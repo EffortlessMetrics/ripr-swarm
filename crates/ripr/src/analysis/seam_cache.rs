@@ -756,6 +756,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.182`: a module-level `const` read only by a same-module function gains a
 /// reader entry, so cached verdicts for such a value would stay
 /// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
 /// `1.183`: the unresolved boundary-input activation summary leads with the
 /// typed `activation_boundary_input_unresolved` token and the evidence record
 /// no longer derives that category from the sentence (#14951), so a cached

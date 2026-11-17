@@ -67,14 +67,13 @@ first Ready, validate the body offline and fix every line it names:
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
 below apply to candidate preparation. Ordinary development does not request CI.
-The selected, reviewed candidate uses the installed qualification route. After
-verified queue activation, use
-[the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for conditional landing and actual-G qualification. During the current bootstrap,
-GitHub can still require the installed H check before enqueue; the delivery owner
-may request that check through `merge-ready` after completing this preparation.
-Auxiliary event retirement does not replace that producer with cheap H admission.
-Retire its label request only after the replacement is qualified and enforced.
+The selected, reviewed candidate uses the installed qualification route. Apply
+`merge-ready` to request PR qualification, inspect its results, make the final
+integration judgment, then use
+[the native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
+for conditional landing and actual-G qualification. Auxiliary event retirement
+does not replace that producer with cheap H admission. Retire its label request
+only after the replacement is qualified and enforced.
 The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed

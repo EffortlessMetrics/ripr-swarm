@@ -234,6 +234,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         source,
         item_scopes: None,
         macro_candidates: None,
+        external_docs: None,
     }
 }
 

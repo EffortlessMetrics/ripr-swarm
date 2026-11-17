@@ -229,6 +229,79 @@ fn a_call_that_may_never_run_is_not_reachable_unrevealed() -> Result<(), String>
     Ok(())
 }
 
+/// #14968: a short-circuited right operand, token text inside a macro that
+/// does not evaluate its input, and a call after a statement that always
+/// diverges do not show the input reached the owner either.
+#[test]
+fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrevealed()
+-> Result<(), String> {
+    for test_body in [
+        "let _ = false && f(5) == 5;",
+        "let _ = true || f(5) == 5;",
+        "let _ = g() && f(5) == 5;",
+        "let _ = stringify!(f(5));",
+        "let _ = vec![stringify!(f(5))];",
+        "let Some(_x) = None::<i32> else { return; };\n        let _ = f(5);",
+        "let Ok(_x) = Err::<i32, i32>(1) else { return; };\n        let _ = f(5);",
+        "Err::<(), i32>(1)?;\n        let _ = f(5);",
+        "None::<i32>?;\n        let _ = f(5);",
+        // #14968 review: an assertion message is formatted only on failure,
+        // a `let`-`else` block runs only on a mismatch, and an evaluating
+        // macro's input with `&&`, a closure, `?` or a branch may skip it.
+        "assert!(true, \"{}\", f(5));",
+        "assert_eq!(1, 1, \"{}\", f(5));",
+        "let Some(_x) = Some(1) else { let _ = f(5); return; };",
+        "let Some(_v) = Some(1) else { assert_eq!(f(5), 5); return; };",
+        "assert!(g() && f(5) == 5);",
+        "assert_eq!(o.map(|_| f(5)), None);",
+        "assert_eq!(g()?, f(5));",
+        "assert!(if c { f(5) == 5 } else { true });",
+    ] {
+        let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
+        assert!(
+            !matches!(
+                class,
+                ExposureClass::Exposed
+                    | ExposureClass::WeaklyExposed
+                    | ExposureClass::ReachableUnrevealed
+            ),
+            "{test_body}: {finding:?}"
+        );
+    }
+    // Controls: a call that always runs is reached, an evaluated macro input
+    // is a call, an exact pin still exposes, and a refutable `let`-`else` on
+    // a value that can match does not end the block.
+    for (test_body, expected) in [
+        ("let _ = f(5);", ExposureClass::ReachableUnrevealed),
+        (
+            "let _ = true && f(5) == 5;",
+            ExposureClass::ReachableUnrevealed,
+        ),
+        (
+            "let _ = false || f(5) == 5;",
+            ExposureClass::ReachableUnrevealed,
+        ),
+        ("let _ = vec![f(5)];", ExposureClass::ReachableUnrevealed),
+        ("let _ = dbg!(f(5));", ExposureClass::ReachableUnrevealed),
+        (
+            "let Some(_x) = Some(1) else { return; };\n        let _ = f(5);",
+            ExposureClass::ReachableUnrevealed,
+        ),
+        ("assert_eq!(f(5), 5);", ExposureClass::Exposed),
+        // A `let`-`else` initializer always runs, even beside its block.
+        (
+            "let Some(_v) = Some(f(5)) else {\n            return;\n        };",
+            ExposureClass::ReachableUnrevealed,
+        ),
+        // A message is lazy, but the operands before it always run.
+        ("assert_eq!(f(5), 5, \"case\");", ExposureClass::Exposed),
+    ] {
+        let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
+        assert_eq!(class, expected, "{test_body}: {finding:?}");
+    }
+    Ok(())
+}
+
 /// `-a` and `a` are equal at `0`: a pin there cannot tell them apart.
 #[test]
 fn a_pin_where_minus_and_plain_agree_is_weakly_exposed() -> Result<(), String> {

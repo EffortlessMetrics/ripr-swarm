@@ -151,6 +151,10 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Changed single-line constants with their old and new declarations
     /// (RIPR-SPEC-0048), for the value-flow check.
     changed_consts: super::ChangedConsts,
+    /// #14852: whether the diff's base side may rebind `vec` or a standard
+    /// assertion macro ([`super::base_side_may_rebind_trusted_macros`]).
+    /// `None` (not computed) reads as yes.
+    base_may_rebind_trusted_macros: Option<bool>,
     /// #14852: the run's out-of-line `mod` declarations and the diff's
     /// changes to them, for the shared base-owner identity. Unread (every
     /// owner refuses) unless the run read them.
@@ -325,6 +329,15 @@ impl RelatedTestCandidateIndex {
         &self.changed_consts
     }
 
+    /// Record the diff-wide base-side macro rebinding answer (#14852).
+    pub(in crate::analysis) fn with_base_may_rebind_trusted_macros(
+        mut self,
+        rebinds: bool,
+    ) -> Self {
+        self.base_may_rebind_trusted_macros = Some(rebinds);
+        self
+    }
+
     /// Record the run's module declaration reading (#14852).
     pub(in crate::analysis) fn with_module_declarations(
         mut self,
@@ -342,6 +355,12 @@ impl RelatedTestCandidateIndex {
         static UNREAD: std::sync::LazyLock<crate::analysis::diff::ModuleDeclarations> =
             std::sync::LazyLock::new(crate::analysis::diff::ModuleDeclarations::unread);
         self.module_declarations.as_ref().unwrap_or(&UNREAD)
+    }
+
+    /// Whether the diff's base side may rebind `vec` or a standard assertion
+    /// macro; yes when the run did not compute it.
+    pub(in crate::analysis) fn base_may_rebind_trusted_macros(&self) -> bool {
+        self.base_may_rebind_trusted_macros.unwrap_or(true)
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -9829,6 +9848,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -9943,6 +9963,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -10001,6 +10022,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,

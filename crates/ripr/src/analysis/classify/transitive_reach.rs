@@ -4155,6 +4155,7 @@ mod tests {
                 source: source.into(),
                 item_scopes: None,
                 macro_candidates: None,
+                external_docs: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -6083,6 +6084,7 @@ mod tests {
                     source: source.into(),
                     item_scopes: None,
                     macro_candidates: None,
+                    external_docs: None,
                 },
             )
         };

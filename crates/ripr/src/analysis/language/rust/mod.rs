@@ -3267,6 +3267,12 @@ impl RustAdapter {
                 .with_changed_consts(classify::ChangedConsts::from_changed_files(
                     &analyzable_changed_files,
                 ))
+                // #14852: every changed file, generated ones included, since
+                // a removed binding anywhere may have rebound `vec`.
+                .with_base_may_rebind_trusted_macros(classify::base_side_may_rebind_trusted_macros(
+                    changed_files,
+                    &index,
+                ))
                 // #14852: every `mod` declaration the index holds, and every
                 // changed file's declarations on both sides, for the shared
                 // base-owner identity.
