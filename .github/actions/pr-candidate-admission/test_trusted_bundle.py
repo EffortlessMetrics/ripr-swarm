@@ -295,6 +295,38 @@ class Bundle(unittest.TestCase):
                                                  GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
                 self.assertEqual(result.returncode, int(collision), result)
 
+    def assert_constituent_reads_are_pinned(self, constituent):
+        self.assertIsNotNone(constituent)
+        script = shell(constituent)
+        for read in ("git/commits/${GROUP_BASE_SHA}",
+                     "contents/${packet_path}?ref=${GROUP_BASE_SHA}",
+                     "contents/.gitattributes?ref=${GROUP_BASE_SHA}"):
+            self.assertIn(read, script)
+            self.assertNotIn(read.replace("${GROUP_BASE_SHA}", "${base_sha}"), script)
+
+    def test_constituent_reads_use_group_base_and_keep_live_checks(self):
+        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
+        constituent = step(workflow, "Admit additional merge-group constituents")
+        self.assert_constituent_reads_are_pinned(constituent)
+        script = shell(constituent)
+        # History-sync and the during-run movement check intentionally stay live.
+        self.assertIn('--base-sha "$base_sha"', script)
+        self.assertIn('if [ "$base_sha_after" != "$base_sha" ]; then', script)
+        self.assertIn('contents/${packet_path}?ref=${base_sha_after}', script)
+
+    def test_constituent_pin_removal_mutants_are_rejected(self):
+        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
+        constituent = step(workflow, "Admit additional merge-group constituents")
+        self.assertIsNotNone(constituent)
+        for read in ("git/commits/${GROUP_BASE_SHA}",
+                     "contents/${packet_path}?ref=${GROUP_BASE_SHA}",
+                     "contents/.gitattributes?ref=${GROUP_BASE_SHA}"):
+            with self.subTest(read=read):
+                self.assertEqual(constituent.count(read), 1)
+                mutant = constituent.replace(read, read.replace("${GROUP_BASE_SHA}", "${base_sha}"))
+                with self.assertRaises(AssertionError):
+                    self.assert_constituent_reads_are_pinned(mutant)
+
     def test_event_identity_selection_has_no_candidate_fallback(self):
         check = step((ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8"), "Select trusted admission source")
         self.assertIsNotNone(check)
