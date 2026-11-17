@@ -3267,6 +3267,31 @@ impl RustAdapter {
                 .with_diff_touched(diff_touched.clone())
                 .with_changed_consts(classify::ChangedConsts::from_changed_files(
                     &analyzable_changed_files,
+                ))
+                // #14852: every `mod` declaration the index holds, and every
+                // changed file's declarations on both sides, for the shared
+                // base-owner identity.
+                .with_module_declarations(crate::analysis::diff::ModuleDeclarations::read(
+                    index
+                        .files()
+                        .iter()
+                        .filter(|(_, facts)| {
+                            // The facts list every parsed declaration; the
+                            // lexical test keeps a file the index could not
+                            // parse, which then reads as unreadable.
+                            !facts.module_declarations.is_empty()
+                                || facts.source.lines().any(|line| {
+                                    line.contains("mod ") && line.trim_end().ends_with(';')
+                                })
+                        })
+                        .map(|(_, facts)| facts.data().source.as_ref()),
+                    changed_files.iter().map(|changed| {
+                        (
+                            changed,
+                            crate::analysis::rust_index::find_file_facts(&index, &changed.path)
+                                .map(|facts| facts.data().source.as_ref()),
+                        )
+                    }),
                 ));
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
