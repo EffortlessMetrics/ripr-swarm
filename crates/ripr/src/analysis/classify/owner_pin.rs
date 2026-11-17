@@ -494,8 +494,6 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Whether every matches-binding candidate is this file's verified
     /// standard assertion argument, rather than a real or opaque binding.
     matches_arguments_clear: SyncMemo<BTreeMap<PathBuf, bool>>,
-    /// All sites, including opaque imports that never spell the bound name.
-    matches_binding_sites: OnceLock<Vec<(PathBuf, MacroBindingSite)>>,
     /// #10389: per test file, the known comparison macros it imports by name.
     comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
     /// #10389: every name a `macro_rules!` in the index defines, scanned once.
@@ -1982,6 +1980,65 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// Every `matches` binding site in the workspace, including opaque
+    /// imports that never spell the name, in index path order. Memoized per
+    /// index (#13754), so every owner-pin syntax instance over one index
+    /// shares one scan. It stays lazy: priming it before the probes cost a
+    /// large diff that never reaches this check more than it saved.
+    fn matches_binding_sites(index: &RustIndex) -> &[(PathBuf, MacroBindingSite)] {
+        index
+            .call_identity_memos
+            .matches_binding_sites
+            .get_or_init(|| {
+                let files: Vec<(&PathBuf, crate::analysis::rust_index::FileFactsView<'_>)> =
+                    index.files().iter().collect();
+                map_scans(&files, |(file, facts)| {
+                    // The stored candidates over-approximate every context's
+                    // sites, so a file that cannot bind `matches` reports
+                    // none and is not parsed (#5363). A file without stored
+                    // candidates is always scanned.
+                    if facts
+                        .macro_candidates
+                        .as_deref()
+                        .is_some_and(|candidates| !candidates.may_bind("matches"))
+                    {
+                        return Vec::new();
+                    }
+                    trusted_macro_binding_sites(
+                        &facts.source,
+                        index.macro_scope_crates(),
+                        &assertion_context_macros(),
+                        &|_, _| false,
+                        &|_| false,
+                    )
+                    .into_iter()
+                    .filter(|(name, _)| name == "matches")
+                    .map(|(_, site)| ((*file).clone(), site))
+                    .collect::<Vec<_>>()
+                })
+                .into_iter()
+                .flatten()
+                .collect()
+            })
+    }
+
+    /// The per-file `matches` argument verdict, memoized by test file. The
+    /// workspace site scan is resolved before the memo lock is taken, so a
+    /// worker that pays it does not hold every sibling on that lock (#13754).
+    fn matches_arguments_clear_for(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        clear: impl FnOnce(&[(PathBuf, MacroBindingSite)]) -> bool,
+    ) -> bool {
+        let sites = Self::matches_binding_sites(index);
+        *self
+            .matches_arguments_clear
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| clear(sites))
+    }
+
     /// #9211: pay the whole workspace macro-site scan once, before the
     /// classify workers start. The first consumer otherwise runs it in line on
     /// one worker while holding the memo lock, and every sibling worker sleeps
@@ -2380,50 +2437,25 @@ impl OwnerPinSyntax {
                     .root_sites
                     .keys()
                     .any(|(name, _)| name == "matches")
-                && *self
-                    .matches_arguments_clear
-                    .borrow_mut()
-                    .entry(test.file.clone())
-                    .or_insert_with(|| {
-                        // Check every site, not only the earliest disclosure site:
-                        // a later definition must not hide behind std::assert!.
-                        self.matches_binding_sites
-                            .get_or_init(|| {
-                                index
-                                    .files()
-                                    .iter()
-                                    .flat_map(|(file, facts)| {
-                                        trusted_macro_binding_sites(
-                                            &facts.source,
-                                            index.macro_scope_crates(),
-                                            &assertion_context_macros(),
-                                            &|_, _| false,
-                                            &|_| false,
-                                        )
-                                        .into_iter()
-                                        .filter(|(name, _)| name == "matches")
-                                        .map(|(_, site)| (file.clone(), site))
-                                        .collect::<Vec<_>>()
-                                    })
-                                    .collect()
-                            })
-                            .iter()
-                            .all(|(file, site)| {
-                                let MacroBindingKind::MacroArgument(path) = &site.kind else {
-                                    return false;
-                                };
-                                let path: String = path.split_whitespace().collect();
-                                file == &test.file
-                                    && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                                    && rooted.is_unrebound(&path, &facts.source)
-                                    && self.targeted_macro_binding_is_unambiguous(
-                                        test,
-                                        assertion.line,
-                                        &path,
-                                        index,
-                                    )
-                            })
-                    });
+                && self.matches_arguments_clear_for(test, index, |sites| {
+                    // Check every site, not only the earliest disclosure site:
+                    // a later definition must not hide behind std::assert!.
+                    sites.iter().all(|(file, site)| {
+                        let MacroBindingKind::MacroArgument(path) = &site.kind else {
+                            return false;
+                        };
+                        let path: String = path.split_whitespace().collect();
+                        file == &test.file
+                            && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                            && rooted.is_unrebound(&path, &facts.source)
+                            && self.targeted_macro_binding_is_unambiguous(
+                                test,
+                                assertion.line,
+                                &path,
+                                index,
+                            )
+                    })
+                });
             if clear {
                 ambiguous.remove("matches");
             }
