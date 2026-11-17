@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs_rival (4)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs_rival --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

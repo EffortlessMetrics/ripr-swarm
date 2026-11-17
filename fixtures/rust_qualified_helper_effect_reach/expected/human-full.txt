@@ -21,7 +21,7 @@ Shared evidence and guidance
   E6 [findings 1, 2]: local flow reaches state write: out.push(10) (line 2)
   E7 [findings 1, 2]: related test src/lib.rs:14 observes_record uses strong exact value oracle: assert_eq!(out, vec![10]);
   E8 [findings 1, 2]: source assertion argument value 10 at line 17
-  N1 [findings 1, 2]: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  N1 [findings 1, 2]: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 
 Finding 1: NOTE ./src/lib.rs:2
   id: probe:src_lib.rs:call_deletion:05331642

@@ -22,11 +22,13 @@ earned once per queue entry on the exact queued merge commit (see
 must form a linear single-parent squash chain, bind to its live PR head and
 queue entry, pass candidate/cut/review/thread admission, and belong to the
 base repository before self-hosted runners are selected. The workflow also
-still requests PR qualification on the explicit `merge-ready` label and runs on
-main/master push and manual dispatch. The branch summary names
-`Ripr Rust Small Result` (application 15368). A complete current enforcement
-readback is required before changing settings, but no settings change is part of
-the live landing order above. A file or issue edit does not install protection.
+still requests full PR qualification on the explicit `merge-ready` label and
+retains manual dispatch. Ordinary main/master product replay is retired;
+[the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
+`Ripr Rust Small Result` (application 15368); a complete current enforcement
+readback is still required before changing settings, and whether the repository's
+merge queue is enabled for `main` is a live setting this document does not
+establish. A file or issue edit does not install new protection.
 
 The installed `merge-ready` label requests PR qualification; Ready alone requests
 nothing, and neither one enqueues the PR. After reviewing those results and the
@@ -38,9 +40,9 @@ accepted remain separate states.
 ## Who owns the change
 
 Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. The two legacy label subscribers and the
-required caller's main cache writer remain explicit cutover obligations; source
-retirement alone does not establish the final zero-label/native-queue state.
+#4842 auxiliary-trigger retirement. Label cutover and hosted App activation remain
+open. Main replay is retired with full H/G protection, opportunistic caches and
+mandatory cold recomputation; no recurring warmer is introduced (#7827).
 See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
 
 This source stage retains the installed required H producer. While GitHub still
@@ -163,11 +165,12 @@ Sequence the rollout:
    PR fields; an added event alone cannot adapt them. Group scope is the union
    of applicable constituent and integration risks, not one guessed PR number.
 3. Prove every required G result, negative controls and frozen-source review.
-   Keep full legacy PR qualification during the bounded queue bootstrap.
+   Full legacy PR qualification was kept during the bounded queue bootstrap.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
-5. Retire duplicate expensive label/main-push and child routes coherently. Keep
-   cheap main reconciliation and distinct incident/deep/release obligations.
+5. Retire the remaining duplicate label and child routes coherently. The bounded
+   main-push retirement already keeps full H/G authority, cold recomputation and
+   cheap landed observation. Distinct incident/deep/release obligations remain.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
 
 Rollback restores and verifies full PR qualification before queue-only protection
@@ -189,8 +192,10 @@ PRs require an explicitly authorized protection exception or a separately decide
 route; a normal direct merge is not permitted.
 
 The former profile was not a new pull_request-triggered CI lane: it rode the
-merge-ready-requested run and added no workflow trigger. Product CI now runs only
-on `merge_group`; history-preserving syncs and release transactions remain a
+merge-ready-requested run and added no workflow trigger. Queue landing now runs
+product CI on `merge_group`; the explicit `merge-ready` request and manual
+dispatch remain installed until the label route retires, and history-preserving
+syncs and release transactions remain a
 separate exceptional profile. Any successor must keep the S/B/H/G identity
 binding, privileged authorization and typed diff-scoped
 `not_applicable: history_sync` semantics described here.

@@ -50,11 +50,14 @@ PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
 separate evidence gap. After required proof and review, the native merge queue is
-the installed landing route for ordinary PRs; submit the direct expected-head
-squash only where the queue route is genuinely not in force or a refusal has been
-reconciled as a supported fallback, and never as a bypass, and let GitHub enforce
-applicable requirements. Report
-a rejection without guessing its cause; never bypass enforcement or change settings.
+the installed landing route for ordinary PRs; landing is only via native enqueue.
+Direct expected-head squash and `scripts/guarded_merge.py` are a refused
+historical route (#14247), not an alternative landing route, and must not be used
+after a rejection or for any other reason. Verify the current required
+Result and all other applicable checks; do not arm auto-merge or retry without
+reconciling an uncertain outcome. Check observations and mutation are not
+atomic, so retain native enforcement. Report a rejection without guessing its
+cause; never bypass enforcement or change settings.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists. Coordinate actual ownership and preserve unique work as described in `prepare-issue`.
 2. Write a complete body:

@@ -187,8 +187,9 @@ PR transition. Keep that receipt with the issue; a structural pass is not it.
 Development checks and review belong in the owning session. Ordinary PR
 publication, Draft/Ready transitions, updates and review comments must not start
 Actions, including cheap or skipped-job wrappers. #4842 retires auxiliary
-subscribers; the explicit legacy label route and its main cache writer remain
-bootstrap debt under #4838, not an exception in the final design. Do not restore
+subscribers; the explicit legacy label route remains bootstrap debt under
+#4838, not an exception in the final design. Ordinary main-push product replay
+is retired; cache misses recompute within the retained H/G qualification. Do not restore
 an automated advisory reviewer to compensate for the retirement.
 
 Keep development cheap: focused warm proof, substantive review and joined repairs

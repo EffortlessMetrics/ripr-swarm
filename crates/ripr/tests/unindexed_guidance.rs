@@ -207,7 +207,7 @@ fn assertion_helper_retains_oracle_inspection_guidance() -> Result<(), String> {
     assert_eq!(
         finding.recommended_next_step.as_deref(),
         Some(
-            "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); inspect the inputs and behavior this helper checks, including any existing boundary or negative-path assertions. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); inspect the inputs and behavior this helper checks, including any existing boundary or negative-path assertions. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
         )
     );
     Ok(())

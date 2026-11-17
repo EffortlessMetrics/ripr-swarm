@@ -55,33 +55,15 @@ Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, the native merge queue is the installed landing
-route for ordinary PRs; use the direct expected-head squash only where the queue
-route is genuinely not in force or a refusal has been reconciled as a supported
-fallback, and never as a bypass. Verify the current required
+separate evidence gap. After required proof and review, the native merge queue is
+the installed landing route for ordinary PRs; landing is only via native enqueue.
+Direct expected-head squash and `scripts/guarded_merge.py` are a refused
+historical route (#14247), not an alternative landing route, and must not be used
+after a rejection or for any other reason. Verify the current required
 Result and all other applicable checks; do not arm auto-merge or retry without
 reconciling an uncertain outcome. Check observations and mutation are not
 atomic, so retain native enforcement. Report a rejection without guessing its
 cause; never bypass enforcement or change settings.
-
-For the audited heavy Rust qualification route, `scripts/guarded_merge.py` is
-the expected-head squash path only where the queue route is genuinely not in
-force or a refusal has been reconciled as a supported fallback, and never as a
-bypass; use it after completing that final judgment. It does not
-establish substantive review or every other gate. A guard refusal, including
-failed or ambiguous evidence, remains blocked until the evidence is reconciled;
-do not treat it as permission to use another merge path. Before invoking, compare the
-`routed-rust.yml`, `rust-gates.yml` and `rust-test-shards.yml` blob ids on the
-candidate's workflow source with `AUDITED_WORKFLOW_TUPLES` in the script; a tuple
-that is not listed has not been audited, so the route is unsupported and no guard
-refusal occurred. Report the unaudited tuple on the audit-refresh issue (#12817) rather
-than adding it unreviewed. If the qualification
-route was independently established as unsupported before guard invocation,
-follow its existing ordinary protected exact-head procedure with current required
-Result, review and other gates; do not claim the guard passed. An unknown or
-rejected mutation requires PR and merge-state readback before any retry. Check
-observations and the server mutation are not atomic, so native required checks
-and protections remain authoritative.
 
 Before retrying a terminal Result, inspect its original request and native
 run/attempt binding under [CI eligibility semantics](../../../docs/CI.md#merge-queue-request-cutover).

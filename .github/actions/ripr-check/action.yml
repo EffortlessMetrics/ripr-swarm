@@ -30,9 +30,16 @@ inputs:
     description: >-
       'true' (default) restores and saves ripr's analysis cache with
       actions/cache, so later pushes re-analyze only changed files. 'false'
-      skips the cache step.
+      skips the cache step, as does `install-only`.
     required: false
     default: 'true'
+  install-only:
+    description: >-
+      'true' installs the pinned ripr onto PATH and skips `ripr check`, for a
+      workflow (such as the one `ripr init --ci github` writes) that runs its
+      own ripr commands after the install.
+    required: false
+    default: 'false'
 
 outputs:
   exit-code:
@@ -127,7 +134,7 @@ runs:
     # version by ripr itself, so a restored entry that no longer matches is a
     # miss, never stale evidence. Pinned to a commit SHA like the generated workflow's.
     - name: Restore ripr analysis cache
-      if: inputs.cache == 'true'
+      if: inputs.cache == 'true' && inputs.install-only != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/ripr-cache
@@ -142,6 +149,7 @@ runs:
     # fails the step with an error annotation that names why.
     - name: Run ripr check
       id: check
+      if: inputs.install-only != 'true'
       shell: bash
       env:
         RIPR_INPUT_BASE: ${{ inputs.base }}

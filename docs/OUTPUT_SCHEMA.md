@@ -1601,7 +1601,17 @@ stubs), and `repair` (`seam_id` or `canonical_gap_id`,
 `ready`) only for the finding the pipeline selected for repair, by the same gates
 the human screen applies (the gap-bound route wins over the seam route, and a
 static-limited finding gets none). A blocked start names `uncommitted_file` or
-`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+`uncommitted_files` and carries no `command`: a seam route names
+`uncommitted_file` for a held inline test target and `uncommitted_files` for the
+uncommitted production files `ripr repair` refuses to start over (#13636), and a
+gap route names `uncommitted_files`. Both routes spell the files relative to the
+analyzed root (files outside it as `../...`). The seam route lists the dirty files
+the start's early preflight refuses; a `ready` seam route can still be refused by
+the start's full check (for example a dirty production file carrying an inline
+test module), which names the files itself.
+When the check did not analyze those files (a committed-only run, or source or
+test changes it left unanalyzed), neither route prints a commit step and the
+route is refused instead. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it. The schema
@@ -1944,6 +1954,11 @@ classes are:
   `missing_required` with the flag to add as `token`; where the refusal
   offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
   token is the first one it names (#14877);
+- two given flags that cannot be used together (for example `ripr context
+  --json --base main --diff a.diff`, or `ripr rerun --json --changed-test
+  tests/a.rs --gap-ledger ledger.json`), as `conflicting_flags` with one of
+  the conflicting flags as `token`; outside `check`, whose conflicts keep
+  their own check refusal (#14925);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1956,16 +1971,16 @@ Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: required-flag refusals not yet typed,
 including those whose wording #14076 is revising (`calibrate cargo-mutants`,
 `zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
-`pr-review front-panel`) and those whose named flag would conflict with one
-already given (`rerun --changed-test` with `--gap-ledger`), a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
+`pr-review front-panel`), a missing or malformed value rejected by a
+command's own parser rather than the shared readers (for example
+`impacted-evidence`), conflicting flags not yet typed, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
-`invalid_value`,
+`conflicting_flags`, `invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
@@ -16541,6 +16556,12 @@ Field notes:
   status.
 - `static_movement` is copied from the receipt and remains a static
   before/after artifact relationship.
+- A receipt that supplies the movement but does not record the `advisory`
+  status (it is `invalid` or `incomplete`, or carries no recognized status)
+  keeps `status` at `incomplete`. `static_movement` is still copied, and
+  `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
+  Markdown `Receipt:` line say that the recorded movement is not review
+  evidence. The wording is fixed per case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
