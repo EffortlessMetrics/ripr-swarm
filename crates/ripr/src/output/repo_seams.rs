@@ -15,9 +15,11 @@ use crate::agent::artifact::{
     CONTENT_SHA256_PLACEHOLDER, RepoExposureArtifactContext, Sha256Writer,
     repo_seams_artifact_metadata,
 };
+use crate::analysis::owner_opt_out::RepoOwnerOptOuts;
 use crate::analysis::{RepoSeam, RequiredDiscriminator};
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::table_code_span;
+use crate::output::repo_exposure::{repo_owner_opt_outs_json, repo_owner_opt_outs_md};
 
 pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.3";
 
@@ -41,14 +43,26 @@ pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> 
 /// digest field replaced by the fixed placeholder, so a consumer can verify
 /// the artifact was not edited in flight: first pass hashes the document with
 /// the placeholder envelope, second pass re-renders with the resulting digest.
+#[cfg(test)]
 pub(crate) fn render_repo_seams_json_with_context(
     seams: &[RepoSeam],
+    context: &RepoExposureArtifactContext,
+) -> Result<String, String> {
+    render_repo_seams_json_with_owner_opt_outs(seams, RepoOwnerOptOuts::default(), context)
+}
+
+/// [`render_repo_seams_json_with_context`] for an inventory that already
+/// withheld the seams of opted-out owners (#14139); the top-level
+/// `owner_opt_outs` member renders only when any were withheld.
+pub(crate) fn render_repo_seams_json_with_owner_opt_outs(
+    seams: &[RepoSeam],
+    owner_opt_outs: RepoOwnerOptOuts,
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     use std::io::Write as _;
 
     let placeholder = repo_seams_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
-    let hashed = render_repo_seams_json_document(seams, Some(&placeholder));
+    let hashed = render_repo_seams_json_document(seams, &owner_opt_outs, Some(&placeholder));
     let mut hasher = Sha256Writer::new();
     hasher
         .write_all(hashed.as_bytes())
@@ -56,11 +70,16 @@ pub(crate) fn render_repo_seams_json_with_context(
     let content_sha256 = hasher.finish();
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
-    Ok(render_repo_seams_json_document(seams, Some(&metadata)))
+    Ok(render_repo_seams_json_document(
+        seams,
+        &owner_opt_outs,
+        Some(&metadata),
+    ))
 }
 
 fn render_repo_seams_json_document(
     seams: &[RepoSeam],
+    owner_opt_outs: &RepoOwnerOptOuts,
     artifact: Option<&serde_json::Value>,
 ) -> String {
     let mut out = String::new();
@@ -73,6 +92,9 @@ fn render_repo_seams_json_document(
         out.push_str(&format!("  \"artifact\": {artifact},\n"));
     }
     out.push_str("  \"scope\": \"repo\",\n");
+    if let Some(disclosure) = repo_owner_opt_outs_json(owner_opt_outs) {
+        out.push_str(&format!("  \"owner_opt_outs\": {disclosure},\n"));
+    }
     out.push_str("  \"seams\": [");
 
     for (idx, seam) in seams.iter().enumerate() {
@@ -154,12 +176,26 @@ fn discriminator_payload(d: &RequiredDiscriminator) -> &str {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn render_repo_seams_md(seams: &[RepoSeam]) -> String {
+    render_repo_seams_md_with_owner_opt_outs(seams, RepoOwnerOptOuts::default())
+}
+
+/// [`render_repo_seams_md`] for an inventory that already withheld the seams
+/// of opted-out owners (#14139); one line under the total names how many.
+pub(crate) fn render_repo_seams_md_with_owner_opt_outs(
+    seams: &[RepoSeam],
+    owner_opt_outs: RepoOwnerOptOuts,
+) -> String {
     let mut out = String::new();
     out.push_str("# Repo Seam Inventory\n\n");
     out.push_str(&format!("Schema version: {}\n", REPO_SEAMS_SCHEMA_VERSION));
     out.push_str("Scope: repo\n");
-    out.push_str(&format!("Total seams: {}\n\n", seams.len()));
+    out.push_str(&format!("Total seams: {}\n", seams.len()));
+    if let Some(line) = repo_owner_opt_outs_md(&owner_opt_outs) {
+        out.push_str(&line);
+    }
+    out.push('\n');
 
     if seams.is_empty() {
         out.push_str(
@@ -430,7 +466,7 @@ mod tests {
             end_line: 88,
             end_column: 41,
         });
-        let json = render_repo_seams_json_document(&[seam], None);
+        let json = render_repo_seams_json_document(&[seam], &RepoOwnerOptOuts::default(), None);
         for needle in [
             "\"line\": 88",
             "\"column\": 12",
@@ -446,7 +482,8 @@ mod tests {
         // Seams without span geometry (legacy cache, fixture-built) keep
         // the line-only shape: the header goes straight from "line" to
         // "owner" and the emitter invents no coordinates.
-        let json = render_repo_seams_json_document(&[sample_seam()], None);
+        let json =
+            render_repo_seams_json_document(&[sample_seam()], &RepoOwnerOptOuts::default(), None);
         assert!(
             json.contains("\"line\": 88,\n      \"owner\""),
             "seam header grew span fields without geometry in: {json}"

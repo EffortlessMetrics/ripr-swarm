@@ -98,8 +98,8 @@ pub(in crate::analysis) use builder_override::{
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{
-    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
-    qualified_owner_calls_resolve, shared_owner_call_identity,
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
+    bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
     test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
@@ -124,7 +124,9 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
-pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
+pub(in crate::analysis) use field_reach::{
+    FieldTable, mentions_in, owner_name_mentions, test_can_name_field,
+};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
     propagation_evidence_with_witness, same_line_arm_result_in,

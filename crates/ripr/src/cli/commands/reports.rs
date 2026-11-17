@@ -1304,6 +1304,7 @@ mod tests {
                 None,
                 None,
                 &[],
+                crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");

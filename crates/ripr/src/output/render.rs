@@ -186,25 +186,38 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::RepoSeamsJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_seams_at_with_config(&output.root, config),
-            |seams| {
+            |mut seams| {
+                let owner_opt_outs = withhold_repo_seam_owner_opt_outs(&mut seams);
                 let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_seams(
                     output.root.clone(),
                     output.mode.as_str().to_string(),
                     output.base.clone(),
                     config,
                 )?;
-                repo_seams::render_repo_seams_json_with_context(&seams, &context)
+                repo_seams::render_repo_seams_json_with_owner_opt_outs(
+                    &seams,
+                    owner_opt_outs,
+                    &context,
+                )
             },
         ),
         OutputFormat::RepoSeamsMd => repo_inventory_with_progress(
             progress,
             || analysis::inventory_seams_at_with_config(&output.root, config),
-            |seams| Ok(repo_seams::render_repo_seams_md(&seams)),
+            |mut seams| {
+                let owner_opt_outs = withhold_repo_seam_owner_opt_outs(&mut seams);
+                Ok(repo_seams::render_repo_seams_md_with_owner_opt_outs(
+                    &seams,
+                    owner_opt_outs,
+                ))
+            },
         ),
         OutputFormat::RepoExposureJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
-            |report| {
+            |mut report| {
+                let owner_opt_outs =
+                    withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
@@ -231,6 +244,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                 )
             },
@@ -238,19 +252,25 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::RepoExposureSummaryJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_compact_classified_seams_at_with_config(&output.root, config),
-            |classified| {
-                Ok(repo_exposure::render_repo_exposure_summary_json(
-                    &classified,
-                    &output.root,
-                    output.base.as_deref(),
-                    output.mode.as_str(),
-                ))
+            |mut classified| {
+                let owner_opt_outs = withhold_repo_classified_owner_opt_outs(&mut classified);
+                Ok(
+                    repo_exposure::render_repo_exposure_summary_json_with_owner_opt_outs(
+                        &classified,
+                        &output.root,
+                        output.base.as_deref(),
+                        output.mode.as_str(),
+                        owner_opt_outs,
+                    ),
+                )
             },
         ),
         OutputFormat::RepoExposureMd => repo_inventory_with_progress(
             progress,
             || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
-            |report| {
+            |mut report| {
+                let owner_opt_outs =
+                    withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
@@ -259,13 +279,17 @@ pub(crate) fn render_check_with_config_and_progress(
                     report.naming_only_skips,
                     report.declined_rust_files,
                 );
-                Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
+                Ok(repo_exposure::render_repo_exposure_md_with_owner_opt_outs(
                     &report.classified,
-                    report.limit_info.as_ref(),
+                    report
+                        .limit_info
+                        .as_ref()
+                        .map(repo_exposure::RepoExposureLimit::Inventory),
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                 ))
             },
         ),
@@ -658,10 +682,14 @@ fn ripr_repo_canonical_actionable_summary(
     output: &CheckOutput,
     config: &RiprConfig,
 ) -> Result<(badge::BadgeSummary, Option<analysis::SeamLimitInfo>), String> {
-    let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+    let mut report =
+        analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
     // #13340: a failed seam-evidence warm leaves every seam an opaque
     // stand-in; refuse rather than project a clean-looking zero badge.
     report.require_complete_evidence("repo badge")?;
+    // #14139: an opted-out owner's seams are not unsuppressed gaps, exactly
+    // as `repo-exposure-json` withholds them; the badge carries no count.
+    let _withheld = withhold_repo_classified_owner_opt_outs(&mut report.classified);
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
@@ -671,6 +699,24 @@ fn ripr_repo_canonical_actionable_summary(
     // full-run badge (review round 1, #5261): the limit travels with the
     // summary so the public projection resolves to the limited state.
     Ok((summary, report.limit_info))
+}
+
+/// The repo-scope owner opt-out withholding for a classified inventory
+/// (#14139): the repo-exposure (json, summary, md) and repo badge arms run
+/// their owned inventory through this one call. `repo-sarif`,
+/// `repo-sarif-compact` and `agent-seam-packets-json` do not, and keep every
+/// seam (documented in `docs/OUTPUT_SCHEMA.md`).
+pub(crate) fn withhold_repo_classified_owner_opt_outs(
+    classified: &mut Vec<analysis::ClassifiedSeam>,
+) -> crate::analysis::owner_opt_out::RepoOwnerOptOuts {
+    crate::analysis::owner_opt_out::withhold_repo_owner_opt_outs(classified, |entry| &entry.seam)
+}
+
+/// The same withholding for the raw `repo-seams-*` inventory.
+fn withhold_repo_seam_owner_opt_outs(
+    seams: &mut Vec<analysis::RepoSeam>,
+) -> crate::analysis::owner_opt_out::RepoOwnerOptOuts {
+    crate::analysis::owner_opt_out::withhold_repo_owner_opt_outs(seams, |seam| seam)
 }
 
 /// The seam-native repo badge's public projection, honoring the producing

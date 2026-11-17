@@ -64,12 +64,11 @@ Every normal swarm slice should finish the same way:
 - open a same-repo PR as Draft with one clear purpose, then finish focused proof
   and substantive review before marking the composed head Ready; Ready requests
   no Actions run;
-- after verified activation, use the [native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-  for the selected candidate and inspect its required exact-subject results;
-  during bootstrap, request the installed required H qualification through
-  `merge-ready` when it is still needed before enqueue. The delivery owner may
-  do this after review; auxiliary event retirement does not install cheap H
-  admission or make the existing producer unavailable;
+- request PR qualification through `merge-ready`, inspect the results, then use
+  the [native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
+  for the selected candidate and inspect its required exact-subject results.
+  Auxiliary event retirement does not install cheap H admission or make the
+  existing producer unavailable;
 - merge only when clean and current;
 - remove generated residue, isolated targets, and stale local branches or
   worktrees that are no longer needed.
