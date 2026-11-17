@@ -407,3 +407,133 @@ fn descriptor_or_hidden_expression_shapes_carry_no_fact() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// Each variant is refused by one guard alone: the orthogonal weak reading
+/// holds (asserted as a precondition) and nothing else in the fixture would
+/// refuse the fact. The changed right-hand side may not call (`t.pop()` can
+/// mutate what the test reads), bind with a walrus or use a bare `self`; the
+/// changed statement is alone on its line; and the dynamic-access markers
+/// (`__getattr`, `property`, `getattr(`, `patch`, `mock`) each refuse.
+#[test]
+fn single_guard_variants_carry_no_fact() -> Result<(), String> {
+    let head = "class Req:\n    def __init__(self, url):\n        self.url = url\n        self.retries = 0\n        self.timeout_value = 30\n\n    def timeout(self, t):\n";
+    let tail = "        return self\n";
+    let mut cases: Vec<(&str, String, &str, String)> = Vec::new();
+    for (case, pre, new_line, old_line, extra) in [
+        (
+            "an alias of self made before the write overwrites it",
+            "        s = self\n",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "",
+        ),
+        (
+            "the changed right-hand side calls",
+            "",
+            "        self.timeout_value = t.pop()",
+            "        self.timeout_value = t",
+            "",
+        ),
+        (
+            "the changed right-hand side binds a walrus",
+            "",
+            "        self.timeout_value = (u := t * 2)",
+            "        self.timeout_value = t",
+            "",
+        ),
+        (
+            "the changed right-hand side uses a bare self",
+            "",
+            "        self.timeout_value = [self, t][1]",
+            "        self.timeout_value = t",
+            "",
+        ),
+        (
+            "another statement shares the changed line",
+            "",
+            "        self.retries = 3; self.timeout_value = t * 2",
+            "        self.retries = 3; self.timeout_value = t",
+            "",
+        ),
+        (
+            "the class defines __getattr__",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def __getattr__(self, name):\n        return 30\n",
+        ),
+        (
+            "the class text names property",
+            "",
+            "        self.timeout_value = t * 2",
+            "        self.timeout_value = t",
+            "\n    def describe(self):\n        return 'property'\n",
+        ),
+    ] {
+        let after = if pre.is_empty() {
+            ""
+        } else {
+            "        s.timeout_value = 30\n"
+        };
+        let source = format!("{head}{pre}{new_line}\n{after}{tail}{extra}");
+        cases.push((case, source, new_line, old_line.to_string()));
+    }
+    for (case, source, new_line, old_line) in &cases {
+        let line = source
+            .lines()
+            .position(|line| line == *new_line)
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("{case}: changed line missing"))?;
+        let finding = classify_at(source, line, new_line, old_line, UNREAD_TEST)?;
+        assert_weak_orthogonal_without_fact(case, &finding)?;
+        // The exact-read credit shares the guard: reading `r.retries`, which
+        // the semicolon variant also writes, must not read as exposed.
+        for read in ["retries == 3", "timeout_value == 20"] {
+            let exact = format!(
+                "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n    assert r.{read}\n"
+            );
+            let credited = classify_at(source, line, new_line, old_line, &exact)?;
+            if credited.alignment_reason.as_deref()
+                == Some("strong_oracle_observes_owner_result_field")
+            {
+                return Err(format!(
+                    "{case}: `r.{read}` must not take the owner-result credit"
+                ));
+            }
+        }
+    }
+    let with_reset = format!("{SOURCE}\n    def reset(self):\n        self.retries = 0\n");
+    let reset_test = "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    reset = r.reset\n    reset()\n    assert r.url == 'http://x'\n";
+    let finding = classify(&with_reset, reset_test)?;
+    assert_weak_orthogonal_without_fact("the test aliases a bound method", &finding)?;
+    for (case, test) in [
+        (
+            "the test calls getattr",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    x = getattr(object, 'mro', None)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test text names patch",
+            "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    label = 'patch'\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+        (
+            "the test mocks",
+            "from unittest import mock\nfrom fx.core import Req\n\n\ndef test_builder_sets_url():\n    m = mock.Mock()\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n",
+        ),
+    ] {
+        let finding = classify(SOURCE, test)?;
+        assert_weak_orthogonal_without_fact(case, &finding)?;
+    }
+    Ok(())
+}
+
+fn assert_weak_orthogonal_without_fact(case: &str, finding: &Finding) -> Result<(), String> {
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding.oracle_alignment.as_deref() != Some("orthogonal")
+    {
+        return Err(format!(
+            "{case}: precondition, the orthogonal weak reading: {:?} {:?} {:?}",
+            finding.class, finding.oracle_alignment, finding.alignment_reason
+        ));
+    }
+    assert_orthogonal_without_fact(case, finding)
+}

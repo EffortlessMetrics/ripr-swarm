@@ -107,9 +107,16 @@ pub(super) fn unread_owner_result_field(
     related: &[RelatedTest],
     candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<UnreadOwnerResultField> {
-    let (test, field) = owner_result_shape(owner, owner_source, line, family, related, candidates)?;
-    let (binding, _) =
-        binding_of_owner_result(test, owner, &owner.class_path, &field, FieldUse::Unread)?;
+    let (test, field, methods) =
+        owner_result_shape(owner, owner_source, line, family, related, candidates)?;
+    let (binding, _) = binding_of_owner_result(
+        test,
+        owner,
+        &owner.class_path,
+        &field,
+        &methods,
+        FieldUse::Unread,
+    )?;
     Some(UnreadOwnerResultField {
         binding,
         field,
@@ -127,9 +134,16 @@ pub(super) fn owner_result_field_read(
     related: &[RelatedTest],
     candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<OwnerResultFieldRead> {
-    let (test, field) = owner_result_shape(owner, owner_source, line, family, related, candidates)?;
-    let (_, assertion_text) =
-        binding_of_owner_result(test, owner, &owner.class_path, &field, FieldUse::ExactRead)?;
+    let (test, field, methods) =
+        owner_result_shape(owner, owner_source, line, family, related, candidates)?;
+    let (_, assertion_text) = binding_of_owner_result(
+        test,
+        owner,
+        &owner.class_path,
+        &field,
+        &methods,
+        FieldUse::ExactRead,
+    )?;
     Some(OwnerResultFieldRead {
         test_name: test.name.clone(),
         test_file: test.file.clone(),
@@ -146,7 +160,7 @@ fn owner_result_shape<'t>(
     family: &ProbeFamily,
     related: &[RelatedTest],
     candidates: &[PythonRelatedCandidate<'t>],
-) -> Option<(&'t PythonTest, String)> {
+) -> Option<(&'t PythonTest, String, Vec<String>)> {
     if *family != ProbeFamily::FieldConstruction
         || owner.owner_kind != Some(OwnerKind::Method)
         || !owner.decorators.is_empty()
@@ -167,14 +181,19 @@ fn owner_result_shape<'t>(
     {
         return None;
     }
-    let field = changed_self_field(owner, owner_source, line)?;
-    Some((test, field))
+    let (field, methods) = changed_self_field(owner, owner_source, line)?;
+    Some((test, field, methods))
 }
 
 /// The field the changed line writes, when the owner is a plain method of a
 /// plain top-level class, returns `self` (or is `__init__`), and the changed
-/// line is the method's one top-level, unconditional write of `self.<field>`.
-fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<String> {
+/// line is the method's one top-level, unconditional write of `self.<field>`,
+/// with the names of the class's methods.
+fn changed_self_field(
+    owner: &PythonOwner,
+    source: &str,
+    line: usize,
+) -> Option<(String, Vec<String>)> {
     let Ok(Mod::Module(module)) = parse_module_result(&owner.file, source) else {
         return None;
     };
@@ -258,11 +277,17 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
     {
         return None;
     }
-    // The changed line is one top-level `self.<field> = ...` statement.
-    let changed = method
-        .body
-        .iter()
-        .find(|stmt| line_of(source, stmt_start(stmt)) == Some(line))?;
+    // The changed line is one top-level `self.<field> = ...` statement, alone
+    // on its line: with `self.retries = 3; self.timeout_value = t` the fact
+    // could name, or credit, a field the change did not touch.
+    let mut on_line = method.body.iter().filter(|stmt| {
+        line_of(source, stmt_start(stmt)) == Some(line)
+            || line_of(source, usize::from(stmt.range().end())) == Some(line)
+    });
+    let changed = on_line.next()?;
+    if on_line.next().is_some() || line_of(source, stmt_start(changed)) != Some(line) {
+        return None;
+    }
     let Stmt::Assign(assign) = changed else {
         return None;
     };
@@ -322,9 +347,15 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
     }) {
         return None;
     }
+    // The changed statement itself joins the scan: its right-hand side must
+    // not call (`self.opts.pop(..)` mutates what the test reads), bind with a
+    // walrus, or use a bare `self`.
+    let scanned = method
+        .body
+        .get(changed_index..changed_index + 1 + after.len())?;
     let (mut calls, mut self_names, mut self_bases) = (0usize, 0usize, 0usize);
-    visit_exprs_in_statements(after, &mut |expr| match expr {
-        Expr::Call(_) => calls += 1,
+    visit_exprs_in_statements(scanned, &mut |expr| match expr {
+        Expr::Call(_) | Expr::NamedExpr(_) => calls += 1,
         Expr::Name(name) if name.id.as_str() == "self" => self_names += 1,
         Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self") =>
         {
@@ -333,6 +364,25 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
         _ => {}
     });
     if calls != 0 || self_names != self_bases {
+        return None;
+    }
+    // An alias of `self` made before the write (`s = self`) can overwrite
+    // the field afterwards through a store the write count does not see: no
+    // bare `self` anywhere in the method but its final `return self`.
+    let body_before_return = match method.body.split_last() {
+        Some((Stmt::Return(_), rest)) if owner.name != "__init__" => rest,
+        _ => method.body.as_slice(),
+    };
+    let (mut method_self_names, mut method_self_bases) = (0usize, 0usize);
+    visit_exprs_in_statements(body_before_return, &mut |expr| match expr {
+        Expr::Name(name) if name.id.as_str() == "self" => method_self_names += 1,
+        Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self") =>
+        {
+            method_self_bases += 1;
+        }
+        _ => {}
+    });
+    if method_self_names != method_self_bases {
         return None;
     }
     let mut field_reads = 0usize;
@@ -344,7 +394,15 @@ fn changed_self_field(owner: &PythonOwner, source: &str, line: usize) -> Option<
             field_reads += 1;
         }
     });
-    (field_reads == 0).then_some(field)
+    let methods = class
+        .body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.to_string()),
+            _ => None,
+        })
+        .collect();
+    (field_reads == 0).then_some((field, methods))
 }
 
 /// The local the test binds once to the owner's returned instance, when the
@@ -355,6 +413,7 @@ fn binding_of_owner_result(
     owner: &PythonOwner,
     class: &str,
     field: &str,
+    methods: &[String],
     field_use: FieldUse,
 ) -> Option<(String, Option<String>)> {
     if test.framework != PythonFramework::Pytest
@@ -426,7 +485,7 @@ fn binding_of_owner_result(
     }
     let mut uses = BindingUses::default();
     visit_exprs_in_statements(body, &mut |expr| {
-        uses.record(expr, &binding, &class_local, owner, field)
+        uses.record(expr, &binding, &class_local, owner, field, methods)
     });
     let owner_mentions_ok = owner.name == "__init__" || uses.owner_attribute_mentions == 1;
     let shape_ok = !uses.refused
@@ -513,6 +572,7 @@ impl BindingUses {
         class_local: &str,
         owner: &PythonOwner,
         field: &str,
+        methods: &[String],
     ) {
         match expr {
             Expr::Lambda(_) | Expr::NamedExpr(_) => self.refused = true,
@@ -537,7 +597,12 @@ impl BindingUses {
                 if matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == binding)
                 {
                     let attr = attribute.attr.as_str();
-                    if attribute.ctx != ExprContext::Load || attr.starts_with("__") {
+                    // A bound method read (`reset = r.reset`) can be called
+                    // later under another name and reset the field.
+                    if attribute.ctx != ExprContext::Load
+                        || attr.starts_with("__")
+                        || methods.iter().any(|method| method == attr)
+                    {
                         self.refused = true;
                     } else if attr == field {
                         self.field_reads += 1;

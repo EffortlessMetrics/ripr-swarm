@@ -1421,8 +1421,10 @@ read-out: the boolean the classifier uses is derived from the surfaced
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   Unread owner-result field (#13827, the Python analogue of Rust #13804): a
-  changed unconditional, top-level `self.<field> = ...` statement starting on
-  the changed line (the field not starting with `__`) in a plain method
+  changed unconditional, top-level `self.<field> = ...` statement alone on
+  the changed line (no other statement starts or ends there; the field not
+  starting with `__`), whose right-hand side holds no call, walrus or bare
+  `self`, in a plain method
   whose only `return` is its last statement `return self` (or in `__init__`,
   with no `return`) of a plain top-level class (no base, keyword, decorator, or
   class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
@@ -1431,7 +1433,9 @@ read-out: the boolean the classifier uses is derived from the surfaced
   bindings, docstrings and `pass`, since any other class-level value could be a
   descriptor; no `case` line; no class-level binding of the field; no other
   write of the field in the method; only plain assignments after the changed
-  line besides the final `return self`, with no call and no bare `self`; and no
+  line besides the final `return self`, with no call and no bare `self`; no
+  bare `self` anywhere in the method but that final return (an earlier
+  `s = self` alias can overwrite the field); and no
   read of `.<field>` anywhere in the class, which could derive an attribute the
   test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
   evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
@@ -1439,7 +1443,8 @@ read-out: the boolean the classifier uses is derived from the surfaced
   module-level pytest function whose body is straight-line
   (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
   (or `Cls(...)` for `__init__`, `Cls` the owner class import) exactly once, uses
-  `<binding>` only as reads of other non-dunder attributes (no call, method
+  `<binding>` only as reads of other non-dunder, non-method attributes (a
+  bound method read like `reset = r.reset` can be called later; no call, method
   call, subscript, whole-value use, rebinding or walrus), calls the owner once,
   and never names the field anywhere in its text (nor `patch`, `mock`,
   `getattr`, `setattr`, `vars(`, `globals(`, `locals(`, `exec(` or `eval(`).
