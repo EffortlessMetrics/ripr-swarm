@@ -1,6 +1,6 @@
 # RIPR-SPEC-0003: Agent Context Packet
 
-Status: planned
+Status: accepted
 
 ## Problem
 
@@ -175,7 +175,7 @@ The context packet should not:
 
 ## Test Mapping
 
-Planned tests:
+Tests:
 
 - golden context packet for boundary gap
 - golden context packet for weak error oracle
@@ -193,7 +193,7 @@ Planned tests:
 
 ## Implementation Mapping
 
-Planned modules:
+Modules:
 
 - `domain` context data types
 - `app` context use case
