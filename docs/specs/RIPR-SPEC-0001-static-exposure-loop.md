@@ -164,11 +164,12 @@ that item must equal the current one with the tail line restored. A `cfg`
 on the function, an enclosing item, the file or a `mod` declaration on its
 chain, or any `#[path]` module declaration, refuses, so a swapped module,
 `#[cfg]` twin or `#[path]` target cannot supply another function's body.
-Because that identity does not see a `cfg` outside `mod` declarations
-(#14952), the reading also refuses when the index holds another function of
-the owner's name, or any indexed file renames an import to that name, calls
-`include!`, or defines a `macro_rules!` that may emit a module or such a
-function.
+The identity also reads the gates outside `mod` declarations and the
+function's own body attributes (see "Base-owner cfg gates" below). As a
+second layer, the reading also refuses when the index holds another function
+of the owner's name, or any indexed file renames an import to that name,
+calls `include!`, or defines a `macro_rules!` that may emit a module or such
+a function.
 The parameter and return types must be the same unshadowed primitive.
 `!` differs from its operand at every input, so the ordinary infection
 reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
@@ -222,6 +223,46 @@ tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
 in a function body does, not as the returned value. The lexical fallback
 that classifies such a line still reads its text the way it reads any
 function-body statement (a `?` reads `error_path`).
+
+### Base-owner cfg gates (#15003, #14952)
+
+A claim that compares a changed function's old and new body reads the
+base-side item through the shared base-owner identity, which reports whether
+a `cfg` or `cfg_attr` may compile the function out or swap it for a twin. A
+claim that sees that gate does not credit the function, so a test that runs a
+twin, or a function that no build compiles, never reads `exposed`,
+`weakly_exposed` or `reachable_unrevealed` with propagation credited from the
+changed body. The identity reports a gate when any of these holds:
+
+- a `cfg`/`cfg_attr` on the function, an enclosing item or the owner file, or
+  an inner attribute of the function's own body (`fn f() { #![cfg(..)] .. }`),
+  which Rust applies to the function itself (#15003);
+- a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
+  owner file's path, on an item enclosing one or on its declaring file, or any
+  `#[path]` declaration;
+- a `use` with its own `cfg`/`cfg_attr`, or a `pub` one under a gated item or
+  file, whose leaf or rename is the owner's name, or whose glob or `self`
+  import names a module named like a component of the owner file's path
+  (#14952). A test module's private import gated only by its module's
+  `#[cfg(test)]` is not a gate;
+- the owner file is not a crate root and no out-of-line `mod` declaration is
+  named like its module (or no module is named like a directory above it),
+  as for a file reached only through `include!`, however the macro is
+  spelled (#14952);
+- an `include!` with a literal path names the owner file's stem;
+- a `macro_rules!` or `macro` body holds a `mod` token and the owner file is
+  not a crate root.
+
+A diff that adds or removes any of these refuses the identity. Names
+approximate the module chain, so among these checks a name can only gate more
+owners than the exact chain would, with one exception: a module of the same
+name in another directory satisfies the declaration check for a file reached
+only through a renamed `include!`. Not read: an `include!` whose path is not
+a literal (`concat!(env!("OUT_DIR"), ..)`, which names a generated file), a
+module or re-export emitted by a procedural macro, and a private `use`
+gated only through its enclosing module. Each claim that relies on the
+identity keeps its own refusals for these (the unary-tail reading's
+same-name, rename, `include!` and `macro_rules!` checks above).
 
 ## Required Evidence
 

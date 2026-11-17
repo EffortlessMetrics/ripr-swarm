@@ -14,12 +14,16 @@
 //! `#[cfg]`) and the items enclosing it. [`ModuleDeclarations`] reads every
 //! such declaration once per run, so a diff that swaps `#[path]` targets or
 //! a `cfg`-gated `mod real;` twin of a test-only `mod fake;` is seen from
-//! the owner's file.
+//! the owner's file. It also reads the gates that live outside a `mod`
+//! declaration (#14952): a `cfg` on a `use` that re-exports the owner, a file
+//! reached only through `include!`, and a `macro_rules!` that may emit a
+//! module. The function's own inner attributes (`fn f() { #![cfg(..)] .. }`)
+//! gate it too (#15003).
 
 use super::{ChangedFile, reconstruct_old_lines_with_origins};
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
-    ast::{self, HasName},
+    ast::{self, HasName, HasVisibility},
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -36,13 +40,19 @@ pub(crate) struct BaseOwner {
     pub(crate) old_text: String,
     pub(crate) old_first_line: usize,
     /// A `cfg` or `cfg_attr` that may compile the function out or change it,
-    /// on either side: on the function, an enclosing item or the owner file
-    /// (an inner attribute); or, read from [`ModuleDeclarations`] on the new
-    /// side, on any out-of-line `mod` declaration named like a component of
-    /// the owner file's path, on an item enclosing it or on its declaring
-    /// file; or any `#[path]` declaration in the workspace (whose target the
-    /// path cannot name). Identity holds regardless; a claim decides whether
-    /// a gated function may be credited.
+    /// on either side: on the function, an inner attribute of its body
+    /// (#15003), an enclosing item or the owner file (an inner attribute);
+    /// or, read from [`ModuleDeclarations`] on the new side, on any
+    /// out-of-line `mod` declaration named like a component of the owner
+    /// file's path, on an item enclosing it or on its declaring file; on a
+    /// `use` that names the owner or a glob over a module named like a
+    /// component of its path (#14952); or any `#[path]` declaration in the
+    /// workspace (whose target the path cannot name). It is also set when
+    /// the owner file's module chain is not established by plain `mod`
+    /// declarations: no out-of-line declaration names its module, an
+    /// `include!` names its file, or a `macro_rules!` may emit a module
+    /// (#14952). Identity holds regardless; a claim decides whether a gated
+    /// function may be credited.
     pub(crate) cfg_gated: bool,
 }
 
@@ -64,7 +74,9 @@ pub(crate) struct BaseOwner {
 /// - `modules` saw no added or removed line on an out-of-line `mod`
 ///   declaration (attributes included) named like a component of
 ///   `owner_file`'s path, on an inline module or file attribute enclosing
-///   one, or on any `#[path]` declaration, and read every changed file.
+///   one, on any `#[path]` declaration, on a gated `use` naming the owner or
+///   a module of its chain, on an `include!` naming its file, or on a
+///   `macro_rules!` that may emit a module, and read every changed file.
 ///
 /// Names compare with any `r#` prefix removed.
 pub(crate) fn verified_base_owner(
@@ -76,11 +88,11 @@ pub(crate) fn verified_base_owner(
     start_line: usize,
     end_line: usize,
 ) -> Option<BaseOwner> {
+    let name = unraw(name);
     let chain = module_chain_names(owner_file);
-    if modules.chain_changed(&chain) {
+    if modules.chain_changed(&chain, name) {
         return None;
     }
-    let name = unraw(name);
     let new_parse = crate::analysis::syntax::parse_clean_source_file(new_source)?;
     let new_root = new_parse.tree().syntax().clone();
     let mut enclosing = named_functions(&new_root, name).filter(|function| {
@@ -149,7 +161,10 @@ pub(crate) fn verified_base_owner(
         new_first_line: new_first,
         old_text: node_text(&old_source, old_fn.syntax())?.to_string(),
         old_first_line: old_first,
-        cfg_gated: cfg_gated(&new_fn) || cfg_gated(&old_fn) || modules.chain_gated(&chain),
+        cfg_gated: cfg_gated(&new_fn)
+            || cfg_gated(&old_fn)
+            || modules.chain_gated(&chain, name)
+            || !modules.declares(owner_file),
     })
 }
 
@@ -296,8 +311,9 @@ fn header_line_ranges(source: &str, function: &ast::Fn) -> Option<Vec<(usize, us
         .collect()
 }
 
-/// Whether a `cfg` or `cfg_attr` attribute on the function, an enclosing
-/// item or the file (an inner attribute) may compile it out or change it.
+/// Whether a `cfg` or `cfg_attr` attribute on the function, an inner
+/// attribute of its body, an enclosing item or the file (an inner
+/// attribute) may compile it out or change it.
 fn cfg_gated(function: &ast::Fn) -> bool {
     cfg_gated_node(function.syntax())
 }
@@ -322,6 +338,66 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
         .collect()
 }
 
+/// The module path of `file` inside its crate, read from its path under the
+/// last `src` directory (or, with none, the last `tests`, `examples` or
+/// `benches` directory): empty for a crate root (`src/lib.rs`,
+/// `src/main.rs`, a file directly under `src/bin` or `tests`, or such a
+/// directory's `main.rs`), otherwise each directory and the file stem, a
+/// final `mod` dropped. `None` when no such directory is on the path.
+fn module_path(file: &Path) -> Option<Vec<String>> {
+    let components: Vec<String> = file
+        .iter()
+        .filter_map(|component| component.to_str())
+        .flat_map(|component| component.split(['/', '\\']))
+        .filter(|component| !component.is_empty())
+        .map(str::to_string)
+        .collect();
+    let anchor = components
+        .iter()
+        .rposition(|component| component == "src")
+        .or_else(|| {
+            components.iter().rposition(|component| {
+                matches!(component.as_str(), "tests" | "examples" | "benches")
+            })
+        })?;
+    let mut rest: Vec<String> = components
+        .get(anchor + 1..)?
+        .iter()
+        .map(|component| {
+            component
+                .strip_suffix(".rs")
+                .unwrap_or(component)
+                .to_string()
+        })
+        .collect();
+    let in_src = components
+        .get(anchor)
+        .is_some_and(|component| component == "src");
+    // A target directory of its own: `src/bin`, or the anchor itself
+    // outside `src`. `<dir>/x.rs` and `<dir>/x/main.rs` are roots;
+    // `<dir>/x/a.rs` is module `a` of target `x`.
+    let target_dir = !in_src || rest.first().is_some_and(|component| component == "bin");
+    if in_src && target_dir {
+        rest.drain(..1);
+    }
+    let root = match rest.as_slice() {
+        [] => return None,
+        [only] => target_dir || matches!(only.as_str(), "lib" | "main"),
+        [_, second] => target_dir && second == "main",
+        _ => false,
+    };
+    if root {
+        return Some(Vec::new());
+    }
+    if target_dir {
+        rest.drain(..1);
+    }
+    if rest.last().is_some_and(|component| component == "mod") {
+        rest.pop();
+    }
+    Some(rest)
+}
+
 /// What the workspace's out-of-line `mod` declarations, and the diff's
 /// changes to them, say about every owner's module chain. Read once per run
 /// by [`ModuleDeclarations::read`]; a run that never read them uses
@@ -332,21 +408,48 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
 /// over-approximates the declaration chain, so among `mod` declarations it
 /// can only gate or refuse more owners, never fewer. A `#[path]` declaration
 /// breaks the name mapping, so its presence gates every owner and a change
-/// to one refuses every owner. Gates that live outside a `mod` declaration
-/// (a `cfg` on `include!`, on a `pub use` re-export, or a `mod` emitted by
-/// `macro_rules!`) are not read here; see #14952.
+/// to one refuses every owner.
+///
+/// Gates that live outside a `mod` declaration are read too (#14952):
+///
+/// - a `use` with a `cfg`/`cfg_attr` of its own, or a `pub` one under a
+///   gated item or file, gates every owner it names (by its last path
+///   segment or its rename) and, through a glob or `self`, every owner whose
+///   path has a component named like one of its path's modules;
+/// - an owner file is gated unless an out-of-line declaration is named like
+///   its module and every directory between it and its crate root is named
+///   by some module (a file reached only through `include!`, however the
+///   macro is spelled, has no declaration);
+/// - an `include!` whose literal path names a file stem gates that stem;
+/// - a `macro_rules!` (or `macro`) whose body holds a `mod` token gates
+///   every owner outside a crate root file.
+///
+/// A diff touching any of these, on either side, counts as a change to the
+/// names it gates.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleDeclarations {
     /// Names of declarations with a `cfg`/`cfg_attr` on themselves, an
-    /// enclosing item or their file.
+    /// enclosing item or their file; module names a gated `use` glob or
+    /// `self` import covers; file stems an `include!` names.
     gated: BTreeSet<String>,
+    /// Item names a gated `use` imports or renames to.
+    gated_names: BTreeSet<String>,
+    /// Names of every out-of-line `mod` declaration.
+    declared: BTreeSet<String>,
+    /// Names of every module, inline or out-of-line.
+    modules: BTreeSet<String>,
+    /// Some `macro_rules!` or `macro` body may emit a module.
+    macro_modules: bool,
     /// Some declaration carries `#[path]` (directly or through `cfg_attr`).
     retargeted: bool,
     /// Names of declarations the diff touched: an added or removed line on
     /// the declaration or its attributes, on the header of an inline module
     /// enclosing it, or on an inner attribute of its file.
     changed: BTreeSet<String>,
-    /// The diff touched a `#[path]` declaration.
+    /// Item names a gated `use` the diff touched imports or renames to.
+    changed_names: BTreeSet<String>,
+    /// The diff touched a `#[path]` declaration or a macro that may emit a
+    /// module.
     changed_retarget: bool,
     /// A declaring source or a changed Rust file could not be read.
     unreadable: bool,
@@ -375,18 +478,29 @@ impl ModuleDeclarations {
                 reading.unreadable = true;
                 continue;
             };
-            for module in out_of_line_modules(parse.tree().syntax()) {
+            let root = parse.tree().syntax().clone();
+            for module in root.descendants().filter_map(ast::Module::cast) {
                 let Some(name) = module.name() else {
                     reading.unreadable = true;
                     continue;
                 };
+                let name = unraw(name.text()).to_string();
+                reading.modules.insert(name.clone());
+                if module.item_list().is_some() {
+                    continue;
+                }
+                reading.declared.insert(name.clone());
                 if module_retargets(&module) {
                     reading.retargeted = true;
                 }
                 if cfg_gated_node(module.syntax()) {
-                    reading.gated.insert(unraw(name.text()).to_string());
+                    reading.gated.insert(name);
                 }
             }
+            let gates = OutsideGates::read(&root, |_| true);
+            reading.macro_modules |= gates.macro_modules;
+            reading.gated.extend(gates.modules);
+            reading.gated_names.extend(gates.names);
         }
         for (changed, new_source) in changed_files {
             if changed
@@ -457,6 +571,8 @@ impl ModuleDeclarations {
             }
             // An out-of-line declaration itself, or every one an inline
             // module's header encloses.
+            //
+            // (Gates outside `mod` declarations are read below.)
             for declaration in std::iter::once(module.clone())
                 .filter(|module| module.item_list().is_none())
                 .chain(out_of_line_modules(module.syntax()))
@@ -472,18 +588,178 @@ impl ModuleDeclarations {
                 }
             }
         }
+        // A gated `use`, an `include!` or a module-emitting macro the diff
+        // touched (or, under a touched file attribute, every one).
+        let gates = OutsideGates::read(&root, |node| {
+            let range = node.text_range();
+            file_attrs_touched || touches(usize::from(range.start()), usize::from(range.end()))
+        });
+        self.changed.extend(gates.modules);
+        self.changed_names.extend(gates.names);
+        self.changed_retarget |= gates.macro_modules;
     }
 
     /// Whether the diff may have changed which module `chain` names, or how
-    /// its declarations are gated.
-    fn chain_changed(&self, chain: &BTreeSet<String>) -> bool {
-        self.unreadable || self.changed_retarget || !self.changed.is_disjoint(chain)
+    /// its declarations, or a `use` naming the function `name`, are gated.
+    fn chain_changed(&self, chain: &BTreeSet<String>, name: &str) -> bool {
+        self.unreadable
+            || self.changed_retarget
+            || !self.changed.is_disjoint(chain)
+            || self.changed_names.contains(name)
     }
 
-    /// Whether a declaration on `chain` may be compiled out or retargeted.
-    fn chain_gated(&self, chain: &BTreeSet<String>) -> bool {
-        self.retargeted || !self.gated.is_disjoint(chain)
+    /// Whether a declaration on `chain`, or a `use` naming the function
+    /// `name`, may be compiled out or retargeted.
+    fn chain_gated(&self, chain: &BTreeSet<String>, name: &str) -> bool {
+        self.retargeted || !self.gated.is_disjoint(chain) || self.gated_names.contains(name)
     }
+
+    /// Whether plain `mod` declarations establish `file`'s module chain: it
+    /// is a crate root, or no macro may emit a module, an out-of-line
+    /// declaration is named like its module, and some module is named like
+    /// each directory above it. A file reached only through `include!` (or a
+    /// macro) has no such declaration. Names approximate the chain, as in
+    /// [`ModuleDeclarations::chain_gated`].
+    fn declares(&self, file: &Path) -> bool {
+        let Some(path) = module_path(file) else {
+            return false;
+        };
+        let Some((leaf, directories)) = path.split_last() else {
+            return true;
+        };
+        !self.macro_modules
+            && self.declared.contains(leaf)
+            && directories
+                .iter()
+                .all(|directory| self.modules.contains(directory))
+    }
+}
+
+/// What gates outside `mod` declarations say, read from the nodes of one
+/// file that `select` keeps (#14952).
+#[derive(Default)]
+struct OutsideGates {
+    /// Module names a gated glob or `self` import covers, and file stems an
+    /// `include!` names.
+    modules: BTreeSet<String>,
+    /// Item names a gated `use` imports or renames to.
+    names: BTreeSet<String>,
+    /// Some macro body may emit a module.
+    macro_modules: bool,
+}
+
+impl OutsideGates {
+    fn read(root: &SyntaxNode, select: impl Fn(&SyntaxNode) -> bool) -> Self {
+        let mut gates = Self::default();
+        for node in root.descendants() {
+            if let Some(item) = ast::Use::cast(node.clone()) {
+                if select(&node) && use_gated(&item) {
+                    gates.read_use(&item);
+                }
+            } else if let Some(call) = ast::MacroCall::cast(node.clone()) {
+                if select(&node) && macro_named(&call, "include") {
+                    gates.read_include(&call);
+                }
+            } else if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                if select(&node) && rules.token_tree().is_none_or(|body| emits_module(&body)) {
+                    gates.macro_modules = true;
+                }
+            } else if let Some(definition) = ast::MacroDef::cast(node.clone())
+                && select(&node)
+                && definition.body().is_none_or(|body| emits_module(&body))
+            {
+                gates.macro_modules = true;
+            }
+        }
+        gates
+    }
+
+    /// Every name a gated `use` brings in: each leaf's last segment and
+    /// rename, and for a glob or `self` leaf every segment of its path.
+    fn read_use(&mut self, item: &ast::Use) {
+        let Some(tree) = item.use_tree() else {
+            return;
+        };
+        for leaf in std::iter::once(tree.clone())
+            .chain(
+                tree.syntax()
+                    .descendants()
+                    .skip(1)
+                    .filter_map(ast::UseTree::cast),
+            )
+            .filter(|tree| tree.use_tree_list().is_none())
+        {
+            let segments: Vec<String> = leaf
+                .syntax()
+                .ancestors()
+                .filter_map(ast::UseTree::cast)
+                .filter_map(|tree| tree.path())
+                .flat_map(|path| {
+                    path.segments()
+                        .filter_map(|segment| segment.name_ref())
+                        .map(|name| unraw(name.text()).to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if let Some(rename) = leaf.rename().and_then(|rename| rename.name()) {
+                self.names.insert(unraw(rename.text()).to_string());
+            }
+            let own_last = leaf
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|name| unraw(name.text()).to_string());
+            match own_last {
+                Some(last) if leaf.star_token().is_none() && last != "self" => {
+                    self.names.insert(last);
+                }
+                _ => self.modules.extend(segments),
+            }
+        }
+    }
+
+    /// The file stem a literal `include!("..")` names. A path it cannot read
+    /// (`concat!(env!("OUT_DIR"), ..)`) names a generated file, not a
+    /// workspace source.
+    fn read_include(&mut self, call: &ast::MacroCall) {
+        let Some(literal) = call.token_tree().and_then(|tree| {
+            tree.syntax()
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == SyntaxKind::STRING)
+        }) else {
+            return;
+        };
+        let text = literal.text().trim_matches('"');
+        if let Some(stem) = Path::new(text).file_stem().and_then(|stem| stem.to_str()) {
+            self.modules.insert(stem.to_string());
+        }
+    }
+}
+
+/// Whether a `use` may be compiled out or swapped: a `cfg`/`cfg_attr` of its
+/// own, or, for a `pub` (re-exporting) one, on an enclosing item or its
+/// file. A private import gated only through its enclosing module (the test
+/// module's `use super::f`) is that module's own scope, not a re-export.
+fn use_gated(item: &ast::Use) -> bool {
+    ast::HasAttrs::attrs(item).any(|attr| is_cfg_attr(&attr))
+        || item.visibility().is_some() && cfg_gated_node(item.syntax())
+}
+
+/// Whether `call` invokes a macro whose last path segment is `name`.
+fn macro_named(call: &ast::MacroCall, name: &str) -> bool {
+    call.path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .is_some_and(|found| unraw(found.text()) == name)
+}
+
+/// Whether a macro body holds a `mod` token, so it may emit a module.
+fn emits_module(body: &ast::TokenTree) -> bool {
+    body.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| token.kind() == SyntaxKind::MOD_KW || token.text() == "mod")
 }
 
 /// Every out-of-line `mod name;` declaration under `node`.
@@ -513,15 +789,41 @@ fn attr_name(attr: &ast::Attr) -> Option<String> {
     Some(unraw(name.text()).to_string())
 }
 
-/// [`cfg_gated`] for any node: a `cfg`/`cfg_attr` on it, an enclosing item
-/// or its file.
+/// [`cfg_gated`] for any node: a `cfg`/`cfg_attr` on it, an inner attribute
+/// of its own body or item list (`fn f() { #![cfg(..)] .. }` or
+/// `mod m { #![cfg(..)] .. }`, #15003), an enclosing item or its file.
+/// The enclosing items' bodies and lists are ancestors, so their inner
+/// attributes are read by the walk; the node's own are descendants.
 fn cfg_gated_node(node: &SyntaxNode) -> bool {
-    node.ancestors().any(|node| {
-        ast::AnyHasAttrs::cast(node).is_some_and(|owner| {
-            ast::HasAttrs::attrs(&owner)
-                .any(|attr| matches!(attr_name(&attr).as_deref(), Some("cfg" | "cfg_attr")))
+    node.ancestors()
+        .chain(own_inner_attribute_holders(node))
+        .any(|node| has_cfg(&node))
+}
+
+/// The nodes holding `node`'s own inner attributes: its item list, or a
+/// function's body block and that block's statement list.
+fn own_inner_attribute_holders(node: &SyntaxNode) -> impl Iterator<Item = SyntaxNode> {
+    node.children()
+        .filter(|child| is_list(child.kind()))
+        .flat_map(|list| {
+            let statements = list
+                .children()
+                .filter(|child| child.kind() == SyntaxKind::STMT_LIST)
+                .collect::<Vec<_>>();
+            std::iter::once(list).chain(statements)
         })
-    })
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
+/// Whether `node` carries a `cfg`/`cfg_attr` attribute, outer or inner.
+fn has_cfg(node: &SyntaxNode) -> bool {
+    ast::AnyHasAttrs::cast(node.clone())
+        .is_some_and(|owner| ast::HasAttrs::attrs(&owner).any(|attr| is_cfg_attr(&attr)))
+}
+
+fn is_cfg_attr(attr: &ast::Attr) -> bool {
+    matches!(attr_name(attr).as_deref(), Some("cfg" | "cfg_attr"))
 }
 
 #[cfg(test)]
@@ -929,6 +1231,297 @@ mod tests {
             None
         );
         Ok(())
+    }
+
+    /// #15003: a function-body inner attribute applies to the function, but
+    /// it is a descendant of the function node, not an ancestor.
+    #[test]
+    fn a_body_inner_cfg_gates_the_function() -> Result<(), String> {
+        let body = |attribute: &str, tail: &str| {
+            format!("pub fn ready() -> bool {{\n    {attribute}\n    {tail}\n}}\n")
+        };
+        for attribute in [
+            "#![cfg(any())]",
+            "#![cfg_attr(test, cfg(any()))]",
+            "#![r#cfg(not(test))]",
+        ] {
+            let (old, new) = (body(attribute, "true"), body(attribute, "false"));
+            let base = verify(&old, &new, "ready", "false")?.ok_or("identity refused")?;
+            assert!(base.cfg_gated, "{attribute}");
+        }
+        // Inside an impl and a module too.
+        let nested = |tail: &str| {
+            format!(
+                "pub struct A;\nimpl A {{\n    pub fn ready() -> bool {{\n        #![cfg(any())]\n        {tail}\n    }}\n}}\n"
+            )
+        };
+        let base = verify(&nested("true"), &nested("false"), "ready", "false")?
+            .ok_or("identity refused")?;
+        assert!(base.cfg_gated, "impl method");
+        // The gate appears only on the new side (the attribute line is in the
+        // body, which identity does not compare).
+        let old = "pub fn ready() -> bool {\n    true\n}\n";
+        let new = "pub fn ready() -> bool {\n    #![cfg(any())]\n    false\n}\n";
+        let base = verify(old, new, "ready", "false")?.ok_or("identity refused")?;
+        assert!(base.cfg_gated, "new-side body gate");
+        // Controls: a non-cfg inner attribute, and a `cfg` on a statement
+        // (which gates the statement, not the function).
+        for attribute in ["#![allow(unused)]", "#[cfg(any())]\n    let _x = 1;"] {
+            let (old, new) = (body(attribute, "true"), body(attribute, "false"));
+            let base = verify(&old, &new, "ready", "false")?.ok_or("identity refused")?;
+            assert!(!base.cfg_gated, "{attribute}");
+        }
+        // A nested function's own body attribute does not gate its parent.
+        let parent = |tail: &str| {
+            format!(
+                "pub fn ready() -> bool {{\n    fn inner() {{\n        #![cfg(any())]\n    }}\n    {tail}\n}}\n"
+            )
+        };
+        let base = verify(&parent("true"), &parent("false"), "ready", "false")?
+            .ok_or("identity refused")?;
+        assert!(!base.cfg_gated, "nested function's body attribute");
+        Ok(())
+    }
+
+    /// #14952: the four shapes whose gate lives outside a `mod` declaration
+    /// (inc_cfg, inc_mod, cfg_use, macro_mod_decl), plus spelling variants.
+    #[test]
+    fn gates_outside_mod_declarations_are_reported() -> Result<(), String> {
+        let stub = "pub fn stub() -> bool {\n    false\n}\n";
+        for (owner, others) in [
+            // inc_cfg: reached only through a gated `include!`.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "#[cfg(not(test))]\ninclude!(\"real.rs\");\n#[cfg(test)]\nmod fake;\n#[cfg(test)]\npub use fake::stub as ready;\n",
+                )],
+            ),
+            // The same through a renamed macro: no declaration names it.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "use core::include as inc;\n#[cfg(not(test))]\ninc!(\"real.rs\");\n",
+                )],
+            ),
+            // An `include!` of a file whose stem a declaration also names.
+            (
+                "src/real.rs",
+                vec![
+                    (
+                        "src/lib.rs",
+                        "mod a;\n#[cfg(not(test))]\nmod shim {\n    include!(\"real.rs\");\n}\n",
+                    ),
+                    ("src/a.rs", "mod real;\n"),
+                ],
+            ),
+            // inc_mod: an inline gated module including the owner's file.
+            (
+                "src/real_impl.rs",
+                vec![(
+                    "src/lib.rs",
+                    "#[cfg(not(test))]\nmod real {\n    include!(\"real_impl.rs\");\n}\n",
+                )],
+            ),
+            // cfg_use: only the re-export is gated.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(not(test))]\npub use real::ready;\n#[cfg(test)]\nmod fake;\n#[cfg(test)]\npub use fake::stub as ready;\n",
+                )],
+            ),
+            // A gated rename to the owner's name alone.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\npub use real::ready;\nmod fake;\n#[cfg(test)]\npub use fake::stub as ready;\n",
+                )],
+            ),
+            // Grouped, glob and `self` re-exports; `cfg_attr`; raw names.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(not(test))]\npub use real::{other, ready};\n",
+                )],
+            ),
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(not(test))]\npub use real::*;\n",
+                )],
+            ),
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(not(test))]\npub use self::real::{self};\n",
+                )],
+            ),
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg_attr(test, cfg(any()))]\npub use real::r#ready;\n",
+                )],
+            ),
+            // A re-export inside a gated module.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\n#[cfg(not(test))]\nmod shim {\n    pub use crate::real::ready;\n}\n",
+                )],
+            ),
+            // macro_mod_decl: a macro emits the gated declaration.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "macro_rules! declare {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        pub mod $m;\n    };\n}\ndeclare!(real);\n#[cfg(test)]\npub mod real {\n    pub fn ready() -> bool {\n        false\n    }\n}\n",
+                )],
+            ),
+            // A macro emitting a module elsewhere, beside a plain declaration.
+            (
+                "src/real.rs",
+                vec![(
+                    "src/lib.rs",
+                    "mod real;\nmacro_rules! declare {\n    ($m:ident) => { mod $m; };\n}\n",
+                )],
+            ),
+            // No declaration at all, and no anchor directory.
+            ("src/real.rs", vec![("src/lib.rs", "pub fn other() {}\n")]),
+            ("real.rs", vec![("lib.rs", "mod real;\n")]),
+            // A directory no module names.
+            ("src/a/real.rs", vec![("src/lib.rs", "mod real;\n")]),
+        ] {
+            let mut files: Vec<(&str, &str, &str)> = others
+                .iter()
+                .map(|(path, text)| (*path, *text, *text))
+                .collect();
+            files.push(("src/fake.rs", stub, stub));
+            let base = verify_in((owner, REAL_OLD, REAL_NEW), &files, "ready", "false")?
+                .ok_or("identity refused")?;
+            assert!(base.cfg_gated, "{owner}: {others:?}");
+        }
+        Ok(())
+    }
+
+    /// #14952 controls (pos_plain, pos_unrelated_mod, pos_unrelated_gated):
+    /// unrelated gates and the test module's own imports keep credit.
+    #[test]
+    fn unrelated_gates_outside_mod_declarations_keep_credit() -> Result<(), String> {
+        for (owner, lib) in [
+            ("src/real.rs", "mod real;\npub use real::ready;\n"),
+            ("src/real.rs", "mod real;\n#[cfg(test)]\nmod other;\n"),
+            (
+                "src/real.rs",
+                "mod real;\nmod other;\n#[cfg(not(test))]\npub use other::{g, h as k};\n",
+            ),
+            (
+                "src/real.rs",
+                "mod real;\n#[cfg(test)]\nmod tests {\n    use super::real::ready;\n    use super::*;\n}\n",
+            ),
+            (
+                "src/real.rs",
+                "mod real;\ninclude!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"));\ninclude!(\"other.rs\");\n",
+            ),
+            (
+                "src/real.rs",
+                "mod real;\nmacro_rules! m {\n    () => { fn x() {} };\n}\n",
+            ),
+            ("src/a/real.rs", "mod a {\n    pub mod real;\n}\n"),
+            ("src/a/real/mod.rs", "mod a;\n"),
+            ("crates/x/src/bin/tool/real.rs", "mod real;\n"),
+            // Crate roots need no declaration.
+            (
+                "src/main.rs",
+                "macro_rules! m {\n    () => { mod x; };\n}\n",
+            ),
+            ("src/bin/tool.rs", ""),
+            ("tests/it.rs", ""),
+            ("examples/demo/main.rs", ""),
+        ] {
+            let mut others = vec![("src/lib.rs", lib, lib)];
+            if owner == "src/a/real/mod.rs" {
+                others.push(("src/a.rs", "pub mod real;\n", "pub mod real;\n"));
+            }
+            let base = verify_in((owner, REAL_OLD, REAL_NEW), &others, "ready", "false")?
+                .ok_or("identity refused")?;
+            assert!(!base.cfg_gated, "{owner}: {lib}");
+        }
+        Ok(())
+    }
+
+    /// #14952: a diff that adds or removes a gate outside a declaration
+    /// refuses, as a changed declaration does.
+    #[test]
+    fn a_changed_gate_outside_mod_declarations_refuses() -> Result<(), String> {
+        for (old_lib, new_lib) in [
+            (
+                "mod real;\npub use real::ready;\n",
+                "mod real;\n#[cfg(not(test))]\npub use real::ready;\n",
+            ),
+            (
+                "mod real;\n#[cfg(not(test))]\npub use real::*;\n",
+                "mod real;\npub use real::*;\n",
+            ),
+            (
+                "mod real;\n",
+                "mod real;\n#[cfg(test)]\nmod shim {\n    include!(\"real.rs\");\n}\n",
+            ),
+            (
+                "mod real;\nmacro_rules! m {\n    () => { mod x; };\n}\n",
+                "mod real;\n",
+            ),
+        ] {
+            assert_eq!(
+                verify_in(
+                    ("src/real.rs", REAL_OLD, REAL_NEW),
+                    &[("src/lib.rs", old_lib, new_lib)],
+                    "ready",
+                    "false"
+                )?,
+                None,
+                "{old_lib} -> {new_lib}"
+            );
+        }
+        // An ungated import added beside the change keeps identity.
+        let base = verify_in(
+            ("src/real.rs", REAL_OLD, REAL_NEW),
+            &[(
+                "src/lib.rs",
+                "mod real;\n",
+                "mod real;\npub use real::ready;\n",
+            )],
+            "ready",
+            "false",
+        )?
+        .ok_or("an ungated re-export refused")?;
+        assert!(!base.cfg_gated);
+        Ok(())
+    }
+
+    #[test]
+    fn module_paths_follow_cargo_layout() {
+        let path = |file: &str| module_path(Path::new(file));
+        let owned = |parts: &[&str]| Some(parts.iter().map(|part| (*part).to_string()).collect());
+        assert_eq!(path("src/lib.rs"), owned(&[]));
+        assert_eq!(path("crates/x/src/main.rs"), owned(&[]));
+        assert_eq!(path("work/src/proj/src/real.rs"), owned(&["real"]));
+        assert_eq!(path("src/a/b/mod.rs"), owned(&["a", "b"]));
+        assert_eq!(path("src/bin/tool.rs"), owned(&[]));
+        assert_eq!(path("src/bin/tool/main.rs"), owned(&[]));
+        assert_eq!(path("src/bin/tool/cli.rs"), owned(&["cli"]));
+        assert_eq!(path("tests/it.rs"), owned(&[]));
+        assert_eq!(path("tests/it/common.rs"), owned(&["common"]));
+        assert_eq!(path("benches/b/main.rs"), owned(&[]));
+        assert_eq!(path("build.rs"), None);
+        assert_eq!(path("src"), None);
     }
 
     /// Review N2: `r#ready` and `ready` name one function.
