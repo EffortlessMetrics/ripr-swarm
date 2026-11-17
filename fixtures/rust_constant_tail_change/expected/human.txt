@@ -55,8 +55,8 @@ Hidden:
     - ./src/lib.rs:29 (exposed, base-side); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
     - ./src/lib.rs:30 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
     - ./src/lib.rs:34 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
-    - ./src/lib.rs:38 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
-    - ./src/lib.rs:42 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
+    - ./src/lib.rs:38 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not…
+    - ./src/lib.rs:42 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
     - ./src/lib.rs:42 (unknown: static analysis limited, base-side); kind: unclear; reason: No strong assertion was detected
     - ./src/lib.rs:50 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
   Hidden classes:
