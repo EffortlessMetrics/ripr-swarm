@@ -1,6 +1,5 @@
 use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -23,17 +22,23 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
         })
         .map(|(parent, facts)| (parent, facts.source.as_ref()))
         .collect();
-    // `collect` on a parallel iterator over a slice preserves input order, so
-    // each precomputed entry still matches the BTreeMap file order the serial
-    // loop used (#9214).
+    // `memoize_many` returns one result per source in input order, so each
+    // precomputed entry still matches the BTreeMap file order the serial loop
+    // used (#9214).
+    // The directive read is a pure function of the source text (the parent
+    // path is unused), so the run memo serves files a diff check already
+    // resolved in its admission core when the extended main index resolves
+    // again; misses still parse on the rayon pool.
+    let sources: Vec<&str> = candidates.iter().map(|(_, source)| *source).collect();
+    let directives = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::IncludeDirectives,
+        &sources,
+        |source| rust_include_directives(Path::new(""), source, MAX_INCLUDE_EDGES),
+    );
     let precomputed: Vec<(PathBuf, Result<Vec<_>, String>)> = candidates
-        .par_iter()
-        .map(|(parent, source)| {
-            (
-                (*parent).clone(),
-                rust_include_directives(parent, source, MAX_INCLUDE_EDGES),
-            )
-        })
+        .iter()
+        .map(|(parent, _)| (*parent).clone())
+        .zip(directives)
         .collect();
 
     'files: for (parent, directives) in precomputed {
@@ -139,6 +144,9 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             "rust_include_edge_limit_exceeded",
         ));
         index.include_parents.clear();
+        // A fresh build starts with no targets; an index extended in place
+        // would otherwise keep the set an earlier pass found.
+        index.include_targets.clear();
         sort_limitations(&mut limitations);
         index.include_limitations = limitations;
         return;
@@ -225,6 +233,96 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
+/// The include view the retained files of an index were composed against,
+/// captured before the index grows (#12947).
+///
+/// Include resolution is recomputed over the whole index on every extension,
+/// but state derived from the earlier view is not: function identities
+/// already rebased onto a compilation unit (a rebase rewrites a `file::`
+/// prefix once and cannot be undone), and composed roles, provenance and
+/// module-edge claims of retained files that are only withdrawn in part when
+/// the view moves. So an extension stands only when every retained file
+/// keeps exactly its include parent and its include-target membership, and
+/// when the edge limit is not hit (it clears every parent and keeps stale
+/// targets, and the budget is shared, so an inert added directive can spend
+/// it). Added files then bring only include edges and limitations of their
+/// own, and reach the merged resolution unrebased, as in a fresh build. A
+/// new limitation that withdraws a withheld file's module-tree claim is
+/// refused by the caller's withheld-tests check.
+pub(super) struct RetainedIncludeView {
+    parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
+    targets: BTreeSet<PathBuf>,
+}
+
+impl RetainedIncludeView {
+    pub(super) fn capture(index: &RustIndex) -> Self {
+        Self {
+            parents: index.include_parents.clone(),
+            targets: index.include_targets.clone(),
+        }
+    }
+
+    /// Whether `index`, re-resolved after the `added` files joined it,
+    /// still shows every retained file the captured view.
+    pub(super) fn preserved(&self, index: &RustIndex, added: &BTreeSet<&Path>) -> bool {
+        let edge_limit = index
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded");
+        // Before the merge every parent edge had a retained child and a
+        // retained parent, so equal retained edges also keep each retained
+        // file's whole parent chain, and its compilation unit, unchanged.
+        let parents_kept = index
+            .include_parents
+            .iter()
+            .filter(|(child, _)| !added.contains(child.as_path()))
+            .eq(self.parents.iter());
+        let targets_kept = index
+            .include_targets
+            .iter()
+            .filter(|target| !added.contains(target.as_path()))
+            .eq(self.targets.iter());
+        !edge_limit && parents_kept && targets_kept
+    }
+}
+
+/// Whether adding a file with this decoded `source` to an already-indexed
+/// workspace can re-parent function identities through an `include!`
+/// directive. Only an invocation that can become an edge counts: a
+/// parser-backed file-level `include!` with a literal path to a repository
+/// file the index already held before the merge (`kept`; an added target
+/// reaches the merged resolution unrebased). A mention in a comment or a string
+/// never enters the producer the resolution pass reads, and a nested,
+/// dynamic, out-of-repository or unindexed-target invocation only records a
+/// limitation, so none of them re-parents anything (the same-run reuse used
+/// to fall back to a full rebuild for every added file whose bytes merely
+/// contained `include!`). A file the parser refuses, or one over the
+/// directive budget, reports `true`: its directives are unknown, so the
+/// caller fails closed to a fresh build. An inert directive can still spend
+/// the shared edge budget; the extension checks that after the merge with [`RetainedIncludeView`]
+/// (#12947), so this cheap pre-check only refuses what is sure to re-parent.
+pub(super) fn added_file_may_rebase_includes(
+    path: &Path,
+    source: &str,
+    kept: &BTreeSet<&Path>,
+) -> bool {
+    if !might_contain_include_macro(source) {
+        return false;
+    }
+    let Ok(directives) = rust_include_directives(path, source, MAX_INCLUDE_EDGES) else {
+        return true;
+    };
+    directives.len() > MAX_INCLUDE_EDGES
+        || directives.iter().any(|directive| {
+            directive.is_file_level
+                && directive
+                    .literal_path
+                    .as_deref()
+                    .and_then(|literal| repository_relative_target(path, literal))
+                    .is_some_and(|target| kept.contains(target.as_path()))
+        })
+}
+
 fn might_contain_include_macro(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut offset = 0;
@@ -292,6 +390,39 @@ fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
             .then(left.expression.cmp(&right.expression))
     });
     limitations.dedup();
+}
+
+/// #14116: the repository-relative files an `include!` limitation pastes,
+/// when the limitation is a literal path inside the repository: the
+/// invocation sits in an inline module (`mod name { include!("literal"); }`),
+/// or sits at file level and names a file the index does not hold. Every
+/// such invocation on the limitation's line must name a literal path. The
+/// limitation itself stands; this only names the files the paste reads,
+/// which the index may or may not hold. `None` for every other limitation,
+/// a dynamic expression or a path that leaves the repository.
+pub(crate) fn literal_include_fragments(
+    index: &RustIndex,
+    limitation: &RustIncludeLimitation,
+) -> Option<Vec<PathBuf>> {
+    let file_level = match limitation.reason_code.as_str() {
+        "rust_include_nested_module_context" => false,
+        "rust_include_target_not_indexed" => true,
+        _ => return None,
+    };
+    let parent = index.files.get(&limitation.parent)?;
+    if parent.used_lexical_fallback {
+        return None;
+    }
+    let directives =
+        rust_include_directives(&limitation.parent, &parent.source, MAX_INCLUDE_EDGES).ok()?;
+    let mut fragments = Vec::new();
+    for directive in directives.iter().filter(|directive| {
+        directive.is_file_level == file_level && directive.line == limitation.line
+    }) {
+        let literal = directive.literal_path.as_deref()?;
+        fragments.push(repository_relative_target(&limitation.parent, literal)?);
+    }
+    (!fragments.is_empty()).then_some(fragments)
 }
 
 pub(crate) fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
@@ -834,6 +965,190 @@ mod tests {
             parallel_snapshot.include_limitations
         );
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    /// An index extended in place can carry the target set an earlier pass
+    /// found; the budget-overflow path must leave none, as a fresh build does.
+    #[test]
+    fn edge_budget_overflow_leaves_no_stale_include_targets() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-include-overflow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut many = String::new();
+        for _ in 0..=MAX_INCLUDE_EDGES {
+            many.push_str("mod m { include!(\"frag.rs\"); }\n");
+        }
+        let sources = [
+            ("src/lib.rs", many.as_str()),
+            ("src/frag.rs", "pub fn f() {}\n"),
+        ];
+        write_fixture(&root, &sources).map_err(|error| error.to_string())?;
+        let mut index = manual_index(&sources);
+        index.include_targets.insert(PathBuf::from("src/frag.rs"));
+        resolve_repository_local_includes(&root, &mut index);
+        let _ = fs::remove_dir_all(&root);
+        assert!(index.include_parents.is_empty());
+        assert!(index.include_targets.is_empty());
+        assert!(
+            index
+                .include_limitations
+                .iter()
+                .any(|limit| limit.reason_code == "rust_include_edge_limit_exceeded")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn added_file_rebase_check_reads_parsed_directives_not_mentions() {
+        let path = Path::new("src/added.rs");
+        let kept: BTreeSet<&Path> = [Path::new("src/lib.rs"), Path::new("src/x.rs")].into();
+        // A mention in a comment, a string, a similarly named macro or a
+        // macro definition body is not an `include!` invocation.
+        for mention in [
+            "// include!(\"x.rs\") is documented here\npub fn a() {}\n",
+            "pub fn a() -> &'static str { \"include!(\\\"x.rs\\\")\" }\n",
+            "pub fn a() { let _ = include_str!(\"x.rs\"); }\n",
+            "macro_rules! m { () => { include!(\"x.rs\") } }\npub fn a() {}\n",
+        ] {
+            assert!(
+                !added_file_may_rebase_includes(path, mention, &kept),
+                "mention must not count: {mention}"
+            );
+        }
+        // A real invocation counts at file level, nested, attributed, with
+        // token-separating trivia, and when the parser refuses the file.
+        for directive in [
+            "include!(\"x.rs\");\n",
+            "#[cfg(test)]\ninclude!(\"x.rs\");\n",
+            "include /* why */ ! (\"x.rs\");\n",
+            "include!(\"x.rs\"); fn broken( {\n",
+        ] {
+            assert!(
+                added_file_may_rebase_includes(path, directive, &kept),
+                "directive must count: {directive}"
+            );
+        }
+        // An inert directive that spends the shared edge budget is refused
+        // after the merge by `RetainedIncludeView`, not by this pre-check
+        // (#12947).
+        // An invocation that cannot become an edge only records a limitation.
+        for inert in [
+            "include!(\"missing.rs\");\n",
+            "mod m { include!(\"x.rs\"); }\n",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/x.rs\"));\n",
+            "include!(\"../../escaped.rs\");\n",
+        ] {
+            assert!(
+                !added_file_may_rebase_includes(path, inert, &kept),
+                "inert directive must not count: {inert}"
+            );
+        }
+    }
+
+    /// Reusing a same-run core for a workspace that adds a file which only
+    /// mentions `include!` extends the index in place, and a real `include!`
+    /// still takes the fresh build; both equal a fresh build over the target.
+    #[test]
+    fn added_file_mentioning_include_extends_in_place_and_real_include_rebuilds()
+    -> Result<(), String> {
+        use crate::analysis::facts::{
+            build_analysis_index_from_loaded_files, index_build_probe, reuse_cached_index_in_run,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "ripr-include-rebase-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let plain_core = [
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            ("src/lib.rs", "pub fn base() -> u8 { 1 }\n"),
+            ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
+        ];
+        // A core that already rebased `frag.rs` through a real edge.
+        let edge_core = [
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            (
+                "src/lib.rs",
+                "include!(\"frag.rs\");\npub fn base() -> u8 { 1 }\n",
+            ),
+            ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
+        ];
+        let load = |names: &[(&str, &str)]| -> Vec<(PathBuf, Vec<u8>)> {
+            names
+                .iter()
+                .filter(|(path, _)| path.ends_with(".rs"))
+                .map(|(path, source)| (PathBuf::from(path), source.as_bytes().to_vec()))
+                .collect()
+        };
+        let snapshot = |index: &RustIndex| -> Result<String, String> {
+            Ok(format!(
+                "{:?}|{}|{}",
+                include_resolution_snapshot(index),
+                serde_json::to_string(&index.functions().iter().collect::<Vec<_>>())
+                    .map_err(|error| error.to_string())?,
+                index
+                    .files()
+                    .keys()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))
+        };
+        for (core_sources, added_source, expect_rebuild) in [
+            (
+                plain_core,
+                "// include!(\"frag.rs\")\npub fn added() -> &'static str { \"include!\" }\n",
+                0usize,
+            ),
+            // An include whose target the merged index does not hold records
+            // a limitation only; it is not an edge.
+            (
+                plain_core,
+                "include!(\"nope.rs\");\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
+            (
+                plain_core,
+                "include!(\"frag.rs\");\npub fn added() -> u8 { 3 }\n",
+                1usize,
+            ),
+            // With a rebased edge in the core, an inert directive that leaves
+            // the retained include view and the edge budget intact extends in
+            // place too (#12947), as does a plain mention.
+            (
+                edge_core,
+                "mod m { include!(\"nope.rs\"); }\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
+            (
+                edge_core,
+                "// include!(\"nope.rs\")\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
+        ] {
+            write_fixture(&root, &core_sources).map_err(|error| error.to_string())?;
+            let mut target_sources = core_sources.to_vec();
+            target_sources.push(("src/added.rs", added_source));
+            write_fixture(&root, &[("src/added.rs", added_source)])
+                .map_err(|error| error.to_string())?;
+            let core = build_analysis_index_from_loaded_files(&root, &load(&core_sources), &[])?;
+            let target = load(&target_sources);
+            let (reused, rebuilds) = index_build_probe::observe_rebase_fallbacks(|| {
+                reuse_cached_index_in_run(core, &root, &target, &[])
+            });
+            let reused = reused?;
+            assert_eq!(rebuilds, expect_rebuild, "{added_source}");
+            let fresh = build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            assert_eq!(
+                snapshot(&reused.index)?,
+                snapshot(&fresh.index)?,
+                "{added_source}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 }

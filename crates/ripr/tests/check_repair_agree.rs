@@ -453,10 +453,11 @@ fn changed_constant_returned_whole_selects_the_same_repair_in_both() -> Result<(
         "check must name greet's returned value:\n{check}"
     );
     // The change is uncommitted, so repair selects the seam and then asks
-    // for the commit before starting; the selection is what must agree.
+    // for the commit before starting; the selection is what must agree. The
+    // refusal names the façade rerun for that seam (#14394).
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains(&format!("--seam-id {id}"))
+        repair.contains(&format!("ripr repair {id} --root "))
             && !repair.contains("shout")
             && !repair.contains("choose the change to repair"),
         "repair must select the seam check offered ({id}):\n{repair}"
@@ -777,7 +778,9 @@ fn limited_option_change_is_not_called_gripped_by_repair() -> Result<(), String>
         OPTION_OLD,
         OPTION_NEW,
         OPTION_TEST,
-        "Changed behavior: x % 2 == 0",
+        // #14266: the weak `.or(Some(0))` return gap leads Start here over
+        // the unknown predicate on the same line; both are non-exposed.
+        "Changed behavior: xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))",
         "different check than the one still open",
     )
 }
@@ -1016,4 +1019,172 @@ fn async_route_refusal_does_not_offer_a_stub_that_refuses() -> Result<(), String
         "precondition, the stub command itself refuses the async owner:\n{stub}"
     );
     Ok(())
+}
+
+const SHIPPING_OLD: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 20 {\n        15\n    } else {\n        5\n    }\n}\n";
+const SHIPPING_NEW: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 25 {\n        15\n    } else {\n        5\n    }\n}\n";
+
+/// The 16-hex spot id of the `ripr repair <id>` start a check screen offers.
+fn offered_repair_id(check: &str) -> Option<String> {
+    check.lines().find_map(|line| {
+        let rest = line.trim_start().strip_prefix("ripr repair ")?;
+        let id = rest.split_whitespace().next()?;
+        (id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| id.to_string())
+    })
+}
+
+/// #14084: a changed boundary whose only test calls the owner and asserts
+/// nothing. The before phase withholds the seam (its propagation stage is
+/// unknown), so check must not print a start for it and bare repair must not
+/// list it as startable; both give the one plain reason, as a typed refusal.
+#[test]
+fn no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses() -> Result<(), String> {
+    let repo = Repo::create(
+        SHIPPING_OLD,
+        SHIPPING_NEW,
+        "use ar::shipping;\n\n#[test]\nfn shipping_runs() {\n    let _ = shipping(30);\n}\n",
+    )?;
+    let reason = "it cannot tell from reading the code whether the changed value reaches a result a test can check";
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Changed behavior: weight > 25"),
+        "the fixture must produce the boundary finding:\n{check}"
+    );
+    assert!(
+        offered_repair_id(&check).is_none() && check.contains(reason),
+        "check must name the reason instead of offering a start:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains(reason) && repair.contains("refusal code=no_eligible_seam"),
+        "bare repair must refuse with the same reason:\n{repair}"
+    );
+    // The item check names for the full gate's answer: a typed refusal, not
+    // the before phase's exit 2.
+    let id = check
+        .split("run `ripr repair ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| format!("check must name the item to ask the gate about:\n{check}"))?
+        .to_string();
+    let (code, named) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "a named item must refuse as a decision:\n{named}"
+    );
+    assert!(
+        named.contains(reason)
+            && named.contains("refusal code=seam_not_repair_eligible")
+            && !named.contains("no workflow starts")
+            && !named.contains("static limitation"),
+        "the named refusal must be the shared gate's plain one:\n{named}"
+    );
+    Ok(())
+}
+
+/// Control for #14084: the same change under a test that reads the result
+/// with a loose assertion is offered a start by check, and that exact
+/// command starts.
+#[test]
+fn weak_assertion_gap_start_offered_by_check_starts() -> Result<(), String> {
+    let repo = Repo::create(
+        SHIPPING_OLD,
+        SHIPPING_NEW,
+        "use ar::shipping;\n\n#[test]\nfn shipping_is_positive() {\n    assert!(shipping(30) > 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let id = offered_repair_id(&check)
+        .ok_or_else(|| format!("check must offer a repair start:\n{check}"))?;
+    let (code, started) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(0), "the offered start must start:\n{started}");
+    assert!(
+        started.contains("Repair prepared for seam"),
+        "the start must print its before-phase summary:\n{started}"
+    );
+    Ok(())
+}
+
+/// #14084: when check already reads the finding as unclear, its limitation
+/// guidance is the whole story; the withheld seam adds no second advisory.
+/// The comparison sits in parentheses, an operand shape the boundary reader
+/// does not bind, so the finding stays unclear. (A plain
+/// `member && total >= 120` is read by the guarded boundary rule, #13037,
+/// which credits only rows that hold `member = true`.)
+#[test]
+fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 100) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 120) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "use ar::discount;\n\n#[test]\nfn runs() {\n    let _ = discount(200, true);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: unknown"),
+        "the fixture must produce an unclear finding:\n{check}"
+    );
+    assert!(
+        offered_repair_id(&check).is_none() && !check.contains("no repair start offered"),
+        "an unclear finding must stay without a repair advisory:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains("whether the changed value reaches a result a test can check"),
+        "bare repair still names why the spot cannot start:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #14719: a compound predicate's gap id names its one comparison
+/// (`s.len==1`), which the inner `s.len() > 1` seam on the same line also
+/// mints. Repair by that id picks the most-specific seam instead of refusing
+/// the id as naming several seams.
+#[test]
+fn compound_predicate_gap_id_names_one_seam() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') {\n        1\n    } else {\n        0\n    }\n}\n",
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') && s.len() > 1 {\n        1\n    } else {\n        0\n    }\n}\n",
+        "use ar::f;\n\n#[test]\nfn t() {\n    let _ = f(\"-v\");\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let id = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:s.len==1";
+    assert!(
+        check.contains(id),
+        "the predicate's gap id names the narrowed comparison:\n{check}"
+    );
+    let (_, repair) = repo.ripr_status(&["repair", id, "--root", "."])?;
+    assert!(
+        !repair.contains("item_names_several_seams") && repair.contains("names gap `"),
+        "the gap id must resolve to one seam:\n{repair}"
+    );
+    let inner = seam_id_for_expression(&repo, "s.len() > 1")?;
+    let outer = seam_id_for_expression(&repo, "s.starts_with('-') && s.len() > 1")?;
+    assert_ne!(inner, outer, "the fixture must mint two distinct seams");
+    assert!(
+        repair.contains(&format!("names gap `{inner}`")) && !repair.contains(&format!("`{outer}`")),
+        "repair must pick the inner comparison seam {inner}, not the enclosing {outer}:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The seam id `ripr pilot` lists for the one seam whose changed expression is
+/// exactly `expression`.
+fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, String> {
+    repo.ripr(&["pilot", "--root", "."])?;
+    let text = std::fs::read_to_string(repo.0.join("target/ripr/pilot/agent-seam-packets.json"))
+        .map_err(|e| e.to_string())?;
+    let packets: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let ids: Vec<&str> = packets["packets"]
+        .as_array()
+        .ok_or("pilot packets must be an array")?
+        .iter()
+        .filter(|packet| packet["changed_expression"] == expression)
+        .filter_map(|packet| packet["seam_id"].as_str())
+        .collect();
+    match ids.as_slice() {
+        [id] => Ok((*id).to_string()),
+        other => Err(format!(
+            "expected one seam for `{expression}`, found {other:?}"
+        )),
+    }
 }

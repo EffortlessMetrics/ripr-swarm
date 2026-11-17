@@ -479,6 +479,7 @@ Updated:
 ## Pending — binding_predicate_positions (34)
 
 Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
 Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
 
 Command:
@@ -486,4 +487,27 @@ Command:
 
 Updated:
 - `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_positions (35)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_positions (36)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
 - `expected/human.txt`

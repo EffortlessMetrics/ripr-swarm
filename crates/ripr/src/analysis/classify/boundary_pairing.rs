@@ -10,7 +10,8 @@ use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
 use super::activation::{
-    call_arguments, comparison_operands, function_parameters, owner_argument_values,
+    boundary_parameter_field_projection, call_arguments, comparison_operands, function_parameters,
+    owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, asserting_method_entry, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
@@ -791,7 +792,7 @@ fn owner_parameter_literals(
         .collect()
 }
 
-fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
     matches!(assertion.strength, OracleStrength::Strong)
         || matches!(
             assertion.kind,
@@ -824,6 +825,24 @@ fn assertion_observes_boundary_owner_call(
     } else {
         owner_call_sites(&subject, owner)
     };
+    // #13037: a comparison guarded by `&& flag` pairs only with a call that
+    // sits on the boundary and holds every guard. A guarded shape the rule
+    // declines pairs with nothing: the readings below see the comparison
+    // without its guards.
+    if let Some(guarded) = super::activation::guarded_comparison(probe, owner) {
+        return lists
+            .iter()
+            .try_fold(false, |any, arguments| {
+                let values: Vec<Vec<String>> = arguments
+                    .iter()
+                    .map(|argument| pairing_argument_values(test, argument, scope))
+                    .collect();
+                guarded
+                    .call_reaches_boundary(probe, owner, index, &values)
+                    .map(|reached| any || reached)
+            })
+            .unwrap_or(false);
+    }
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -1252,7 +1271,12 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
+        // #13037: the guarded argument check above already read this call's
+        // own guards and boundary; a line-level fact may belong to a sibling
+        // call on the same line that holds the guards.
+        if super::activation::guarded_comparison(probe, owner).is_some()
+            || !owner_call_arguments_admit_activation_fallback(probe, owner, arguments)
+        {
             return false;
         }
     }
@@ -1273,10 +1297,23 @@ fn argument_list_activates_boundary(
         .iter()
         .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
+    let parameters = function_parameters(owner);
+    // #13037: a guarded comparison is reached only by a call that holds
+    // every guard, and its boundary operand is the comparison's alone (not
+    // `5 && !x`).
+    let guarded = super::activation::guarded_comparison(probe, owner);
+    if guarded
+        .as_ref()
+        .is_some_and(|guarded| !guarded.guards_hold_in(&parameters, &arg_values))
+    {
+        return false;
+    }
+    let expression = guarded
+        .as_ref()
+        .map_or(probe.expression.as_str(), |guarded| guarded.comparison());
+    let Some((left, right)) = comparison_operands(expression) else {
         return false;
     };
-    let parameters = function_parameters(owner);
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
@@ -1450,6 +1487,17 @@ fn pairing_argument_values(
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
+    // A parenthesized whole literal is that literal: a `#[test_case(10 =>
+    // 90)]` row's synthesized comparison writes its argument as `(10)` so a
+    // negated literal keeps its sign (RIPR-SPEC-0231).
+    if let Some(inner) = trimmed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+        .filter(|inner| argument_is_whole_scalar_literal(inner))
+    {
+        return owner_argument_values(test, inner);
+    }
     // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
     // the whole argument's value, exactly as the literal it computes would be.
     super::argument_fold::folded_argument(&test.body, trimmed, scope)
@@ -1517,8 +1565,27 @@ fn owner_call_arguments_admit_activation_fallback(
         arguments.get(idx).is_some_and(|argument| {
             let argument = argument.trim();
             argument_is_activation_fallback_shape(argument)
+                || argument_names_boundary_parameter(
+                    argument,
+                    &parameters,
+                    left.as_str(),
+                    right.as_str(),
+                )
                 || (slice_len_operand && literal_slice_length(argument).is_some())
         })
+    })
+}
+
+fn argument_names_boundary_parameter(
+    argument: &str,
+    parameters: &[String],
+    left: &str,
+    right: &str,
+) -> bool {
+    let argument = argument.trim().trim_start_matches('&').trim();
+    [left, right].into_iter().any(|operand| {
+        boundary_parameter_field_projection(parameters, operand)
+            .is_some_and(|(parameter, _)| argument == parameter.trim())
     })
 }
 
@@ -1657,8 +1724,18 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&*call.text))
+            && activation_fact_text_pairs_call(fact.text.as_str(), call.text.as_str())
     })
+}
+
+/// Pair activation rows keyed by a bare owner call with assertions that embed
+/// that call (`assert_eq!(owner(x), ..)`), and keep the existing superset match
+/// when the row carries the full assertion text.
+fn activation_fact_text_pairs_call(fact_text: &str, call_text: &str) -> bool {
+    if fact_text.is_empty() {
+        return true;
+    }
+    fact_text.contains(call_text) || call_text.contains(fact_text)
 }
 
 #[cfg(test)]
@@ -1753,6 +1830,26 @@ mod tests {
                 "{refused}"
             );
         }
+    }
+
+    #[test]
+    fn field_assignment_row_pairs_assert_eq_call_text() {
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 53,
+                text: "is_stale(&manifest)".to_string(),
+                value: "manifest.version == CURRENT".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let call = CallFact {
+            line: 53,
+            name: "is_stale".into(),
+            text: "assert_eq!(is_stale(&manifest), true);".into(),
+        };
+        assert!(activation_marks_boundary_call(&activation, &call));
     }
 
     #[test]

@@ -1,0 +1,2 @@
+evals/ripr-eval-smoke/src/lib.rs|Command::new|1|evals|#14643: runs the configured ripr binary (`$RIPR_BIN --version`) as a subprocess in the Tier 2 evals smoke harness.
+evals/ripr-eval-smoke/src/lib.rs|use std::process::Command|1|evals|#14643: imports the spawner for the invocation above.

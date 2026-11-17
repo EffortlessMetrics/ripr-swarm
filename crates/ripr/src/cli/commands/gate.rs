@@ -472,6 +472,13 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
                 i += 1;
                 guidance_out = non_empty_path_arg(args, i, flag, "gate check")?;
             }
+            // #13895: the suppression policy belongs to the producer, so a
+            // suppressed seam reaches the gate as non-blocking.
+            "--suppression-policy" => {
+                i += 1;
+                let value = non_empty_string_arg(args, i, flag, "gate check")?;
+                review_args.extend([flag.to_string(), value]);
+            }
             "--mode" => {
                 i += 1;
                 let value = expect_value(args, i, flag)?;
@@ -504,7 +511,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
     }
 
     let base = base.ok_or_else(|| {
-        "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`".to_string()
+        crate::cli::usage_refusal::missing_required("--base", "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`")
     })?;
     let head = head.unwrap_or_else(|| "HEAD".to_string());
     review_args.extend([
@@ -1378,6 +1385,37 @@ mod tests {
         );
         assert_eq!(plan.gate.input.gap_ledger, None);
         assert_eq!(plan.gate.out, PathBuf::from(output::gate::DEFAULT_GATE_OUT));
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_forwards_suppression_policy_to_the_producer_only() -> Result<(), String> {
+        // #13895: suppressions are applied by review-comments, so the gate
+        // sees a suppressed seam as non-blocking without its own flag.
+        let plan = parse_gate_check_plan(&args(&[
+            "--base",
+            "origin/main",
+            "--suppression-policy",
+            ".ripr/suppressions.toml",
+        ]))?;
+        assert_eq!(
+            plan.review_comments_args,
+            args(&[
+                "--suppression-policy",
+                ".ripr/suppressions.toml",
+                "--base",
+                "origin/main",
+                "--head",
+                "HEAD",
+                "--out",
+                DEFAULT_GATE_CHECK_GUIDANCE,
+            ])
+        );
+        let missing = parse_gate_check_plan(&args(&["--base", "x", "--suppression-policy"]));
+        assert!(
+            missing.is_err(),
+            "a bare --suppression-policy is a usage error"
+        );
         Ok(())
     }
 

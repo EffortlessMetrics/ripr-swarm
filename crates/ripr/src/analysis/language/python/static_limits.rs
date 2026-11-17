@@ -1,7 +1,10 @@
 use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
-use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, parse_expression, python_band_reading,
+};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
@@ -44,7 +47,15 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+    static_limit_for_focused_change(
+        line_text,
+        None,
+        None,
+        &focus,
+        owner,
+        PythonBandSource::default(),
+        related_candidates,
+    )
 }
 
 /// A test that rebinds the owner's module object (`route.response = fake`,
@@ -121,9 +132,10 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
-    owner_source: &str,
+    source: PythonBandSource<'_>,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
+    let owner_source = source.text;
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
         return Some(PythonStaticLimit {
@@ -281,6 +293,15 @@ pub(super) fn static_limit_for_focused_change(
             line_text,
         ) {
             Some(calls) => substituted_calls.extend(calls),
+            // A literal stand-in for a callee the edit neither names nor
+            // feeds leaves the exact assertion reading the edit (#13632).
+            None if callee_only_patch(
+                candidate.test,
+                owner,
+                owner_source,
+                old_line_text,
+                line_text,
+            ) => {}
             None => mocked = true,
         }
     }
@@ -311,7 +332,14 @@ pub(super) fn static_limit_for_focused_change(
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
         && matches!(
-            python_band_reading(old_line_text, trimmed, owner, related_candidates, focus),
+            python_band_reading(
+                old_line_text,
+                trimmed,
+                owner,
+                source,
+                related_candidates,
+                focus
+            ),
             PythonBandReading::Unread
         )
     {
@@ -491,63 +519,135 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
 /// a comment or an open string. A tripled quote opens a string that only the
 /// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
 /// code after it is visible (#9992); a triple string left open at the end of
-/// the prefix hides what follows. F-string fields are not read here.
+/// the prefix hides what follows. The replacement field of an f-string is code
+/// (#14754 review): `f"{parse('')}"` ends the prefix inside a field, so the
+/// call there stays visible.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
+    /// One open string literal on the prefix scanner's stack.
+    struct Literal {
+        quote: char,
+        triple: bool,
+        formatted: bool,
+        /// The scanner is inside this f-string's replacement field: its text
+        /// is code, not string text.
+        in_field: bool,
+        /// Open braces of that field (a dict or set literal nests).
+        field_depth: usize,
+    }
     let chars: Vec<char> = prefix.chars().collect();
-    // The active delimiter and its width (1 or 3).
-    let mut open: Option<(char, usize)> = None;
+    let mut stack: Vec<Literal> = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
-        if let Some((quote, width)) = open {
-            let closes = ch == quote
-                && chars.len() - index >= width
-                && chars[index..index + width].iter().all(|c| *c == quote);
-            if ch == '\\' {
-                index += 2;
-            } else if closes {
-                open = None;
-                index += width;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if ch == '#' {
-            return true;
-        }
-        if ch == '\'' || ch == '"' {
-            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
-            let width = if triple { 3 } else { 1 };
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides what follows: a miss, never an invented call (#9230).
-            if !triple
-                && chars_end_with_f_prefix(&chars[..index])
-                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
-            {
+        let in_code = stack.last().is_none_or(|literal| literal.in_field);
+        if in_code {
+            if ch == '#' {
                 return true;
             }
-            open = Some((ch, width));
-            index += width;
+            if ch == '\'' || ch == '"' {
+                let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+                let formatted = chars_end_with_f_prefix(&chars[..index]);
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides what follows: a miss, never an invented call (#9230).
+                if !triple
+                    && formatted
+                    && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+                {
+                    return true;
+                }
+                stack.push(Literal {
+                    quote: ch,
+                    triple,
+                    formatted,
+                    in_field: false,
+                    field_depth: 0,
+                });
+                index += if triple { 3 } else { 1 };
+                continue;
+            }
+            if let Some(literal) = stack.last_mut()
+                && literal.in_field
+            {
+                if ch == '{' {
+                    literal.field_depth += 1;
+                } else if ch == '}' {
+                    literal.field_depth = literal.field_depth.saturating_sub(1);
+                    if literal.field_depth == 0 {
+                        literal.in_field = false;
+                    }
+                }
+            }
+            index += 1;
             continue;
+        }
+        let Some((quote, triple, formatted)) = stack
+            .last()
+            .map(|literal| (literal.quote, literal.triple, literal.formatted))
+        else {
+            index += 1;
+            continue;
+        };
+        if ch == '\\' {
+            index += 2;
+            continue;
+        }
+        if triple {
+            if chars.len() - index >= 3 && chars[index..index + 3].iter().all(|c| *c == quote) {
+                stack.pop();
+                index += 3;
+                continue;
+            }
+        } else if ch == quote {
+            stack.pop();
+            index += 1;
+            continue;
+        }
+        if formatted {
+            if ch == '{' {
+                if chars.get(index + 1) == Some(&'{') {
+                    index += 2;
+                    continue;
+                }
+                if let Some(literal) = stack.last_mut() {
+                    literal.in_field = true;
+                    literal.field_depth = 1;
+                }
+                index += 1;
+                continue;
+            }
+            if ch == '}' && chars.get(index + 1) == Some(&'}') {
+                index += 2;
+                continue;
+            }
         }
         index += 1;
     }
-    open.is_some()
+    stack.last().is_some_and(|literal| !literal.in_field)
 }
 
 /// Whether the identifier run that ends `before` is an `f` string prefix
 /// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
 /// longer name such as `perf`.
 fn chars_end_with_f_prefix(before: &[char]) -> bool {
-    let run = before
-        .iter()
-        .rev()
-        .take_while(|ch| is_python_identifier_char(**ch))
-        .count();
+    // Stop at the third identifier character: the answer is already `false`,
+    // and the caller pays this per quote, so walking (and allocating) the whole
+    // identifier run of a long line is unbounded work for a bounded answer.
+    let mut run = 0usize;
+    for ch in before.iter().rev() {
+        if !is_python_identifier_char(*ch) {
+            break;
+        }
+        run += 1;
+        if run > 2 {
+            return false;
+        }
+    }
+    if run == 0 {
+        return false;
+    }
     let prefix: String = before[before.len() - run..].iter().collect();
-    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+    matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
 }
 
 /// Whether the single-line f-string literal that starts at the first character
@@ -734,7 +834,10 @@ fn receiver_is_rebound_from_non_stdlib_functools(imports: &[PythonImport], recei
 /// as functools` or `from helpers import functools`). `import functools as
 /// ft` then `@ft.lru_cache` is the same binding unless `ft` is also rebound.
 /// Call arguments are already dropped by `expr_full_name`.
-fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+pub(super) fn is_imported_functools_memoization_decorator(
+    decorator: &str,
+    imports: &[PythonImport],
+) -> bool {
     if let Some((receiver, method)) = decorator.rsplit_once('.') {
         if !is_functools_memoization_name(method) {
             return false;
@@ -1804,6 +1907,7 @@ pub(super) mod tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),

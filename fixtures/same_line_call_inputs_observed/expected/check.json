@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach band: observed", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 2 (line 2)", "related test src/lib.rs:5 observed uses strong exact value oracle: assert_eq!(band(9), 1);", "related test src/lib.rs:5 observed uses strong exact value oracle: assert_eq!(band(band(9)), 1);", "source assertion argument value 1 at line 5", "source assertion argument value 1 at line 5", "source function argument value n = 9 at line 5", "source function argument value n == 9 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"2","line":2}

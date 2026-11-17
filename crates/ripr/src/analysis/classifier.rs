@@ -313,8 +313,23 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.const_readers = const_readers;
     context.const_flow = const_flow;
     context.binding_return_flow = binding_return_flow;
+    context.compile_time_guarded = owner_fn.is_none()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                facts.source.contains("assert")
+                    && super::classify::constrained_by_compile_time_assertion(
+                        &crate::analysis::extract::mask_comments_and_strings(&facts.source),
+                        probe.location.line,
+                        probe.changed_const_name(),
+                    )
+            });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    context.owner_sole_change = changed_file
+        .zip(owner_fn)
+        .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -388,6 +403,9 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     if context.tier_flow.is_some() {
         finding.probe.expected_sinks = vec!["return value".to_string()];
         finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
+    if context.compile_time_guarded {
+        withhold_compile_time_guard_as_unknown(&mut finding);
     }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
@@ -634,6 +652,76 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     }
 }
 
+/// #12040: a changed continuation line of a multi-line compile-time assertion
+/// is classified like any ownerless predicate (`no_static_path`), but a
+/// violating edit fails to build; "no test reaches it" is the wrong claim. The
+/// class abstains as `static_unknown` with the build-time reason, exactly as
+/// the assertion's head line does. Only `no_static_path` is rewritten; nothing
+/// is promoted or credited.
+fn withhold_compile_time_guard_as_unknown(finding: &mut Finding) {
+    let reach_ruled_out = match finding.class {
+        ExposureClass::NoStaticPath => true,
+        ExposureClass::StaticUnknown => finding.ripr.reach.state == StageState::No,
+        _ => false,
+    };
+    if !reach_ruled_out {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "Not established: a compile-time assertion constrains this line, and tests are not what checks it",
+    );
+    let mut stale: Vec<String> = Vec::new();
+    for stage in [
+        &mut finding.ripr.reach,
+        &mut finding.ripr.infect,
+        &mut finding.ripr.propagate,
+        &mut finding.ripr.reveal.observe,
+        &mut finding.ripr.reveal.discriminate,
+    ] {
+        if stage.state == StageState::No {
+            stale.push(stage.summary.clone());
+            *stage = unknown.clone();
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
+    finding.missing = vec![
+        "compile-time assertion constrains this line: the build, not a test, checks the new value against it; ripr has not evaluated it"
+            .to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+    finding.recommended_next_step = super::classify::recommended_next_step(
+        &finding.probe,
+        &finding.class,
+        false,
+        &finding.stop_reasons,
+    );
+}
+
 /// #11544: an owner whose only candidate tests sit inside opaque property
 /// macros (`proptest!`, `quickcheck!`) has no ruled-out reach: the macro's
 /// own limitation says expansion, collection and reach are unresolved. Calling
@@ -796,6 +884,34 @@ fn restore_reveal_misses(
     for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
         test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #14387: the old text of `line` when it is the one line of `owner` the diff
+/// replaces: exactly one added line inside the owner, at `line`, paired with
+/// exactly one removed line inside it.
+fn owner_sole_change(
+    changed: &crate::analysis::diff::ChangedFile,
+    owner: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+) -> Option<String> {
+    let inside = |at: usize| (owner.start_line..=owner.end_line).contains(&at);
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| inside(added.new_side_line));
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| inside(removed.new_side_line));
+    let (Some(added), None, Some(removed), None) =
+        (added.next(), added.next(), removed.next(), removed.next())
+    else {
+        return None;
+    };
+    let paired = changed.replaced_line_counterpart(line)?;
+    // The counterpart must be this very removed line, not one elsewhere in
+    // the file with the same text (#14786 review).
+    (added.new_side_line == line && std::ptr::eq(paired, removed)).then(|| removed.text.clone())
 }
 
 #[cfg(test)]

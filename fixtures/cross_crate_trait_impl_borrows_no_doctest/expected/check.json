@@ -35,59 +35,43 @@
         "expression": "x <= self.remaining"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"},
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No tests were found, so activation/infection cannot be estimated"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)"},
-        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
-      "evidence_path": ["reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)", "propagation yes: Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 4 at line 8"],
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No tests were found, so activation/infection cannot be estimated", "propagation yes: Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":10}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change", "Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)"],
+      "evidence": ["Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
-        "8": "assert_eq!(t.limit(), 4);"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 8,
-            "value": "4",
-            "context": "assertion_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 8,
-          "value": "4",
-          "context": "assertion_argument"
-        }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "util/src/io/take.rs - limit (line 6)",
-          "file": "util/src/io/take.rs",
-          "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(t.limit(), 4);",
-          "relation_reason": "same_test_file",
-          "relation_confidence": "medium",
-          "miss": "no_call_path",
-          "why": "no established call path to the changed code; linked by file location only"
-        }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "language": "rust",
@@ -109,7 +93,7 @@
       },
       "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.35,
+      "confidence": 0.40,
       "probe": {
         "id": "probe:util_src_stream_take.rs:return_value:2263b7d6",
         "family": "return_value",
@@ -119,59 +103,43 @@
         "expression": "Some(x)"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)"},
-        "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No reachable tests were found, so infection cannot be established"},
         "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)"},
-        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
-      "evidence_path": ["reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation weak: No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 4 at line 8"],
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation weak: No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":10}
       ],
-      "evidence": ["No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)", "No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
-        "8": "assert_eq!(t.limit(), 4);"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 8,
-            "value": "4",
-            "context": "assertion_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 8,
-          "value": "4",
-          "context": "assertion_argument"
-        }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "util/src/io/take.rs - limit (line 6)",
-          "file": "util/src/io/take.rs",
-          "line": 6,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(t.limit(), 4);",
-          "relation_reason": "same_test_file",
-          "relation_confidence": "medium",
-          "miss": "no_call_path",
-          "why": "no established call path to the changed code; linked by file location only"
-        }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "language": "rust",

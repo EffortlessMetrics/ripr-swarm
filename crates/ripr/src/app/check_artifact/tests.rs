@@ -662,8 +662,23 @@ fn load_fails_closed_on_wrong_schema_version_and_malformed_input() -> Result<(),
         let missing = dir.join("missing.json");
         require_err_containing(
             load_findings_for_reuse(&missing, &input, &config, None),
-            &["not found or unreadable"],
+            &[
+                "could not be read: not found; write it with `ripr check --write-artifact ",
+                "missing.json` using this run's root, scope (--diff or --base) and analysis options, then rerun",
+            ],
         )?;
+        // A directory gets its plain cause and no `--write-artifact` advice,
+        // since writing the artifact to that directory path would fail too.
+        match load_findings_for_reuse(&dir, &input, &config, None) {
+            Ok(_) => return Err("a directory artifact path must fail closed".to_string()),
+            Err(err) => {
+                if !err.ends_with(
+                    "could not be read: is a directory, not a file; pass the path of a file",
+                ) {
+                    return Err(format!("unexpected directory refusal: {err}"));
+                }
+            }
+        }
 
         let malformed = dir.join("malformed.json");
         std::fs::write(&malformed, "{ not json").map_err(|err| format!("write: {err}"))?;

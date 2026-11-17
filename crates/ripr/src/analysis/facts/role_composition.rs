@@ -169,8 +169,11 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
 /// they never run, so they are not related-test evidence. Only the test
 /// registrations go; the files, their functions and their provenance stay, so
 /// an owner in such a file still reads as outside the module tree. Every
-/// composition pass starts from freshly normalized tests, so a file that a
-/// later leaf addition links gets its tests back through incremental reuse.
+/// composition pass starts from freshly normalized tests. Same-run index
+/// extension refuses a merge that links a file the core withheld here when
+/// that revived file has tests, and falls back to a fresh build (#12947): the
+/// revived tests would be rebuilt from function facts rather than the parser's
+/// test facts. A revived file without tests extends.
 fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<PathBuf>) {
     if outside.is_empty() {
         return;
@@ -332,13 +335,21 @@ fn module_may_be_declared_invisibly(
 /// Grants the evidence-only `CfgTestModule` role to `Production` functions of
 /// the given files, in both the per-file facts and the flat function list.
 /// Existing evidence roles (executable tests, promoted expansions, same-file
-/// cfg-test helpers) are never demoted: evidence roles union.
+/// cfg-test helpers) are never demoted: evidence roles union. A test-input
+/// generator in a test-only module is test code like its inline twin, not a
+/// visible stimulus change of compiled product source (#11545).
 fn apply_cfg_test_module_grants(index: &mut RustIndex, granted: &BTreeSet<PathBuf>) {
+    let grantable = |role: FunctionSourceRole| {
+        matches!(
+            role,
+            FunctionSourceRole::Production | FunctionSourceRole::TestInputGenerator
+        )
+    };
     let local = granted
         .iter()
         .filter_map(|file| index.files.get(file))
         .flat_map(|file| file.functions.iter().copied())
-        .filter(|&id| index.function_facts[id].source_role == FunctionSourceRole::Production)
+        .filter(|&id| grantable(index.function_facts[id].source_role))
         .map(|id| (id, FunctionSourceRole::CfgTestModule))
         .collect::<Vec<_>>();
     let flat = index
@@ -347,8 +358,7 @@ fn apply_cfg_test_module_grants(index: &mut RustIndex, granted: &BTreeSet<PathBu
         .copied()
         .filter(|&id| {
             let function = &index.function_facts[id];
-            granted.contains(&function.file)
-                && function.source_role == FunctionSourceRole::Production
+            granted.contains(&function.file) && grantable(function.source_role)
         })
         .map(|id| (id, FunctionSourceRole::CfgTestModule))
         .collect::<Vec<_>>();

@@ -9,10 +9,21 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if super::classify::is_item_header(text.trim()) {
         return vec![ProbeFamily::StaticUnknown];
     }
+    // #14429: a `type` item (`type Eq: CmpEq;`) declares a type; its bound
+    // only looks like a constructed field.
+    if super::classify::is_type_item_declaration(text) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     // Masked once: comments between `pub` and `const` (`pub /* note */`)
     // must not hide a declaration, and string/comment contents must not
     // mint behavioral families downstream.
     let masked = mask_comments_and_strings(text);
+    // #14181: `const { assert!(N <= 249) };` is checked when the function is
+    // instantiated. A violating input fails to build, so no test can pass a
+    // value across its comparison and no runtime family applies.
+    if is_inline_const_assertion(text, &masked) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     if is_constant_declaration(&masked) {
         return classify_constant_declaration(&masked);
     }
@@ -959,9 +970,142 @@ fn is_constant_declaration(text: &str) -> bool {
     rest.starts_with("const ") || rest.starts_with("static ")
 }
 
+/// A statement that is one inline const block holding only an assertion
+/// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!`, the
+/// `debug_` forms and their `core::`/`std::` paths. One line only: a
+/// rustfmt-split block keeps the line-by-line reading. Read on masked text, so a quoted `}` cannot end it. A const
+/// block producing a value (`let x = const { 1 + 2 };`) is runtime-visible
+/// and is not matched.
+fn is_inline_const_assertion(text: &str, masked: &str) -> bool {
+    let Some(rest) = masked.trim().strip_prefix("const") else {
+        return false;
+    };
+    let Some(body) = rest.trim_start().strip_prefix('{') else {
+        return false;
+    };
+    let tail = body.trim_end();
+    let tail = tail.strip_suffix(';').map_or(tail, str::trim_end);
+    let Some(inner) = tail.strip_suffix('}') else {
+        return false;
+    };
+    let inner = inner.trim();
+    let inner = inner.strip_suffix(';').map_or(inner, str::trim_end);
+    let inner = ["::core::", "::std::", "core::", "std::"]
+        .iter()
+        .find_map(|path| inner.strip_prefix(path))
+        .map_or(inner, str::trim_start);
+    // Masked text has comments as spaces, so `assert /* note */ !(..)` reads
+    // as `assert   !(..)`: whitespace may sit between the name and `!`.
+    let name_end = inner
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(inner.len());
+    if !matches!(
+        &inner[..name_end],
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+    ) {
+        return false;
+    }
+    let Some(call) = inner[name_end..].trim_start().strip_prefix('!') else {
+        return false;
+    };
+    let call = call.trim_start();
+    // One macro call spanning the whole block, in any delimiter (`assert!(..)`,
+    // `assert![..]`, `assert!{..}`): its opening delimiter closes at the
+    // block's end, so `assert!(a); f()` is not a lone assertion.
+    let Some(args) = call
+        .strip_prefix('(')
+        .or_else(|| call.strip_prefix('['))
+        .or_else(|| call.strip_prefix('{'))
+    else {
+        return false;
+    };
+    let mut depth = 1usize;
+    let mut args_len = None;
+    for (at, byte) in args.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    args_len = Some(at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(args_len) = args_len.filter(|len| len + 1 == args.len()) else {
+        return false;
+    };
+    // Masking blanks literals, so `assert!(a); "small"` would read as a lone
+    // assertion. Every string or char literal must sit inside the macro's
+    // arguments. The mask keeps byte offsets, so `text` and `masked` align.
+    let args_start = args.as_ptr() as usize - masked.as_ptr() as usize;
+    let args_end = args_start + args_len;
+    let inside = |open: usize, close: usize| args_start <= open && close < args_end;
+    let (_, char_literals) = crate::analysis::extract::mask_with_char_literals(text);
+    crate::analysis::extract::string_literal_spans(text)
+        .into_iter()
+        .all(|(open, close, _)| inside(open, close))
+        && char_literals
+            .into_iter()
+            .all(|(open, close)| inside(open, close))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_const_assertion_selects_no_runtime_family() {
+        for line in [
+            "const { assert!(N <= 249) };",
+            "    const { assert!(Self::PREFIX.len() + N <= u8::MAX as usize) };",
+            "const { assert_eq!(N, 4) }",
+            "const { assert!(N > 0, \"N must be } positive\"); };",
+            "const {assert!(N < 8)};",
+            "const { core::assert!(N <= 249) };",
+            "const { ::std::assert!(N <= 249, \"too long\") };",
+            "const { assert /* note */ !(N <= 249) };",
+            "const { assert !(N <= 249) };",
+            "const { assert![N <= 249] };",
+            "const { assert!{N <= 249} };",
+            "const { core:: /* note */ assert!(N <= 249) };",
+            "const { assert!(N > 0, \"n {}\", 'x') };",
+        ] {
+            assert_eq!(
+                classify_changed_line(line),
+                vec![ProbeFamily::StaticUnknown],
+                "{line}"
+            );
+        }
+        // A const block that yields a value, a declaration, or an assertion
+        // followed by other code keeps its ordinary reading.
+        for line in [
+            "let ok = const { N <= 249 };",
+            "const LIMIT: bool = N <= 249;",
+            "const { assert!(N <= 249); f(x) > 3 };",
+            "const { assert!(N <= 249) }; f(x) > 3;",
+            "const { other::assert!(N <= 249) };",
+            "const { asserts!(N <= 249) };",
+            "const { assert!(N <= 249); \"small\" > \"a\" };",
+            // Masking blanks the literal tail; only the literal-span check
+            // keeps this value-yielding block out.
+            "const { assert!(N <= 249); \"small\" };",
+            "const { assert!(N <= 249); 'x' };",
+        ] {
+            assert!(
+                classify_changed_line(line).contains(&ProbeFamily::Predicate),
+                "{line}: {:?}",
+                classify_changed_line(line)
+            );
+        }
+    }
 
     const MAX_LINE: &str =
         "let idx = self.queue.iter().enumerate().max_by_key(|(_, t)| t.prio).map(|(i, _)| i)?;";

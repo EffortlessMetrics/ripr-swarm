@@ -377,8 +377,269 @@ pub(crate) fn no_finding_matched_fresh_run(
         }
         message
     };
+    // #14077: one cause clause from facts the run holds. When it already
+    // names the other finding lines of the same file, the #14384 hint
+    // would repeat it; otherwise the hint adds where this scope's findings
+    // are (and the column note), so the next selector needs no listing run.
+    let cause = location_miss_cause(selector, output);
+    let names_same_file_lines = cause
+        .as_ref()
+        .is_some_and(|cause| cause.names_same_file_lines);
+    let names_incomplete = cause.as_ref().is_some_and(|cause| cause.names_incomplete);
+    if let Some(LocationMissCause { text: cause, .. }) = cause {
+        message.push_str(". ");
+        message.push_str(&cause);
+    }
+    // #14406: an incomplete run never reads as an all-clear; when the cause
+    // already said so, the hint keeps its wording without repeating it.
+    let completeness = if names_incomplete {
+        super::selector::ScopeCompleteness::IncompleteDisclosed
+    } else if fresh_run_incomplete(output) {
+        super::selector::ScopeCompleteness::Incomplete
+    } else {
+        super::selector::ScopeCompleteness::Complete
+    };
+    if !names_same_file_lines
+        && let Some(hint) =
+            super::selector::location_miss_hint(&output.findings, root, selector, completeness)
+    {
+        message.push('.');
+        message.push_str(&hint);
+    }
     append_fresh_run_language_limits(&mut message, output);
     message
+}
+
+/// Whether a fresh run left part of its scope unanalyzed: an incomplete
+/// producer outcome (`partial_with_limitations`, `unsupported_input`,
+/// `analysis_failed`, for example an oversized or malformed diff), a
+/// language run that did not complete, or preview-language files no adapter
+/// analyzed (#14406).
+fn fresh_run_incomplete(output: &CheckOutput) -> bool {
+    output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| !outcome.kind.is_complete())
+        // A diff degraded to a partial scope (`limited_partial_scope`), the
+        // same signal #14077's miss cause reads as incomplete.
+        || output.partial_scope.is_some()
+        || output
+            .language_runs
+            .iter()
+            .any(|run| run.status != crate::analysis::LanguageRunStatus::Ok)
+        || output
+            .preview_language_advisories
+            .iter()
+            .any(|advisory| !advisory.analyzed(&output.language_runs))
+}
+
+/// How many same-file finding locations a location miss names.
+const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
+
+/// Why a well-formed `file:line` selector matched nothing (#14077), from
+/// facts this run already holds: its finding list, its analyzed root and the
+/// producer's outcome counts. One message used to answer six different
+/// causes, so a typo, an unchanged line and a finding one line up were
+/// indistinguishable.
+///
+/// The run output carries counts, not the per-file changed-line set, so this
+/// never says whether the named line itself changed. Finding ids, seam ids
+/// and malformed locations return `None`: they keep their own wording.
+fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    location_miss_cause_text(selector, output)
+}
+
+/// The [`MAX_NEARBY_FINDING_LOCATIONS`] locations nearest `wanted_line`,
+/// listed in file/line order, and how many were listed.
+fn nearest_locations(mut locations: Vec<(usize, String)>, wanted_line: usize) -> (String, usize) {
+    locations.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
+    locations.truncate(MAX_NEARBY_FINDING_LOCATIONS);
+    locations.sort();
+    let listed = locations
+        .iter()
+        .map(|(line, file)| format!("{file}:{line}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    (listed, locations.len())
+}
+
+/// A [`location_miss_cause`] clause, whether it already names the same
+/// file's other finding lines (so the #14384 hint must not repeat them),
+/// and whether it already says the analysis was incomplete (so the hint
+/// must not repeat that either, #14406).
+struct LocationMissCause {
+    text: String,
+    names_same_file_lines: bool,
+    names_incomplete: bool,
+}
+
+impl LocationMissCause {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            names_same_file_lines: false,
+            names_incomplete: false,
+        }
+    }
+}
+
+fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    if selector.starts_with("probe:")
+        || selector.starts_with("repo-probe:")
+        || selector.starts_with("gap:")
+        || seam_id_of(selector).is_some()
+        || super::selector::location_selector_needs_syntax_hint(selector)
+    {
+        return None;
+    }
+    let (selector_file, selector_line) = selector.rsplit_once(':')?;
+    let wanted_line = selector_line.parse::<usize>().ok()?;
+    // A `file:line:column` selector would read its line as part of the path
+    // and be told the path is misspelled; the #14384 hint names the column
+    // form instead, through the same detector (#14511).
+    if super::selector::location_column_form_file(selector_file).is_some() {
+        return None;
+    }
+    let wanted_file = super::selector::normalize_locator_path(selector_file);
+    if wanted_file.is_empty() {
+        return None;
+    }
+
+    // Same file, another line: the user is one retry away from the finding.
+    let mut nearby: Vec<(usize, String)> = output
+        .findings
+        .iter()
+        .filter_map(|finding| {
+            let stored = crate::analysis::stable_path_text(&finding.probe.location.file);
+            super::selector::locator_paths_match(stored.as_ref(), selector_file).then(|| {
+                (
+                    finding.probe.location.line,
+                    // Shown root-relative, as every rendered location is: a
+                    // fresh run stores absolute (on Windows, verbatim) paths.
+                    super::selector::normalize_locator_path(
+                        &crate::analysis::finding_location_text(
+                            &output.root,
+                            &finding.probe.location.file,
+                        ),
+                    ),
+                )
+            })
+        })
+        .collect();
+    nearby.sort();
+    nearby.dedup();
+    if !nearby.is_empty() {
+        // #14492: retry advice names only a location that selects exactly
+        // one finding; a line several findings share would refuse the retry
+        // as ambiguous, so those lines point at probe ids instead.
+        let (unique, shared): (Vec<_>, Vec<_>) = nearby.into_iter().partition(|(line, file)| {
+            matches!(
+                super::selector::select_finding(&output.findings, &format!("{file}:{line}")),
+                super::selector::FindingSelection::Unique(_)
+            )
+        });
+        let shared_count = shared.len();
+        let noun = match (unique.len() + shared_count, shared_count) {
+            (1, 0) => "a finding at another line",
+            (1, _) => "findings at another line",
+            _ => "findings at other lines",
+        };
+        let shared_note = if shared_count == 0 {
+            String::new()
+        } else {
+            let verb = if shared_count == 1 {
+                "holds"
+            } else {
+                "each hold"
+            };
+            let (listed, _) = nearest_locations(shared, wanted_line);
+            let lead = if unique.is_empty() { "" } else { "; " };
+            format!("{lead}{listed} {verb} several findings, so select one there by its probe id")
+        };
+        let text = if unique.is_empty() {
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {shared_note}"
+            )
+        } else {
+            let count = unique.len();
+            let (listed, shown) = nearest_locations(unique, wanted_line);
+            let scope = if count > shown {
+                format!("the {shown} nearest of {count} are")
+            } else if count == 1 {
+                "it is at".to_string()
+            } else {
+                "they are at".to_string()
+            };
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations{shared_note}"
+            )
+        };
+        return Some(LocationMissCause {
+            text,
+            names_same_file_lines: true,
+            names_incomplete: false,
+        });
+    }
+
+    // #14676: a finding file that matches only ignoring ASCII case is the
+    // file the user meant. The #14416 hint names its correct spelling and
+    // lines; a disk probe here would answer differently by filesystem (on a
+    // case-insensitive one the wrong-case path "exists" with "no finding"),
+    // contradicting that hint, so the cause defers before probing. The hint
+    // speaks only for a path-shaped selector, so a bare `MAKEFILE:3` keeps
+    // its cause rather than getting neither sentence.
+    if wanted_file.contains(['/', '.'])
+        && output.findings.iter().any(|finding| {
+            super::selector::locator_paths_match_ignoring_ascii_case(
+                &crate::analysis::stable_path_text(&finding.probe.location.file),
+                selector_file,
+            )
+        })
+    {
+        return None;
+    }
+
+    // Only a plain relative path is probed on disk, so a selector can never
+    // be used to ask whether something outside the analyzed root exists.
+    // Selection also accepts a path suffix (`lib.rs` for `src/lib.rs`), which
+    // only finding files can resolve; with none matching, the miss says the
+    // text is not a path from the root rather than that no such file exists.
+    let relative = Path::new(&wanted_file);
+    let confined = relative
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !confined {
+        return None;
+    }
+    let root = output.root.display();
+    if !output.root.join(relative).is_file() {
+        return Some(LocationMissCause::plain(format!(
+            "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
+        )));
+    }
+    let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");
+    // Only a complete run supports "nothing there to report": an incomplete
+    // or partitioned run may never have analyzed the file, and a run with no
+    // producer outcome establishes neither.
+    let Some(outcome) = &output.analysis_outcome else {
+        return Some(LocationMissCause::plain(cause));
+    };
+    if !outcome.kind.is_complete() || output.partial_scope.is_some() {
+        cause.push_str(
+            ". The analysis was incomplete, so that file may not have been analyzed; `ripr check` for the same scope lists what was left out",
+        );
+        return Some(LocationMissCause {
+            text: cause,
+            names_same_file_lines: false,
+            names_incomplete: true,
+        });
+    }
+    let counts = &outcome.counts;
+    cause.push_str(&format!(
+        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
+    ));
+    Some(LocationMissCause::plain(cause))
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
@@ -518,11 +779,25 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             &explain_navigation_list_command(&navigation),
             &limitation,
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched(
-            selector,
-            &explain_navigation_list_command(&navigation),
-            None,
-        )),
+        FindingSelection::NoMatch => {
+            let mut message = no_finding_matched(
+                selector,
+                &explain_navigation_list_command(&navigation),
+                None,
+            );
+            if let Some(hint) = super::selector::location_miss_hint(
+                &findings,
+                &input.root,
+                selector,
+                // #14440: the artifact records findings, not whether
+                // its run was complete.
+                super::selector::ScopeCompleteness::Unrecorded,
+            ) {
+                message.push('.');
+                message.push_str(&hint);
+            }
+            Err(message)
+        }
     }
 }
 #[cfg(test)]
@@ -625,6 +900,52 @@ mod tests {
         Ok(())
     }
 
+    fn outcome_of_kind(
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        crate::analysis_outcome::AnalysisOutcome::new(
+            kind,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+            limitations,
+        )
+    }
+
+    #[test]
+    fn fresh_run_incomplete_reads_an_incomplete_producer_outcome() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeKind, AnalysisRecovery,
+            AnalysisRecoveryKind, AnalysisStage,
+        };
+        // #14406: an oversized or malformed diff leaves no language-run or
+        // preview record, only the producer outcome; the location-miss hint
+        // must still read that run as incomplete.
+        let mut output = crate::app::check_workspace(sample_diff_input())?;
+        output.language_runs.clear();
+        output.preview_language_advisories.clear();
+        // The sample has no Cargo.toml, so its own outcome is partial (the
+        // path-dependency graph is unavailable) and already reads incomplete.
+        assert!(fresh_run_incomplete(&output));
+        let Some(outcome) = output.analysis_outcome.as_mut() else {
+            return Err("the sample run carries a producer outcome".to_string());
+        };
+        outcome.kind = AnalysisOutcomeKind::CompleteWithFindings;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = None;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = Some(outcome_of_kind(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::DiffScopeOversized,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(AnalysisRecoveryKind::NarrowDiff, "Narrow the diff.")?,
+            )],
+        )?);
+        assert!(fresh_run_incomplete(&output));
+        Ok(())
+    }
+
     #[test]
     #[cfg(feature = "lang-typescript")]
     fn explain_finding_renders_typescript_actionable_packet_field_note() -> Result<(), String> {
@@ -702,6 +1023,258 @@ mod tests {
             message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
             "ambiguous refusal must name the second candidate: {message}"
         );
+    }
+
+    fn fixture_check_output(name: &str) -> Result<CheckOutput, String> {
+        let mut input = fixture_diff_input(name);
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        check_with_progress(input, &config, AnalysisProgressScope::Diff, None)
+    }
+
+    /// Every `file:line` the same-file clause tells the user to retry with:
+    /// the list after `is at` / `are at`, up to `. Retry with`.
+    fn advised_retry_locations(cause: &str) -> Vec<String> {
+        let Some((head, _)) = cause.split_once(". Retry with one of those locations") else {
+            return Vec::new();
+        };
+        // After `of that file: ` comes `it is at`, `they are at` or the
+        // bounded `the 5 nearest of 7 are`, then the list.
+        let scope = head
+            .split_once("of that file: ")
+            .map_or("", |(_, scope)| scope);
+        let listed = scope
+            .strip_prefix("it is at ")
+            .or_else(|| scope.strip_prefix("they are at "))
+            .or_else(|| scope.split_once(" are ").map(|(_, listed)| listed))
+            .unwrap_or("");
+        listed
+            .split(", ")
+            .filter(|location| !location.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// #14492: `collection_argument_plain` has two findings at
+    /// `src/lib.rs:3` and none elsewhere. A miss on another line of that
+    /// file must not tell the user to retry `src/lib.rs:3`, which refuses as
+    /// ambiguous; it points at probe ids instead. With a uniquely held line
+    /// added, only that line is offered for retry.
+    #[test]
+    fn same_file_retry_advice_names_only_uniquely_selectable_lines() -> Result<(), String> {
+        let mut output = fixture_check_output("collection_argument_plain")?;
+        let shared: Vec<_> = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.location.line == 3)
+            .collect();
+        if shared.len() != 2 || output.findings.len() != 2 {
+            return Err(format!(
+                "fixture must hold exactly two findings, both at line 3: {:?}",
+                output
+                    .findings
+                    .iter()
+                    .map(|finding| (&finding.id, finding.probe.location.line))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if !matches!(
+            super::super::selector::select_finding(&output.findings, "src/lib.rs:3"),
+            FindingSelection::Ambiguous(_)
+        ) {
+            return Err("src/lib.rs:3 must be ambiguous in the fixture".to_string());
+        }
+
+        let cause = location_miss_cause("src/lib.rs:1", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(
+            &cause,
+            "src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+        require_not_contains(&cause, "Retry with one of those locations")?;
+
+        // Add a uniquely held line: it is offered, the shared one is not.
+        let mut unique = output.findings[0].clone();
+        unique.id = "probe:src_lib.rs:unique_line:00000007".to_string();
+        unique.probe.id = crate::domain::ProbeId(unique.id.clone());
+        unique.probe.location.line = 7;
+        unique.canonical_gap = None;
+        output.findings.push(unique);
+        let cause = location_miss_cause("src/lib.rs:5", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.is_empty() {
+            return Err(format!("the uniquely held line must be offered: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "it is at src/lib.rs:7. Retry with one of those locations",
+        )?;
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+
+        // More uniquely held lines than the clause lists: the bounded form
+        // still offers only unique locations, and the shared line stays out.
+        for line in [20, 21, 22, 23, 24, 25] {
+            let mut extra = output.findings[0].clone();
+            extra.id = format!("probe:src_lib.rs:unique_line:000000{line}");
+            extra.probe.id = crate::domain::ProbeId(extra.id.clone());
+            extra.probe.location.line = line;
+            extra.canonical_gap = None;
+            output.findings.push(extra);
+        }
+        let cause = location_miss_cause("src/lib.rs:30", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(&cause, "the 5 nearest of 7 are ")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.len() != 5 {
+            return Err(format!("the bounded list must offer 5 locations: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )
+    }
+
+    /// #14676: a selector whose path names a finding file in the wrong
+    /// ASCII case gets no disk-probe cause. On a case-insensitive filesystem
+    /// that probe would call the file present with "no finding", against the
+    /// #14416 hint naming its findings; the deferral happens before the
+    /// probe, so this Linux test pins the same outcome every filesystem gets.
+    #[test]
+    fn wrong_case_selector_defers_the_cause_to_the_case_hint() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        if !output
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+        {
+            return Err("fixture must hold a finding in src/lib.rs".to_string());
+        }
+        for selector in ["SRC/Lib.rs:9", "Lib.rs:9"] {
+            if let Some(cause) = location_miss_cause(selector, &output) {
+                return Err(format!(
+                    "{selector}: a wrong-case finding file gets no probe cause: {}",
+                    cause.text
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: the case hint must speak"))?;
+            require_contains(&hint, "Paths match case-sensitively.")?;
+            require_contains(&hint, "Findings in src/lib.rs are on line 3")?;
+        }
+        // Control: a path matching no finding file in any case keeps its cause.
+        let cause = location_miss_cause("src/other.rs:9", &output)
+            .map(|cause| cause.text)
+            .ok_or("an unrelated path keeps its cause")?;
+        require_contains(&cause, "is not the path of a file from the analyzed root")?;
+
+        // The assembled fresh-run miss the CLI prints: the case hint alone,
+        // with no probe clause from either filesystem outcome.
+        let message = match explain_fixture("collection_argument_plain", "SRC/Lib.rs:9") {
+            Ok(rendered) => return Err(format!("SRC/Lib.rs:9 must miss: {rendered}")),
+            Err(message) => message,
+        };
+        for wanted in [
+            "no finding matched \"SRC/Lib.rs:9\"",
+            "Paths match case-sensitively.",
+            "Findings in src/lib.rs are on line 3",
+        ] {
+            if !message.contains(wanted) {
+                return Err(format!("assembled miss lacks {wanted:?}: {message}"));
+            }
+        }
+        for unwanted in [
+            "exists, but this run has no finding",
+            "is not the path of a file from the analyzed root",
+        ] {
+            if message.contains(unwanted) {
+                return Err(format!("assembled miss carries {unwanted:?}: {message}"));
+            }
+        }
+
+        // A bare wrong-case name matching an extensionless finding file gets
+        // no hint (the hint needs a path shape), so the cause must stay.
+        let mut output = output;
+        let mut makefile = output.findings[0].clone();
+        makefile.probe.location.file = output.root.join("Makefile");
+        output.findings.push(makefile);
+        let hint = super::super::selector::location_miss_hint(
+            &output.findings,
+            &output.root,
+            "MAKEFILE:3",
+            super::super::selector::ScopeCompleteness::Complete,
+        );
+        if hint.is_some() {
+            return Err(format!("a bare name gets no hint: {hint:?}"));
+        }
+        if location_miss_cause("MAKEFILE:3", &output).is_none() {
+            return Err("MAKEFILE:3 gets no hint, so it must keep a cause".to_string());
+        }
+        Ok(())
+    }
+
+    /// #14511: the cause defers a `file:line:column` selector to the hint
+    /// through the shared detector, and an all-digit extensionless path is
+    /// not mistaken for a column form.
+    #[test]
+    fn column_forms_defer_to_the_hint_and_digit_paths_keep_a_cause() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        for selector in ["src/lib.rs:3:5", "Makefile:3:5"] {
+            if location_miss_cause(selector, &output).is_some() {
+                return Err(format!(
+                    "{selector} is a column form; the hint speaks for it"
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: a column form must get a hint"))?;
+            require_contains(&hint, "Selectors are file:line; drop the column.")?;
+        }
+        for selector in ["src/2024:10", "2024:10"] {
+            if location_miss_cause(selector, &output).is_none() {
+                return Err(format!("{selector} is file:line and must keep a cause"));
+            }
+        }
+        Ok(())
     }
 
     /// #8166 Slice B: a unique canonical gap identity resolves exactly the
