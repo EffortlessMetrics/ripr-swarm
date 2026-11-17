@@ -589,6 +589,17 @@ Updated:
 ## Pending — assertion_form_parity_assert_msg (45)
 
 Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — assertion_form_parity_assert_msg (46)
+
+Reason:
 RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
 
 Command:

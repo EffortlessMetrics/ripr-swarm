@@ -51,7 +51,7 @@ specs already state.
 | `propagation_evidence_unknown` | unknown-class backfill | no | same for `propagation_unknown` | RIPR-SPEC-0411 |
 | `static_probe_unknown` | unknown-class backfill | no | same for `static_unknown` | RIPR-SPEC-0411 |
 | `fixture_opaque` | heuristic annotation | no | related test body contains `fixture`, `builder`, or `arb_` | RIPR-SPEC-0411 |
-| `async_boundary_opaque` | heuristic annotation | no | probe expression mentions `async`, `spawn`, or `await` | RIPR-SPEC-0411 |
+| `async_boundary_opaque` | heuristic annotation | no | a name segment of the probe expression is `async`, `spawn`, `await` or `asyncio` (strings and comments ignored) | RIPR-SPEC-0411 |
 | `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0411 |
 | `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0411 |
 | `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.), a continuation line of one, or a const that a top-level assertion in the same file names, without an owner function (#12040) | RIPR-SPEC-0411 |
@@ -119,6 +119,7 @@ slice does not remove tokens.
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_registry_is_exhaustive_and_unique`
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::reserved_wire_stop_reasons_have_no_production_push_sites`
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_spec_documents_every_wire_value`
+- `crates/ripr/src/analysis/classify/decision.rs::tests::async_boundary_signals_match_whole_name_segments`
 
 ## Implementation Mapping
 

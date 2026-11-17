@@ -2598,6 +2598,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
@@ -2616,6 +2619,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod cross_module_caller_tests;
 #[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]

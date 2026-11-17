@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_range_bound_two_ranges_one_line (2)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless rust_range_bound_two_ranges_one_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

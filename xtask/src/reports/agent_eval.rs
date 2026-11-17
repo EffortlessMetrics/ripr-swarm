@@ -30,6 +30,7 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
+mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -41,7 +42,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
 /// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_DIVISOR: u64 = 10;
@@ -817,7 +818,7 @@ fn verify_complete(agent_report: &str) -> bool {
 
 /// What one `cargo test` run established.
 #[derive(Debug, PartialEq)]
-enum Suite {
+pub(super) enum Suite {
     Pass,
     /// The tests compiled, ran, and at least one failed.
     TestFailed,
@@ -832,7 +833,7 @@ enum Suite {
 /// Classify a finished `cargo test` run. Only a run that compiled and
 /// reported a failing test counts as a failure; a revert that stops the
 /// crate compiling must not credit the agent's tests.
-fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
+pub(super) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
     let compile_error = output.contains("could not compile") || output.contains("error[E");
     match exit {
         Some(0) if !compile_error => Suite::Pass,
@@ -1371,10 +1372,50 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
+fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
+    match args {
+        // Absolute, so cargo runs in each trial repository resolve it the same
+        // way whatever directory they start in.
+        [_, dir] => {
+            std::path::absolute(dir).map_err(|err| format!("cannot resolve trial dir {dir}: {err}"))
+        }
+        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
+    }
+}
+
+fn write_trial_score(dir: &Path) -> Result<(), String> {
+    let score = trial::trial_score(dir)?;
+    let report_dir = crate::reports_dir();
+    let path = report_dir.join("agent-eval-trial-score.json");
+    let pretty = serde_json::to_string_pretty(&score)
+        .map_err(|err| format!("failed to render trial score: {err}"))?;
+    write_file(&path, &format!("{pretty}\n"))?;
+    println!("{pretty}");
+    println!(
+        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
+        score["caught"],
+        score["keyed_gaps"],
+        normalize_path(&path)
+    );
+    if score["complete"] == true {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent-eval trial-score: incomplete, scored as zero caught: {}",
+            score["problems"]
+        ))
+    }
+}
+
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
+        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
+        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {

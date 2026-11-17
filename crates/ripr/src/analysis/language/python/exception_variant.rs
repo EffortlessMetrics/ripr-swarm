@@ -286,8 +286,9 @@ fn credits<'a>(
 /// so a test written during the repair is not reported as closing the gap.
 ///
 /// Fails open (no fact) for any shape it cannot read exactly: a raise that is
-/// not one `raise Name(...)` line, an attribute or tuple expected class, a related
-/// test that names the new class anywhere, an assertion expecting another
+/// not one `raise Name(...)` or `raise Name` line (a dotted `mod.Exc` is never
+/// read), an expected class that is dotted, a tuple with any member other than
+/// the old class, a related test that names the new class anywhere, an assertion expecting another
 /// class, or a class hierarchy it cannot resolve within the module and the
 /// builtin exception table.
 pub(super) fn stale_raised_type_pins(
@@ -339,7 +340,10 @@ fn stale_pins(
             .iter()
             .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
         {
-            if expected_class(&assertion.text)? != old_type {
+            if !expected_classes(&assertion.text)?
+                .iter()
+                .all(|class| *class == old_type)
+            {
                 return None;
             }
             // The test module may rebind the expected name
@@ -572,8 +576,11 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     })
 }
 
-/// The class name a `raises` / `assertRaises*` call expects as its first argument.
-fn expected_class(assertion_text: &str) -> Option<String> {
+/// The class names a `raises` / `assertRaises*` call expects, read exactly: the
+/// first positional argument or the `expected_exception=` keyword (never both),
+/// each a plain name or a non-empty tuple of plain names. A dotted name, a
+/// starred or computed element, or a duplicated keyword is unreadable.
+fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     let Ok(Mod::Module(module)) =
         parse_module_result(Path::new("<expected-class>"), assertion_text.trim())
     else {
@@ -592,13 +599,33 @@ fn expected_class(assertion_text: &str) -> Option<String> {
     ) {
         return None;
     }
-    match call.args.first()? {
+    let mut keywords = call.keywords.iter().filter(|keyword| {
+        keyword
+            .arg
+            .as_ref()
+            .is_some_and(|arg| arg.as_str() == "expected_exception")
+    });
+    let expected = match (call.args.first(), keywords.next()) {
+        (Some(expected), None) => expected,
+        (None, Some(keyword)) => &keyword.value,
+        _ => return None,
+    };
+    if keywords.next().is_some() {
+        return None;
+    }
+    let plain = |expression: &Expr| match expression {
         Expr::Name(name) => Some(name.id.to_string()),
         _ => None,
+    };
+    match expected {
+        Expr::Tuple(tuple) if !tuple.elts.is_empty() => tuple.elts.iter().map(plain).collect(),
+        other => Some(vec![plain(other)?]),
     }
 }
 
-/// The class a one-line `raise Name(...)` constructs. The arguments, keywords
+/// The class a one-line `raise Name(...)` or bare `raise Name` constructs. A
+/// dotted `mod.Exc` is not read: its hierarchy is not resolvable here, so it
+/// could alias an ancestor of the other class. The arguments, keywords
 /// and cause do not change which class is raised, so a message built with an
 /// f-string or a variable still names its type (#13622 review).
 fn raised_type_name(line: &str) -> Option<String> {
@@ -613,8 +640,12 @@ fn raised_type_name(line: &str) -> Option<String> {
     if raise.cause.is_some() {
         return None;
     }
-    let Expr::Call(call) = raise.exc.as_deref()? else {
-        return None;
+    let call = match raise.exc.as_deref()? {
+        // A bare class is instantiated with no arguments; whether the name is
+        // a class at all is settled by the hierarchy resolution.
+        Expr::Name(name) => return Some(name.id.to_string()),
+        Expr::Call(call) => call,
+        _ => return None,
     };
     let Expr::Name(name) = call.func.as_ref() else {
         return None;

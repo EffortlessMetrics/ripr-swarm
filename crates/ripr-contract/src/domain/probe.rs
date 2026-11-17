@@ -572,6 +572,11 @@ pub fn exact_assertion_fact<'a>(
 /// constant here would publish the exact wording as library API.
 pub const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
 
+/// Reach-summary suffix for an owner no source, test or doc in the workspace
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording, and
+/// [`Finding::is_unreferenced_no_static_path`] reads it back (#14820).
+pub const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FindingCanonicalGap {
     pub id: String,
@@ -1124,6 +1129,23 @@ impl Finding {
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
         self.source_currentness.permits_candidate_action()
+    }
+
+    /// Whether the producer established that nothing in the workspace calls
+    /// the changed owner (#14820): a candidate-current `no_static_path`
+    /// finding with no static limit, reach ruled out, and the RIPR-SPEC-0219
+    /// [`UNREFERENCED_IN_WORKSPACE`] marker, which the producer sets only
+    /// when the owner's name occurs nowhere outside its own definition in a
+    /// fully indexed workspace and the owner is not an entry point. That is
+    /// a test-side gap (write a test that calls it), not an analysis limit.
+    /// Any other `no_static_path` finding, including an owner some non-test
+    /// code calls on a path ripr cannot trace, stays fail-closed.
+    pub fn is_unreferenced_no_static_path(&self) -> bool {
+        self.is_candidate_actionable()
+            && self.class == ExposureClass::NoStaticPath
+            && self.static_limit_kind.is_none()
+            && self.ripr.reach.state == crate::domain::StageState::No
+            && self.ripr.reach.summary.ends_with(UNREFERENCED_IN_WORKSPACE)
     }
 
     /// Whether the only thing between this finding and a test path is a proof

@@ -1601,7 +1601,17 @@ stubs), and `repair` (`seam_id` or `canonical_gap_id`,
 `ready`) only for the finding the pipeline selected for repair, by the same gates
 the human screen applies (the gap-bound route wins over the seam route, and a
 static-limited finding gets none). A blocked start names `uncommitted_file` or
-`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+`uncommitted_files` and carries no `command`: a seam route names
+`uncommitted_file` for a held inline test target and `uncommitted_files` for the
+uncommitted production files `ripr repair` refuses to start over (#13636), and a
+gap route names `uncommitted_files`. Both routes spell the files relative to the
+analyzed root (files outside it as `../...`). The seam route lists the dirty files
+the start's early preflight refuses; a `ready` seam route can still be refused by
+the start's full check (for example a dirty production file carrying an inline
+test module), which names the files itself.
+When the check did not analyze those files (a committed-only run, or source or
+test changes it left unanalyzed), neither route prints a commit step and the
+route is refused instead. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it. The schema
@@ -1944,6 +1954,11 @@ classes are:
   `missing_required` with the flag to add as `token`; where the refusal
   offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
   token is the first one it names (#14877);
+- two given flags that cannot be used together (for example `ripr context
+  --json --base main --diff a.diff`, or `ripr rerun --json --changed-test
+  tests/a.rs --gap-ledger ledger.json`), as `conflicting_flags` with one of
+  the conflicting flags as `token`; outside `check`, whose conflicts keep
+  their own check refusal (#14925);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1956,16 +1971,16 @@ Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: required-flag refusals not yet typed,
 including those whose wording #14076 is revising (`calibrate cargo-mutants`,
 `zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
-`pr-review front-panel`) and those whose named flag would conflict with one
-already given (`rerun --changed-test` with `--gap-ledger`), a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
+`pr-review front-panel`), a missing or malformed value rejected by a
+command's own parser rather than the shared readers (for example
+`impacted-evidence`), conflicting flags not yet typed, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
-`invalid_value`,
+`conflicting_flags`, `invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
@@ -4002,8 +4017,18 @@ removed before the out-of-scope test-file partition; the partition therefore
 cannot reduce it. The fixed `owner_mutants_skip` reason holds while
 the editor supplies no suppression policy (#14610).
 
+The MCP adapter consumes the same set (#14138): `ripr mcp --stdio` serves no
+canonical item for a finding id in `CheckOutput::withheld_finding_ids`. The gap
+list and `ripr://snapshot/{snapshot_id}` resource disclose
+`owner_opt_outs: {"withheld": N, "reason": "owner_mutants_skip"}` (plus
+`"all_withheld": true` and `clean: false` when no item is left), the refresh and
+status snapshot summaries carry the same object, and a gap, limitation,
+repair-card or repair-start read of a withheld id refuses with the typed
+`owner_opt_out` failure (`data.reason: "owner_mutants_skip"`). See
+`docs/interop/mcp.md`.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
+`ripr explain`; and the repo-scope formats
 (`repo-*`), which do not read the attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
@@ -10995,6 +11020,16 @@ Field contract:
   `gate evaluate` reads such records as non-blocking. Seam records carry the
   optional `canonical_gap_id` when the seam has one, so a suppressed gap that
   moved still matches its baseline entry instead of reading as resolved.
+  A gap-class seam on a changed line or in a changed owner that selection
+  withholds as a static limitation is itemized here with `seam_id`, `file`,
+  `line`, its grip `class` (`ungripped`, `weakly_gripped`, ...; the vocabulary
+  gate policy reads), `reason = "static_limitation"` and a `message` naming the
+  limitation category in exposure words (for example `no_static_path`) (#13892).
+  `ripr check` can list such a seam (for example as `no_static_path` when no
+  test calls the changed owner), so it is disclosed instead of appearing only
+  in `warnings[]` and `omitted_by_policy`. The record is not a repair card and
+  does not mean the gap is resolved; `ripr gate evaluate --pr-guidance`
+  evaluates it as `suppressed` under that reason and never blocks on it.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 
@@ -11983,7 +12018,9 @@ Field contract:
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
-  gate candidates, so a nonzero or malformed value adds a gate warning and the
+  blocking candidates (the changed-line or changed-owner gap seams among them
+  are itemized in `suppressed[]` and evaluated as `suppressed`, #13892), so a
+  nonzero or malformed value adds a gate warning and the
   status is never `pass`; seams omitted because they are configured off or are
   not gaps do not count. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
@@ -16519,6 +16556,12 @@ Field notes:
   status.
 - `static_movement` is copied from the receipt and remains a static
   before/after artifact relationship.
+- A receipt that supplies the movement but does not record the `advisory`
+  status (it is `invalid` or `incomplete`, or carries no recognized status)
+  keeps `status` at `incomplete`. `static_movement` is still copied, and
+  `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
+  Markdown `Receipt:` line say that the recorded movement is not review
+  evidence. The wording is fixed per case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.

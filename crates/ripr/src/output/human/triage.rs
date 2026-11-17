@@ -680,7 +680,20 @@ pub(crate) fn render_human_triage(
                 Some(PrintedRepairRoute::Seam(route)) => {
                     repair_printed = true;
                     let command = navigation.repair_command(&route.seam_id);
-                    if let Some(file) = route.uncommitted_target.as_deref() {
+                    if let Some(commit) = navigation.repair_prerequisite(route) {
+                        // #13636: `ripr repair` refuses while tracked
+                        // production files differ from HEAD; name the
+                        // commit first, in the gap-bound route's words.
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
+                    } else if let Some(file) = route.uncommitted_target.as_deref() {
                         // `ripr repair` would refuse this start: its
                         // inline test module target begins from the
                         // committed file. State the requirement instead
@@ -1079,11 +1092,7 @@ fn grouped_hidden_row(
     if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
         return None;
     }
-    let lines = if first_line == last_line {
-        first_line.to_string()
-    } else {
-        format!("{first_line}-{last_line}")
-    };
+    let lines = grouped_line_text(members.iter().map(|f| f.probe.location.line));
     let currentness = if label_currentness {
         format!(", {}", hidden_bullet_currentness(first))
     } else {
@@ -1110,6 +1119,40 @@ fn grouped_hidden_row(
         kinds.join(", "),
         hidden_finding_reason(first)
     ))
+}
+
+/// Most separate line runs a grouped row lists before it falls back to the
+/// span and a line count (#14682).
+const GROUPED_LINE_RUNS_LISTED: usize = 3;
+
+/// The lines a grouped `Hidden:` row names: each run of consecutive lines as
+/// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
+/// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
+/// the row keeps the span and says how many lines it covers:
+/// `1078-1241 (12 lines)`.
+fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
+    let distinct: std::collections::BTreeSet<usize> = lines.collect();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in &distinct {
+        match runs.last_mut() {
+            Some((_, end)) if end.checked_add(1) == Some(*line) => *end = *line,
+            _ => runs.push((*line, *line)),
+        }
+    }
+    let run_text = |(start, end): &(usize, usize)| {
+        if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        }
+    };
+    if runs.len() <= GROUPED_LINE_RUNS_LISTED {
+        return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
+    }
+    match (distinct.first(), distinct.last()) {
+        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        _ => String::new(),
+    }
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -1333,7 +1376,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
-/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
@@ -1345,6 +1388,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
         )
     ) && !matches!(
@@ -2303,24 +2347,46 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
 /// level with the unknown classes, ahead of `exposed`.
 const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
 
+/// The `Start here` sort key, lowest first. Fields compare in declaration
+/// order (the derived `Ord`), so the order of the fields is the ranking
+/// (RIPR-SPEC-0122 "Start here" steps 1-6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TriageRank<'a> {
+    /// #9346: changed-file role leads the ranking. The pair (file role,
+    /// verdict decisiveness) defines the demotion this fixes, an unknown
+    /// verdict on an evidence-role file, while verdict order within one role
+    /// keeps the keys below, so a production unknown still leads a
+    /// production exposed finding and `no_actionable_gap` keeps meaning
+    /// only-exposed-selected.
+    role: u8,
+    /// 1 when a decisive verdict on the same behavior shadows this unknown.
+    shadowed: u8,
+    /// 1 for a preview-language finding.
+    preview: u8,
+    /// 0 for a non-exposed finding with a printable repair route, the shared
+    /// static-limited tier, or the class rank.
+    repair: u8,
+    no_canonical_gap: u8,
+    /// 1 unless a related test is linked by more than a name token (#14734).
+    no_linked_oracle_test: u8,
+    no_missing_evidence: u8,
+    /// Negated confidence percentage, so higher confidence sorts first.
+    negated_confidence: i32,
+    /// #14266: without this key two otherwise equal candidates were ordered
+    /// by file path: an unknown in `analysis/` led a `reachable_unrevealed`
+    /// gap in `provider_contract/`. The class order breaks that tie before
+    /// the path does.
+    class: u8,
+    path: &'a std::path::Path,
+    line: usize,
+}
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    i32,
-    u8,
-    &'a std::path::Path,
-    usize,
-) {
+) -> TriageRank<'a> {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2362,31 +2428,19 @@ fn triage_rank<'a>(
                 .iter()
                 .any(|decisive| decisive_shadows_unknown(decisive, finding)),
     );
-    (
-        // #9346: changed-file role leads the ranking. The pair (file
-        // role, verdict decisiveness) defines the demotion this fixes —
-        // an unknown verdict on an evidence-role file — while verdict
-        // order within one role keeps its existing keys below, so a
-        // production unknown still leads a production exposed finding
-        // and `no_actionable_gap` keeps meaning only-exposed-selected.
-        role_rank,
-        shadowed_rank,
-        preview_rank,
-        repair_rank,
-        u8::from(finding.canonical_gap.is_none()),
-        u8::from(!has_linked_oracle_test(finding)),
-        u8::from(finding.missing.is_empty()),
-        -(finding.confidence * 100.0) as i32,
-        // #14266: a repair route zeroes `repair_rank` for every routed
-        // finding, and every stable finding with a next step counts as
-        // routed, so without this key two otherwise equal candidates were
-        // ordered by file path: an unknown in `analysis/` led a
-        // `reachable_unrevealed` gap in `provider_contract/`. The class
-        // order breaks that tie before the path does.
-        class_rank,
-        finding.probe.location.file.as_path(),
-        finding.probe.location.line,
-    )
+    TriageRank {
+        role: role_rank,
+        shadowed: shadowed_rank,
+        preview: preview_rank,
+        repair: repair_rank,
+        no_canonical_gap: u8::from(finding.canonical_gap.is_none()),
+        no_linked_oracle_test: u8::from(!has_linked_oracle_test(finding)),
+        no_missing_evidence: u8::from(finding.missing.is_empty()),
+        negated_confidence: -(finding.confidence * 100.0) as i32,
+        class: class_rank,
+        path: finding.probe.location.file.as_path(),
+        line: finding.probe.location.line,
+    }
 }
 
 /// Whether `finding` has a decision-set related test linked by more than a
@@ -2517,17 +2571,23 @@ pub(crate) fn finding_routes_json(
         }
         Some(PrintedRepairRoute::Seam(route)) => {
             repair.insert("seam_id".to_string(), route.seam_id.clone().into());
-            match &route.uncommitted_target {
-                None => {
-                    repair.insert("status".to_string(), "ready".into());
-                    repair.insert(
-                        "command".to_string(),
-                        navigation.repair_command(&route.seam_id).into(),
-                    );
-                }
-                Some(file) => {
-                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+            if route.uncommitted_target.is_none() && route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.repair_command(&route.seam_id).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                if let Some(file) = &route.uncommitted_target {
                     repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                // #13636: the dirty production premise the start refuses.
+                if !route.uncommitted_files.is_empty() {
+                    repair.insert(
+                        "uncommitted_files".to_string(),
+                        route.uncommitted_files.clone().into(),
+                    );
                 }
             }
         }
@@ -2659,6 +2719,28 @@ fn push_hidden_row(
 
 #[cfg(test)]
 mod tests {
+
+    /// #14682: a grouped row names the lines its members are on. Gaps show,
+    /// runs collapse, and beyond three runs the span carries a line count.
+    #[test]
+    fn grouped_line_text_names_runs_not_a_covering_range() {
+        for (lines, expected) in [
+            (vec![3, 5], "3, 5"),
+            (vec![5, 3, 5], "3, 5"),
+            (vec![10, 11, 12], "10-12"),
+            (vec![7, 7], "7"),
+            (vec![10, 11, 12, 15], "10-12, 15"),
+            (vec![1, 3, 5], "1, 3, 5"),
+            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
+            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+        ] {
+            assert_eq!(
+                grouped_line_text(lines.clone().into_iter()),
+                expected,
+                "{lines:?}"
+            );
+        }
+    }
 
     #[test]
     fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {

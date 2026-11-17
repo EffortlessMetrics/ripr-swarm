@@ -2,7 +2,6 @@ use super::*;
 use crate::testing::fixture_workspace::{HermeticGateFixture, hermetic_gate_fixture_root};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
 /// so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -17,12 +16,7 @@ fn ignore_remove_dir_all(path: impl AsRef<Path>) {
 /// path) is byte-indistinguishable from a fresh one.
 #[test]
 fn gate_decision_records_subject_identity_of_build_and_inputs() -> Result<(), String> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system time before unix epoch: {err}"))?
-        .as_nanos();
-    let root =
-        std::env::temp_dir().join(format!("ripr-gate-subject-{}-{stamp}", std::process::id()));
+    let root = temp_dir("gate-subject")?;
     fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
     let guidance_path = root.join("comments.json");
     let write_guidance = |receipt: Value| -> Result<(), String> {
@@ -5364,15 +5358,84 @@ fn repo_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// A unique per-process, per-allocation scratch directory.
+///
+/// The name must not come from the clock: two nextest processes started on the
+/// same tick would get the same directory, `create_dir_all` would silently
+/// reuse it, and one test would read the other's inputs (#14937). Allocate a
+/// process-wide sequence instead, so uniqueness does not depend on clock
+/// resolution.
 fn temp_dir(name: &str) -> Result<PathBuf, String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+    let allocation = ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system time before unix epoch: {err}"))?
-        .as_nanos();
-    path.push(format!("ripr-{name}-{stamp}"));
+    path.push(format!("ripr-{name}-{}-{allocation}", std::process::id()));
     fs::create_dir_all(&path).map_err(|err| format!("create temp dir failed: {err}"))?;
     Ok(path)
+}
+
+/// #14937: the e2e project root must be unique per process and per allocation,
+/// never named from the clock. Two nextest processes on the same tick used to
+/// share one directory and read each other's `comments.json`, which failed
+/// `e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated` with another test's
+/// scope. This asserts the property the name has to carry, not one run's luck.
+#[test]
+fn temp_dir_allocations_are_unique_per_process_and_allocation() -> Result<(), String> {
+    let mut paths = Vec::new();
+    for _ in 0..256 {
+        paths.push(temp_dir("gate-e2e-9301")?);
+    }
+    let shared = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let sink = Arc::clone(&shared);
+        workers.push(std::thread::spawn(move || -> Result<(), String> {
+            for _ in 0..16 {
+                let path = temp_dir("gate-e2e-9301")?;
+                sink.lock().map_err(|err| err.to_string())?.push(path);
+            }
+            Ok(())
+        }));
+    }
+    for worker in workers {
+        worker.join().map_err(|panic| {
+            // Keep what the allocator thread panicked on: a silent panic here
+            // is the failure this test exists to catch, so the detail is the
+            // diagnostic. A non-string payload keeps a named fallback.
+            let detail = panic
+                .downcast_ref::<&str>()
+                .map(|detail| (*detail).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            format!("temp dir allocator thread panicked: {detail}")
+        })??;
+    }
+    paths.extend(
+        shared
+            .lock()
+            .map_err(|err| err.to_string())?
+            .iter()
+            .cloned(),
+    );
+
+    let mut unique = paths.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(paths.len(), unique.len(), "two allocations shared one path");
+    let process = std::process::id().to_string();
+    for path in &paths {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        assert!(
+            name.starts_with("ripr-gate-e2e-9301-") && name.contains(&process),
+            "the allocation must name its process and sequence, not a clock tick: {name}"
+        );
+        ignore_remove_dir_all(path);
+    }
+    Ok(())
 }
 
 /// #3742 class (e): a leaked bare `RIPR_UPDATE_FIXTURES` (present but
@@ -5845,6 +5908,7 @@ fn e2e_review_comments_doc_with_outcome(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        withheld_changed_gaps: Vec::new(),
         omitted_static_limited: 0,
     };
     let config = crate::config::RiprConfig::default();

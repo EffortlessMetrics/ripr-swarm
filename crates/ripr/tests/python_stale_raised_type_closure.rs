@@ -313,6 +313,49 @@ fn stale_old_type_test_is_refused_when_the_raise_message_is_an_f_string() -> Res
     )
 }
 
+/// #13753: the `expected_exception=` keyword and a tuple of the old class are
+/// the same stale old-type pin; a tuple that also names the new class or a
+/// broader class still passes against the new raise and closes.
+#[test]
+fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_type()
+-> Result<(), String> {
+    for (label, expected, refused) in [
+        ("keyword", "expected_exception=ValueError", true),
+        ("tuple", "(ValueError, ValueError)", true),
+        ("tuple-new", "(ValueError, TypeError)", false),
+        ("tuple-broad", "(ValueError, Exception)", false),
+    ] {
+        let (_guard, root) = repository(label)?;
+        let attempt = start_attempt(&root)?;
+        commit_test(
+            &root,
+            &format!(
+                "def test_negative():\n    with pytest.raises({expected}, match=\"negative quantity\"):\n        validate_qty(-1)\n"
+            ),
+            label,
+        )?;
+        let after = continue_attempt(&root, &attempt)?;
+        let text = combined(&after);
+        let stale = text.contains("pins the old raised type `ValueError`");
+        if refused != (after.status.code() == Some(3) && stale) {
+            return Err(format!(
+                "{label}: refused={refused}, got {:?}:\n{text}",
+                after.status.code()
+            ));
+        }
+        if !refused {
+            if !after.status.success() || stale {
+                return Err(format!(
+                    "{label}: must close, got {:?}:\n{text}",
+                    after.status.code()
+                ));
+            }
+            need(&text, "closed: weakly_exposed -> exposed", label)?;
+        }
+    }
+    Ok(())
+}
+
 /// Review follow-up: `excinfo.type is New` under a broad `pytest.raises` names
 /// the new class, so it is never refused as a stale old-type pin.
 #[test]

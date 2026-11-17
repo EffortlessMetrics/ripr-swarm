@@ -2,7 +2,7 @@
 //!
 //! Draft, Ready, push and ordinary-label activity must not create the required
 //! `Ripr Rust Small Result` check. An explicit `merge-ready` label event is the
-//! only pull-request admission event; main and explicit manual authorities remain separate. The PR
+//! only pull-request admission event; queue and explicit manual authorities remain separate. The PR
 //! staleness watchdog is alert-only: it must never qualify a Ready head by
 //! dispatching the protected workflow on its branch (#4986).
 
@@ -16,15 +16,13 @@ const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "    types: [labeled]",
     "  merge_group:",
     "    types: [checks_requested]",
-    "  push:",
-    "    branches: [main, master]",
     "  workflow_dispatch:",
 ];
 const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
 const EXPECTED_CANCEL_IN_PROGRESS: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
-/// The only name expression that can post the required context: main/manual
+/// The only name expression that can post the required context: queue/manual
 /// runs and an explicit merge-ready request. Every other label event posts a
 /// different name; a skipped job would report success for a static name.
 const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
@@ -142,7 +140,7 @@ fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
     assert_eq!(
         event_declarations(&source)?,
         EXPECTED_EVENT_DECLARATIONS,
-        "protected workflow must expose only the label-request PR, main push, and manual authorities",
+        "protected workflow must expose only the retained label request, native queue, and manual authorities",
     );
     assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
     assert!(source.contains(EXPECTED_CANCEL_IN_PROGRESS));
@@ -186,7 +184,7 @@ fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
     let source = workflow_source()?;
     // A static required name would be skipped-as-success on ordinary labels.
     let changed = source.replace(
-        &format!("  result:\n    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit\n    # merge-ready request. Any other pull_request label event is a nonrequest\n    # under a different name so the required context is never satisfied by it.\n    name: {EXPECTED_RESULT_NAME}"),
+        &format!("  result:\n    # Static `Ripr Rust Small Result` only for queue/manual runs and an explicit\n    # merge-ready request. Any other pull_request label event is a nonrequest\n    # under a different name so the required context is never satisfied by it.\n    name: {EXPECTED_RESULT_NAME}"),
         "  result:\n    name: Ripr Rust Small Result",
     );
     assert_ne!(changed, source, "result-name mutation must engage");
