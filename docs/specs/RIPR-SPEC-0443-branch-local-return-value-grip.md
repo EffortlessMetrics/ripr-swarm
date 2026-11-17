@@ -261,6 +261,11 @@ answers no credit.
   the primitive it spells. The scan is deliberately coarse: a `use` that
   only names a primitive without rebinding it (`use core::primitive::u8 as
   Byte;`) also refuses, which only withholds credit.
+- A remainder by `-1` does not fold: `MIN % -1` panics in the operand's own
+  width (in release too), so a call with those arguments never reaches the
+  tail, though the fold's wider arithmetic would read 0.
+- A test binding that the test writes again after the call (`got %= ..`, or
+  any compound assignment) is not a bare pin of the call's value.
 
 The admission is the bool field pin's: the test is not `should_panic`, the
 assertion macros are the standard ones, and no `use` rebinds the owner's

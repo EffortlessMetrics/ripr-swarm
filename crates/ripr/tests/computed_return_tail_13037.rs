@@ -371,3 +371,46 @@ fn a_release_elided_assertion_or_a_glob_import_is_not_credited() -> Result<(), S
     );
     Ok(())
 }
+
+#[test]
+fn a_remainder_by_a_minus_one_argument_is_not_folded() -> Result<(), String> {
+    // #14950 review: `i8::MIN % -1` panics in Rust even with overflow checks
+    // off, so this call never reaches the tail. The fold works in `i128`,
+    // where the same remainder is 0, so it refuses every `-1` divisor.
+    let source = AFTER
+        .replace("weight_g: u32,", "weight_g: i8, divisor: i8,")
+        .replace("if weight_g <= 500 {", "if weight_g % divisor == 0 {");
+    let class = class_of(
+        &source,
+        "assert_eq!(shipping_cost(-128, -1, 10, true), 800);",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed);
+    // Control: a divisor the remainder does not overflow on is credited.
+    assert_eq!(
+        class_of(&source, "assert_eq!(shipping_cost(-14, 7, 10, true), 800);")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_compound_assignment_to_the_compared_binding_is_not_a_bare_pin() -> Result<(), String> {
+    // #14950 review: a later `got op= ..` changes the value the assertion
+    // compares, so the binding's initializer is not what the test pins.
+    for op in ["%= 1600", "|= 0", "&= 0x320", "^= 0", "<<= 0", ">>= 0"] {
+        let body = format!(
+            "let mut got = shipping_cost(100, 10, true);\n        got {op};\n        assert_eq!(got, 800);"
+        );
+        let class = class_of(AFTER, &body)?;
+        assert_ne!(class, ExposureClass::Exposed, "{op}");
+    }
+    // Control: the same binding without a write is credited.
+    assert_eq!(
+        class_of(
+            AFTER,
+            "let got = shipping_cost(100, 10, true);\n        assert_eq!(got, 800);"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
