@@ -168,9 +168,11 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   8,731 estimated tokens over the original six scenarios; with it, 2,594 for
   the same answers (#14536). `baseline.json` records the current figure. A
   row with `(+N more)` or a clipped `…` value is followed too.
-- `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
-  crediting the sibling field's assertion; the intended bool-field assertion
-  alone does not yet earn credit (#14701).
+- `struct_field` closes since #14726: #14701 credits the bool-field
+  assertion for the `field_construction` seam, and the predicate seam now reads
+  the added `flag == "--verbose"` arm as its boundary, pairing only with an
+  assertion that reads the `verbose` field. Before that, #14565 had stopped
+  crediting the sibling field's assertion and the loop read `false`.
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 25 times the agent loop to reach the same answers (82,254

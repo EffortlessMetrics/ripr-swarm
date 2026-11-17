@@ -927,7 +927,11 @@ probe families, so a shadowed `assert!` or one after `return` pins nothing.
 
 Its kind stays `relational_check`. Only its strength relative to the probe
 rises to strong, as the RIPR-SPEC-0197 bool owner pin's does. The same pin
-satisfies the predicate's same-test boundary pairing. The usual caps still
+satisfies the predicate's same-test boundary pairing. That pairing, for a
+predicate on the changed bool field, refuses an assertion that reads another
+field of the owner's record (`assert_eq!(opts("--verbose").retries, 3)`):
+feeding the boundary input is not enough when the assertion never reads the
+field the predicate sets (#14726). The usual caps still
 apply: self-computed expected values, and #14206 masking. A condition that
 compares (`opts(10).big == true`), combines (`&&`, `||`), negates twice,
 calls a method, or reads the field through another field or a helper stays

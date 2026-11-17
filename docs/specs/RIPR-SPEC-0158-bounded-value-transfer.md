@@ -190,7 +190,16 @@ exercised boundary from a missing one.
   (including a continuation line that starts with `&&` or `||`), a block
   comment, or text the scan cannot balance, with or without a connective,
   give no boundary reading, so the stage falls back to its existing unknown
-  or connective-change reason. A `//` line comment ends the scanned text.
+  or connective-change reason. One two-comparison shape is read (#14726): a
+  bare equality `x == A` edited to `x == A || x == B` (either order), where
+  the pre-edit text is that one comparison kept verbatim, the connective is a
+  single top-level `||`, the added operand is a bare `==` on the same left
+  side, and `A` and `B` are literals of different value. The reading is the
+  added `x == B`: an input equal to `B` makes it true and the kept `x == A`
+  false, so the predicate flips. An added `&&` conjunct, a third operand, a
+  `!=` or ordered comparison, another left side, a non-literal side, or a
+  second literal equal in value to the first (`5` and `05`) keeps no reading.
+  A `//` line comment ends the scanned text.
   A balanced predicate with no top-level connective and no block comment is
   read whole, as before. A
   single-comparison compound is newly readable, so a test input at that

@@ -2,9 +2,9 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
     ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
-    OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
-    RecordFieldLine, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_compares_hand_built_field,
+    OwnerInputs, OwnerPinSyntax, OwnerReturnPin, OwnerValueFlow, ProbeContext,
+    PropagationWitnessV1, RecordFieldLine, ReturnOracleAdmission, TransitiveReachIndex,
+    WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
     assertion_pins_pushed_collection_count, body_contains_owner_call, bool_field_assertion,
     call_parameter_names, call_text_may_call_free_function, callee_is_unique,
@@ -16,7 +16,7 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_returns_record,
+    oracle_crediting_relations, outer_imported_names, owner_field_value_flow, owner_returns_record,
     owner_touches_field_only_at, package_prefix, parameter_rebound, predicate_initialized_field,
     propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
     reach_evidence, returned_array_construction_plain, reveal_outcome,
@@ -1741,7 +1741,25 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
-                &assertion_admitted,
+                // #14726: a predicate that sets one record field pairs only
+                // with an assertion that reads that field or the whole
+                // record, as reveal observes it (#14562).
+                // `assert_eq!(opts("--verbose").retries, 3)` feeds the
+                // boundary input but reads another field, so it is no
+                // discriminating oracle for the predicate.
+                &|test, assertion| {
+                    assertion_admitted(test, assertion)
+                        && !pairing_bool_field.zip(context.owner_fn).is_some_and(
+                            |(field, owner)| {
+                                owner_field_value_flow(
+                                    test,
+                                    &assertion.text,
+                                    &owner.name,
+                                    Some(field),
+                                ) == OwnerValueFlow::Masked
+                            },
+                        )
+                },
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
                 &|test, assertion| {

@@ -8711,41 +8711,46 @@ fn replaced_equality_constant(
         .flatten()
 }
 
-fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
-    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
-        let text = text.trim();
-        let text = text.strip_prefix("if ").unwrap_or(text);
-        let text = text.strip_suffix('{').unwrap_or(text).trim();
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
-        if masked.len() != text.len()
-            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
-                .iter()
-                .any(|token| masked.contains(token))
-        {
-            return None;
-        }
-        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
-            (1, 0) => "==",
-            (0, 1) => "!=",
-            _ => return None,
-        };
-        let at = masked.find(operator)?;
-        let left = text.get(..at)?;
-        let right = text.get(at + operator.len()..)?.trim();
-        let literal = !right.is_empty()
-            && if right.starts_with('"') || right.starts_with('\'') {
-                super::match_transfer::is_single_literal(right)
-            } else {
-                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-            };
-        (literal && !left.trim().is_empty()).then(|| {
-            (
-                left.split_whitespace().collect::<String>(),
-                operator,
-                right.to_string(),
-            )
-        })
+/// A bare `left == literal` or `left != literal` comparison (whitespace-free
+/// left side, operator, literal text): one operator, no connective, and a
+/// right side that is a single string or char literal or a digits-only
+/// integer. `None` for any other shape.
+fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+    let text = text.trim();
+    let text = text.strip_prefix("if ").unwrap_or(text);
+    let text = text.strip_suffix('{').unwrap_or(text).trim();
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    if masked.len() != text.len()
+        || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+            .iter()
+            .any(|token| masked.contains(token))
+    {
+        return None;
     }
+    let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+        (1, 0) => "==",
+        (0, 1) => "!=",
+        _ => return None,
+    };
+    let at = masked.find(operator)?;
+    let left = text.get(..at)?;
+    let right = text.get(at + operator.len()..)?.trim();
+    let literal = !right.is_empty()
+        && if right.starts_with('"') || right.starts_with('\'') {
+            super::match_transfer::is_single_literal(right)
+        } else {
+            right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        };
+    (literal && !left.trim().is_empty()).then(|| {
+        (
+            left.split_whitespace().collect::<String>(),
+            operator,
+            right.to_string(),
+        )
+    })
+}
+
+fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
     let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
     let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
     if before_left != after_left
@@ -8828,6 +8833,11 @@ pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
     if operands.len() == 1 {
         return Some(expression);
     }
+    if let Some(added) =
+        before.and_then(|before| added_equality_disjunct(expression, &operands, before))
+    {
+        return Some(added);
+    }
     let mut comparisons = operands
         .iter()
         .copied()
@@ -8858,6 +8868,58 @@ pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
         }
     }
     Some(comparison)
+}
+
+/// #14726: the one comparison an edit added as a new `||` disjunct of a bare
+/// equality, `x == A` to `x == A || x == B` (either order). An input equal to
+/// `B` makes the added disjunct true and the kept one false, because `A` and
+/// `B` are different literal values, so that input flips the predicate and
+/// `x == B` is its boundary reading. Every part is fail-closed: the
+/// pre-edit text must be one bare `==` comparison kept verbatim as one
+/// operand, the connective must be a single top-level `||`, the added
+/// operand must be a bare `==` on the same left side, and both right sides
+/// must be literals whose values differ. Any other shape, including an added
+/// `&&` conjunct, a `!=` or ordered comparison, a third operand, or a second
+/// literal equal in value to the first (`5` and `05`), keeps the
+/// two-comparison refusal (RIPR-SPEC-0158).
+fn added_equality_disjunct<'a>(
+    expression: &'a str,
+    operands: &[&'a str],
+    before: &str,
+) -> Option<&'a str> {
+    let [first, second] = operands else {
+        return None;
+    };
+    let base = expression.as_ptr() as usize;
+    let gap_start = first.as_ptr() as usize - base + first.len();
+    let gap_end = second.as_ptr() as usize - base;
+    if expression.get(gap_start..gap_end)?.trim() != "||" {
+        return None;
+    }
+    if top_level_connective_operands(before)?.len() != 1 {
+        return None;
+    }
+    let (kept_left, kept_operator, kept_literal) = bare_equality(before)?;
+    let added = match (bare_equality(first), bare_equality(second)) {
+        (Some(one), Some(two))
+            if one == (kept_left.clone(), kept_operator, kept_literal.clone()) =>
+        {
+            (*second, two)
+        }
+        (Some(one), Some(two))
+            if two == (kept_left.clone(), kept_operator, kept_literal.clone()) =>
+        {
+            (*first, one)
+        }
+        _ => return None,
+    };
+    let (added_text, (added_left, added_operator, added_literal)) = added;
+    if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
+        return None;
+    }
+    let kept_value = literal_operand_value(&kept_literal)?;
+    let added_value = literal_operand_value(&added_literal)?;
+    (!same_literal_value(&kept_value, &added_value)).then_some(added_text)
 }
 
 /// `text` with every string and char literal body byte replaced by `x`, so a
@@ -10304,6 +10366,55 @@ mod rebinding_scan;
 
 #[cfg(test)]
 mod tests {
+    /// #14726: `x == A` to `x == A || x == B` reads the added `x == B`; every
+    /// other two-comparison shape keeps no boundary reading (RIPR-SPEC-0158).
+    #[test]
+    fn an_added_equality_disjunct_is_the_boundary_reading() {
+        use super::changed_comparison_conjunct as conjunct;
+        let kept = Some("flag == \"-v\"");
+        assert_eq!(
+            conjunct("flag == \"-v\" || flag == \"--verbose\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        // Either order, chars and integers.
+        assert_eq!(
+            conjunct("flag == \"--verbose\" || flag == \"-v\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        assert_eq!(
+            conjunct("c == 'a' || c == 'b'", Some("c == 'a'")),
+            Some("c == 'b'")
+        );
+        assert_eq!(conjunct("n == 1 || n == 2", Some("n == 1")), Some("n == 2"));
+        for (expression, before) in [
+            // No pre-edit text, or a pre-edit text that is not kept verbatim.
+            ("flag == \"-v\" || flag == \"--verbose\"", None),
+            ("flag == \"-x\" || flag == \"--verbose\"", kept),
+            // `&&`, a third operand, and a mixed connective.
+            ("flag == \"-v\" && flag == \"--verbose\"", kept),
+            (
+                "flag == \"-v\" || flag == \"-q\" || flag == \"--verbose\"",
+                kept,
+            ),
+            ("flag == \"-v\" || flag == \"--verbose\" && on", kept),
+            // Another left side, a non-equality, or a non-literal right side.
+            ("flag == \"-v\" || other == \"--verbose\"", kept),
+            ("flag == \"-v\" || flag != \"--verbose\"", kept),
+            ("flag == \"-v\" || flag == VERBOSE", kept),
+            (
+                "flag != \"-v\" || flag != \"--verbose\"",
+                Some("flag != \"-v\""),
+            ),
+            // The same literal value spelled again flips nothing.
+            ("n == 5 || n == 05", Some("n == 5")),
+            ("flag == \"-v\" || flag == \"-v\"", kept),
+            // A pre-edit text that already held two comparisons.
+            ("a == 1 || a == 2 || a == 3", Some("a == 1 || a == 2")),
+        ] {
+            assert_eq!(conjunct(expression, before), None, "{expression}");
+        }
+    }
+
     #[test]
     fn a_compound_predicate_reads_only_its_one_changed_comparison() {
         use super::changed_comparison_conjunct as conjunct;
