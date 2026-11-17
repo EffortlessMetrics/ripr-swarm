@@ -305,6 +305,17 @@ fn name_segments(token: &str) -> Vec<&str> {
     segments
 }
 
+/// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
+/// inline const assertion block in `owner`'s body, whose first body line is
+/// the owner's `start_line`.
+fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
+    line.checked_sub(owner.start_line).is_some_and(|offset| {
+        owner.body.contains("const")
+            && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
+                .contains(&(offset + 1))
+    })
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -318,10 +329,12 @@ pub(in crate::analysis) fn stop_reasons(
             reasons.push(StopReason::NoChangedRustLine);
         }
     } else if probe.family == ProbeFamily::StaticUnknown
-        && crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+        && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || owner_fn.is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line)))
     {
         // #14181: `const { assert!(N <= 249) };` inside a function is checked
-        // when the function is built; a violating edit fails to compile.
+        // when the function is built; a violating edit fails to compile. A
+        // rustfmt-split block is found by its line in the owner's body.
         reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {

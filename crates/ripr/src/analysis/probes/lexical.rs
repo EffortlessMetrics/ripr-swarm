@@ -977,10 +977,89 @@ pub(crate) fn is_inline_const_assertion_line(text: &str) -> bool {
     is_inline_const_assertion(text, &mask_comments_and_strings(text))
 }
 
+/// #14181: 1-based lines of `source` inside an inline const block that holds
+/// only an assertion macro, on one line or split by rustfmt
+/// (`const {` / `assert!(N <= 249);` / `};`, its arguments split too). The
+/// block's first line counts only when nothing precedes `const` on it, and
+/// its last line only when nothing but `;` follows the `}`, so another
+/// statement sharing either line keeps its own reading.
+pub(crate) fn inline_const_assertion_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let mut lines = std::collections::BTreeSet::new();
+    if !source.contains("const") || !source.contains("assert") {
+        return lines;
+    }
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let line_of = |at: usize| 1 + bytes[..at].iter().filter(|byte| **byte == b'\n').count();
+    let line_bounds = |at: usize| {
+        let start = masked[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let end = masked[at..]
+            .find('\n')
+            .map_or(masked.len(), |newline| at + newline);
+        (start, end)
+    };
+    let mut search = 0;
+    while let Some(found) = masked[search..].find("const") {
+        let start = search + found;
+        search = start + "const".len();
+        if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            continue;
+        }
+        let after = &masked[search..];
+        if !after.trim_start().starts_with('{') {
+            continue;
+        }
+        let open = search + after.len() - after.trim_start().len();
+        let mut depth = 0usize;
+        let mut close = None;
+        for (at, byte) in bytes.iter().enumerate().skip(open) {
+            match *byte {
+                b'{' | b'(' | b'[' => depth += 1,
+                b'}' | b')' | b']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close) = close else {
+            continue;
+        };
+        let (_, close_line_end) = line_bounds(close);
+        let tail = &masked[close + 1..close_line_end];
+        let end = match tail.trim_start().strip_prefix(';') {
+            Some(after_semicolon) => close_line_end - after_semicolon.len(),
+            None => close + 1,
+        };
+        let flatten = |text: &str| text.replace(['\n', '\r'], " ");
+        let Some(text) = source.get(start..end) else {
+            continue;
+        };
+        if !is_inline_const_assertion(&flatten(text), &flatten(&masked[start..end])) {
+            continue;
+        }
+        let (first, last) = (line_of(start), line_of(close));
+        let (open_line_start, _) = line_bounds(start);
+        let alone_at_open = masked[open_line_start..start].trim().is_empty();
+        let alone_at_close = masked[end..close_line_end].trim().is_empty();
+        for line in first..=last {
+            let shared = (line == first && !alone_at_open) || (line == last && !alone_at_close);
+            if !shared {
+                lines.insert(line);
+            }
+        }
+        search = end;
+    }
+    lines
+}
+
 /// A statement that is one inline const block holding only an assertion
 /// macro: `const { assert!(..) };`, also `assert_eq!`/`assert_ne!`, the
-/// `debug_` forms and their `core::`/`std::` paths. One line only: a
-/// rustfmt-split block keeps the line-by-line reading. Read on masked text, so a quoted `}` cannot end it. A const
+/// `debug_` forms and their `core::`/`std::` paths. A rustfmt-split block
+/// is read flattened by [`inline_const_assertion_lines`]. Read on masked text, so a quoted `}` cannot end it. A const
 /// block producing a value (`let x = const { 1 + 2 };`) is runtime-visible
 /// and is not matched.
 fn is_inline_const_assertion(text: &str, masked: &str) -> bool {
@@ -1111,6 +1190,58 @@ mod tests {
                 "{line}: {:?}",
                 classify_changed_line(line)
             );
+        }
+    }
+
+    #[test]
+    fn split_inline_const_assertion_lines_cover_the_block() {
+        let lines = |source: &str| {
+            inline_const_assertion_lines(source)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        // One line, rustfmt-split, and split arguments with a message.
+        assert_eq!(
+            lines("fn f() {\n    const { assert!(N <= 249) };\n}\n"),
+            [2]
+        );
+        assert_eq!(
+            lines("fn f() {\n    const {\n        assert!(N <= 249);\n    };\n    g();\n}\n"),
+            [2, 3, 4]
+        );
+        assert_eq!(
+            lines(
+                "fn f() {\n    const {\n        assert!(\n            N <= 249,\n            \"a } b\"\n        );\n    }\n}\n"
+            ),
+            [2, 3, 4, 5, 6, 7]
+        );
+        assert_eq!(
+            lines(
+                "fn f() {\n    const {\n        // why\n        core::assert_eq!(A, B)\n    };\n}\n"
+            ),
+            [2, 3, 4, 5]
+        );
+        // A statement sharing the opening or closing line keeps its reading.
+        assert_eq!(
+            lines("fn f() {\n    g(); const {\n        assert!(N < 2);\n    }; h();\n}\n"),
+            [3]
+        );
+        for source in [
+            // A block that yields a value or runs another statement.
+            "fn f() {\n    let x = const {\n        N <= 249\n    };\n}\n",
+            "fn f() {\n    const {\n        assert!(N <= 249);\n        N\n    };\n}\n",
+            "fn f() {\n    const {\n        assert!(N <= 249);\n        \"small\"\n    };\n}\n",
+            // Not an assertion macro, a `const` item, or `const` in a name.
+            "fn f() {\n    const {\n        check!(N <= 249);\n    };\n}\n",
+            "const X: () = assert!(N <= 249);\n",
+            "fn f() {\n    my_const {\n        assert!(N <= 249);\n    };\n}\n",
+            // Quoted or commented-out blocks.
+            "fn f() {\n    let s = \"const {\n        assert!(N <= 249);\n    }\";\n}\n",
+            "fn f() {\n    /* const {\n        assert!(N <= 249);\n    } */\n}\n",
+            // An unclosed block.
+            "fn f() {\n    const {\n        assert!(N <= 249);\n",
+        ] {
+            assert_eq!(lines(source), Vec::<usize>::new(), "{source:?}");
         }
     }
 
