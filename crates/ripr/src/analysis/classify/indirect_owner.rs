@@ -185,7 +185,11 @@ fn judged_for_owner(
         )
     });
     for test in index.tests() {
-        if is_ignored(test) || test.assertions.is_empty() {
+        // Both forms below need a masked mention of the owner's name, and
+        // masking only blanks bytes, so a body whose raw text never spells
+        // the name cannot qualify. This pass runs over every test for each
+        // withheld finding; skipping the mask there is #13754's saving.
+        if is_ignored(test) || test.assertions.is_empty() || !test.body.contains(&*owner.name) {
             continue;
         }
         let code = mask_comments_and_strings(&test.body);
