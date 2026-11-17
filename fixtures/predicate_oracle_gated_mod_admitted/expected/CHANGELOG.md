@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — predicate_oracle_gated_mod_admitted (3)
+
+Reason:
+RIPR-SPEC-0197: re-bless the gated-mod admitted fixture onto the shortened unknown-class next-step hedge from #14780
+
+Command:
+`cargo xtask goldens bless predicate_oracle_gated_mod_admitted --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — predicate_oracle_gated_mod_ungated_owner_refused (2)
+
+Reason:
+RIPR-SPEC-0197: re-bless the gated-mod ungated-owner-refused fixture onto the shortened unknown-class next-step hedge from #14780
+
+Command:
+`cargo xtask goldens bless predicate_oracle_gated_mod_ungated_owner_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
