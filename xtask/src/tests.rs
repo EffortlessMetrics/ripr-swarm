@@ -54163,6 +54163,205 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+/// #14906: the `ci` nextest profile's hang window must fit inside the shard
+/// test step, so a hung test is terminated and named by nextest instead of
+/// being ended by the step cap with its log lost.
+///
+/// These are measurements, not guesses. Run 43943282726 (2026-11-16, PR
+/// #14866, head 235641bfe9) uploaded each shard's JUnit and build metrics:
+/// - slowest legitimate test: 210s, `xtask::ripr_public_guide_contract::
+///   doctor_exit_code_guide_distinguishes_analysis_and_source_build`;
+/// - longest build step: 774s (shard 4);
+/// - longest test step: 494s (shard 4).
+///
+/// Refresh them from a green run's `nextest-*` artifacts when the suite grows;
+/// the cap and the window are read live, so only the measurements are pinned.
+const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
+const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
+const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
+
+/// The trimmed key and value of a `key = value` line, tolerating any spacing
+/// around the `=`: `slow-timeout={...}` and `slow-timeout = {...}` are the
+/// same key, so a spelling cannot slip past a prefix match.
+fn toml_key_value(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once('=')?;
+    Some((key.trim(), value.trim()))
+}
+
+/// One `slow-timeout = { period = "Ns", terminate-after = N }` value as its
+/// window in seconds: `period` seconds of silence marked SLOW, terminated
+/// after `terminate-after` periods. Keys are read by name, so spacing and key
+/// order do not matter.
+fn parse_nextest_slow_timeout(value: &str) -> Result<u64, String> {
+    let inner = value
+        .trim()
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(value);
+    let mut period = None;
+    let mut terminate_after = None;
+    for part in inner.split(',') {
+        let Some((key, value)) = toml_key_value(part) else {
+            continue;
+        };
+        match key {
+            "period" => {
+                period = value
+                    .trim_matches('"')
+                    .strip_suffix('s')
+                    .and_then(|secs| secs.parse::<u64>().ok());
+            }
+            "terminate-after" => {
+                terminate_after = value.parse::<u64>().ok();
+            }
+            _ => {}
+        }
+    }
+    let period = period.ok_or_else(|| format!("cannot read a seconds period from {value:?}"))?;
+    let terminate_after =
+        terminate_after.ok_or_else(|| format!("cannot read terminate-after from {value:?}"))?;
+    Ok(period * terminate_after)
+}
+
+/// The `[profile.ci]` `slow-timeout` window plus every
+/// `[[profile.ci.overrides]]` entry that sets its own `slow-timeout`, as
+/// `(name, window_seconds)`. A per-test override is a real execution window,
+/// so a check that read only the profile-level value would pass a test whose
+/// own window is far past the budget.
+///
+/// Fails closed: an override that sets `slow-timeout` but cannot be parsed is
+/// an error, not a skip.
+fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), String> {
+    let ci = config
+        .split("[profile.ci]")
+        .nth(1)
+        .ok_or("nextest.toml has no [profile.ci] section")?;
+    let section = ci
+        .split("\n[")
+        .next()
+        .ok_or("cannot isolate the [profile.ci] section")?;
+    let profile_value = section
+        .lines()
+        .find_map(|line| {
+            let (key, value) = toml_key_value(line.trim())?;
+            (key == "slow-timeout").then_some(value)
+        })
+        .ok_or("[profile.ci] has no slow-timeout")?;
+    let profile_window = parse_nextest_slow_timeout(profile_value)?;
+
+    fn finish(
+        block: &mut Option<(usize, Option<String>, Option<u64>)>,
+        overrides: &mut Vec<(String, u64)>,
+    ) {
+        if let Some((ordinal, filter, window)) = block.take()
+            && let Some(window) = window
+        {
+            let name = filter.unwrap_or_else(|| format!("[[profile.ci.overrides]] #{ordinal}"));
+            overrides.push((format!("override {name}"), window));
+        }
+    }
+
+    let mut overrides = Vec::new();
+    // (ordinal, filter, window) for the block being read.
+    let mut block: Option<(usize, Option<String>, Option<u64>)> = None;
+    let mut ordinal = 0usize;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[[profile.ci.overrides]]") {
+            finish(&mut block, &mut overrides);
+            ordinal += 1;
+            block = Some((ordinal, None, None));
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            finish(&mut block, &mut overrides);
+            continue;
+        }
+        let Some((_, filter, window)) = block.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = toml_key_value(trimmed) else {
+            continue;
+        };
+        match key {
+            "filter" => *filter = Some(value.to_string()),
+            "slow-timeout" => {
+                *window = Some(parse_nextest_slow_timeout(value).map_err(|err| {
+                    format!(
+                        "cannot parse the slow-timeout of override {}: {err}",
+                        filter.as_deref().unwrap_or("<unnamed>")
+                    )
+                })?);
+            }
+            _ => {}
+        }
+    }
+    finish(&mut block, &mut overrides);
+    Ok((profile_window, overrides))
+}
+
+/// The `timeout-minutes` of the first step whose `- name:` contains
+/// `name_fragment` in a workflow, in seconds.
+fn workflow_step_timeout_seconds(workflow: &str, name_fragment: &str) -> Result<u64, String> {
+    let mut in_step = false;
+    for line in workflow.lines() {
+        if line.starts_with("      - ") {
+            if in_step {
+                break;
+            }
+            in_step = line.contains(name_fragment);
+            continue;
+        }
+        if in_step && let Some(value) = line.trim().strip_prefix("timeout-minutes: ") {
+            let minutes = value
+                .trim()
+                .parse::<u64>()
+                .map_err(|err| format!("bad timeout-minutes {value:?}: {err}"))?;
+            return Ok(minutes * 60);
+        }
+    }
+    Err(format!(
+        "rust-test-shards.yml has no step named like {name_fragment:?} with a timeout-minutes"
+    ))
+}
+
+/// #14906 acceptance: the hang window plus the measured build and test-phase
+/// time stays inside the shard step's cap, and the window sits above the
+/// slowest legitimate test. Widening `terminate-after` past the budget fails
+/// here, naming the window and the cap.
+#[test]
+fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
+    let root = repo_root()?;
+    let config = std::fs::read_to_string(root.join(".config/nextest.toml"))
+        .map_err(|err| format!("read nextest.toml: {err}"))?;
+    let shard_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
+            .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
+    let (window, overrides) = nextest_ci_hang_windows(&config)?;
+    let cap = workflow_step_timeout_seconds(&shard_workflow, "Required Rust tests")?;
+
+    if window <= NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS {
+        return Err(format!(
+            "ci hang window {window}s does not sit above the measured slowest legitimate test {}s; a legitimate test would be killed as hung",
+            NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS
+        ));
+    }
+    for (name, window) in std::iter::once(("ci profile".to_string(), window)).chain(overrides) {
+        for (phase, measured) in [
+            ("build", NEXTEST_CI_MEASURED_BUILD_SECONDS),
+            ("test phase", NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS),
+        ] {
+            let bound = window + measured;
+            if bound >= cap {
+                return Err(format!(
+                    "{name}: ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an
