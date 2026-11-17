@@ -284,6 +284,16 @@ fn constant_tail_of(function: &ast::Fn) -> Option<ConstantTail> {
     if list.statements().next().is_some() {
         return None;
     }
+    // An inner attribute in the body (`#![cfg(any())]`) applies to the
+    // function itself, and the shared gate check reads only outer ones, so
+    // any attribute in the body refuses (fail closed).
+    if list
+        .syntax()
+        .descendants_with_tokens()
+        .any(|element| element.kind() == SyntaxKind::POUND)
+    {
+        return None;
+    }
     let tail = list.tail_expr()?;
     let mut uses_vec = false;
     let value = fold(&tail, 0, &mut uses_vec)?;
@@ -785,6 +795,22 @@ mod tests {
         let old = format!("{rebind}pub fn items() -> Vec<i32> {{\n    vec![1, 2]\n}}\n");
         let new = "\npub fn items() -> Vec<i32> {\n    vec![]\n}\n";
         assert_eq!(read(&old, new, "items", "vec![]")?, None);
+        Ok(())
+    }
+
+    /// #14953 review: an inner `#![cfg(any())]` in the body compiles the
+    /// function out, and the shared gate check reads only outer attributes.
+    #[test]
+    fn an_inner_attribute_in_the_body_is_refused() -> Result<(), String> {
+        for inner in ["#![cfg(any())]", "#![allow(unused)]"] {
+            let old = format!("pub fn ready() -> bool {{\n    {inner}\n    true\n}}\n");
+            let new = format!("pub fn ready() -> bool {{\n    {inner}\n    false\n}}\n");
+            assert_eq!(read(&old, &new, "ready", "false")?, None, "{inner}");
+        }
+        // Control: the same edit without the inner attribute is read.
+        let old = "pub fn ready() -> bool {\n    true\n}\n";
+        let new = "pub fn ready() -> bool {\n    false\n}\n";
+        assert!(read(old, new, "ready", "false")?.is_some());
         Ok(())
     }
 

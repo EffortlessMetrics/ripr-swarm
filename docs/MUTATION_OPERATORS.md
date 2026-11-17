@@ -114,7 +114,7 @@ the mutmut 3.3.1 source (`mutmut/node_mutation.py`).
 
 | | yes | partial | unknown | false gap | rows |
 | --- | --- | --- | --- | --- | --- |
-| Rust | 15 | 6 | 10 | 0 | 31 |
+| Rust | 17 | 6 | 8 | 0 | 31 |
 | Python | 28 | 4 | 0 | 1 | 33 |
 | TypeScript | 22 | 10 | 1 | 1 | 34 |
 
