@@ -1057,9 +1057,9 @@ Candidates come from the first non-empty tier:
    value runs is not modeled: a callback stored and never invoked, or run
    only at import, still counts as reach. On the eight-package unjs Stryker
    corpus (`benchmarks/mutation_spot_check/corpus-typescript.json`), this
-   moves 295 caught mutants and 49 missed ones from `no_static_path` to
-   `static_unknown`, and changes no other verdict. File-fact schema 9 carries
-   the `closure` flag.
+   moves 296 caught mutants and 49 missed ones from `no_static_path` to
+   `static_unknown` against main with #13719, and changes no other verdict.
+   File-fact schema 10 carries the `closure` flag.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an

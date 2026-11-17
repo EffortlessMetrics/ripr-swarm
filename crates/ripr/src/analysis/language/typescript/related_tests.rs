@@ -2073,10 +2073,11 @@ pub(crate) fn related_test_candidates<'a>(
             })
             .collect()
     };
-    // A test that names a call-built constant itself keeps the
-    // `module_value_use` reading (#8568): a direct value use is nearer
-    // evidence than a closure path through a function that reads it, so its
-    // closure entries apply only when no test names it (#13592).
+    // A test that names a `ModuleFunction` owner itself (a call-built
+    // constant, or a #13719 module value a same-file test can name) keeps
+    // the `module_value_use` reading (#8568): a direct value use is nearer
+    // evidence than an entry path through a function that reads it, so its
+    // entries apply only when no test names it (#13592).
     let mut heuristic_tried = false;
     if candidates.is_empty() && owner.owner_kind == OwnerKind::ModuleFunction {
         candidates = heuristic_candidates();
