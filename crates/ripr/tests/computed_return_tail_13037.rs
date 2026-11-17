@@ -269,6 +269,28 @@ fn a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited() -> Result<
         Ok(false),
         "aliased local"
     );
+    // #14950 review: a module-level alias named like a primitive (or a `use`
+    // that rebinds one) changes the width a primitive-spelled type has.
+    for (label, rebinding) in [
+        ("primitive-named alias", "pub type i32 = u8;"),
+        ("primitive-named import", "use core::primitive::u8 as i32;"),
+    ] {
+        let source = AFTER
+            .replace(
+                "    let base = if weight_g <= 500 { 400 } else { 900 };",
+                "    let base = if weight_g <= 500 { 400 } else { 900 }; let n: i32 = 200; let total = n + 100;",
+            )
+            .replace("    if express {", "    if total > 250 {")
+            + "\n"
+            + rebinding
+            + "\n";
+        assert_eq!(
+            class_of(&source, "assert_eq!(shipping_cost(100, 10, true), 800);")
+                .map(|class| class == ExposureClass::Exposed),
+            Ok(false),
+            "{label}"
+        );
+    }
     // A `static` can be reassigned before the owner reads it.
     let static_threshold = AFTER.replace(
         "pub const FREE_OVER_CENTS: u32 = 5_000;",

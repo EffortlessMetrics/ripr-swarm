@@ -1250,9 +1250,23 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| callee_is_unique(&owner.name, context.index));
+        // A file that rebinds a primitive type name (`type i32 = u8;`, or a
+        // `use` naming one) can change the width a primitive-spelled type in
+        // the owner has, which the fold cannot see (#14950 review).
+        let owner_types_are_primitive = context.owner_fn.is_some_and(|owner| {
+            owner_constants.as_deref().is_some_and(|source| {
+                owner
+                    .start_line
+                    .checked_sub(1)
+                    .and_then(|index| source.lines().nth(index))
+                    .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                    && !file_may_rebind_primitive_type(source)
+            })
+        });
         let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
             matches!(context.probe.family, ProbeFamily::ReturnValue)
                 && owner_name_unique
+                && owner_types_are_primitive
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
@@ -3131,6 +3145,57 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
         start = end;
     }
     text
+}
+
+/// #13037: whether `source` may give a primitive type name another meaning
+/// in a top-level owner: a `type` item named like a primitive, a `use` that
+/// names a primitive (an import or an `as` rebinding), or a top-level glob
+/// `use` that could bring either in.
+fn file_may_rebind_primitive_type(source: &str) -> bool {
+    const PRIMITIVES: [&str; 13] = [
+        "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
+        "isize",
+    ];
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let words: Vec<(usize, &str)> = masked
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .scan(0usize, |offset, word| {
+            let start = *offset;
+            *offset += word.len() + 1;
+            Some((start, word))
+        })
+        .filter(|(_, word)| !word.is_empty())
+        .collect();
+    words.windows(2).any(|pair| {
+        let (start, word) = pair[0];
+        match word {
+            // `type i32 = u8;`
+            "type" => PRIMITIVES.contains(&pair[1].1),
+            // Every `use` up to its `;`, across lines: one that names a
+            // primitive, or any glob.
+            "use" => {
+                let Some(rest) = masked.get(start..) else {
+                    return true;
+                };
+                let statement = rest.split(';').next().unwrap_or(rest);
+                // A glob changes a top-level owner's scope only from the top
+                // level (an indented `use super::*;` in a test module does
+                // not), and the owner itself must be top level.
+                let line_start = masked
+                    .get(..start)
+                    .and_then(|before| before.rfind('\n'))
+                    .map_or(0, |index| index + 1);
+                let top_level = masked
+                    .get(line_start..)
+                    .is_some_and(|line| !line.starts_with(char::is_whitespace));
+                (statement.contains('*') && top_level)
+                    || statement
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|part| PRIMITIVES.contains(&part))
+            }
+            _ => false,
+        }
+    })
 }
 
 /// #13037: the initializer text and declared type of `name` when the file

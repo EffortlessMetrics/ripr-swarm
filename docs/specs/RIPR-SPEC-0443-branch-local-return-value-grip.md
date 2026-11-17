@@ -252,7 +252,11 @@ answers no credit.
   width, since with overflow checks off the runtime wraps where the fold
   would not. An owner naming `usize`, `isize`, `u128` or `i128`, or spelling
   any non-primitive type (an alias such as `type Byte = u8;` could hide a
-  narrower width), is not read.
+  narrower width), is not read. Nor is an owner that is not at its file's
+  top level, or whose file could give a primitive name another meaning: a
+  `type` item named like a primitive (`pub type i32 = u8;`), a `use` naming
+  a primitive (`use core::primitive::u8 as i32;`), or a top-level glob
+  `use`.
 
 The admission is the bool field pin's: the test is not `should_panic`, the
 assertion macros are the standard ones, and no `use` rebinds the owner's
@@ -273,7 +277,8 @@ Acceptance:
    parameter, a computed operand (`f(..) / 2`) or a local argument: not
    `exposed`.
 6. A narrow local that wraps (`let n: u8 = 200; let total = n + 100;`, or
-   the same through `type Byte = u8;`), a
+   the same through `type Byte = u8;` or a primitive-named
+   `pub type i32 = u8;`), a
    `static` threshold, a closure that shadows the owner in the test, and an
    expected value computed by a helper that calls the owner: not `exposed`.
    `debug_assert_eq!` and a top-level glob import are refused here too, as a
@@ -282,7 +287,9 @@ Acceptance:
 Fixtures `fixtures/rust_computed_return_tail_reached` (promoted),
 `fixtures/rust_computed_return_tail_other_branch` (not promoted) and
 `fixtures/rust_computed_return_tail_wrapping_local` (not promoted: a `u8`
-local wraps, so the call takes the other branch) pin both sides in the
+local wraps, so the call takes the other branch) and
+`fixtures/rust_computed_return_tail_primitive_alias` (not promoted: the
+same wrap through `pub type i32 = u8;`) pin both sides in the
 evidence-promotion honesty corpus.
 
 ## Test Mapping
