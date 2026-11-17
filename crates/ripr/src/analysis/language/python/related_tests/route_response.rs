@@ -177,207 +177,85 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
 
 /// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
 /// `-> dict` return annotation as a response model when the name is a model
-/// class, which may coerce the returned values. The scan runs over logical
-/// lines (a bracketed or continued statement joined) and fails closed: a
-/// `dict` token anywhere in an assignment target (`dict = ...`, `dict, x =
-/// ...`, `(dict, x) = ...`, `dict: T`, `dict := ...`, `dict += ...`), in a
-/// `for` target, after `as`, `class`, `def`, `global` or `nonlocal`, in a
-/// `case` pattern or on an `import` line is a rebinding, as is a star import,
-/// the name in a
-/// string or any namespace write a name cannot be read from (`builtins`,
-/// `__builtins__`, `globals()`, `locals()`, `vars()`, `__dict__`,
-/// `sys.modules`, `setattr`, `exec`, `eval`, `__import__`, so that
-/// `globals()["di" "ct"] = Price` refuses). An over-read only refuses.
+/// class, which may coerce the returned values. The scan reads the Python
+/// lexer's tokens (so strings, comments, brackets and one-line suites cannot
+/// hide a statement) and fails closed. A `dict` name token is a read only as
+/// a return annotation (after `->`), a bracketed annotation or value (after a
+/// `:` inside brackets, outside a `case` pattern), or a call (before `(`, not
+/// after `def` or `class`); any other `dict` token may bind it. A source that
+/// does not lex, a star import, a non-ASCII name (Python folds names under
+/// NFKC, so `ｄｉｃｔ` is `dict`), a `"dict"` string, and any name that can
+/// write a namespace without spelling the bound name (`globals`, `vars`,
+/// `__dict__`, `setattr`, `exec`, `sys.modules`, frame and function globals,
+/// `importlib`, and the like) all count as a rebinding. An over-read only
+/// refuses.
 fn rebinds_builtin_dict(source: &str) -> bool {
-    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let tokens_of = |text: &str| -> Vec<String> {
-        text.split(|ch: char| !word(ch))
-            .filter(|token| !token.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
-    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-    if compact.contains("\"dict\"")
-        || compact.contains("'dict'")
-        || tokens_of(source).iter().any(|token| {
-            matches!(
-                token.as_str(),
-                "builtins"
-                    | "__builtins__"
-                    | "globals"
-                    | "locals"
-                    | "vars"
-                    | "__dict__"
-                    | "modules"
-                    | "setattr"
-                    | "exec"
-                    | "eval"
-                    | "__import__"
-            )
-        })
-    {
-        return true;
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    const NAMESPACE_WRITERS: [&str; 24] = [
+        "builtins",
+        "__builtins__",
+        "globals",
+        "locals",
+        "vars",
+        "__dict__",
+        "modules",
+        "setattr",
+        "__setattr__",
+        "delattr",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "importlib",
+        "import_module",
+        "f_globals",
+        "f_locals",
+        "f_back",
+        "__globals__",
+        "_getframe",
+        "currentframe",
+        "inspect",
+        "ctypes",
+    ];
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok((token, _)) => tokens.push(token),
+            Err(_) => return true,
+        }
     }
-    logical_lines(source).iter().any(|line| {
-        let tokens = tokens_of(line);
-        // A star import (`from models import *`) binds names it does not
-        // spell, `dict` among them.
-        if tokens.first().is_some_and(|token| token == "from")
-            && line
-                .split_whitespace()
-                .collect::<String>()
-                .contains("import*")
-        {
-            return true;
-        }
-        if !tokens.iter().any(|token| token == "dict") {
-            return false;
-        }
-        let first = tokens.first().map(String::as_str);
-        if matches!(
-            first,
-            Some("import" | "from" | "case" | "global" | "nonlocal")
-        ) {
-            return true;
-        }
-        // A `dict` after `as`, `class` or `def`, or between `for` and `in`.
-        let mut in_for_target = false;
-        for pair in tokens.windows(2) {
-            match pair[0].as_str() {
-                "for" => in_for_target = true,
-                "in" => in_for_target = false,
-                _ => {}
-            }
-            if pair[1] == "dict"
-                && (in_for_target || matches!(pair[0].as_str(), "as" | "class" | "def" | "for"))
-            {
-                return true;
-            }
-        }
-        assignment_targets(line)
-            .iter()
-            .any(|target| tokens_of(target).iter().any(|token| token == "dict"))
-    })
-}
-
-/// The statements of a source with each `#` comment dropped and each
-/// bracketed or backslash-continued statement joined onto one line.
-fn logical_lines(source: &str) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
     let mut depth = 0i64;
-    for physical in source.lines() {
-        let line = strip_line_comment(physical);
-        let mut quote: Option<char> = None;
-        let mut escaped = false;
-        for ch in line.chars() {
-            match quote {
-                Some(open) => {
-                    if escaped {
-                        escaped = false;
-                    } else if ch == '\\' {
-                        escaped = true;
-                    } else if ch == open {
-                        quote = None;
-                    }
+    let mut in_case_pattern = false;
+    let mut previous: Option<&Tok> = None;
+    for (at, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Lpar | Tok::Lsqb | Tok::Lbrace => depth += 1,
+            Tok::Rpar | Tok::Rsqb | Tok::Rbrace => depth -= 1,
+            Tok::Case => in_case_pattern = true,
+            Tok::Colon if depth <= 0 => in_case_pattern = false,
+            Tok::Newline => in_case_pattern = false,
+            Tok::Import if matches!(tokens.get(at + 1), Some(Tok::Star)) => return true,
+            Tok::String { value, .. } if value.trim() == "dict" => return true,
+            Tok::Name { name } => {
+                if !name.is_ascii() || NAMESPACE_WRITERS.contains(&name.as_str()) {
+                    return true;
                 }
-                None => match ch {
-                    '"' | '\'' => quote = Some(ch),
-                    '(' | '[' | '{' => depth += 1,
-                    ')' | ']' | '}' => depth -= 1,
-                    _ => {}
-                },
-            }
-        }
-        let continued = line.trim_end().ends_with('\\');
-        current.push_str(line.trim_end().trim_end_matches('\\'));
-        current.push(' ');
-        if depth <= 0 && !continued {
-            lines.push(std::mem::take(&mut current));
-            depth = 0;
-        }
-    }
-    if !current.trim().is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-/// The assignment targets of a logical line: the text before each `=` that
-/// sits outside brackets and strings (not `==`, `!=`, `<=`, `>=`), the text
-/// before a top-level annotation `:` of an annotated assignment, and the
-/// name before each `:=` at any depth. An augmented `+=` keeps its operator
-/// in the target, which only over-reads.
-fn assignment_targets(line: &str) -> Vec<String> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut targets = Vec::new();
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
-    let mut depth = 0i64;
-    for (at, &ch) in chars.iter().enumerate() {
-        if let Some(open) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == open {
-                quote = None;
-            }
-            continue;
-        }
-        let prev = at
-            .checked_sub(1)
-            .and_then(|index| chars.get(index))
-            .copied();
-        let next = chars.get(at + 1).copied();
-        match ch {
-            '"' | '\'' => quote = Some(ch),
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            '=' if next == Some('=') || matches!(prev, Some('=' | '!' | '<' | '>')) => {}
-            '=' if prev == Some(':') => {
-                // A walrus binds the name just before it, at any depth.
-                let before: String = chars[..at - 1].iter().collect();
-                let name: String = before
-                    .trim_end()
-                    .chars()
-                    .rev()
-                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-                    .collect();
-                targets.push(name.chars().rev().collect());
-            }
-            '=' if depth == 0 => targets.push(chars[..at].iter().collect()),
-            ':' if depth == 0 && next != Some('=') => {
-                // An annotated assignment `name: T` binds the text before the
-                // colon unless the line opens a compound statement.
-                let before: String = chars[..at].iter().collect();
-                let first = before.split_whitespace().next().unwrap_or_default();
-                if !matches!(
-                    first,
-                    "def"
-                        | "async"
-                        | "class"
-                        | "if"
-                        | "elif"
-                        | "else"
-                        | "for"
-                        | "while"
-                        | "with"
-                        | "try"
-                        | "except"
-                        | "finally"
-                        | "match"
-                        | "case"
-                        | "lambda"
-                ) && !before.contains("lambda")
-                {
-                    targets.push(before);
+                if name == "dict" {
+                    let annotation = matches!(previous, Some(Tok::Rarrow))
+                        || (depth > 0 && !in_case_pattern && matches!(previous, Some(Tok::Colon)));
+                    let call = matches!(tokens.get(at + 1), Some(Tok::Lpar))
+                        && !in_case_pattern
+                        && !matches!(previous, Some(Tok::Def | Tok::Class));
+                    if !(annotation || call) {
+                        return true;
+                    }
                 }
             }
             _ => {}
         }
+        previous = Some(token);
     }
-    targets
+    false
 }
 
 /// A physical line without its `#` comment (a `#` inside a one-line string

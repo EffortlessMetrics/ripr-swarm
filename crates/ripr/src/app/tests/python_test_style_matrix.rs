@@ -568,6 +568,30 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nglobals()[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
+            "compound-line dict import",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nif True: from src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "frame globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport sys\nsys._getframe().f_globals[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "function globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\ndef _h(): pass\n_h.__globals__[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "fullwidth dict name",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nｄｉｃｔ = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict import after a bracketed docstring",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n\"\"\"\nsee (\n\"\"\"\nfrom src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "case pattern dict capture",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nmatch {\"k\": Price}:\n    case {\"k\": dict}:\n        pass\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
             "unpacked application options",
             "from fastapi import FastAPI\n\noptions = {\"docs\" \"_url\": \"/price\"}\napp = FastAPI(\n    **options\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
@@ -1254,7 +1278,7 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         ));
     }
     // Control: the builtin `dict` used as a return annotation (on one line or
-    // after a split signature), a call or an `isinstance` argument is not a
+    // after a split signature), a parameter annotation or a call is not a
     // rebinding, so the changed key stays credited.
     for (name, app) in [
         (
@@ -1263,7 +1287,7 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         ),
         (
             "split signature dict annotation",
-            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef shape(value: dict) -> dict:\n    return dict(value) if isinstance(value, dict) else {}\n\n\n@app.get(\"/price\")\nasync def price(\n    vip: bool = True,\n) -> dict :\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef shape(value: dict) -> dict:\n    return dict(value)\n\n\n@app.get(\"/price\")\nasync def price(\n    vip: bool = True,\n) -> dict :\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
     ] {
         let finding = check_style(name, &[("src/app.py", app)], PRICE_EDIT, &strong)?;

@@ -551,12 +551,15 @@ Relations, first match wins (rank, oracle-eligible):
   custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
   `**` unpack in call arguments (which may pass such an option under a name
   the source does not spell; markers are matched with and without comments), may rebind `dict` (which a `-> dict` annotation
-  would then name as a model: `dict` in any assignment, `for`, `as`, `case`
-  or `import` target, a star import, a `class` or `def` name, the name in a
-  string, or a
-  namespace write such as `globals()[...]`, `setattr`, `vars()`, `__dict__`,
-  `sys.modules`, `exec` or the builtins; a `-> dict` annotation, a `dict(...)` call or an
-  `isinstance(x, dict)` argument is not a rebinding), or has an exception
+  would then name as a model; the scan reads lexer tokens, so strings,
+  comments, brackets and one-line suites cannot hide a statement, and a
+  `dict` token counts as a read only after `->`, after a `:` inside brackets
+  outside a `case` pattern, or before a call's `(` not after `def` or
+  `class`; a source that does not lex, a star import, a non-ASCII name, a
+  `"dict"` string, or a name that can write a namespace without spelling the
+  bound name, such as `globals`, `vars`, `__dict__`, `setattr`, `exec`,
+  `sys.modules`, frame or function globals or the builtins, also refuses),
+  or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
