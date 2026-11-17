@@ -287,6 +287,13 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
             ExposureClass::ReachableUnrevealed,
         ),
         ("assert_eq!(f(5), 5);", ExposureClass::Exposed),
+        // A `let`-`else` initializer always runs, even beside its block.
+        (
+            "let Some(_v) = Some(f(5)) else {\n            return;\n        };",
+            ExposureClass::ReachableUnrevealed,
+        ),
+        // A message is lazy, but the operands before it always run.
+        ("assert_eq!(f(5), 5, \"case\");", ExposureClass::Exposed),
     ] {
         let (class, finding) = tail_class("i32", "-a", "a", test_body)?;
         assert_eq!(class, expected, "{test_body}: {finding:?}");

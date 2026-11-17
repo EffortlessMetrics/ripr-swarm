@@ -190,8 +190,9 @@ other than `vec!`, `dbg!`, the `assert*` / `debug_assert*` family and the
 `format!` / `print!` / `write!` family, because that input is token text
 (`stringify!(f(5))`). An assertion macro evaluates only its operands (one for
 `assert!` / `debug_assert!`, two for the `*_eq!` / `*_ne!` forms) and formats
-any message only when it fails, so an assertion input with a message refuses
-(`assert!(true, "{}", f(5))`). An evaluating macro's input that holds `&&`, `|`, `?`, a
+any message only when it fails, so a call in the message arguments refuses
+(`assert!(true, "{}", f(5))`) while a call in an operand still counts. A call
+in a `let`-`else` `else` block refuses; one in its initializer still counts. An evaluating macro's input that holds `&&`, `|`, `?`, a
 nested macro or a control-flow keyword refuses too, even when the call would
 run (`assert!(true && f(5) == 5)`), because the parser does not read inside
 macro input (#14968).

@@ -1337,7 +1337,8 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// #14538: zero-based line offsets of `test.body` inside code that may run
 /// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
 /// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, the
-/// `else` block of a `let`-`else`, or a `#[cfg]`-gated statement (`for _ in 0..0 { .. }`, an unpolled
+/// lines of a `let`-`else` block after its first, or a `#[cfg]`-gated
+/// statement (`for _ in 0..0 { .. }`, an unpolled
 /// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
 /// not show that its input ran, so it supplies no separating input. `None`
 /// when the body does not parse.
@@ -1365,9 +1366,6 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
             || ast::IfExpr::can_cast(node.kind())
             || ast::MatchExpr::can_cast(node.kind())
             || ast::MacroRules::can_cast(node.kind())
-            // The `else` block of a `let`-`else` runs only when the pattern
-            // does not match (#14968 review).
-            || ast::LetElse::can_cast(node.kind())
             || (node != *root.syntax()
                 && node.children().any(|child| {
                     ast::Attr::cast(child).is_some_and(|attr| {
@@ -1377,6 +1375,16 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
         if deferred {
             let range = node.text_range();
             lines.extend(line_of(usize::from(range.start()))..=line_of(usize::from(range.end())));
+        }
+        // The `else` block of a `let`-`else` runs only when the pattern does
+        // not match (#14968 review). Its first line also holds the
+        // initializer, which always runs, so only the lines after it are
+        // deferred here; `unevaluated_spans` refuses the block by byte span.
+        if let Some(block) = ast::LetElse::cast(node).and_then(|let_else| let_else.block_expr()) {
+            let range = block.syntax().text_range();
+            lines.extend(
+                line_of(usize::from(range.start())) + 1..=line_of(usize::from(range.end())),
+            );
         }
     }
     Some(lines)
@@ -1390,8 +1398,9 @@ fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize
 /// - the input of a macro other than `vec!`, `dbg!`, the `assert*` /
 ///   `debug_assert*` family and the `format!` / `print!` / `write!` family
 ///   (`stringify!(f(5))` is token text);
-/// - the whole input of an assertion macro that carries a message past its
-///   evaluated operands, which is formatted only when the assertion fails
+/// - the `else` block of a `let`-`else`, which runs only on a mismatch;
+/// - the message arguments of an assertion macro past its evaluated
+///   operands, which are formatted only when the assertion fails
 ///   (`assert!(true, "{}", f(5))`);
 /// - the whole input of one of those evaluating macros when its token text
 ///   holds anything the parser does not read inside a macro input and that
@@ -1424,6 +1433,12 @@ fn unevaluated_spans(test: &TestSummary, masked: &str) -> Option<Vec<std::ops::R
             }
             continue;
         }
+        if let Some(block) =
+            ast::LetElse::cast(node.clone()).and_then(|let_else| let_else.block_expr())
+        {
+            spans.push(span(block.syntax().text_range()));
+            continue;
+        }
         let Some(call) = ast::MacroCall::cast(node) else {
             continue;
         };
@@ -1438,11 +1453,10 @@ fn unevaluated_spans(test: &TestSummary, masked: &str) -> Option<Vec<std::ops::R
             .unwrap_or_default();
         let range = span(input.syntax().text_range());
         let text = masked.get(range.clone())?;
-        if !is_evaluating_macro(&name)
-            || macro_input_may_skip(text)
-            || has_lazy_message(&name, text)
-        {
+        if !is_evaluating_macro(&name) || macro_input_may_skip(text) {
             spans.push(range);
+        } else if let Some(offset) = lazy_message_offset(&name, text) {
+            spans.push(range.start + offset..range.end);
         }
     }
     Some(spans)
@@ -1471,25 +1485,38 @@ fn is_evaluating_macro(name: &str) -> bool {
     )
 }
 
-/// Whether an assertion macro's masked input `text` (delimiters included)
-/// holds arguments past its evaluated operands: one for `assert!` /
-/// `debug_assert!`, two for the `*_eq!` / `*_ne!` forms. The rest is a
-/// message formatted only when the assertion fails, so a call there may
-/// never run (`assert!(true, "{}", f(5))`).
-fn has_lazy_message(name: &str, text: &str) -> bool {
+/// Where an assertion macro's lazily formatted message starts in its masked
+/// input `text` (delimiters included): the byte offset just past the
+/// top-level comma that ends its evaluated operands, one for `assert!` /
+/// `debug_assert!` and two for the `*_eq!` / `*_ne!` forms. Only that tail is
+/// formatted when the assertion fails, so a call there may never run
+/// (`assert!(true, "{}", f(5))`); the operands before it always run. `None`
+/// when the macro is not an assertion or carries no argument past its
+/// operands (a trailing comma alone is not a message).
+fn lazy_message_offset(name: &str, text: &str) -> Option<usize> {
     let operands = match name {
         "assert" | "debug_assert" => 1,
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
-        _ => return false,
+        _ => return None,
     };
-    let inner = text
-        .get(1..text.len().saturating_sub(1))
-        .unwrap_or_default();
-    super::split_top_level_commas(inner)
-        .iter()
-        .filter(|argument| !argument.trim().is_empty())
-        .count()
-        > operands
+    let inner_end = text.len().saturating_sub(1);
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    for (at, byte) in text.bytes().enumerate().take(inner_end).skip(1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                commas += 1;
+                if commas == operands {
+                    let rest = text.get(at + 1..inner_end)?;
+                    return (!rest.trim().is_empty()).then_some(at + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether masked macro input text holds a token that may skip or defer a
