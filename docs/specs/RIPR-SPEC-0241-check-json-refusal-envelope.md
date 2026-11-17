@@ -513,10 +513,10 @@ writes the minimal `cli_refusal` document on stdout. Its `error.code` is that
 disposition (`retryable`, `terminal`, `needs_selection`, `not_started`), and
 `error.message` is the prose without the code line. `error.next` is always
 `null`: these steps can quote a user-supplied item or selector, so the
-document never lifts one into a runnable field. Text a refusal points
-at above its prose (the choice commands of `several_eligible_seams`,
-`repair_needs_item` and `ambiguous_attempts`, the status of
-`attempt_baseline_blocked`) stays on stderr only. The façade's before-phase
+document never lifts one into a runnable field. The context that
+`repair_needs_item` (its next-action block) and `attempt_baseline_blocked`
+(the attempt status) print above their prose stays on stderr only; the
+selection codes carry theirs as `choices` (amendment #14980). The façade's before-phase
 start refusal (for example `build_output_not_ignored`) writes the same
 document, recovered from its exact code line. Refusals inside the
 after-phase check keep their own documents. Exit code and stderr are
@@ -536,3 +536,27 @@ unchanged, and the plain spelling keeps stdout empty.
 - `crates/ripr/src/cli/commands/task_first.rs::typed_decision`
 - `crates/ripr/src/cli/mod.rs::drive_before_phase_deferring_stdout`
 - `crates/ripr/src/app/task_first.rs::RepairRefusalCode::split_stderr_line`
+
+## Amendment (#14980): selection refusals carry their choices
+
+A `several_eligible_seams` or `ambiguous_attempts` document adds
+`error.choices = { total, items: [{ label, command, powershell_command? }] }`.
+Each `command` is the one the refusal prints on stderr, composed by the
+selection owner from a typed seam id or attempt id and the bound root; none
+is lifted from prose, and `next` stays null. `powershell_command` appears
+only when PowerShell needs a different line and an honest translation
+exists. `total` is the full count; a bounded listing has fewer `items`.
+Every other refusal omits `choices`.
+
+## Test Mapping (Amendment #14980)
+
+- `crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition`
+- `crates/ripr/tests/task_first_facade.rs::continue_two_attempts_requires_explicit_selection`
+- `crates/ripr/src/output/refusal.rs::tests::choices_render_total_items_and_only_a_differing_powershell_line`
+
+## Implementation Mapping (Amendment #14980)
+
+- `crates/ripr/src/output/refusal.rs::RefusalChoices`
+- `crates/ripr/src/app/task_first.rs::repair_choice_items`
+- `crates/ripr/src/cli/usage_refusal.rs::note_typed_refusal_with_choices`
+- `crates/ripr/src/cli/commands/task_first.rs::typed_choice_decision`

@@ -1997,10 +1997,17 @@ line (exit `3`) also writes this document. Its `code` is that reason code
 `retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
 the plain-words prose without the code line. `next` is always `null`:
 these prose steps can quote a user-supplied item or selector, so the document
-never lifts one into a runnable field. The step is in `message`, except
-that a refusal pointing at text printed above it (the choice commands of
-`several_eligible_seams`, `repair_needs_item` and `ambiguous_attempts`, the
-status of `attempt_baseline_blocked`) prints that text on stderr only. For
+never lifts one into a runnable field. The step is in `message`. A
+selection refusal also carries `choices` (#14980): `several_eligible_seams`
+lists one `ripr repair <seam> --root <root>` per eligible seam, and
+`ambiguous_attempts` one `ripr continue --attempt <id> --root <root>` per
+current attempt. Each item has a plain-words `label`, the `command` exactly
+as stderr prints it, and a `powershell_command` only when PowerShell needs a
+different line; `total` counts every choice when the listing is bounded.
+These commands are composed from typed seam and attempt ids, never lifted
+from prose. `repair_needs_item` (its canonical next-action block) and
+`attempt_baseline_blocked` (the attempt status) still print that context on
+stderr only. For
 example, `ripr continue --json` with no attempt
 writes `code: "no_current_attempt"` and `disposition: "not_started"`.
 Refusals inside the after-phase check keep their own documents

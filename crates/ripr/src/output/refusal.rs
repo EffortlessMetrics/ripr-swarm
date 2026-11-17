@@ -19,6 +19,8 @@
 //! The block never composes a command. `next` is only a runnable `ripr ...`
 //! step the refusal prose already states, copied verbatim by
 //! [`RefusalRemedy`], or a fixed help pointer the usage-error owner supplies.
+//! `choices` carries the commands a selection refusal's owner already composed
+//! from typed seam or attempt ids for its stderr listing (#14980).
 
 use crate::domain::RefusalRemedy;
 use crate::output::json::render_pretty_with_newline;
@@ -43,6 +45,41 @@ pub(crate) struct RefusalNext {
     pub(crate) command: String,
 }
 
+/// One command a selection refusal offers, as its owner printed it on stderr.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RefusalChoice {
+    /// What picking this choice selects, in plain words.
+    pub(crate) label: String,
+    /// The command that makes this choice, runnable as written in a POSIX
+    /// shell.
+    pub(crate) command: String,
+    /// The PowerShell spelling, only when PowerShell needs a different line
+    /// and an honest translation exists (#10978).
+    pub(crate) powershell_command: Option<String>,
+}
+
+impl RefusalChoice {
+    pub(crate) fn new(label: String, command: String) -> Self {
+        let powershell_command = match crate::output::markdown::powershell_form(&command) {
+            crate::output::markdown::PowershellForm::Translated(line) => Some(line),
+            _ => None,
+        };
+        Self {
+            label,
+            command,
+            powershell_command,
+        }
+    }
+}
+
+/// The listed choices of a selection refusal and how many exist in all; a
+/// bounded listing has fewer `items` than `total`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RefusalChoices {
+    pub(crate) total: usize,
+    pub(crate) items: Vec<RefusalChoice>,
+}
+
 /// The shared refusal block's content.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RefusalBlock {
@@ -56,6 +93,9 @@ pub(crate) struct RefusalBlock {
     /// (`retryable`, `terminal`, `needs_selection`, `not_started`, #14931).
     /// Only the standalone `cli_refusal` document carries one.
     pub(crate) disposition: Option<&'static str>,
+    /// The commands a selection refusal offers (#14980). Only the standalone
+    /// `cli_refusal` document carries them.
+    pub(crate) choices: Option<RefusalChoices>,
 }
 
 impl RefusalBlock {
@@ -73,6 +113,7 @@ impl RefusalBlock {
             token: None,
             next: next_from_remedy(remedy),
             disposition: None,
+            choices: None,
         }
     }
 
@@ -85,6 +126,25 @@ impl RefusalBlock {
         }
         if let Some(disposition) = self.disposition {
             error.insert("disposition".to_string(), json!(disposition));
+        }
+        if let Some(choices) = &self.choices {
+            let items: Vec<Value> = choices
+                .items
+                .iter()
+                .map(|choice| {
+                    let mut item = Map::new();
+                    item.insert("label".to_string(), json!(choice.label));
+                    item.insert("command".to_string(), json!(choice.command));
+                    if let Some(form) = &choice.powershell_command {
+                        item.insert("powershell_command".to_string(), json!(form));
+                    }
+                    Value::Object(item)
+                })
+                .collect();
+            error.insert(
+                "choices".to_string(),
+                json!({ "total": choices.total, "items": items }),
+            );
         }
         let next = match &self.next {
             Some(next) => json!({ "purpose": next.purpose, "command": next.command }),
@@ -183,6 +243,7 @@ mod tests {
                 command: "ripr check --help --all".to_string(),
             }),
             disposition: None,
+            choices: None,
         };
         let value: Value = serde_json::from_str(&block.render_cli_refusal()?)
             .map_err(|error| error.to_string())?;
@@ -200,6 +261,46 @@ mod tests {
         let value: Value = serde_json::from_str(&block.render_cli_refusal()?)
             .map_err(|error| error.to_string())?;
         assert!(value["error"].get("token").is_none());
+        assert!(value["error"].get("choices").is_none());
+        Ok(())
+    }
+
+    /// #14980: a selection refusal's choices render with their full count,
+    /// and a PowerShell line only where PowerShell needs a different one.
+    #[test]
+    fn choices_render_total_items_and_only_a_differing_powershell_line() -> Result<(), String> {
+        let block = RefusalBlock {
+            code: "several_eligible_seams".to_string(),
+            message: "no repair started; run one of the commands above".to_string(),
+            token: None,
+            next: None,
+            disposition: Some("needs_selection"),
+            choices: Some(RefusalChoices {
+                total: 3,
+                items: vec![
+                    RefusalChoice::new("plain".to_string(), "ripr repair a --root .".to_string()),
+                    RefusalChoice::new(
+                        "apostrophe root".to_string(),
+                        "ripr repair b --root '/tmp/it'\\''s'".to_string(),
+                    ),
+                ],
+            }),
+        };
+        let value: Value = serde_json::from_str(&block.render_cli_refusal()?)
+            .map_err(|error| error.to_string())?;
+        let choices = &value["error"]["choices"];
+        assert_eq!(choices["total"], 3);
+        assert_eq!(choices["items"][0]["label"], "plain");
+        assert_eq!(choices["items"][0]["command"], "ripr repair a --root .");
+        assert!(choices["items"][0].get("powershell_command").is_none());
+        let translated = choices["items"][1]["powershell_command"]
+            .as_str()
+            .ok_or("an apostrophe root needs a PowerShell line")?;
+        assert_ne!(
+            translated,
+            choices["items"][1]["command"].as_str().unwrap_or_default()
+        );
+        assert_eq!(value["error"]["next"], Value::Null);
         Ok(())
     }
 }
