@@ -250,7 +250,17 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
 ) -> Result<(String, String), CommandError> {
     drive_before_phase_inner(options).map_err(|error| match error {
         // A deliberate typed refusal: the façade exits with the decision code.
-        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Refused(message) => {
+            // The start refusal already carries its code line; note the
+            // same typed document `typed_decision` would, so `--json` on the
+            // façade sees it too (#14931).
+            if let Some((code, prose)) =
+                crate::app::task_first::RepairRefusalCode::split_stderr_line(&message)
+            {
+                crate::cli::usage_refusal::note_typed_refusal(code, prose);
+            }
+            CommandError::Decision(message)
+        }
         BeforePhaseError::Other(error) => error,
     })
 }

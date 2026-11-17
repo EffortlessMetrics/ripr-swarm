@@ -40,7 +40,9 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   (standalone `ripr agent verify` is the exception: its refusal is named on
   stderr and stdout stays empty; see below. `ripr agent repair`,
   `ripr agent card` and `ripr agent stub` print their refusal document
-  (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
+  (`agent_card_refusal` / `rust_test_stub` `state: refused`), and the
+  typed `ripr repair` / `ripr continue` / `ripr status` refusals the
+  `cli_refusal` document (#14931), on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
   stderr names the cause. An unknown `--seam-id` is one typed refusal with
   one exit, `3`, on `agent start`, `agent card`, `agent stub`,
@@ -279,8 +281,10 @@ reached the caller.
   visible); several eligible seams, or a start the selector will not
   bind, so no item is selected (the canonical next-action block and a
   retry command); and a card render that fails after the before phase
-  already published an attempt (#7032). In every case stdout stays
-  empty and stderr names the cause. The post-publication card path is a
+  already published an attempt (#7032). In every case stderr names the
+  cause. Stdout stays empty, except that under `--json` each typed
+  refusal above (not the card failure) also writes its `cli_refusal`
+  document (#14931). The post-publication card path is a
   deliberate asymmetry with `ripr agent card`: even an operational card
   failure is remapped to exit `3` because the attempt exists, and
   recovery inspects or continues that same attempt
@@ -293,8 +297,10 @@ reached the caller.
   finished state a compliant receipt does not confirm (unissued,
   unavailable, or compatibility-only); no current attempt under the
   selected root; and several current attempts, so none is selected (a
-  bounded list and a retry command). Stdout stays empty; stderr carries
-  the cause and, for an ended attempt, the status facts. A continue that
+  bounded list and a retry command). Stderr carries the cause and, for an
+  ended attempt, the status facts. Under `--json` stdout carries the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
+  without it stdout stays empty. A continue that
   has selected a current attempt then follows the same
   `ripr agent repair --phase after` refusals above.
 
@@ -304,7 +310,11 @@ reached the caller.
   assign a code, and the two status spellings for the unanchored discovery
   gate #12417) write one stderr line, after the plain-words prose (#12193),
   `ripr: refusal code=<code> disposition=<disposition>`, so a script
-  switches on the state instead of parsing prose. `disposition` is
+  switches on the state instead of parsing prose. Under `--json`, the
+  `ripr repair`, `ripr continue` and `ripr status` refusals that write this
+  line at exit `3` before any check runs also write the `cli_refusal`
+  document on stdout, with the same `code` and a `disposition` field
+  (#14931); see `docs/OUTPUT_SCHEMA.md`. `disposition` is
   `retryable` (the same attempt proceeds after the stated action),
   `terminal` (the attempt is over; start a fresh `ripr repair`),
   `needs_selection` (name one of several), or `not_started` (nothing

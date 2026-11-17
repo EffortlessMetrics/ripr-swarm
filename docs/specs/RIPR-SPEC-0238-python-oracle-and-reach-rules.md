@@ -1220,10 +1220,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
     the arm that can run is still read) and the body of a `try` whose
-    handler catches `AssertionError` (a bare `except`, `Exception`,
-    `BaseException`, `AssertionError`, `builtins.AssertionError`, or a tuple
-    naming one) and does not raise, assert, call a `fail` helper or call a
-    unittest `assert*` method. The `else` and `finally` blocks
+    first matching handler catches `AssertionError` (a bare `except`,
+    an unmodified builtin `Exception`, `BaseException` or `AssertionError`,
+    the same names through a plain, unmodified `import builtins`, or a flat
+    tuple of bounded builtin types) and does not raise, assert, call a `fail`
+    helper or call a unittest `assert*` method. Handlers are read in order:
+    proven unrelated builtin types are skipped; a first matching re-raise
+    keeps the assertion even when a later broad handler swallows (#14885).
+    A project, unknown, rebound or otherwise unbounded type before that match
+    retains the assertion as an unresolved oracle, never as a swallowing or
+    strong-oracle claim. Binding custody is conservative across the file:
+    parameters and local/module bindings, opaque scopes, namespace writers
+    and escaping `builtins` references refuse the type read. This does not
+    resolve external monkey-patching or change the existing handler-body
+    failure approximation. The `else` and `finally` blocks
     are still read. A swallowed or dead assertion cannot notice a change, so
     it must not credit one (`py-trap-dead-branch`,
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
