@@ -42,6 +42,12 @@ pub(in super::super) fn apply_route_overlaps(
             })
             .collect()
     };
+    // FastAPI installs its schema and docs routes while the application is
+    // constructed, before any user route, so a user route on one of their
+    // default paths never answers (custom paths are refused as opaque by
+    // [`workspace_reshapes_responses`]).
+    const FRAMEWORK_ROUTES: [&str; 4] =
+        ["/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"];
     let shared: Vec<bool> = owners
         .iter()
         .enumerate()
@@ -49,13 +55,16 @@ pub(in super::super) fn apply_route_overlaps(
             owner.route_returns_body
                 && !opaque
                 && routes(owner).iter().any(|(path, verbs)| {
-                    owners.iter().enumerate().any(|(other_index, other)| {
-                        other_index != index
-                            && routes(other).iter().any(|(other_path, other_verbs)| {
-                                verbs_meet(verbs, other_verbs)
-                                    && route_patterns_overlap(path, other_path)
-                            })
-                    })
+                    FRAMEWORK_ROUTES
+                        .iter()
+                        .any(|framework| route_patterns_overlap(path, framework))
+                        || owners.iter().enumerate().any(|(other_index, other)| {
+                            other_index != index
+                                && routes(other).iter().any(|(other_path, other_verbs)| {
+                                    verbs_meet(verbs, other_verbs)
+                                        && route_patterns_overlap(path, other_path)
+                                })
+                        })
                 })
         })
         .collect();
@@ -100,7 +109,12 @@ fn route_patterns_overlap(left: &str, right: &str) -> bool {
 /// (`monkeypatch.setattr(Response, "json", ...)`, `"httpx.Response.json"`,
 /// `Response.json = ...`, `response.__class__ = ...`).
 pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
-    const MARKERS: [&str; 27] = [
+    const MARKERS: [&str; 32] = [
+        "openapi_url",
+        "docs_url",
+        "redoc_url",
+        "swagger_ui_oauth2_redirect_url",
+        "openapi_prefix",
         "exception_handler",
         "errorhandler(",
         "middleware",
@@ -133,6 +147,7 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
     // the markers are matched against the source without it.
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     MARKERS.iter().any(|marker| compact.contains(marker))
+        || rebinds_builtin_dict(source)
         || compact
             .match_indices("APIRoute")
             .any(|(at, _)| !compact[at + "APIRoute".len()..].starts_with('r'))
@@ -142,6 +157,44 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
             let name = verb.trim_start_matches('.').trim_end_matches('(');
             compact.contains(&format!("\"{name}\")")) || compact.contains(&format!("'{name}')"))
         })
+}
+
+/// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
+/// `-> dict` return annotation as a response model when the name is a model
+/// class, which may coerce the returned values. A `dict` token after `class`,
+/// `def`, `as`, `for`, `global` or `nonlocal`, before an assignment `=` or
+/// `:`, or on an `import` line is a rebinding (an over-read only refuses).
+fn rebinds_builtin_dict(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = strip_line_comment(line);
+        let trimmed = line.trim_start();
+        let tokens: Vec<&str> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|token| !token.is_empty())
+            .collect();
+        if !tokens.contains(&"dict") {
+            return false;
+        }
+        if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
+            return true;
+        }
+        tokens.windows(2).any(|pair| {
+            pair[1] == "dict"
+                && matches!(
+                    pair[0],
+                    "class" | "def" | "as" | "for" | "global" | "nonlocal"
+                )
+        }) || line.match_indices("dict").any(|(at, _)| {
+            let before = line[..at].chars().next_back();
+            let rest = line[at + "dict".len()..].trim_start();
+            !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
+                && !line[at + "dict".len()..]
+                    .starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                && ((rest.starts_with('=') && !rest.starts_with("=="))
+                    || rest.starts_with(':')
+                    || rest.starts_with(":="))
+        })
+    })
 }
 
 /// A physical line without its `#` comment (a `#` inside a one-line string
@@ -328,6 +381,27 @@ pub(in super::super) fn workspace_registers_routes_indirectly<'a>(
                         }
                         // An unclosed call or quote is not established.
                         if index >= chars.len() || chars.get(index + 1) == Some(&'(') {
+                            return true;
+                        }
+                        // A route call wrapped in parentheses or a line
+                        // continuation on an assignment's right side
+                        // (`register = (\n app.get("/x")\n)`) is an alias
+                        // the per-line scan does not see.
+                        let mut before = at;
+                        while before > 0
+                            && (identifier(chars[before - 1]) || chars[before - 1] == '.')
+                        {
+                            before -= 1;
+                        }
+                        let receiver_start = before;
+                        while before > 0 && matches!(chars[before - 1], '(' | '\\') {
+                            before -= 1;
+                        }
+                        if before < receiver_start
+                            && before > 0
+                            && chars[before - 1] == '='
+                            && !(before > 1 && "=!<>".contains(chars[before - 2]))
+                        {
                             return true;
                         }
                     }

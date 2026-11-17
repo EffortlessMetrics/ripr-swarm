@@ -10,7 +10,9 @@
   is not a literal, a response model or a return annotation other than a
   bare `dict`, another decorator, another `return`, a `raise`, a `**`
   unpack or repeated key, a changed `detail` key, a change JSON cannot see
-  (tuple to list, `5` to `5.0`, `1` to `True`, a quote-style swap), a
-  route another route may share, and any workspace with exception handlers,
+  (tuple to list, `5` to `5.0`, `1` to `True`, a quote-style swap,
+  `3.3 // 0.3` for `10`, `[10][0]` for `10`, a removed duplicate key), a
+  response the test rewrites or rebinds, a `dict` the workspace redefines,
+  FastAPI's own docs routes, a route another route may share, and any workspace with exception handlers,
   middleware, router inclusions or route registrations ripr does not record,
   such as a directly applied or aliased route call (#13869).

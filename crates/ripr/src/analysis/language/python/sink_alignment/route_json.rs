@@ -18,6 +18,37 @@ pub(super) fn json_equivalent_keys(old_line: Option<&str>, new_line: &str) -> Ve
     ) else {
         return Vec::new();
     };
+    // The old dict's effective mapping is read only when every segment is a
+    // plain `key: value` with distinct keys; Python keeps the last of a
+    // duplicate key and a `**` unpack may supply any key, so otherwise every
+    // key is unchanged (fail closed).
+    let old_strict = old_line.is_some_and(|line| {
+        let trimmed = line.trim();
+        let expr = trimmed
+            .strip_prefix("return ")
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        let Some(body) = expr
+            .strip_prefix('{')
+            .and_then(|body| body.strip_suffix('}'))
+        else {
+            return false;
+        };
+        let segments: Vec<&str> = top_level_python_segments(body)
+            .into_iter()
+            .filter(|segment| !segment.trim().is_empty())
+            .collect();
+        let mut keys: Vec<&String> = old.iter().map(|(key, _)| key).collect();
+        keys.sort();
+        keys.dedup();
+        segments.len() == old.len() && keys.len() == old.len()
+    });
+    if !old_strict {
+        return new
+            .iter()
+            .map(|(key, _)| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+            .collect();
+    }
     new.iter()
         .filter_map(|(key, new_value)| {
             let (_, old_value) = old.iter().find(|(k, _)| k == key)?;
@@ -71,6 +102,12 @@ fn json_normal_form(value: &str) -> Option<String> {
     }
     let mut normal = String::new();
     let mut token = String::new();
+    // List grammar: a value (a scalar token, a string or a list) only where
+    // one is expected (at the start, after `[` or `,`), and after a value
+    // only `,` or `]`, so a subscript (`[5][0]`), adjacent tokens (`[1 +2]`)
+    // or adjacent strings are not established.
+    let mut depth = 0usize;
+    let mut after_value = false;
     // The source text, not `compact`: whitespace inside a string is part
     // of its value, and is dropped only between tokens.
     let mut chars = value.trim().chars();
@@ -81,17 +118,19 @@ fn json_normal_form(value: &str) -> Option<String> {
         }
         if !token.is_empty() {
             // A token right before a quote is a string prefix (`r`, `f`, `b`).
-            if matches!(ch, '"' | '\'') {
+            if matches!(ch, '"' | '\'') || after_value {
                 return None;
             }
             normal.push_str(&literal_scalar(&token)?);
             token.clear();
+            after_value = true;
         }
         match ch {
             '"' | '\'' => {
-                if normal.ends_with('"') {
+                if after_value {
                     return None;
                 }
+                after_value = true;
                 let mut closed = false;
                 normal.push('"');
                 for inner in chars.by_ref() {
@@ -112,23 +151,47 @@ fn json_normal_form(value: &str) -> Option<String> {
                 }
                 normal.push('"');
             }
-            '[' | ',' => normal.push(ch),
+            '[' => {
+                if after_value {
+                    return None;
+                }
+                depth += 1;
+                normal.push('[');
+            }
+            ',' => {
+                if !after_value || depth == 0 {
+                    return None;
+                }
+                after_value = false;
+                normal.push(',');
+            }
             ']' => {
+                // `]` closes an open list after a value, a trailing comma or
+                // right after `[`.
+                if depth == 0 || (!after_value && !normal.ends_with([',', '['])) {
+                    return None;
+                }
+                depth -= 1;
                 // A string always ends in its closing quote, so a comma at
                 // the end here is a structural trailing comma.
                 if normal.ends_with(',') {
                     normal.pop();
                 }
                 normal.push(']');
+                after_value = true;
             }
             ch if ch.is_whitespace() => {}
             _ => return None,
         }
     }
     if !token.is_empty() {
+        if after_value {
+            return None;
+        }
         normal.push_str(&literal_scalar(&token)?);
+        after_value = true;
     }
-    Some(normal)
+    (depth == 0 && after_value).then_some(normal)
 }
 
 /// A scalar literal token's canonical text: a number's value, or `None` /

@@ -34,26 +34,84 @@ pub(in super::super) fn identified_route_response_names(
             {
                 continue;
             }
+            // The names bound once to a call of each verb, computed once per
+            // verb rather than once per assignment.
+            let mut bound_once: HashMap<String, Vec<String>> = HashMap::new();
             for (name, verb, path) in route_response_assignments(test, receiver) {
                 let http_verb = ["get", "post", "put", "patch", "delete", "options", "head"]
                     .contains(&verb.as_str());
-                if http_verb
-                    && (verbs.is_empty() || verbs.contains(&verb))
-                    && python_route_matches_call_path(route, &path)
-                    && super::super::route_client::single_call_bindings(
+                if !http_verb
+                    || !(verbs.is_empty() || verbs.contains(&verb))
+                    || !python_route_matches_call_path(route, &path)
+                    || names.contains(&name)
+                {
+                    continue;
+                }
+                let bound = bound_once.entry(verb.clone()).or_insert_with(|| {
+                    super::super::route_client::single_call_bindings(
                         &test.body_text,
                         &format!("{receiver}.{verb}"),
                     )
-                    .iter()
-                    .any(|(bound, _)| *bound == name)
-                    && !names.contains(&name)
-                {
+                    .into_iter()
+                    .map(|(bound, _)| bound)
+                    .collect()
+                });
+                if bound.contains(&name) && name_only_read_through(&test.body_text, &name) {
                     names.push(name);
                 }
             }
         }
     }
     names
+}
+
+/// Whether every use of `name` in the test body other than its one
+/// assignment reads an attribute of it (`name.json()`, `name.status_code`)
+/// and none assigns one (#13869). Any other use (a loop or `with` target in
+/// any spacing, `del`, an argument, a nested `def`, a second assignment, an
+/// attribute write such as `name._content = ...`) refuses the read, so a
+/// rebinding the bound-once count misses cannot pose as the route call.
+fn name_only_read_through(body: &str, name: &str) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let name_chars: Vec<char> = name.chars().collect();
+    let mut assignments = 0usize;
+    let mut at = 0;
+    while at + name_chars.len() <= chars.len() {
+        let end = at + name_chars.len();
+        if chars[at..end] != name_chars[..]
+            || (at > 0 && (word(chars[at - 1]) || chars[at - 1] == '.'))
+            || chars.get(end).is_some_and(|&ch| word(ch))
+        {
+            at += 1;
+            continue;
+        }
+        let mut next = end;
+        while chars.get(next).is_some_and(|&ch| ch == ' ' || ch == '\t') {
+            next += 1;
+        }
+        match chars.get(next) {
+            Some('.') => {
+                // An attribute read; an attribute write (`name.x = ...`) is
+                // refused.
+                let mut after = next + 1;
+                while chars.get(after).is_some_and(|&ch| word(ch)) {
+                    after += 1;
+                }
+                while chars.get(after).is_some_and(|&ch| ch == ' ' || ch == '\t') {
+                    after += 1;
+                }
+                if chars.get(after) == Some(&'=') && chars.get(after + 1) != Some(&'=') {
+                    return false;
+                }
+            }
+            Some('=') if chars.get(next + 1) != Some(&'=') => assignments += 1,
+            Some(':') => assignments += 1,
+            _ => return false,
+        }
+        at = end;
+    }
+    assignments == 1
 }
 
 /// `(name, verb, path)` of each top-level statement of the test function
@@ -87,6 +145,7 @@ fn route_response_assignments(test: &PythonTest, receiver: &str) -> Vec<(String,
             .match_indices(".json")
             .any(|(at, _)| !compact[at + ".json".len()..].starts_with('('))
         || compact.contains("setattr")
+        || compact.contains("._content")
         || compact.contains("\"json\"")
         || compact.contains("'json'")
         || test.body_text.lines().any(|line| {

@@ -528,11 +528,16 @@ Relations, first match wins (rank, oracle-eligible):
   is not). The other side must be a literal (numbers, strings without escapes, `True`,
   `False`, `None`, and lists or tuples of them; a dict is refused): a name, call or
   attribute may carry the route's own response. A test with a `match`
-  statement, a walrus, a `.json` that is not called at once, a `setattr` or a
-  quoted `json` grants no credit. The
+  statement, a walrus, a `.json` that is not called at once, a `setattr`, a
+  `._content` access or a quoted `json` grants no credit, and the bound name
+  may be used only in its one assignment and through attribute reads (a loop
+  or `with` target in any spacing, an argument or an attribute write
+  refuses). The
   handler must not share a request with another route of the workspace
   (verbs that can meet and paths that can match one request, a segment
-  holding any parameter matching anything; dispatch order is not read). The
+  holding any parameter matching anything; dispatch order is not read), nor
+  a FastAPI docs route installed before any user route (`/openapi.json`,
+  `/docs`, `/docs/oauth2-redirect`, `/redoc`). The
   credit is off for the whole run when any file was not read or a changed
   file did not parse, any owner has a dynamic route decorator, the route
   decorator lines of the read sources (test files included, counting the
@@ -540,8 +545,11 @@ Relations, first match wins (rank, oracle-eligible):
   undercount the routes the owners record, a route call is applied directly
   (`app.get("/p")(view)`, on one line or several), a route method is used
   without being called (`partial(app.get, "/p")`), a route call is bound to
-  a name that is later called or used as a decorator (comments are not
-  read; an unclosed call is opaque), or any source has an exception
+  a name that is later called or used as a decorator, or wrapped in
+  parentheses or a line continuation on an assignment's right side
+  (comments are not read; an unclosed call is opaque), or any source has
+  custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`), rebinds
+  `dict` (which a `-> dict` annotation would then name as a model), or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
@@ -554,9 +562,11 @@ Relations, first match wins (rank, oracle-eligible):
   value under Python's precedence, every step below 2^53, `//`, `%` and `**`
   evaluated only on integral operands (a non-negative integral exponent;
   `7.0 // 2` is evaluated, `3.3 // 0.3` is not), with `True`/`False` as 1/0, integers compared exactly; lists of
-  such values) or whose value is not established as a literal (a tuple, a
-  dict, a name, a prefixed, escaped or adjacent string, a float at or past
-  2^53) is not a changed key for this read, and the run
+  such values, one value per element) or whose value is not established as a
+  literal (a tuple, a dict, a name, a subscript, two tokens in one element, a
+  prefixed, escaped or adjacent string, a float at or past 2^53), and every
+  key when the old dict has a duplicate key or a `**` unpack (Python keeps
+  the last duplicate), is not a changed key for this read, and the run
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return

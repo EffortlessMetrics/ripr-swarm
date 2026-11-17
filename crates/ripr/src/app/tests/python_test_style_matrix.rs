@@ -453,6 +453,14 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] != 0\n",
         ),
         (
+            "replaced response content",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    response._content = b'{\"total\": 190}'\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "a compact loop rebinding",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    for response in(client.get(\"/other\"),):\n        pass\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
             "an unconditional disjunction",
             "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190 or True\n",
         ),
@@ -528,6 +536,14 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> Price:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
+            "shadowed dict annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass dict(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "parenthesized route alias",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef cached():\n    return {\"total\": 190, \"count\": 3}\n\n\nregister = (\n    app.get(\"/price\")\n)\nregister(cached)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
             "wrapping decorator",
             "from fastapi import FastAPI\n\nfrom src.wrap import redact\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\n@redact\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
@@ -536,6 +552,37 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         if finding.class == ExposureClass::Exposed {
             failures.push(format!("{name}: read exposed"));
         }
+    }
+    // FastAPI installs its docs route (`/docs`) before any user route, so a
+    // user route there never answers; and Python keeps the last of a duplicate
+    // key, so removing the first duplicate leaves the body unchanged.
+    let schema_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/docs\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+    let schema_test = format!(
+        "{CLIENT_IMPORTS}def test_price():\n    client = TestClient(app)\n    response = client.get(\"/docs\")\n    assert response.json()[\"total\"] == 195\n"
+    );
+    let finding = check_style(
+        "framework schema path",
+        &[("src/app.py", schema_app)],
+        PRICE_EDIT,
+        &schema_test,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("framework schema path: read exposed".to_string());
+    }
+    let duplicate_app = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 0, \"total\": 190, \"count\": 3}\n";
+    let duplicate_edit = Edit {
+        owner: "src/app.py",
+        old: "    return {\"total\": 0, \"total\": 190, \"count\": 3}",
+        new: "    return {\"total\": 190, \"count\": 3}",
+    };
+    let finding = check_style(
+        "duplicate old key removed",
+        &[("src/app.py", duplicate_app)],
+        duplicate_edit,
+        &strong,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("duplicate old key removed: read exposed".to_string());
     }
     // A handler that raises can answer with an error body instead of the
     // returned dict, and `detail` is the key of FastAPI's error bodies, so a
@@ -1021,6 +1068,26 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
                 "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": 2**53 + 1 - 2**53 + 9, \"status\": \"ok\"}",
             ),
             read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "list subscript",
+            flag_app,
+            flag_edit(
+                "    return {\"total\": 190, \"flag\": 1, \"zero\": 0, \"ten\": [10][0], \"status\": \"ok\"}",
+            ),
+            read("assert response.json()[\"ten\"] == 10"),
+        ),
+        (
+            "adjacent list tokens summing",
+            list_app,
+            list_edit("    return {\"total\": [2 +3], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
+        ),
+        (
+            "adjacent list tokens differencing",
+            list_app,
+            list_edit("    return {\"total\": [6 -1], \"count\": 3}"),
+            read("assert response.json()[\"total\"] == [5]"),
         ),
         (
             "dict expected side",
