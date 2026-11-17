@@ -1596,11 +1596,15 @@ fn failed_focused_apply_record_publication_stays_retryable() -> Result<(), Strin
     let apply = apply_record(&fixture)?;
     assert_eq!(apply["phase"], "apply");
     assert_eq!(apply["durable_attempt_id"], attempt_id);
+    let patch_digest = apply["apply"]["patch_sha256"]
+        .as_str()
+        .ok_or("apply record patch_sha256 missing")?;
+    let delta_digest = state["after"]["delta_sha256"]
+        .as_str()
+        .ok_or("after delta_sha256 missing")?;
     assert_eq!(
-        apply["apply"]["patch_sha256"].as_str(),
-        state["after"]["delta_sha256"]
-            .as_str()
-            .map(|digest| digest.trim_start_matches("sha256:"))
+        patch_digest.trim_start_matches("sha256:"),
+        delta_digest.trim_start_matches("sha256:")
     );
     Ok(())
 }
@@ -1628,7 +1632,8 @@ fn focused_apply_with_hook(
 #include <string.h>
 #include <unistd.h>
 int rename(const char *old, const char *new) {
-    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    static int (*next)(const char *, const char *);
+    if (!next) next = dlsym(RTLD_NEXT, "rename");
     int result = next(old, new);
     const char *target = getenv("RIPR_TRUST_HOOK_TARGET");
     if (result || !target || strcmp(new, target)) return result;
@@ -1651,7 +1656,8 @@ int rename(const char *old, const char *new) {
     return result;
 }
 ssize_t read(int fd, void *buffer, size_t count) {
-    ssize_t (*next)(int, void *, size_t) = dlsym(RTLD_NEXT, "read");
+    static ssize_t (*next)(int, void *, size_t);
+    if (!next) next = dlsym(RTLD_NEXT, "read");
     ssize_t result = next(fd, buffer, count);
     static int replaced = 0, matched = 0;
     const char *mode = getenv("RIPR_TRUST_HOOK_MODE");
@@ -1685,12 +1691,14 @@ static void maybe_plant(const char *new) {
     }
 }
 int link(const char *old, const char *new) {
-    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
+    static int (*next)(const char *, const char *);
+    if (!next) next = dlsym(RTLD_NEXT, "link");
     maybe_plant(new);
     return next(old, new);
 }
 int linkat(int olddir, const char *old, int newdir, const char *new, int flags) {
-    int (*next)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+    static int (*next)(int, const char *, int, const char *, int);
+    if (!next) next = dlsym(RTLD_NEXT, "linkat");
     maybe_plant(new);
     return next(olddir, old, newdir, new, flags);
 }

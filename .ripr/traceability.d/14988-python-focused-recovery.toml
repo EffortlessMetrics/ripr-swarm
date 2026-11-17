@@ -1,0 +1,9 @@
+# Registers the trust-bound Python recovery tests for an interrupted focused finish (#13203, #14988) under RIPR-SPEC-0011.
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable",
+  "crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_receipt_retries_apply",
+  "crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_retention_recovers_missing_apply",
+  "crates/ripr/tests/python_repair_attempt.rs::focused_apply_failure_does_not_restore_a_changed_terminal_manifest",
+]
