@@ -5,4 +5,6 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/arguments.rs::tests::literal_only_assertions_are_recognized_and_reads_are_not",
   "crates/ripr/tests/literal_only_assertion_credit.rs::a_literal_only_assertion_beside_a_bare_call_gives_no_weak_credit",
   "crates/ripr/tests/literal_only_assertion_credit.rs::assertions_that_read_the_owner_keep_their_class",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::a_guarded_literal_assertion_keeps_its_guards_reading",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::an_unconditional_literal_assertion_never_lowers_the_implicit_reading",
 ]

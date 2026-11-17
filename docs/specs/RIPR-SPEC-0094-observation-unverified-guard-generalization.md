@@ -964,27 +964,60 @@ beside it read `weakly_exposed` with `observation_unverified`.
 
 Rule, for every family. `assertion_compares_only_literals` reads the
 outermost known assertion macro (`assert!`, `assert_eq!`, `assert_ne!`, their
-`debug_` and `prop_` spellings, `ensure!`), never its message arguments. When
-every compared operand holds only numeric literals, `true`/`false`, string or
-character literals and operators, the assertion matches no probe. Its test
-stays listed with `assertion_not_observing`, and it supplies no oracle.
+`debug_` and `prop_` spellings, `ensure!`), never its message arguments, and
+answers yes when every compared operand holds only numeric literals,
+`true`/`false`, string or character literals and operators. Such an
+assertion that is also a top-level statement (or the tail expression) of the
+test body, at its own line, is unconditional: reveal treats it as absent.
+It supplies no oracle, does not count toward the single-assertion fallback,
+and does not displace the implicit reading the test has without it. A test
+whose only assertions are such literals is listed with
+`assertion_not_observing`.
+
+Invariant: adding an unconditional literal-only assertion never changes a
+test's class from the same test without it, in either direction.
+
+```rust
+g(2).unwrap_err(); assert!(true);              // weakly_exposed, as without assert!(true)
+let _e = g(2).unwrap_err(); assert_eq!(1, 1);  // weakly_exposed
+g(3).unwrap(); assert!(true);                  // weakly_exposed
+g(3)?; assert!(true); Ok(())                   // reachable_unrevealed, as `g(3)?; Ok(())`
+```
+
+A literal inside an `if`, `if let`, `match` arm, loop or closure is not
+dropped. It runs only on a path the test's own read selects, so it keeps the
+reading it had before this rule:
+
+```rust
+if let Ok(_) = g(2) { assert!(false, "2 must be rejected"); }  // weakly_exposed
+match g(3) { Ok(_) => {} Err(_) => assert!(false), }           // weakly_exposed
+```
 
 Fail-closed toward the existing credit. Any identifier (a binding, a
 constant, a call, a nested macro), a byte or raw string prefix, an unknown
-macro or `assert_matches!` leaves the assertion as it was. A refused literal
-assertion still counts toward the single-assertion fallback, so its refusal
-never hands that fallback to a sibling assertion. It never removes credit
-another assertion in the test supplies (`assert!(true); assert_eq!(f(5), 7)`
-stays `exposed`).
+macro or `assert_matches!`, an unparseable test body, or an assertion that
+does not sit at a top-level statement of the test body at its own line (for
+example one produced by a helper or macro expansion) leaves the assertion as
+it was. Dropping the literal never removes credit another assertion in the
+test supplies (`assert!(true); assert_eq!(f(5), 7)` stays `exposed`).
 
-Known limit: an assertion on a test-local value that does not come from the
-owner (`let x = 3; assert!(x == 3); let _ = f(5);`) still reads
-`weakly_exposed`. Telling that apart from a value the owner wrote needs the
-test's data flow, not the assertion's text.
+Known limits:
+
+- An assertion on a test-local value that does not come from the owner
+  (`let x = 3; assert!(x == 3); let _ = f(5);`) still reads `weakly_exposed`.
+  Telling that apart from a value the owner wrote needs the test's data flow,
+  not the assertion's text.
+- A guarded literal whose guard reads nothing from the owner
+  (`if cfg_flag { assert!(true) }`) keeps its earlier reading.
+- A `?` alone gives no implicit credit (`g(3)?; Ok(())` reads
+  `reachable_unrevealed`). Under the invariant above, `g(3)?; assert!(true);
+  Ok(())` reads the same. Its earlier `weakly_exposed` came only from the
+  literal.
 
 Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
 `crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
-`crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`.
+`crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
+(bare-call, owner-read, guarded-literal and implicit-observer rows).
 
 ## Test Mapping
 

@@ -2694,13 +2694,29 @@ fn analyze_related_assertions(
         } else {
             Vec::new()
         };
+        // #14968: an unconditional literal-only assertion (`assert!(true)`
+        // as a top-level statement) reads nothing, so the test reads exactly
+        // as it would without it: it is neither credited nor counted toward
+        // the single-assertion fallback, and it never displaces the implicit
+        // unwrap / `unwrap_err` / smoke reading the test has without it.
+        let literal_only = test
+            .assertions
+            .iter()
+            .filter(|assertion| {
+                super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
+            .count();
         let assertions: Vec<_> = test
             .assertions
             .iter()
+            .filter(|assertion| {
+                !super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
             .chain(claims_candidates.iter())
             .collect();
-        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
+        let refused_here = assertions.len()
+            != test.assertions.len().saturating_sub(literal_only) + claims_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -2714,6 +2730,8 @@ fn analyze_related_assertions(
                 relation_confidence,
                 miss: Some(if refused_here {
                     RelatedTestMiss::AssertionNotCredited
+                } else if literal_only > 0 {
+                    RelatedTestMiss::AssertionNotObserving
                 } else {
                     RelatedTestMiss::NoAssertion
                 }),
@@ -2767,10 +2785,10 @@ fn analyze_related_assertions(
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
-        // for an otherwise unrelated surviving oracle.
-        // A literal-only assertion refused below (#14968) still counts, so
-        // its refusal never manufactures the fallback for a sibling either.
-        let assertion_count = test.assertions.len();
+        // for an otherwise unrelated surviving oracle. An unconditional
+        // literal-only assertion (#14968) is absent rather than refused: the
+        // count is the one the test has without it.
+        let assertion_count = test.assertions.len().saturating_sub(literal_only);
         let related_before = related.len();
         for assertion in assertions {
             // #11552: per assertion, because the same proximity test may hold
@@ -3039,13 +3057,6 @@ fn analyze_related_assertions(
                 || (is_effect_family(&probe.family)
                     && implicit_observer.is_some()
                     && effect_observer_confirms(assertion));
-            // #14968: an assertion over literals alone (`assert!(true)`,
-            // `assert!(false)`, `assert_eq!(1, 1)`) reads no value, so it
-            // observes nothing the owner does, whatever its test calls
-            // beside it. Fail closed for every family: it supplies no
-            // oracle and the test stays listed as not observing.
-            let matched = matched
-                && !crate::analysis::extract::assertion_compares_only_literals(&assertion.text);
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.

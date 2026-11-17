@@ -289,3 +289,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_unrelated_equality (24)
+
+Reason:
+RIPR-SPEC-0094: an unconditional literal-only assertion reads as absent, so the row names no oracle text (#14968)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_unrelated_equality --reason "..."`
+
+Updated:
+- `expected/check.json`

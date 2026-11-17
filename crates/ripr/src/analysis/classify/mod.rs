@@ -37,6 +37,7 @@ mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
 mod infection;
+mod literal_assertion;
 mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;

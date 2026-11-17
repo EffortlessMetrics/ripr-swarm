@@ -48,7 +48,7 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses no oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses no oracle", "source assertion argument value 2 at line 4"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
       ],
@@ -85,7 +85,7 @@
           "line": 4,
           "oracle_strength": "none",
           "oracle_kind": "unknown",
-          "oracle": "assert_eq!(2,2);",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_observing",
@@ -139,7 +139,7 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:4 checks uses no oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:4 checks uses no oracle", "source assertion argument value 2 at line 4"],
       "flow_sinks": [
         {"kind":"return_value","text":"Ok(())","line":5}
       ],
@@ -176,7 +176,7 @@
           "line": 4,
           "oracle_strength": "none",
           "oracle_kind": "unknown",
-          "oracle": "assert_eq!(2,2);",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_observing",
@@ -230,7 +230,7 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses no oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses no oracle", "source assertion argument value 2 at line 4"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
       ],
@@ -267,7 +267,7 @@
           "line": 4,
           "oracle_strength": "none",
           "oracle_kind": "unknown",
-          "oracle": "assert_eq!(2,2);",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_observing",

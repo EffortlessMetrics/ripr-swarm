@@ -180,9 +180,11 @@ fn rows() -> Vec<Row> {
             CLAIMS,
             "use claims::assert_ok;",
             "let v = assert_ok!(parse(5));\nlet _ = v;\nassert_eq!(1, 1);",
-            // #14968: the literal-only `assert_eq!(1, 1)` supplies no oracle.
+            // #14968: the unconditional literal-only `assert_eq!(1, 1)` reads
+            // as absent, so the row reads as the discarded payload alone: the
+            // wrapped `assert_ok!` stays an unresolved limit.
             none,
-            None,
+            Some(UNRESOLVED),
         ),
         // Bounded numeric tolerance: equality and inequality directions.
         row(
