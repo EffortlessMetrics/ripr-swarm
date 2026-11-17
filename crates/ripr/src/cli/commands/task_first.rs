@@ -38,9 +38,10 @@ Options:
   --json           Print the repair packet JSON, including
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
-                   status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes. An unknown flag prints the
-                   `cli_refusal` JSON document on stdout beside its exit 2
+                   status JSON. A refusal keeps its stderr prose and exit
+                   code and prints the `cli_refusal` JSON document on
+                   stdout with its reason `code` and `disposition`. An
+                   unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
@@ -100,10 +101,12 @@ Options:
                    verify document) beside the stderr prose and the same
                    exit code. Refusals that stop before the check (no
                    current attempt, several attempts, an ended attempt, a
-                   blocked baseline, an unanchored root) and operational
-                   errors before the verify step keep stdout empty. An
-                   unknown flag or stray argument prints the `cli_refusal`
-                   JSON document on stdout beside its exit 2 stderr prose.
+                   blocked baseline, an unanchored root) print the
+                   `cli_refusal` JSON document with their reason `code`
+                   and `disposition`; operational errors before the verify
+                   step keep stdout empty. An unknown flag or stray
+                   argument prints the `cli_refusal` JSON document on
+                   stdout beside its exit 2 stderr prose.
   --quiet          Drop progress lines and `wrote <path>` lines from stderr.
                    Refusals and the result stay. `RIPR_QUIET` does the same.
 
@@ -419,7 +422,12 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 /// A façade decision (exit 3) carrying its typed reason code: the code line
 /// follows the unchanged prose, so the first line stays plain words (#11597,
 /// #12193).
+///
+/// Under `--json` the same refusal is also the `cli_refusal` document on
+/// stdout, with the code and its disposition as fields (#14931); the
+/// boundary writes it only when this decision is the error that escaped.
 fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal(code, message.trim_end());
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
@@ -523,9 +531,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     {
         return resume_awaiting_attempt(&options.root, &seam_id, &existing, options.json);
     }
-    // The start's stdout is held until the handoff card renders too:
-    // `cmd:repair` declares `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so a card
-    // failure after publication must leave stdout empty — a refusal
+    // The start's stdout is held until the handoff card renders too: a
+    // card failure after publication is an untyped decision that writes no
+    // `cli_refusal` document, so it must leave stdout empty — a refusal
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
     let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
@@ -717,8 +725,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
         }
         ContinueSelection::EndedUnsuccessfully { report } => {
             // The facts print like status but on stderr: this arm is a
-            // typed refusal, and a selection-arm refusal keeps stdout empty
-            // even under `--json` (`cmd:continue` declares
+            // typed refusal: under `--json` stdout carries only the
+            // `cli_refusal` document (#14931; `cmd:continue` declares
             // `EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT`), while stderr
             // carries both the state and the refusal.
             // A stale, failed, or incomparable attempt ended without a
@@ -751,8 +759,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             // fail-closed projection cannot confirm a compliant receipt
             // (unissued, unbound, unavailable, or compatibility-only).
             // Like the unsuccessful arm, the facts print on stderr while
-            // this selection-arm refusal keeps stdout empty even under
-            // `--json`, exit 3, no completion
+            // this selection-arm refusal's stdout is only the `cli_refusal`
+            // document under `--json` (#14931), exit 3, no completion
             // claim: a `ready_to_finish` manifest alone is not one.
             eprint!(
                 "{}",
