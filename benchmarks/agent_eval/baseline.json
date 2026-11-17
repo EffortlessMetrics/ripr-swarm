@@ -1,12 +1,12 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (3215adca158976624e8e8742bb2328657bd77e23)",
+  "ripr_version": "ripr 0.11.0 (73012945f9714e3ceae6eca3de4cbc97eaf50d70)",
   "routes": [
     {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3287,"total_tokens":6909},
     {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2098,"total_tokens":2263},
     {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9793,"total_tokens":10903},
     {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34800,"total_tokens":34800},
-    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9840,"total_tokens":11556},
+    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
     {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89596},
     {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58126}
   ],
@@ -184,11 +184,11 @@
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":7972,"exit":0,"step":"brief","tokens":2578}
+            {"bytes":6080,"exit":0,"step":"brief","tokens":2013}
           ],
-          "tokens_to_answer": 2578,
-          "total_bytes": 7972,
-          "total_tokens": 2578
+          "tokens_to_answer": 2013,
+          "total_bytes": 6080,
+          "total_tokens": 2013
         },
         {
           "answer_reached": true,
