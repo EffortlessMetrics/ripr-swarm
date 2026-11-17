@@ -513,7 +513,10 @@ writes the minimal `cli_refusal` document on stdout. Its `error.code` is that
 disposition (`retryable`, `terminal`, `needs_selection`, `not_started`), and
 `error.message` is the prose without the code line. `error.next` is always
 `null`: these steps can quote a user-supplied item or selector, so the
-document never lifts one into a runnable field. The façade's before-phase
+document never lifts one into a runnable field. Text a refusal points
+at above its prose (the choice commands of `several_eligible_seams`,
+`repair_needs_item` and `ambiguous_attempts`, the status of
+`attempt_baseline_blocked`) stays on stderr only. The façade's before-phase
 start refusal (for example `build_output_not_ignored`) writes the same
 document, recovered from its exact code line. Refusals inside the
 after-phase check keep their own documents. Exit code and stderr are

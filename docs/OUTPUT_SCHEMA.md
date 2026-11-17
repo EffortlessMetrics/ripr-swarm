@@ -1997,7 +1997,10 @@ line (exit `3`) also writes this document. Its `code` is that reason code
 `retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
 the plain-words prose without the code line. `next` is always `null`:
 these prose steps can quote a user-supplied item or selector, so the document
-never lifts one into a runnable field; read the step from `message`. For
+never lifts one into a runnable field. The step is in `message`, except
+that a refusal pointing at text printed above it (the choice commands of
+`several_eligible_seams`, `repair_needs_item` and `ambiguous_attempts`, the
+status of `attempt_baseline_blocked`) prints that text on stderr only. For
 example, `ripr continue --json` with no attempt
 writes `code: "no_current_attempt"` and `disposition: "not_started"`.
 Refusals inside the after-phase check keep their own documents
