@@ -71,10 +71,20 @@ pub(crate) fn owners_from_program(
     );
     for owner in &mut owners {
         if owner.class_name.is_none()
-            && owner.owner_kind != OwnerKind::ModuleFunction
             && let Some(owner_entries) = entries.get(&owner.name)
         {
-            owner.module_entries = owner_entries.clone();
+            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction {
+                // A call-built constant runs its callbacks when the value is
+                // invoked, which only a closure edge models (#13592); its
+                // initializer is not a callable body a call edge reaches.
+                owner_entries
+                    .iter()
+                    .filter(|entry| entry.closure)
+                    .cloned()
+                    .collect()
+            } else {
+                owner_entries.clone()
+            };
         }
     }
     let instance_fields = class_instance_field_names(program);

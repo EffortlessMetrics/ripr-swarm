@@ -31,11 +31,22 @@
 //! the same three-hop total bound and the same weaker-than-direct contract.
 
 use super::*;
+use oxc_ast::ast::{
+    AssignmentTarget, BindingIdentifier, IdentifierReference, TSType, UpdateExpression,
+};
+use oxc_ast_visit::{Visit, walk};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Maximum call edges followed from an exported entry to the owner. Matches
 /// the Rust helper-owner graph bound (`HELPER_OWNER_CALL_GRAPH_MAX_HOPS`).
 pub(crate) const MODULE_ENTRY_MAX_HOPS: usize = 3;
+
+/// Maximum edges followed from an exported entry to the owner when the path
+/// passes at least one closure edge (#13592). Combinator-built code is deep:
+/// unjs/pathe `matchGlob` reaches `int2alpha` only through `compileGlob`,
+/// the `Grammar` constant, `Range`, `RangeValue`, `RangeAlphaUpper` and
+/// `makeRangeAlpha`. Reach along such a path is never more than unknown.
+pub(crate) const MODULE_CLOSURE_MAX_HOPS: usize = 8;
 
 /// An exported name of the owner's module whose code reaches the owner.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -72,6 +83,15 @@ pub(crate) struct TypeScriptModuleEntry {
     /// the owner's own module.
     #[serde(default)]
     pub(crate) cross_module: Option<TypeScriptCrossModuleLink>,
+    /// `true` when every path from the entry to the owner passes a closure
+    /// edge (#13592): the owner is passed as a value (`JSON.parse(text,
+    /// reviver)`, `keys.sort(compare)`), referenced by a value that is
+    /// invoked later (`parse(input, Grammar)`), or is the factory or a
+    /// callback argument of a call-built constant (`const Rule =
+    /// match(re, () => regex(...))`). Whether and when the value runs is not
+    /// modeled, so such reach is never more than unknown.
+    #[serde(default)]
+    pub(crate) closure: bool,
 }
 
 /// Where a cross-module entry lives and which modules and bindings its reach
@@ -123,6 +143,17 @@ struct ModuleNode<'s> {
     factory: Option<&'s str>,
     /// Function texts the declaration returns directly, when it is a factory.
     returned_texts: Vec<CallText<'s>>,
+    /// Names the declaration's code references (#13592): every identifier
+    /// read anywhere in the function, its returned closures and nested
+    /// callbacks, or the whole initializer of a call-built constant (its
+    /// callee included), minus every name the code binds itself. A reference
+    /// to another top-level declaration is a closure edge: the value may run
+    /// whenever this code runs, but when (or whether) is not modeled. A
+    /// function's directly returned functions are left out, as for its calls.
+    references: Vec<&'s str>,
+    /// References of the functions this declaration returns directly: closure
+    /// edges of a value it builds (`const p = f()`), never its own.
+    returned_references: Vec<&'s str>,
 }
 
 /// Code whose bare calls count, plus the enclosing function text that decides
@@ -192,6 +223,36 @@ pub(crate) fn module_entries_and_outbound<'a>(
             import_callees.insert(*name, imported);
         }
     }
+    // Closure edges (#13592): a reference to another top-level declaration
+    // that the bare-call graph does not already record. A name the module
+    // ever reassigns may hold some other value, so it is never a target.
+    let reassigned = reassigned_names(statements);
+    let closure_callees: BTreeMap<&str, BTreeSet<&str>> = nodes
+        .iter()
+        .map(|(name, node)| {
+            let calls = callees.get(name);
+            // A built value also reaches what its factory's returned
+            // functions reference.
+            let built = node
+                .factory
+                .and_then(|factory| nodes.get(factory))
+                .map(|factory| factory.returned_references.as_slice())
+                .unwrap_or_default();
+            let targets: BTreeSet<&str> = node
+                .references
+                .iter()
+                .chain(built)
+                .copied()
+                .filter(|target| {
+                    target != name
+                        && nodes.contains_key(target)
+                        && !reassigned.contains(target)
+                        && !calls.is_some_and(|calls| calls.contains(target))
+                })
+                .collect();
+            (*name, targets)
+        })
+        .collect();
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     // (import local) -> exports of this module that reach a call of it.
     let mut outbound: BTreeMap<&str, BTreeMap<String, TypeScriptModuleEntry>> = BTreeMap::new();
@@ -228,6 +289,33 @@ pub(crate) fn module_entries_and_outbound<'a>(
                             }
                         })
                         .or_insert(entry);
+                }
+            }
+        }
+    }
+    // Owners reached from an export only along a path with a closure edge:
+    // an entry of their own, marked so it reads unknown and never chains
+    // like a call (#13592).
+    for (local, exported) in &exports {
+        for (reached, hops) in reachable_through_closures(local, &callees, &closure_callees) {
+            if reached == local.as_str() {
+                continue;
+            }
+            let owner_entries = entries.entry(reached.to_string()).or_default();
+            for entry in exported {
+                if owner_entries
+                    .iter()
+                    .any(|seen| seen.name == entry.name && !seen.closure)
+                {
+                    continue;
+                }
+                let entry = TypeScriptModuleEntry {
+                    hops: u8::try_from(hops).unwrap_or(u8::MAX),
+                    closure: true,
+                    ..entry.clone()
+                };
+                if !owner_entries.contains(&entry) {
+                    owner_entries.push(entry);
                 }
             }
         }
@@ -334,6 +422,7 @@ fn record_export(
             instance_factory: false,
             hops: 0,
             cross_module: None,
+            closure: false,
         });
 }
 
@@ -359,6 +448,7 @@ fn collect_function_as<'a>(
     };
     let returned = returned_functions(&body.statements);
     add_function_node(name, func.span, &returned, source, nodes);
+    add_function_references(name, &func.params, body, &returned, nodes);
     true
 }
 
@@ -378,6 +468,7 @@ fn collect_arrow_as<'a>(
         returned_functions(&arrow.body.statements)
     };
     add_function_node(name, arrow.span, &returned, source, nodes);
+    add_function_references(name, &arrow.params, &arrow.body, &returned, nodes);
 }
 
 /// A function node: its own calls exclude the functions it returns, which
@@ -470,12 +561,131 @@ fn collect_variables<'a>(
                     continue;
                 };
                 nodes.entry(name).or_default().factory = Some(callee.name.as_str());
+                // The callee and every argument (callbacks included) are
+                // closure references of the built value (#13592).
+                let mut references = References::default();
+                references.visit_expression(init);
+                let References {
+                    referenced, bound, ..
+                } = references;
+                let node = nodes.entry(name).or_default();
+                push_unbound(&mut node.references, referenced, &bound);
                 names.push(name);
             }
             _ => {}
         }
     }
     names
+}
+
+/// Identifier references and bindings of one declaration's code (#13592).
+/// Type positions are skipped: a `typeof f` annotation runs nothing.
+#[derive(Default)]
+struct References<'a> {
+    referenced: Vec<&'a str>,
+    bound: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> Visit<'a> for References<'a> {
+    fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
+        self.referenced.push(it.name.as_str());
+    }
+
+    fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
+        self.bound.insert(it.name.as_str());
+    }
+
+    fn visit_ts_type(&mut self, _it: &TSType<'a>) {}
+}
+
+/// Record a function node's references: its own code minus the functions it
+/// returns directly, and, apart, those returned functions' references, which
+/// a value the function builds reaches (like `returned_texts`). Fail-closed:
+/// a name the function binds anywhere, returned closures included (a
+/// parameter, a local, a nested callback's parameter, a catch binding), may
+/// shadow the top-level declaration at any of its references, so none of
+/// its references counts.
+fn add_function_references<'a>(
+    name: &'a str,
+    params: &'a FormalParameters<'a>,
+    body: &'a oxc_ast::ast::FunctionBody<'a>,
+    returned: &[oxc_span::Span],
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) {
+    let mut all = References::default();
+    all.visit_formal_parameters(params);
+    all.visit_function_body(body);
+    // The same statements, minus each top-level `return` of a function the
+    // node returns directly (an arrow's expression body is such a return).
+    let mut own = References::default();
+    own.visit_formal_parameters(params);
+    for statement in &body.statements {
+        let returns_function = match statement {
+            Statement::ReturnStatement(ret) => ret.argument.as_ref(),
+            Statement::ExpressionStatement(expression) => Some(&expression.expression),
+            _ => None,
+        }
+        .and_then(function_span)
+        .is_some_and(|span| returned.contains(&span));
+        if !returns_function {
+            own.visit_statement(statement);
+        }
+    }
+    let returned_references: Vec<&'a str> = all
+        .referenced
+        .iter()
+        .copied()
+        .filter(|target| !own.referenced.contains(target))
+        .collect();
+    let node = nodes.entry(name).or_default();
+    push_unbound(&mut node.references, own.referenced, &all.bound);
+    push_unbound(
+        &mut node.returned_references,
+        returned_references,
+        &all.bound,
+    );
+}
+
+fn push_unbound<'a>(
+    into: &mut Vec<&'a str>,
+    referenced: Vec<&'a str>,
+    bound: &std::collections::HashSet<&'a str>,
+) {
+    for target in referenced {
+        if !bound.contains(target) && !into.contains(&target) {
+            into.push(target);
+        }
+    }
+}
+
+/// Names the module assigns or updates anywhere (`x = ...`, `x++`, a
+/// destructuring or `for (x of ...)` target), so a closure edge never
+/// follows a binding that may hold some other value.
+fn reassigned_names<'a>(statements: &'a [Statement<'a>]) -> std::collections::HashSet<&'a str> {
+    #[derive(Default)]
+    struct Reassigned<'a> {
+        names: std::collections::HashSet<&'a str>,
+    }
+    impl<'a> Visit<'a> for Reassigned<'a> {
+        fn visit_assignment_target(&mut self, it: &AssignmentTarget<'a>) {
+            let mut inner = References::default();
+            inner.visit_assignment_target(it);
+            self.names.extend(inner.referenced);
+            walk::walk_assignment_target(self, it);
+        }
+
+        fn visit_update_expression(&mut self, it: &UpdateExpression<'a>) {
+            let mut inner = References::default();
+            inner.visit_simple_assignment_target(&it.argument);
+            self.names.extend(inner.referenced);
+            walk::walk_update_expression(self, it);
+        }
+    }
+    let mut visitor = Reassigned::default();
+    for statement in statements {
+        visitor.visit_statement(statement);
+    }
+    visitor.names
 }
 
 /// Spans of the function expressions the body returns from its own top-level
@@ -606,6 +816,51 @@ fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
         // `x.name(...)` is a member call, which is another binding entirely.
         member || (called && !declared)
     })
+}
+
+/// Names reachable from `start` only along paths that take at least one
+/// closure edge, within [`MODULE_CLOSURE_MAX_HOPS`], each with its shortest
+/// such distance. A path may begin with bare calls (at most
+/// [`MODULE_ENTRY_MAX_HOPS`] of them before its first closure edge) and mix
+/// both kinds after it. Names the bare-call graph alone reaches within its
+/// own bound are left out: their call entry already stands.
+fn reachable_through_closures<'n>(
+    start: &'n str,
+    callees: &BTreeMap<&'n str, BTreeSet<&'n str>>,
+    closure_callees: &BTreeMap<&'n str, BTreeSet<&'n str>>,
+) -> BTreeMap<&'n str, usize> {
+    let by_call = reachable_within_hops(start, callees);
+    // States are (name, took a closure edge yet).
+    let mut seen: std::collections::HashSet<(&str, bool)> =
+        std::collections::HashSet::from([(start, false)]);
+    let mut queue: VecDeque<(&str, bool, usize)> = VecDeque::from([(start, false, 0)]);
+    let mut reached: BTreeMap<&str, usize> = BTreeMap::new();
+    while let Some((name, closure, hops)) = queue.pop_front() {
+        if closure && !by_call.contains_key(name) {
+            reached.entry(name).or_insert(hops);
+        }
+        if hops == MODULE_CLOSURE_MAX_HOPS {
+            continue;
+        }
+        let call_allowed = closure || hops < MODULE_ENTRY_MAX_HOPS;
+        let next_calls = callees
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|_| call_allowed)
+            .map(|callee| (*callee, closure));
+        let next_closures = closure_callees
+            .get(name)
+            .into_iter()
+            .flatten()
+            .map(|callee| (*callee, true));
+        for state in next_calls.chain(next_closures).collect::<Vec<_>>() {
+            if seen.insert(state) {
+                queue.push_back((state.0, state.1, hops + 1));
+            }
+        }
+    }
+    reached
 }
 
 /// Names reachable from `start` within the hop bound, each with its shortest

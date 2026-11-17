@@ -382,9 +382,12 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         workspace_root: Option<&Path>,
     ) -> CrossModuleEntries {
+        // A call-built constant is no callable export itself; only its
+        // closure entries (#13592) can be imported and called.
+        let module_value = owner.owner_kind == OwnerKind::ModuleFunction;
         if self.outbound_calls.is_empty()
             || owner.class_name.is_some()
-            || owner.owner_kind == OwnerKind::ModuleFunction
+            || (module_value && !owner.module_entries.iter().any(|entry| entry.closure))
             || owner.commonjs_whole_function
         {
             return CrossModuleEntries::default();
@@ -394,16 +397,22 @@ impl ReExportIndex {
             hops: usize,
             via: BTreeSet<String>,
             names: BTreeSet<String>,
+            /// The chain passed a same-module closure edge (#13592), so it
+            /// takes the closure bound and its entries read unknown.
+            closure: bool,
         }
         let owner_module = normalized_module_path(&owner.file);
         let skeleton = owner_skeleton(owner);
         let mut frontier: std::collections::VecDeque<Frame> = std::collections::VecDeque::new();
-        frontier.push_back(Frame {
-            stand_in: skeleton.clone(),
-            hops: 0,
-            via: BTreeSet::new(),
-            names: BTreeSet::from([owner.name.clone()]),
-        });
+        if !module_value {
+            frontier.push_back(Frame {
+                stand_in: skeleton.clone(),
+                hops: 0,
+                via: BTreeSet::new(),
+                names: BTreeSet::from([owner.name.clone()]),
+                closure: false,
+            });
+        }
         // The owner's own exported wrappers are importable too: a caller of
         // `parseQuery` reaches the owner `parseQuery` calls in its module.
         for entry in owner.module_entries.iter().filter(|entry| {
@@ -417,6 +426,7 @@ impl ReExportIndex {
                 hops: usize::from(entry.hops),
                 via: BTreeSet::new(),
                 names: BTreeSet::from([owner.name.clone(), entry.name.clone()]),
+                closure: entry.closure,
             });
         }
         let mut best: std::collections::BTreeMap<(String, String), TypeScriptModuleEntry> =
@@ -454,11 +464,18 @@ impl ReExportIndex {
                 for exported in &call.entries {
                     let total = frame.hops + 1 + usize::from(exported.hops);
                     let key = (normalized_module_path(file), exported.name.clone());
-                    if total > MODULE_ENTRY_MAX_HOPS
+                    let bound = if frame.closure {
+                        MODULE_CLOSURE_MAX_HOPS
+                    } else {
+                        MODULE_ENTRY_MAX_HOPS
+                    };
+                    // A call chain is preferred over a closure chain, then
+                    // the shorter chain.
+                    if total > bound
                         || key.0 == owner_module
-                        || best
-                            .get(&key)
-                            .is_some_and(|seen| usize::from(seen.hops) <= total)
+                        || best.get(&key).is_some_and(|seen| {
+                            (seen.closure, usize::from(seen.hops)) <= (frame.closure, total)
+                        })
                     {
                         continue;
                     }
@@ -485,6 +502,7 @@ impl ReExportIndex {
                             via_modules: via.iter().cloned().collect(),
                             chain_names: names.iter().cloned().collect(),
                         }),
+                        closure: frame.closure,
                     };
                     best.insert(key, entry.clone());
                     if best.len() > MAX_CROSS_MODULE_ENTRIES {
@@ -498,6 +516,7 @@ impl ReExportIndex {
                         hops: total,
                         via,
                         names,
+                        closure: frame.closure,
                     });
                 }
             }
@@ -2399,6 +2418,39 @@ pub(crate) fn module_entry_reach_is_cross_module_only(
     let reached =
         candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root);
     !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+}
+
+/// `true` when every entry the candidate reaches is one whose reach static
+/// evidence cannot follow to the assertion: an export of another module, or
+/// a path through a closure edge (#13592). A weak oracle there is unknown
+/// too, never an actionable gap.
+pub(crate) fn module_entry_reach_is_opaque_only(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let reached =
+        candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root);
+    !reached.is_empty()
+        && reached
+            .iter()
+            .all(|entry| entry.cross_module.is_some() || entry.closure)
+}
+
+/// `true` when the candidate reaches the owner through at least one entry
+/// whose path passes a closure edge (#13592).
+pub(crate) fn module_entry_reach_includes_closure(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root)
+        .iter()
+        .any(|entry| entry.closure)
 }
 
 /// `true` when the candidate reaches the owner through at least one export of
