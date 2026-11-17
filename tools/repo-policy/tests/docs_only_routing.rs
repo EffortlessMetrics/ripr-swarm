@@ -808,8 +808,8 @@ fn routed_result_admitted(
     heavy: &str,
     admission: (&str, &str),
 ) -> TestResult<bool> {
-    // The extension e2e step (#12122) runs only for an admitted merge-ready
-    // request; elsewhere it is skipped and the summary does not read it.
+    // The extension verdict runs for admitted PR and merge-group requests;
+    // push/dispatch summaries do not require extension qualification.
     let vscode = if admission == ("success", "admitted") {
         "success"
     } else {
@@ -928,31 +928,33 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
 }
 
 #[test]
-fn actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed()
--> TestResult {
+fn actual_result_block_fails_pr_and_merge_group_without_successful_extension_verdict() -> TestResult
+{
     let fixture = Fixture::new()?;
-    assert!(routed_result_with_vscode(
-        &fixture,
-        "pull_request",
-        "success",
-        "true",
-        "success",
-        "skipped",
-        ("success", "admitted", "success"),
-    )?);
-    for outcome in ["failure", "cancelled", "skipped"] {
-        assert!(
-            !routed_result_with_vscode(
-                &fixture,
-                "pull_request",
-                "success",
-                "true",
-                "success",
-                "skipped",
-                ("success", "admitted", outcome),
-            )?,
-            "a {outcome} extension e2e step must fail the Result (#12122)"
-        );
+    for event in ["pull_request", "merge_group"] {
+        assert!(routed_result_with_vscode(
+            &fixture,
+            event,
+            "success",
+            "true",
+            "success",
+            "skipped",
+            ("success", "admitted", "success"),
+        )?);
+        for outcome in ["failure", "cancelled", "skipped", ""] {
+            assert!(
+                !routed_result_with_vscode(
+                    &fixture,
+                    event,
+                    "success",
+                    "true",
+                    "success",
+                    "skipped",
+                    ("success", "admitted", outcome),
+                )?,
+                "{event}: a {outcome:?} extension verdict must fail the Result"
+            );
+        }
     }
     Ok(())
 }
@@ -1076,9 +1078,28 @@ fn extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselect
 }
 
 fn vscode_select(fixture: &Fixture, base: &str, head: &str, labels: &str) -> TestResult<String> {
+    vscode_select_subject(fixture, "pull_request", base, head, "", "", labels)
+}
+
+fn vscode_select_subject(
+    fixture: &Fixture,
+    event: &str,
+    pr_base: &str,
+    pr_head: &str,
+    group_base: &str,
+    group_head: &str,
+    labels: &str,
+) -> TestResult<String> {
     let output = fixture.run(
         &shell("vscode-select")?,
-        &[("BASE_SHA", base), ("HEAD_SHA", head), ("LABELS", labels)],
+        &[
+            ("EVENT_NAME", event),
+            ("BASE_SHA", pr_base),
+            ("HEAD_SHA", pr_head),
+            ("GROUP_BASE_SHA", group_base),
+            ("GROUP_HEAD_SHA", group_head),
+            ("LABELS", labels),
+        ],
         None,
     )?;
     assert!(
@@ -1092,6 +1113,157 @@ fn vscode_select(fixture: &Fixture, base: &str, head: &str, labels: &str) -> Tes
         .collect::<Vec<_>>();
     assert_eq!(values.len(), 1, "exactly one selection output: {outputs}");
     Ok(values[0].to_owned())
+}
+
+#[test]
+fn extension_jobs_and_verdict_admit_queue_requests_without_a_merge_ready_label() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (_, verdict) = job("result")?
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
+        .ok_or("extension verdict step")?;
+    for source in [job("vscode-select")?, verdict] {
+        let condition = source
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("if: "))
+            .ok_or("production selection condition")?;
+        for (event, label, result, status, expected) in [
+            ("merge_group", "", "success", "admitted", true),
+            ("pull_request", "merge-ready", "success", "admitted", true),
+            ("pull_request", "vscode", "success", "admitted", false),
+            ("merge_group", "", "failure", "admitted", false),
+            ("merge_group", "", "success", "refused", false),
+            ("merge_group", "", "success", "not_applicable", false),
+            ("push", "", "success", "admitted", false),
+            ("workflow_dispatch", "", "success", "admitted", false),
+        ] {
+            // These production predicates use only string equality, conjunction,
+            // disjunction and parentheses, whose decisions match Bash [[ ... ]].
+            let expression = condition
+                .replace("needs.admission.result", &format!("'{result}'"))
+                .replace("needs.admission.outputs.status", &format!("'{status}'"))
+                .replace("github.event_name", &format!("'{event}'"))
+                .replace("github.event.label.name", &format!("'{label}'"));
+            assert!(!expression.contains("needs.") && !expression.contains("github."));
+            let output = fixture.run(
+                &format!("if [[ {expression} ]]; then exit 0; else exit 1; fi"),
+                &[],
+                None,
+            )?;
+            assert!(matches!(output.status.code(), Some(0 | 1)), "{output:?}");
+            assert_eq!(
+                output.status.success(),
+                expected,
+                "{condition}: {event}/{label}/{result}/{status}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn extension_queue_selection_uses_the_whole_group_not_the_last_pr_head() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.git(&["checkout", "-b", "extension"])?;
+    fixture.write("editors/vscode/src/extension.ts", "export {};\n")?;
+    let extension = fixture.commit()?;
+    fixture.git(&["checkout", "-b", "rust-only", &base])?;
+    fixture.write("src/core.rs", "pub fn unchanged_extension() {}\n")?;
+    let pr_head = fixture.commit()?;
+    fixture.git(&["checkout", "-b", "queue", &base])?;
+    fixture.git(&["cherry-pick", &extension])?;
+    fixture.git(&["cherry-pick", &pr_head])?;
+    let group = fixture.git(&["rev-parse", "HEAD"])?;
+    assert_ne!(group, pr_head, "G combines both independent PRs");
+    // The checkout and tip PR have no extension diff. Only B..G can see the
+    // earlier constituent's extension change. PR behavior stays unchanged.
+    fixture.git(&["checkout", "rust-only"])?;
+    assert_eq!(vscode_select(&fixture, &base, &pr_head, "")?, "false");
+    assert_eq!(
+        vscode_select_subject(&fixture, "merge_group", &base, &pr_head, &base, &group, "")?,
+        "true"
+    );
+    // A Rust-only group remains cheap even if an irrelevant PR identity names
+    // an extension change. Scope comes exclusively from the queue event.
+    assert_eq!(
+        vscode_select_subject(
+            &fixture,
+            "merge_group",
+            &base,
+            &extension,
+            &base,
+            &pr_head,
+            ""
+        )?,
+        "false"
+    );
+    for labels in ["vscode", "full-ci", "other,vscode,merge-ready"] {
+        assert_eq!(
+            vscode_select_subject(
+                &fixture,
+                "merge_group",
+                &base,
+                &pr_head,
+                &base,
+                &pr_head,
+                labels
+            )?,
+            "true"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn extension_queue_selection_does_not_fall_back_to_a_valid_pr_identity() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("src/core.rs", "pub fn rust_only() {}\n")?;
+    let head = fixture.commit()?;
+    assert_eq!(vscode_select(&fixture, &base, &head, "")?, "false");
+    for (group_base, group_head) in [
+        ("", head.as_str()),
+        (base.as_str(), ""),
+        (base.as_str(), "malformed"),
+        (base.as_str(), base.as_str()),
+    ] {
+        assert_eq!(
+            vscode_select_subject(
+                &fixture,
+                "merge_group",
+                &base,
+                &head,
+                group_base,
+                group_head,
+                ""
+            )?,
+            "true",
+            "unknown/empty group must select, never reuse H's Rust-only diff"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn extension_queue_event_bindings_and_test_checkout_are_explicit() -> TestResult {
+    let selection = job("vscode-select")?;
+    for binding in [
+        "          EVENT_NAME: ${{ github.event_name }}",
+        "          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}",
+        "          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}",
+        "          HEAD_SHA: ${{ needs.admission.outputs.head }}",
+        "          LABELS: ${{ needs.admission.outputs.labels }}",
+    ] {
+        assert_eq!(
+            selection.lines().filter(|line| *line == binding).count(),
+            1,
+            "{binding}"
+        );
+    }
+    assert!(job("vscode-e2e")?.contains("      ref: ${{ github.sha }}\n"));
+    let reusable = include_str!("../../../.github/workflows/vscode-e2e.yml");
+    assert!(reusable.contains("          ref: ${{ inputs.ref || github.sha }}"));
+    Ok(())
 }
 
 #[test]

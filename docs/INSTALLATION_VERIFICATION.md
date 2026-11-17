@@ -220,7 +220,8 @@ target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
   --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
   test ! -s "$smoke/stderr.txt" &&
   ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
-  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  grep -q "ripr/.github/actions/ripr-check@v$version\$" "$smoke/stdout.txt" &&
+  grep -q "^          version: $version\$" "$smoke/stdout.txt" &&
   echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
 ```
 

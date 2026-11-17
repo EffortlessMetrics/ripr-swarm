@@ -475,6 +475,24 @@ an `invalid_argument` tool failure (`isError: true`, see "Argument errors" below
 naming the accepted tokens in `failure.data.allowed` (the echoed token is
 truncated to stay bounded). Empty filter strings and non-boolean `repair_ready` values are `invalid_argument` failures too.
 
+Owner opt-outs (#14138): a finding `ripr check` withholds because its changed
+owner carries `#[mutants::skip]` is not a canonical item. The id set is
+`CheckOutput::withheld_finding_ids`, the set the CLI renderers filter on, so
+the list, the `ripr://snapshot/{snapshot_id}` index, `total`, `selected` and
+`items` never name it. The gap list and snapshot resource add a top-level
+`owner_opt_outs` object, `{"withheld": N, "reason": "owner_mutants_skip"}`,
+the same shape `ripr check --format json` emits; the `ripr_refresh` `snapshot`
+summary and the `ripr_workspace_status` `last_completed_snapshot` carry it
+beside `finding_count` (the producer count, withheld findings included). When
+every finding is withheld the object adds `"all_withheld": true` and the
+outcome or summary carries `clean: false`, so an empty `items` never reads as
+"no gaps". All of it is absent when nothing is withheld. `ripr_get_gap`,
+`ripr_get_top_limitation`, `ripr_get_repair_card`, `ripr_prepare_repair` and
+their resources refuse a withheld canonical or finding id with the typed
+`owner_opt_out` failure (`data.reason`, `data.canonical_id`, `data.finding_id`,
+`data.owner`) instead of a document. The withheld set rides the snapshot
+identity, so adding or removing the attribute and refreshing moves it.
+
 Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
 narrowed items in snapshot order, disclosed through the `page` window
 (`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
@@ -885,6 +903,7 @@ config_invalid         workspace_ambiguous static_limitation
 cancelled              superseded          attempt_invalid
 seam_not_found         policy_omitted      witness_unavailable
 identity_unnameable    budget_overflow     incomplete_inventory
+owner_opt_out
 ```
 
 Before the first successful refresh the evidence tools fail with
@@ -1012,6 +1031,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `unsupported_profile` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | the workspace input is unsupported; narrow the diff and retry `ripr_refresh` |
 | `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml` (or an invalid `RIPR_GIT_TIMEOUT` in the server `env`, then restart), then `ripr_refresh` |
 | `stale_inventory` | `-32603` | retryable after refresh; tool-path only, not produced by `resources/read` (`ripr_list_repair_attempts`) | re-list the attempt inventory |
+| `owner_opt_out` | `-32603` | state; not an id miss (#14138) | the finding exists but its changed owner carries `#[mutants::skip]`, so `ripr check` withholds it and no gap, limitation, card or repair start is served; `data.reason` is `owner_mutants_skip` |
 | `policy_omitted` | `-32603` | operator action; reachable on the repair-card read (#10718) | the agent policy omits this seam's class; inspect it with `ripr agent brief --seam-id <seam> --json` |
 | `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |
 | `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |

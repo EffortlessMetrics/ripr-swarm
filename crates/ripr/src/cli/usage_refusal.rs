@@ -36,6 +36,11 @@ pub(crate) const CODE_UNKNOWN_COMMAND: &str = "unknown_command";
 pub(crate) const CODE_SELECTOR_MISS: &str = "selector_miss";
 /// Machine code of a value flag given no value, or an empty one (#11979).
 pub(crate) const CODE_MISSING_VALUE: &str = "missing_value";
+/// Machine code of a required flag the invocation left out (#14076).
+pub(crate) const CODE_MISSING_REQUIRED: &str = "missing_required";
+/// Machine code of two flags the invocation gave that cannot be used
+/// together (#14925).
+pub(crate) const CODE_CONFLICTING_FLAGS: &str = "conflicting_flags";
 /// Machine code of a value that does not have the shape its flag takes,
 /// such as a word where a whole number belongs (#11979).
 pub(crate) const CODE_INVALID_VALUE: &str = "invalid_value";
@@ -114,6 +119,31 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
 /// one. Command parsers keep their own wording; only the code travels.
 pub(crate) fn empty_value(flag: &str, message: &str) -> String {
     note_missing_value(flag, message);
+    message.to_string()
+}
+
+/// The refusal for a required flag the invocation left out. The token is
+/// the flag to add; command parsers keep their own wording.
+pub(crate) fn missing_required(flag: &str, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_MISSING_REQUIRED.to_string(),
+        message: message.to_string(),
+        token: Some(flag.to_string()),
+        next: None,
+    });
+    message.to_string()
+}
+
+/// The refusal for two given flags that cannot be used together. The token
+/// is one of them: dropping it clears this conflict. Command parsers keep
+/// their own wording.
+pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_CONFLICTING_FLAGS.to_string(),
+        message: message.to_string(),
+        token: Some(flag.to_string()),
+        next: None,
+    });
     message.to_string()
 }
 
@@ -196,7 +226,11 @@ fn argv_command(args: &[String]) -> Option<String> {
 fn fills_help_route(code: &str) -> bool {
     matches!(
         code,
-        CODE_UNKNOWN_VALUE | CODE_MISSING_VALUE | CODE_INVALID_VALUE
+        CODE_UNKNOWN_VALUE
+            | CODE_MISSING_VALUE
+            | CODE_INVALID_VALUE
+            | CODE_MISSING_REQUIRED
+            | CODE_CONFLICTING_FLAGS
     )
 }
 
