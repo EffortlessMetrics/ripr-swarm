@@ -12,8 +12,9 @@ mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
     ForwardedCallbackParam, InvokedCallbackParam, call_making_closure_positions,
-    closure_argument_positions, forwarded_callback_params, invoked_callback_params,
-    macro_call_columns, param_never_mentioned, passes_call_making_closure,
+    closure_argument_positions, closure_argument_positions_many, forwarded_callback_params,
+    invoked_callback_params, invoked_callback_params_many, macro_call_columns,
+    param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
     unconditionally_invoked_param_positions,
 };
 use probe_shapes::extract_parser_probe_shapes;
@@ -49,7 +50,8 @@ use crate::analysis::rust_index::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    placeholder_bound_variables, unwrap_err_bound_variables, without_unfilled_expected,
+    without_unfilled_expected_parts,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,6 +338,27 @@ pub(crate) fn parser_oracles_for_function(
         function_start_line,
         function_text,
         || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+/// [`parser_oracles_for_function`] for many `(function_text, start_line)`
+/// queries under the same memo key, the scope's misses computed on the rayon
+/// pool (#12947).
+pub(crate) fn parser_oracles_for_functions_many(
+    functions: &[(&str, usize)],
+) -> Vec<Option<Vec<OracleFact>>> {
+    let queries = functions
+        .iter()
+        .map(|(source, start_line)| super::run_memo::MemoQuery {
+            discriminator: *start_line,
+            extra: "",
+            source,
+        })
+        .collect::<Vec<_>>();
+    super::run_memo::memoize_many_with(
+        super::run_memo::Product::FunctionOracles,
+        &queries,
+        |query| parser_oracles_for_function_uncached(query.source, query.discriminator),
     )
 }
 
@@ -996,6 +1019,7 @@ fn summarize_file_with_collectors(
             && a.kind == b.kind
             && a.text == b.text
     });
+    retain_probe_shapes_outside_test_bodies(&mut file_probe_shapes, &functions);
 
     let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
@@ -2158,6 +2182,61 @@ fn push_probe_shape(
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
+/// Drop probe shapes that sit strictly inside a plain `#[test]` function body
+/// and inside no other function (#13703). Tests are the instrument, not the
+/// surface under test: diff probes treat those lines as test evidence, and
+/// repo probes, seam inventory and constant readers skip evidence-role
+/// owners, so the shapes only cost memory and cache bytes.
+///
+/// The rule stays narrow so the parser-time decision cannot disagree with
+/// the roles consumers read after test-style normalization:
+/// - only a bare `#[test]` attribute qualifies (argument-bearing harness
+///   attributes are re-read by normalization and may resolve differently);
+/// - a shape on the test's opening line stays (shared-line rule, #9076);
+/// - a shape inside any other function, such as a nested helper (#9177),
+///   stays whatever that function's role;
+/// - `error_path` shapes always stay, because error-path twin pairing reads
+///   them across the whole file by byte order.
+fn retain_probe_shapes_outside_test_bodies(
+    shapes: &mut Vec<ProbeShapeFact>,
+    functions: &[FunctionFact],
+) {
+    let is_plain_test = |function: &&FunctionFact| {
+        function.source_role == FunctionSourceRole::TestAttribute
+            && function.attrs.iter().any(|attr| {
+                attr.chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .eq("#[test]".chars())
+            })
+    };
+    let test_bodies: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(is_plain_test)
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if test_bodies.is_empty() {
+        return;
+    }
+    let other_functions: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| !is_plain_test(function))
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    shapes.retain(|shape| {
+        if shape.kind == ProbeShapeKind::ErrorPath {
+            return true;
+        }
+        let (start, end) = (shape.start_line(), shape.end_line());
+        let inside_test_body = test_bodies
+            .iter()
+            .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
+        !inside_test_body
+            || other_functions
+                .iter()
+                .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
+    });
+}
+
 fn push_probe_shape_with_text(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
@@ -2873,6 +2952,10 @@ fn extract_parser_oracles(
         &original_function_text,
     );
     let bound_error_vars = unwrap_err_bound_variables(&function_text);
+    // #14810: a local the body binds only to an unfilled placeholder macro
+    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
+    // assertion compared with it earns no strong credit.
+    let placeholder_vars = placeholder_bound_variables(&function_text);
 
     let mut assertions = Vec::new();
     for macro_call in function
@@ -2907,6 +2990,8 @@ fn extract_parser_oracles(
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
         }
+        let classification =
+            without_unfilled_expected(classification, &assertion_text, &placeholder_vars);
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
             kind: classification.kind,
@@ -3082,7 +3167,7 @@ fn extract_parser_oracles(
             let_bindings: &let_bindings,
         },
     );
-    for oracle in extract_line_scanned_oracles(&function_text, function_start)
+    for mut oracle in extract_line_scanned_oracles(&function_text, function_start)
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
@@ -3092,6 +3177,18 @@ fn extract_parser_oracles(
             })
         })
     {
+        // #14810 round 3: the line-scanned path must lower an assertion that
+        // names an unfilled placeholder local, exactly as the parser path
+        // does. Without this an `ensure!`-style helper keeps strong credit
+        // while the same assertion through the parser reads unknown.
+        let (kind, strength) = without_unfilled_expected_parts(
+            oracle.kind,
+            oracle.strength,
+            &oracle.text,
+            &placeholder_vars,
+        );
+        oracle.kind = kind;
+        oracle.strength = strength;
         assertions.push(oracle);
     }
     for oracle in guarded_matches.oracles {
@@ -3545,10 +3642,139 @@ fn function_span(function: &FunctionFact) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_body_probe_shapes_are_not_stored_but_production_and_nested_shapes_are()
+    -> Result<(), String> {
+        let source = "\
+pub fn price(amount: i32) -> i32 {
+    if amount > 10 { return amount - 1; }
+    amount
+}
+
+#[test]
+fn prices_discount() {
+    if price(11) > 9 { panic!(\"x\"); }
+    fn helper(v: i32) -> bool {
+        v > 3
+    }
+    assert!(helper(price(4)));
+}
+
+#[tokio::test]
+async fn async_price() {
+    if price(12) > 9 { panic!(\"y\"); }
+}
+
+#[test]
+fn early_error() -> Result<(), String> {
+    if price(1) > 0 { return Err(String::new()); }
+    Ok(())
+}
+";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let lines: Vec<usize> = facts
+            .probe_shapes
+            .iter()
+            .map(ProbeShapeFact::start_line)
+            .collect();
+        // Production body shapes stay.
+        assert!(
+            lines.contains(&2),
+            "production predicate missing: {lines:?}"
+        );
+        // The nested production-role helper inside the test keeps its shape.
+        assert!(
+            lines.contains(&10),
+            "nested helper shape missing: {lines:?}"
+        );
+        // Shapes on the test's own body lines (predicate, call deletion,
+        // assertion) are dropped.
+        assert!(
+            !lines.iter().any(|line| matches!(line, 8 | 12)),
+            "test-body shapes were stored: {lines:?}"
+        );
+        // Only a bare `#[test]` qualifies: the tokio test's body keeps its
+        // predicate, because normalization re-reads harness attributes.
+        assert!(lines.contains(&17), "tokio test shape missing: {lines:?}");
+        // Error-path shapes stay even inside a plain test (twin pairing reads
+        // them file-wide); the plain test's predicate on that line is gone.
+        let line_22: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line() == 22)
+            .map(|shape| shape.kind.as_str())
+            .collect();
+        assert!(
+            line_22.contains(&"error_path"),
+            "error path dropped: {line_22:?}"
+        );
+        assert!(
+            !line_22.contains(&"predicate"),
+            "test predicate kept: {line_22:?}"
+        );
+        // The test functions are still indexed as tests.
+        assert_eq!(facts.tests.len(), 3);
+        Ok(())
+    }
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #14810 round 3: the line-scanned path must lower an assertion that
+    /// names an unfilled placeholder local, exactly as the parser path does.
+    /// Without the filter an `ensure!`-style helper keeps strong credit while
+    /// the same assertion through the parser reads unknown.
+    #[test]
+    fn a_line_scanned_assertion_naming_a_placeholder_lowers() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = todo!(\"x\");\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Unknown {
+            return Err(format!(
+                "a line-scanned assertion naming a placeholder must lower: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The control: the same line-scanned shape with a real expected value
+    /// keeps its strong credit.
+    #[test]
+    fn a_line_scanned_assertion_with_a_real_expected_value_keeps_strong() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = 7;\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Strong {
+            return Err(format!(
+                "a real expected value must keep strong credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
 
     /// #10363: the declaration table is built once per file, not once per
     /// function or assertion, so a large test file stays linear.

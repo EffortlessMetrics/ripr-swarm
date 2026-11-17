@@ -5845,6 +5845,7 @@ fn e2e_review_comments_doc_with_outcome(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        withheld_changed_gaps: Vec::new(),
         omitted_static_limited: 0,
     };
     let config = crate::config::RiprConfig::default();

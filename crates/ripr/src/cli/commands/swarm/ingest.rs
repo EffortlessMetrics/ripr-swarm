@@ -58,8 +58,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(Options {
         root,
         result: result.ok_or_else(|| {
-            "swarm ingest requires --result <path>; add `--result <path>` to the command"
-                .to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--result",
+                "swarm ingest requires --result <path>; add `--result <path>` to the command",
+            )
         })?,
     })
 }
