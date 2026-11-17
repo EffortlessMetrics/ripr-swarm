@@ -658,7 +658,20 @@ pub(crate) fn render_human_triage(
                 Some(PrintedRepairRoute::Seam(route)) => {
                     repair_printed = true;
                     let command = navigation.repair_command(&route.seam_id);
-                    if let Some(file) = route.uncommitted_target.as_deref() {
+                    if let Some(commit) = navigation.repair_prerequisite(route) {
+                        // #13636: `ripr repair` refuses while tracked
+                        // production files differ from HEAD; name the
+                        // commit first, in the gap-bound route's words.
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
+                    } else if let Some(file) = route.uncommitted_target.as_deref() {
                         // `ripr repair` would refuse this start: its
                         // inline test module target begins from the
                         // committed file. State the requirement instead
@@ -1057,11 +1070,7 @@ fn grouped_hidden_row(
     if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
         return None;
     }
-    let lines = if first_line == last_line {
-        first_line.to_string()
-    } else {
-        format!("{first_line}-{last_line}")
-    };
+    let lines = grouped_line_text(members.iter().map(|f| f.probe.location.line));
     let currentness = if label_currentness {
         format!(", {}", hidden_bullet_currentness(first))
     } else {
@@ -1088,6 +1097,40 @@ fn grouped_hidden_row(
         kinds.join(", "),
         hidden_finding_reason(first)
     ))
+}
+
+/// Most separate line runs a grouped row lists before it falls back to the
+/// span and a line count (#14682).
+const GROUPED_LINE_RUNS_LISTED: usize = 3;
+
+/// The lines a grouped `Hidden:` row names: each run of consecutive lines as
+/// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
+/// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
+/// the row keeps the span and says how many lines it covers:
+/// `1078-1241 (12 lines)`.
+fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
+    let distinct: std::collections::BTreeSet<usize> = lines.collect();
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for line in &distinct {
+        match runs.last_mut() {
+            Some((_, end)) if end.checked_add(1) == Some(*line) => *end = *line,
+            _ => runs.push((*line, *line)),
+        }
+    }
+    let run_text = |(start, end): &(usize, usize)| {
+        if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        }
+    };
+    if runs.len() <= GROUPED_LINE_RUNS_LISTED {
+        return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
+    }
+    match (distinct.first(), distinct.last()) {
+        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        _ => String::new(),
+    }
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
@@ -1311,7 +1354,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
-/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
@@ -1323,6 +1366,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
         )
     ) && !matches!(
@@ -2276,24 +2320,51 @@ fn decisive_shadows_unknown(decisive: &Finding, unknown: &Finding) -> bool {
         && (covers_same_changed_behavior(decisive, unknown) || has_no_distinct_change(unknown))
 }
 
+/// `repair_rank` for a non-preview static-limited finding: behind every
+/// routed or unrouted gap (`reachable_unrevealed` 2, `weakly_exposed` 3) and
+/// level with the unknown classes, ahead of `exposed`.
+const STATIC_LIMITED_REPAIR_TIER: u8 = 5;
+
+/// The `Start here` sort key, lowest first. Fields compare in declaration
+/// order (the derived `Ord`), so the order of the fields is the ranking
+/// (RIPR-SPEC-0122 "Start here" steps 1-6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TriageRank<'a> {
+    /// #9346: changed-file role leads the ranking. The pair (file role,
+    /// verdict decisiveness) defines the demotion this fixes, an unknown
+    /// verdict on an evidence-role file, while verdict order within one role
+    /// keeps the keys below, so a production unknown still leads a
+    /// production exposed finding and `no_actionable_gap` keeps meaning
+    /// only-exposed-selected.
+    role: u8,
+    /// 1 when a decisive verdict on the same behavior shadows this unknown.
+    shadowed: u8,
+    /// 1 for a preview-language finding.
+    preview: u8,
+    /// 0 for a non-exposed finding with a printable repair route, the shared
+    /// static-limited tier, or the class rank.
+    repair: u8,
+    no_canonical_gap: u8,
+    /// 1 unless a related test is linked by more than a name token (#14734).
+    no_linked_oracle_test: u8,
+    no_missing_evidence: u8,
+    /// Negated confidence percentage, so higher confidence sorts first.
+    negated_confidence: i32,
+    /// #14266: without this key two otherwise equal candidates were ordered
+    /// by file path: an unknown in `analysis/` led a `reachable_unrevealed`
+    /// gap in `provider_contract/`. The class order breaks that tie before
+    /// the path does.
+    class: u8,
+    path: &'a std::path::Path,
+    line: usize,
+}
+
 fn triage_rank<'a>(
     finding: &'a Finding,
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    u8,
-    i32,
-    u8,
-    &'a std::path::Path,
-    usize,
-) {
+) -> TriageRank<'a> {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2304,9 +2375,16 @@ fn triage_rank<'a>(
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
-    {
+    let repair_rank = if finding.class == ExposureClass::Exposed {
+        class_rank
+    } else if has_ranked_repair_route(finding) {
         0
+    } else if !is_preview_limited(finding) && is_static_limited(finding) {
+        // #14266 item 2: static-limited findings share one tier behind every
+        // gap, so the evidence keys below (gap identity, related test,
+        // missing evidence, confidence) order them among themselves, as they
+        // did while their advisory next step counted as a route.
+        STATIC_LIMITED_REPAIR_TIER
     } else {
         class_rank
     };
@@ -2328,31 +2406,19 @@ fn triage_rank<'a>(
                 .iter()
                 .any(|decisive| decisive_shadows_unknown(decisive, finding)),
     );
-    (
-        // #9346: changed-file role leads the ranking. The pair (file
-        // role, verdict decisiveness) defines the demotion this fixes —
-        // an unknown verdict on an evidence-role file — while verdict
-        // order within one role keeps its existing keys below, so a
-        // production unknown still leads a production exposed finding
-        // and `no_actionable_gap` keeps meaning only-exposed-selected.
-        role_rank,
-        shadowed_rank,
-        preview_rank,
-        repair_rank,
-        u8::from(finding.canonical_gap.is_none()),
-        u8::from(!has_linked_oracle_test(finding)),
-        u8::from(finding.missing.is_empty()),
-        -(finding.confidence * 100.0) as i32,
-        // #14266: a repair route zeroes `repair_rank` for every routed
-        // finding, and every stable finding with a next step counts as
-        // routed, so without this key two otherwise equal candidates were
-        // ordered by file path: an unknown in `analysis/` led a
-        // `reachable_unrevealed` gap in `provider_contract/`. The class
-        // order breaks that tie before the path does.
-        class_rank,
-        finding.probe.location.file.as_path(),
-        finding.probe.location.line,
-    )
+    TriageRank {
+        role: role_rank,
+        shadowed: shadowed_rank,
+        preview: preview_rank,
+        repair: repair_rank,
+        no_canonical_gap: u8::from(finding.canonical_gap.is_none()),
+        no_linked_oracle_test: u8::from(!has_linked_oracle_test(finding)),
+        no_missing_evidence: u8::from(finding.missing.is_empty()),
+        negated_confidence: -(finding.confidence * 100.0) as i32,
+        class: class_rank,
+        path: finding.probe.location.file.as_path(),
+        line: finding.probe.location.line,
+    }
 }
 
 /// Whether `finding` has a decision-set related test linked by more than a
@@ -2382,7 +2448,11 @@ fn has_linked_oracle_test(finding: &Finding) -> bool {
 /// unchanged; only the selection order moves.
 fn has_ranked_repair_route(finding: &Finding) -> bool {
     if !is_preview_limited(finding) {
-        return has_repair_route(finding);
+        // #14266 item 2: rank by the route the screen can print. A
+        // static-limited finding never prints a repair route
+        // (`printed_repair_route`), so its advisory next step must not lift
+        // it to the routed tier over a gap whose route does print.
+        return !is_static_limited(finding) && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2479,17 +2549,23 @@ pub(crate) fn finding_routes_json(
         }
         Some(PrintedRepairRoute::Seam(route)) => {
             repair.insert("seam_id".to_string(), route.seam_id.clone().into());
-            match &route.uncommitted_target {
-                None => {
-                    repair.insert("status".to_string(), "ready".into());
-                    repair.insert(
-                        "command".to_string(),
-                        navigation.repair_command(&route.seam_id).into(),
-                    );
-                }
-                Some(file) => {
-                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+            if route.uncommitted_target.is_none() && route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.repair_command(&route.seam_id).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                if let Some(file) = &route.uncommitted_target {
                     repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                // #13636: the dirty production premise the start refuses.
+                if !route.uncommitted_files.is_empty() {
+                    repair.insert(
+                        "uncommitted_files".to_string(),
+                        route.uncommitted_files.clone().into(),
+                    );
                 }
             }
         }
@@ -2621,6 +2697,28 @@ fn push_hidden_row(
 
 #[cfg(test)]
 mod tests {
+
+    /// #14682: a grouped row names the lines its members are on. Gaps show,
+    /// runs collapse, and beyond three runs the span carries a line count.
+    #[test]
+    fn grouped_line_text_names_runs_not_a_covering_range() {
+        for (lines, expected) in [
+            (vec![3, 5], "3, 5"),
+            (vec![5, 3, 5], "3, 5"),
+            (vec![10, 11, 12], "10-12"),
+            (vec![7, 7], "7"),
+            (vec![10, 11, 12, 15], "10-12, 15"),
+            (vec![1, 3, 5], "1, 3, 5"),
+            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
+            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+        ] {
+            assert_eq!(
+                grouped_line_text(lines.clone().into_iter()),
+                expected,
+                "{lines:?}"
+            );
+        }
+    }
 
     #[test]
     fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
@@ -4121,25 +4219,63 @@ mod tests {
     }
 
     /// #14266: two candidates equal on every evidence key through
-    /// confidence order by exposure class, not by file path. The unknown
-    /// sorts first by path and is listed first, so neither path order nor
-    /// insertion order can masquerade as ranking.
+    /// confidence order by exposure class, not by file path. The weaker
+    /// class sorts first by path and is listed first, so neither path order
+    /// nor insertion order can masquerade as ranking.
     #[test]
     fn start_here_breaks_an_evidence_tie_by_class_before_path() {
-        let mut unknown = finding_at(
-            "finding:unknown",
+        let mut weak = finding_at(
+            "finding:weak",
             "src/a_analysis.rs",
-            ExposureClass::PropagationUnknown,
+            ExposureClass::WeaklyExposed,
         );
         let mut gap = finding_at(
             "finding:unrevealed",
             "src/z_provider.rs",
             ExposureClass::ReachableUnrevealed,
         );
-        for finding in [&mut unknown, &mut gap] {
+        for finding in [&mut weak, &mut gap] {
             finding.recommended_next_step = Some("inspect the related test".to_string());
             finding.confidence = 0.66;
         }
+        let output = test_output(vec![weak.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence weak gap still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        weak.confidence = 0.9;
+        let output = test_output(vec![gap, weak]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:weak")
+        );
+    }
+
+    /// #14266 item 2: an advisory next step on a static-limited finding is
+    /// not a repair route (the screen never prints one for it), so it does
+    /// not lift the unknown over a gap that has no route either. The unknown
+    /// sorts first by path, is listed first and has the higher confidence.
+    #[test]
+    fn start_here_does_not_rank_an_unprintable_route_as_a_repair_route() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        unknown.recommended_next_step =
+            Some("The indexed related tests do not establish a call".to_string());
+        unknown.confidence = 0.9;
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        gap.confidence = 0.5;
         let output = test_output(vec![unknown.clone(), gap.clone()]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
@@ -4147,14 +4283,20 @@ mod tests {
             Some("finding:unrevealed")
         );
 
-        // Discriminating control: a higher-confidence unknown still leads,
-        // so class only breaks a tie and does not override earlier keys.
-        unknown.confidence = 0.9;
-        let output = test_output(vec![gap, unknown]);
+        // Discriminating control: a next step on a finding that is not
+        // static-limited still counts as a route and still leads.
+        let mut routed = finding_at(
+            "finding:routed-weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        routed.recommended_next_step = Some("strengthen the assertion".to_string());
+        routed.confidence = 0.9;
+        let output = test_output(vec![routed, gap]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
-            Some("finding:unknown")
+            Some("finding:routed-weak")
         );
     }
 
@@ -4274,6 +4416,54 @@ mod tests {
         assert_eq!(
             selected(vec![predicate, literal]),
             Some("finding:literal".to_string())
+        );
+    }
+
+    /// #14266 item 2: static-limited findings share one tier, so the
+    /// evidence keys still order them among themselves. A `no_static_path`
+    /// finding sorts first by path, is listed first and has the better class
+    /// rank, but the unknown carries a gap identity and wins on that key.
+    #[test]
+    fn start_here_orders_static_limited_findings_by_evidence_not_class() {
+        let mut no_path = finding_at(
+            "finding:no-path",
+            "src/a_display.rs",
+            ExposureClass::NoStaticPath,
+        );
+        no_path.recommended_next_step = Some("Tests cannot close this limitation".to_string());
+        let mut unknown = finding_at(
+            "finding:unknown-with-gap",
+            "src/z_impls.rs",
+            ExposureClass::InfectionUnknown,
+        );
+        unknown.recommended_next_step = Some("Open the related test".to_string());
+        unknown.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:rust:src/z_impls.rs:cmp:return_value".to_string(),
+            language: "rust".to_string(),
+            file: "src/z_impls.rs".to_string(),
+            owner: "cmp".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "return_value".to_string(),
+            normalized_discriminator: "let_some_rhs".to_string(),
+        });
+        for finding in [&mut no_path, &mut unknown] {
+            finding.confidence = 0.45;
+        }
+        let output = test_output(vec![no_path.clone(), unknown.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown-with-gap")
+        );
+
+        // Control: with equal evidence the class tie-break still puts the
+        // no-path finding first, so the tier does not reverse class order.
+        unknown.canonical_gap = None;
+        let output = test_output(vec![unknown, no_path]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:no-path")
         );
     }
 

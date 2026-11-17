@@ -942,6 +942,11 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// Byte offset in `gate_text` where the exception body ends, before the
+    /// rule 14 comparison is appended (#14754 review). `None` for a
+    /// non-exception assertion or a cached fact written before this field.
+    #[serde(default)]
+    exception_body_end: Option<usize>,
     /// The call a callable-form exception assertion makes
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
@@ -2594,6 +2599,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
@@ -2612,6 +2620,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod cross_module_caller_tests;
 #[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]

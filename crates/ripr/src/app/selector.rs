@@ -263,6 +263,19 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
         || wanted.ends_with(&format!("/{stored}"))
 }
 
+/// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
+/// case-sensitive; only miss wording reads this, so the explain cause and the
+/// location hint agree on which files a wrong-case selector names (#14676).
+pub(in crate::app) fn locator_paths_match_ignoring_ascii_case(
+    stored_file: &str,
+    selector_file: &str,
+) -> bool {
+    locator_paths_match(
+        &stored_file.to_ascii_lowercase(),
+        &selector_file.to_ascii_lowercase(),
+    )
+}
+
 /// What is known about whether the run behind a finding set analyzed its
 /// whole scope, for the location-miss hint's empty-scope and other-file
 /// wording.
@@ -352,14 +365,13 @@ pub(in crate::app) fn location_miss_hint(
     // stays case-sensitive; the hint names the correctly cased file instead.
     let mut case_folded =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
-    let wanted_folded = wanted.to_ascii_lowercase();
     let mut other_files = std::collections::BTreeSet::<String>::new();
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         // The same "same file" rule selection uses (#14077's shared helper).
         let matches = locator_paths_match(file.as_ref(), &wanted);
         // #14416: the same rule ignoring ASCII case, for the hint only.
-        let matches_folded = locator_paths_match(&file.to_ascii_lowercase(), &wanted_folded);
+        let matches_folded = locator_paths_match_ignoring_ascii_case(&file, &wanted);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.

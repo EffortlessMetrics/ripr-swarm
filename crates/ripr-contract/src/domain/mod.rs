@@ -132,6 +132,7 @@ pub use refusal_remedy::RefusalRemedy;
 // Public so the `ripr` facade can re-export it; not part of a product API (ADR 0027).
 pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub use probe::UNREFERENCED_IN_WORKSPACE;
 pub use probe::boundary_input_observed_with_weak_oracle;
 pub use probe::declared_const_name;
 pub use probe::first_observing_related_test;

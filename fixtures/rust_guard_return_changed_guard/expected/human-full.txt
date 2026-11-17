@@ -1,0 +1,128 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_guard_return_changed_guard/input
+
+Summary: 3 changed behavior(s) checked: 0 exposed, 3 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:b21d8bbc
+
+Changed
+  before: t > 500
+  after:  t > 200
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::rate
+  gap id (for scripts): gap:rust:src/lib.rs:rate:predicate_boundary:predicate:t==200
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach rate: three_hundred_rates_sixty
+  - infection weak: Related tests contain input values, but the equality-boundary check is missing
+  - propagation yes: Changed behavior appears to influence returned value: t / 5
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator missing: `t == 200`; related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: t / 5 (line 3)
+  - related test tests/rate.rs:4 three_hundred_rates_sixty uses strong exact value oracle: assert_eq!(rate(300), 60); misses: no test input reaches `t == 200`
+  - source assertion argument value 60 at line 5
+  - source function argument value t = 300 at line 5
+
+Weakness
+  - missing discriminator t == 200: No related test call uses t equal to 200; observed t values: 300; target 200 value: 200
+
+Next step
+  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast probe:src_lib.rs:predicate:b21d8bbc
+  ripr context --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:b21d8bbc
+
+NOTE ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:208869c5
+
+Changed
+  before: if t > 500 {
+  expr:   if t > 500 {
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::rate
+  gap id (for scripts): gap:rust:src/lib.rs:rate:predicate_boundary:predicate:t==500
+
+Static exposure
+  weakly_exposed (note, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach rate: three_hundred_rates_sixty
+  - infection weak: Related tests contain input values, but the equality-boundary check is missing
+  - propagation yes: Changed behavior appears to influence returned value: t / 5
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator missing: `t == 500`; related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: t / 5 (line 3)
+  - related test tests/rate.rs:4 three_hundred_rates_sixty uses strong exact value oracle: assert_eq!(rate(300), 60); misses: no test input reaches `t == 500`
+  - source assertion argument value 60 at line 5
+  - source function argument value t = 300 at line 5
+
+Weakness
+  - missing discriminator t == 500: No related test call uses t equal to 500; observed t values: 300; target 500 value: 500
+
+Next step
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast probe:src_lib.rs:predicate:208869c5
+  ripr context --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:208869c5
+
+WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:9a19aebc
+
+Changed
+  before: return t / 10
+  after:  return t / 5
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::rate
+  gap id (for scripts): gap:rust:src/lib.rs:rate:return_value:return_value:t/5
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach rate: three_hundred_rates_sixty
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: t / 5
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches returned value: t / 5 (line 3)
+  - related test tests/rate.rs:4 three_hundred_rates_sixty uses strong exact value oracle: assert_eq!(rate(300), 60); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 60 at line 5
+  - source function argument value t = 300 at line 5
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  The related test `three_hundred_rates_sixty` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast probe:src_lib.rs:return_value:9a19aebc
+  ripr context --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:9a19aebc

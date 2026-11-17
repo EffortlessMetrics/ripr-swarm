@@ -24,7 +24,7 @@ Change type
   family: predicate
   delta:  control (changes which code path runs)
   owner:  src/lib.rs::shipping_cost
-  gap id (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents!express
+  gap id (for scripts): gap:rust:src/lib.rs:shipping_cost:predicate_boundary:predicate:order_cents==free_over_cents
 
 Static exposure
   infection_unknown (warning, confidence 0.66)
@@ -56,7 +56,7 @@ Stop reasons:
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 
 Next step
-  Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_guarded_boundary_guard_missing/input --diff <cwd>/fixtures/rust_guarded_boundary_guard_missing/diff.patch --mode fast probe:src_lib.rs:predicate:ad5e29a4

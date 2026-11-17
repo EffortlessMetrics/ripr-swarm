@@ -54,8 +54,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -708,8 +708,11 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
+fills a boundary input when the changed comparison names one, builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
@@ -2602,8 +2605,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -3966,8 +3969,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 The CI summary prints the generated workflow's step summary as Markdown on
 stdout, from the artifacts earlier steps wrote. It reads only; it never runs
@@ -4045,8 +4050,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 Examples:
   ripr reports ci-packet --root .

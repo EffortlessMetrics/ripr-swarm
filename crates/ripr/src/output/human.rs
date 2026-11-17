@@ -406,6 +406,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str(no_findings_line(output));
         out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
+            // The headline (and its base hint, when one prints) is its own
+            // paragraph: `Start here:` opens after a blank line here, as it
+            // does after the analysis-outcome block on a run with findings.
+            out.push('\n');
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
@@ -3403,6 +3407,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3464,6 +3469,7 @@ mod tests {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3493,6 +3499,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: Some("src/lib.rs".to_string()),
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -5186,6 +5193,23 @@ mod tests {
         assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("Nothing to check:"));
         assert!(!rendered.contains("No findings:"));
+        // `Start here:` is its own paragraph, not glued to the headline: the
+        // line before it is blank, and exactly one blank line separates them.
+        let lines: Vec<&str> = rendered.lines().collect();
+        let start = lines.iter().position(|line| *line == "Start here:");
+        let before = start.and_then(|index| index.checked_sub(1));
+        assert_eq!(
+            before.and_then(|index| lines.get(index).copied()),
+            Some(""),
+            "{rendered}"
+        );
+        let headline = before
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| lines.get(index).copied());
+        assert!(
+            headline.is_some_and(|line| line.starts_with("Nothing to check:")),
+            "{rendered}"
+        );
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -7461,6 +7485,37 @@ mod tests {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn over_limit_stop_names_only_enabled_language_files_as_selected() -> Result<(), String> {
+        // #13641 review: a fitting file whose adapter is disabled is never
+        // selected, so the over-limit stop must not claim every fitting file
+        // was selected — only every fitting file in an enabled language.
+        use crate::analysis::PartialDiffStopReason;
+        let mut output =
+            partial_scope_output(PartialDiffStopReason::FileExceedsAnalysisLimit, 2, 2510);
+        let scope = output
+            .partial_scope
+            .as_mut()
+            .ok_or("fixture carries a partial scope")?;
+        scope.over_limit_files = vec![crate::analysis::OverLimitFile {
+            path: "src/b.rs".to_string(),
+            changed_lines: 2500,
+            limit: 2000,
+            limit_env: "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        }];
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+        let needle = "every enabled-language file that fits was selected and 1 file(s) \
+                      that each exceed their language's limit on their own were left out";
+        if !rendered.contains(needle) {
+            return Err(format!("missing `{needle}` in:\n{rendered}"));
+        }
+        if rendered.contains("every file that fits was selected") {
+            return Err(format!("unqualified selection claim in:\n{rendered}"));
         }
         Ok(())
     }

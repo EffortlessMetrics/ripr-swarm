@@ -188,10 +188,16 @@ pub(in crate::cli) fn parse_record_options(
         i += 1;
     }
     let snapshot_id = snapshot_id.ok_or_else(|| {
-        "feedback record requires --snapshot; file and line are not a result identity".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--snapshot",
+            "feedback record requires --snapshot; file and line are not a result identity",
+        )
     })?;
     let reason = reason.ok_or_else(|| {
-        "feedback record requires --reason; add `--reason` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--reason",
+            "feedback record requires --reason; add `--reason` to the command",
+        )
     })?;
     let payload = FeedbackPayload {
         identity: ResultIdentity {

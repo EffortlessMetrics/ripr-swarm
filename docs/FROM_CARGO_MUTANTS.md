@@ -194,6 +194,14 @@ verified re-export). Changing an unrelated test, even one in the same file or
 with the same name in another module, does not keep a gap advisory.
 `gate-decision.md` states the reason for each one.
 
+A changed gap that ripr withholds as a static limitation is listed too, not
+dropped. For example, a changed function no test calls, whose boundary operand
+is computed (`cents % 100 > 49`), prints as `no_static_path` in `missed-txt`.
+`comments.json` lists it under `suppressed` with reason `static_limitation`,
+and the gate reports it as `suppressed` with that reason. It does not block:
+ripr cannot yet name a bounded repair for it, so a cargo-mutants run or a
+reviewer has to decide whether it needs a test (#13892).
+
 ### Observed
 
 Run with a development build of `ripr 0.11.0` on the example crate, with a
@@ -331,4 +339,6 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `src/gen/`), even with no flags
   ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
-  list, so counts will not line up one to one.
+  list, so counts will not line up one to one. [Mutation operators ripr
+  models](MUTATION_OPERATORS.md) maps each cargo-mutants genre (and mutmut and
+  Stryker operator) to what ripr reports, with the gaps.

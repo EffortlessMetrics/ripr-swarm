@@ -22,7 +22,8 @@ pub(crate) mod index_build_probe {
     }
 
     /// Reuse fell back to a fresh build because an added file may re-parent
-    /// function identities (a retraction counts too).
+    /// function identities, moved the retained include view, or revived a
+    /// withheld file's tests (a retraction counts too).
     pub(super) fn record_include_rebase() {
         INCLUDE_REBASES.with(|count| count.set(count.get() + 1));
     }
@@ -48,6 +49,7 @@ mod execution_context;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 pub(crate) use build::SecondaryPassGuard;
+pub(in crate::analysis) use build::manifest_library_name;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
@@ -359,26 +361,35 @@ fn reuse_cached_index(
     }
     // Post-processing is only incrementally exact when the file set grows by
     // leaf additions. A dropped file can retract module provenance and helper
-    // credits already applied to retained files, and an added or changed file
-    // with an `include!` directive can re-parent already rebased function
-    // identities; none of those can be undone in place, so fail closed to a
-    // fresh build over exactly `files` (verdicts equal a non-reusing build).
-    // A changed file (an extra replacing an indexed path) retracts too:
-    // `remove_file` leaves include parents/targets/limitations and module
-    // provenance derived from the old bytes in place.
+    // credits already applied to retained files; that cannot be undone in
+    // place, so fail closed to a fresh build over exactly `files` (verdicts
+    // equal a non-reusing build). A changed file (an extra replacing an
+    // indexed path) retracts too: `remove_file` leaves include
+    // parents/targets/limitations and module provenance derived from the old
+    // bytes in place. An added file with an `include!` directive is checked
+    // after the merge instead (`includes_exact` below).
     let retracts = !dropped.is_empty()
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
+    // Only a retained target can be re-parented in place: an added target
+    // reaches the merged resolution unrebased, as in a fresh build.
+    let added: std::collections::BTreeSet<&Path> =
+        extras.iter().map(|(path, _)| path.as_path()).collect();
+    let retained: std::collections::BTreeSet<&Path> = kept.difference(&added).copied().collect();
     let rebases_includes = extras.iter().any(|(path, bytes)| {
         includes::added_file_may_rebase_includes(
             path,
             &build::rust_source_text(bytes).text,
-            &kept,
-            includes::index_holds_include_state(&cached.index),
+            &retained,
         )
     });
     if retracts || rebases_includes {
+        trace_reuse_fallback(if retracts {
+            "retracts"
+        } else {
+            "include_targets_kept_file"
+        });
         #[cfg(test)]
         index_build_probe::record_include_rebase();
         return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
@@ -386,11 +397,37 @@ fn reuse_cached_index(
     for path in &dropped {
         cached.index.remove_file(path);
     }
+    // #12947: composition withholds the tests of a file outside every module
+    // tree by clearing them, and a later pass that no longer withholds them
+    // rebuilds them from the function facts, which is not the parser's own
+    // test fact a fresh build keeps. So a file the core withheld that the
+    // merge links again (an include limitation, a new module edge) falls
+    // back when it then has tests (checked below).
+    let withheld: Vec<PathBuf> = cached
+        .index
+        .files()
+        .iter()
+        .filter(|(_, facts)| facts.role_provenance.outside_module_tree)
+        .map(|(path, _)| path.clone())
+        .collect();
     if !extras.is_empty() {
-        let stats = index_phase("index_cached_parse", || {
+        let (stats, includes_exact) = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
         cached.file_fact_cache.merge_from(&stats);
+        // #12947: an added file's `include!` directive re-resolves every
+        // include edge over the merged index. Rebased identities and
+        // composed roles of retained files cannot be re-parented in place,
+        // so the extension stands only when the retained files' include view
+        // is unchanged (an added directive that only names a target outside
+        // the index, in an index that already had an unresolved include,
+        // changes none). Otherwise fail closed to a fresh build.
+        if !includes_exact {
+            trace_reuse_fallback("retained_include_view_changed");
+            #[cfg(test)]
+            index_build_probe::record_include_rebase();
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
+        }
         // An added file that makes module composition unknowable (lexical
         // fallback emits no `mod` declarations; an unknown `#[path]` target
         // may compile any file) flips workspace-wide `outside_module_tree`
@@ -406,6 +443,7 @@ fn reuse_cached_index(
             })
         });
         if unknowable {
+            trace_reuse_fallback("unknowable_module_composition");
             return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
     }
@@ -414,7 +452,20 @@ fn reuse_cached_index(
         hash.push(path, bytes);
     }
     cached.files_content_hash = hash.finish();
-    post_process_cached_index(cached, root, registrations)
+    let processed = post_process_cached_index(cached, root, registrations)?;
+    // A revived file without tests differs in nothing a fresh build keeps.
+    let revived = withheld.iter().any(|path| {
+        processed.index.files().get(path).is_some_and(|facts| {
+            !facts.role_provenance.outside_module_tree && !facts.tests.is_empty()
+        })
+    });
+    if revived {
+        trace_reuse_fallback("withheld_tests_revived");
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
+        return fresh_build_keeping_run_stats(processed, root, files, registrations, same_run);
+    }
+    Ok(processed)
 }
 
 /// Fresh build over exactly `files` after a reuse that cannot be extended in
@@ -584,6 +635,16 @@ pub(crate) use model::WorkspaceFileAuthority;
 pub(crate) use model::WorkspaceRootAuthority;
 pub(crate) use model::probe_shape_position;
 pub(crate) use model::source_digest;
+
+/// Names, on the opt-in latency stream, why index reuse fell back to a fresh
+/// build, so a trace shows when the extension path is not taken.
+fn trace_reuse_fallback(reason: &str) {
+    if std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_TRACE").is_some() {
+        eprintln!(
+            "ripr_repo_exposure_latency phase=index_reuse_fallback status={reason} duration_ms=0"
+        );
+    }
+}
 
 /// Phase tracing extends the existing opt-in latency stream; normal output is
 /// unchanged. A cancelled intermediate index is never returned as complete.
