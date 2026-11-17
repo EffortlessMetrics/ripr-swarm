@@ -162,6 +162,9 @@ pub(in crate::analysis) fn unary_tail_change(
     {
         return None;
     }
+    if another_definition_may_answer_the_name(owner, index) {
+        return None;
+    }
     Some(UnaryTailChange {
         operator,
         operand: current.operand,
@@ -181,8 +184,9 @@ pub(in crate::analysis) fn unary_tail_change(
 /// header, no changed `mod` or `#[path]` declaration on its module chain); a
 /// gated item (a `cfg` on the function, an enclosing item, the file or a
 /// `mod` declaration on its chain, or any `#[path]` declaration) refuses,
-/// since a test may run a twin compiled in its place. The verified base item must then be exactly the current
-/// item with the one replaced tail line restored.
+/// since a test may run a twin compiled in its place. The verified base item
+/// must then be exactly the current item with the one replaced tail line
+/// restored.
 fn base_item_is_the_restored_owner(
     owner: &FunctionSummary,
     changed: &ChangedFile,
@@ -218,6 +222,81 @@ fn base_item_is_the_restored_owner(
         _ => return false,
     }
     restored.join("\n") == base.old_text
+}
+
+/// #14952: a test's bare `f(5)` reaches the changed owner only when nothing
+/// else can be named `f` where the test runs. The shared identity reads `cfg`
+/// gates on the item, its ancestors and its `mod` declarations, not a `cfg`
+/// on a `pub use` that re-exports one of two same-name functions, an
+/// `include!` that pulls in a twin, a `macro_rules!` that emits a module or a
+/// function, or a `use .. as f` rename. So this reading also refuses when the
+/// index holds another function of the owner's name anywhere, or when any
+/// indexed file renames an import to that name, calls `include!`, or defines
+/// a `macro_rules!` whose body emits a `mod`, a `fn $name` or a `fn` of the
+/// owner's name. A file that matches the lexical prefilter but does not parse
+/// refuses too.
+fn another_definition_may_answer_the_name(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let name = owner.name.as_str();
+    let mut same_name = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == name);
+    let (Some(only), None) = (same_name.next(), same_name.next()) else {
+        return true;
+    };
+    if only.file != owner.file || only.start_line != owner.start_line {
+        return true;
+    }
+    index.files().iter().any(|(_, facts)| {
+        let source: &str = &facts.data().source;
+        if !(source.contains("macro_rules")
+            || source.contains("include")
+            || source.contains(" as "))
+        {
+            return false;
+        }
+        let Some(parse) = parse_clean_source_file(source) else {
+            return true;
+        };
+        parse.tree().syntax().descendants().any(|node| {
+            if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                return macro_body_may_emit(&rules, name);
+            }
+            if let Some(call) = ast::MacroCall::cast(node.clone()) {
+                return call
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|macro_name| macro_name.text() == "include");
+            }
+            ast::Rename::cast(node)
+                .is_some_and(|rename| rename.name().is_some_and(|renamed| renamed.text() == name))
+        })
+    })
+}
+
+/// Whether a `macro_rules!` body may emit a module, a `fn $name` or a `fn`
+/// named `name`. A body with no token tree refuses.
+fn macro_body_may_emit(rules: &ast::MacroRules, name: &str) -> bool {
+    let Some(body) = rules.token_tree() else {
+        return true;
+    };
+    let tokens: Vec<_> = body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    tokens
+        .iter()
+        .enumerate()
+        .any(|(at, token)| match token.text() {
+            "mod" => true,
+            "fn" => tokens
+                .get(at + 1)
+                .is_none_or(|next| next.text() == "$" || next.text() == name),
+            _ => false,
+        })
 }
 
 /// The operator and whether `new` holds it, when `old` and `new` differ by

@@ -6,4 +6,7 @@
   `exposed` and a bare call `reachable_unrevealed`. Because `-a` and `a`
   agree at `0`, a pin at `0` reads `weakly_exposed`, and an argument ripr
   cannot fold to a literal (a local, a loop row, a constant) stays
-  `infection_unknown` (#14815).
+  `infection_unknown`. An owner whose base side is not verified as the same
+  function, that a `cfg` or `#[path]` module declaration gates, or whose name
+  another function, import rename, `include!` or `macro_rules!` may supply,
+  keeps the old reading (#14815).

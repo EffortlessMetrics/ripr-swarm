@@ -156,10 +156,20 @@ gets the owner's return as its flow sink (#14815), but only when, inside the
 owner's span, the diff adds exactly that tail line and removes exactly its
 positional counterpart, so the base-side owner is the current owner with that
 line restored; the paired removed line alone never stands in for the old
-owner. The file must declare exactly one `fn` of that name on both sides,
-and no changed line may touch the header (attributes through the opening
-brace) of the owner or of an enclosing item, so a swapped module or `#[cfg]`
-cannot supply another function's body. The parameter and return types must be the same unshadowed primitive.
+owner. The base-side item must be the one the shared base-owner identity
+verifies as the same function (same qualified path and attributes, unique
+under that path on both sides, no added line on its signature or an
+enclosing header, no changed `mod` declaration on its module chain), and
+that item must equal the current one with the tail line restored. A `cfg`
+on the function, an enclosing item, the file or a `mod` declaration on its
+chain, or any `#[path]` module declaration, refuses, so a swapped module,
+`#[cfg]` twin or `#[path]` target cannot supply another function's body.
+Because that identity does not see a `cfg` outside `mod` declarations
+(#14952), the reading also refuses when the index holds another function of
+the owner's name, or any indexed file renames an import to that name, calls
+`include!`, or defines a `macro_rules!` that may emit a module or such a
+function.
+The parameter and return types must be the same unshadowed primitive.
 `!` differs from its operand at every input, so the ordinary infection
 reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
 an exact assertion pins a bare literal call whose folded result differs

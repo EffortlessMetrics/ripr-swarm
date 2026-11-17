@@ -554,13 +554,14 @@ index 1111111..2222222 100644
     assert_tail_not_exposed(lib, patch, 3)
 }
 
-/// The `return_value` findings for each changed tail `(file, tail)` on line 2
-/// of a multi-file crate, none of which may read `exposed` or credit
-/// infection.
+/// The `return_value` findings for each changed tail `(file, tail)` on `line`
+/// of a multi-file crate, none of which may read `exposed` or
+/// `weakly_exposed` or credit propagation to the return.
 fn assert_file_tails_not_exposed(
     files: &[(&str, &str)],
     patch: &str,
     tails: &[(&str, &str)],
+    line: usize,
 ) -> Result<(), String> {
     let findings = TempRepo::create_files(files, patch)?.findings()?;
     for (file, tail) in tails {
@@ -569,13 +570,16 @@ fn assert_file_tails_not_exposed(
             .filter(|finding| finding.probe.location.file.ends_with(file))
             .cloned()
             .collect();
-        let finding = tail_finding(&in_file, 2, tail)?;
-        // The test runs a different function than the changed one, so no
-        // input reaches this change: neither the class nor the infection
-        // stage may credit it.
+        let finding = tail_finding(&in_file, line, tail)?;
+        // The test runs a different function than the changed one, so the
+        // unary-tail reading must refuse it: no return-value sink credited
+        // and no exposure credit. (Before the identity check read the module
+        // declarations, these read `weakly_exposed` with the sink credited.)
         assert!(
-            !matches!(finding.class, ExposureClass::Exposed)
-                && finding.ripr.infect.state != StageState::Yes,
+            !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ) && finding.ripr.propagate.state != StageState::Yes,
             "{file}: {finding:?}"
         );
     }
@@ -626,6 +630,7 @@ index 1111111..2222222 100644
         ],
         patch,
         &[("src/real.rs", "x")],
+        2,
     )
 }
 
@@ -685,5 +690,141 @@ index 5555555..6666666 100644
         &[("src/lib.rs", lib), ("src/x.rs", x), ("src/y.rs", y)],
         patch,
         &[("src/x.rs", "x"), ("src/y.rs", "-x")],
+        2,
+    )
+}
+
+/// #14952 shape: an in-file `cfg` on the `pub use` that picks which module's
+/// `f` the tests run. The changed `real::f` is compiled for tests but never
+/// called by them; `fake::f` returns `x` on both sides.
+#[test]
+fn a_cfg_gated_reexport_twin_is_not_exposed() -> Result<(), String> {
+    let lib = "pub mod real {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+pub mod fake {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+#[cfg(not(test))]
+pub use real::f;
+#[cfg(test)]
+pub use fake::f;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let patch = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub mod real {
+     pub fn f(x: i32) -> i32 {
+-        -x
++        x
+     }
+ }
+";
+    assert_file_tails_not_exposed(&[("src/lib.rs", lib)], patch, &[("src/lib.rs", "x")], 3)
+}
+
+/// #14952 shape: `include!` under `cfg` picks which file's `f` exists; the
+/// tests run the `fake.rs` twin returning `x` on both sides.
+#[test]
+fn a_cfg_gated_include_twin_is_not_exposed() -> Result<(), String> {
+    let lib = "#[cfg(not(test))]
+include!(\"real.rs\");
+#[cfg(test)]
+include!(\"fake.rs\");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let real = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let fake = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let patch = "diff --git a/src/real.rs b/src/real.rs
+index 1111111..2222222 100644
+--- a/src/real.rs
++++ b/src/real.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+";
+    assert_file_tails_not_exposed(
+        &[
+            ("src/lib.rs", lib),
+            ("src/real.rs", real),
+            ("src/fake.rs", fake),
+        ],
+        patch,
+        &[("src/real.rs", "x")],
+        2,
+    )
+}
+
+/// #14952 shape: a `macro_rules!` emits the non-test `mod real;`, and an
+/// inline `#[cfg(test)]` twin of the module returns `x` on both sides.
+#[test]
+fn a_macro_emitted_module_twin_is_not_exposed() -> Result<(), String> {
+    let lib = "macro_rules! declare {
+    ($name:ident) => {
+        #[cfg(not(test))]
+        pub mod $name;
+    };
+}
+declare!(real);
+
+#[cfg(test)]
+pub mod real {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::real::f;
+    #[test]
+    fn pins() {
+        assert_eq!(f(5), 5);
+    }
+}
+";
+    let real = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+    let patch = "diff --git a/src/real.rs b/src/real.rs
+index 1111111..2222222 100644
+--- a/src/real.rs
++++ b/src/real.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+";
+    assert_file_tails_not_exposed(
+        &[("src/lib.rs", lib), ("src/real.rs", real)],
+        patch,
+        &[("src/real.rs", "x")],
+        2,
     )
 }
