@@ -8,8 +8,8 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 14 changed line(s), 7 candidate line(s), 14 changed behavior(s) checked, 14 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  State: no test gap found
+  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run
   File: ./src/lib.rs:1
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:case_one:predicate_boundary:predicate:value==10
@@ -39,18 +39,12 @@ Next: drill into the top finding:
 Hidden:
   13 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:1 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:2 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:2 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:3 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:3 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:4 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:4 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:5 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:5 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:6 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:6 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:7 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:7 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:2 (exposed); 2 changed behaviors in `case_two`; kinds: predicate, return_value; reason: same as above
+    - ./src/lib.rs:3 (exposed); 2 changed behaviors in `case_three`; kinds: predicate, return_value; reason: same as above
+    - ./src/lib.rs:4 (exposed); 2 changed behaviors in `case_four`; kinds: predicate, return_value; reason: same as above
+    - ./src/lib.rs:5 (exposed); 2 changed behaviors in `case_five`; kinds: predicate, return_value; reason: same as above
+    - ./src/lib.rs:6 (exposed); 2 changed behaviors in `case_six`; kinds: predicate, return_value; reason: same as above
+    - ./src/lib.rs:7 (exposed); 2 changed behaviors in `case_seven`; kinds: predicate, return_value; reason: same as above
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_one: test_case_one", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 1)", "related test tests/cases.rs:4 test_case_one uses strong relational check oracle: assert!(case_one(fixture));", "source function argument value value = 10 at line 4", "source function argument value value == 10 at line 4"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":1}
@@ -135,6 +142,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_one: test_case_one", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 1)", "related test tests/cases.rs:4 test_case_one uses strong relational check oracle: assert!(case_one(fixture));", "source function argument value value = 10 at line 4", "source function argument value value == 10 at line 4"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":1}
@@ -229,6 +243,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_two: test_case_two", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 2)", "related test tests/cases.rs:6 test_case_two uses strong relational check oracle: assert!(case_two(builder));", "source function argument value value = 10 at line 6", "source function argument value value == 10 at line 6"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":2}
@@ -323,6 +344,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_two: test_case_two", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 2)", "related test tests/cases.rs:6 test_case_two uses strong relational check oracle: assert!(case_two(builder));", "source function argument value value = 10 at line 6", "source function argument value value == 10 at line 6"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":2}
@@ -417,6 +445,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_three: test_case_three", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 3)", "related test tests/cases.rs:8 test_case_three uses strong relational check oracle: assert!(case_three(arb_value));", "source function argument value value = 10 at line 8", "source function argument value value == 10 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":3}
@@ -511,6 +546,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_three: test_case_three", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 3)", "related test tests/cases.rs:8 test_case_three uses strong relational check oracle: assert!(case_three(arb_value));", "source function argument value value = 10 at line 8", "source function argument value value == 10 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":3}
@@ -605,6 +647,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_four: test_case_four", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 4)", "related test tests/cases.rs:10 test_case_four uses strong relational check oracle: assert!(case_four(10));", "source function argument value value = 10 at line 10", "source function argument value value == 10 at line 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":4}
@@ -699,6 +748,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_four: test_case_four", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 4)", "related test tests/cases.rs:10 test_case_four uses strong relational check oracle: assert!(case_four(10));", "source function argument value value = 10 at line 10", "source function argument value value == 10 at line 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"value >= 10","line":4}
@@ -793,6 +849,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_five: test_case_five", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: async_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: async_value >= 10 (line 5)", "related test tests/cases.rs:12 test_case_five uses strong relational check oracle: assert!(case_five(10));", "source function argument value async_value = 10 at line 12", "source function argument value async_value == 10 at line 12"],
       "flow_sinks": [
         {"kind":"return_value","text":"async_value >= 10","line":5}
@@ -887,6 +950,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_five: test_case_five", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: async_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: async_value >= 10 (line 5)", "related test tests/cases.rs:12 test_case_five uses strong relational check oracle: assert!(case_five(10));", "source function argument value async_value = 10 at line 12", "source function argument value async_value == 10 at line 12"],
       "flow_sinks": [
         {"kind":"return_value","text":"async_value >= 10","line":5}
@@ -981,6 +1051,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_six: test_case_six", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: spawn_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: spawn_value >= 10 (line 6)", "related test tests/cases.rs:14 test_case_six uses strong relational check oracle: assert!(case_six(10));", "source function argument value spawn_value = 10 at line 14", "source function argument value spawn_value == 10 at line 14"],
       "flow_sinks": [
         {"kind":"return_value","text":"spawn_value >= 10","line":6}
@@ -1075,6 +1152,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_six: test_case_six", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: spawn_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: spawn_value >= 10 (line 6)", "related test tests/cases.rs:14 test_case_six uses strong relational check oracle: assert!(case_six(10));", "source function argument value spawn_value = 10 at line 14", "source function argument value spawn_value == 10 at line 14"],
       "flow_sinks": [
         {"kind":"return_value","text":"spawn_value >= 10","line":6}
@@ -1169,6 +1253,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_seven: test_case_seven", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: await_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: await_value >= 10 (line 7)", "related test tests/cases.rs:16 test_case_seven uses strong relational check oracle: assert!(case_seven(10));", "source function argument value await_value = 10 at line 16", "source function argument value await_value == 10 at line 16"],
       "flow_sinks": [
         {"kind":"return_value","text":"await_value >= 10","line":7}
@@ -1263,6 +1354,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach case_seven: test_case_seven", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: await_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: await_value >= 10 (line 7)", "related test tests/cases.rs:16 test_case_seven uses strong relational check oracle: assert!(case_seven(10));", "source function argument value await_value = 10 at line 16", "source function argument value await_value == 10 at line 16"],
       "flow_sinks": [
         {"kind":"return_value","text":"await_value >= 10","line":7}
