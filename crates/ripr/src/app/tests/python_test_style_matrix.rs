@@ -556,6 +556,14 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\n\napp = FastAPI(**{\"openapi\" \"_url\": \"/price\"})\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
+            "commented schema option",
+            "from fastapi import FastAPI\n\napp = FastAPI(  # options\n    **{\"openapi\" \"_url\": \"/price\"}\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "assembled globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nglobals()[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
             "unpacked application options",
             "from fastapi import FastAPI\n\noptions = {\"docs\" \"_url\": \"/price\"}\napp = FastAPI(\n    **options\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),

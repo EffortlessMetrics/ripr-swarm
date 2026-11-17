@@ -5794,14 +5794,10 @@ mod tests {
         // assertion on the sibling's exception, not the changed owner's, so
         // its weak finding carries one orthogonal card.
         // #13869: `python_route_response_{sibling, json_patch,
-        // equivalent_number, float_floor_division, list_subscript,
-        // adjacent_list_tokens, duplicate_old_key, shadowed_dict,
-        // parenthesized_alias, compact_loop, replaced_content, docs_route,
-        // tuple_dict, unpacked_options}` keep a route response read of a key
-        // the diff did not change (or could not establish) weakly exposed;
-        // each weak finding carries one orthogonal card, fourteen more in
-        // total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
+        // equivalent_number}` keep a route response read of a key the diff
+        // did not change (or could not establish) weakly exposed; each weak
+        // finding carries one orthogonal card, three more in total.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 38, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

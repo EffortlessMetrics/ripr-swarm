@@ -1,9 +1,0 @@
-diff --git a/shop/app.py b/shop/app.py
---- a/shop/app.py
-+++ b/shop/app.py
-@@ -13,4 +13,4 @@
- 
- @app.get("/price")
- def price() -> (dict):
--    return {"total": "1", "count": 3}
-+    return {"total": 1, "count": 3}

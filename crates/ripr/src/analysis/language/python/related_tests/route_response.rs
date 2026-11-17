@@ -147,14 +147,22 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
     ];
     // Whitespace may sit inside a call (`app.add_api_route ("/x", f)`), so
     // the markers are matched against the source without it.
+    // A `#` comment can sit between call arguments, so each marker is also
+    // matched with comments removed (either reading only adds refusals).
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-    MARKERS.iter().any(|marker| compact.contains(marker))
+    let uncommented: String = source
+        .lines()
+        .flat_map(|line| strip_line_comment(line).chars())
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    let contains = |marker: &str| compact.contains(marker) || uncommented.contains(marker);
+    MARKERS.iter().any(|marker| contains(marker))
         // A `**` unpack in call arguments (`FastAPI(**{"openapi" "_url":
         // "/price"})`, `FastAPI(**options)`) passes options the source does
         // not spell, such as a schema or docs path that answers before a user
         // route, so the application's configuration is not established.
-        || compact.contains("(**")
-        || compact.contains(",**")
+        || contains("(**")
+        || contains(",**")
         || rebinds_builtin_dict(source)
         || compact
             .match_indices("APIRoute")
@@ -174,9 +182,11 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
 /// `dict` token anywhere in an assignment target (`dict = ...`, `dict, x =
 /// ...`, `(dict, x) = ...`, `dict: T`, `dict := ...`, `dict += ...`), in a
 /// `for` target, after `as`, `class`, `def`, `global` or `nonlocal`, in a
-/// `case` pattern or on an `import` line is a rebinding, as is a reach into
-/// the builtins (`builtins`, `__builtins__`) or the name in a string
-/// (`globals()["dict"]`). An over-read only refuses.
+/// `case` pattern or on an `import` line is a rebinding, as is the name in a
+/// string or any namespace write a name cannot be read from (`builtins`,
+/// `__builtins__`, `globals()`, `locals()`, `vars()`, `__dict__`,
+/// `sys.modules`, `setattr`, `exec`, `eval`, `__import__`, so that
+/// `globals()["di" "ct"] = Price` refuses). An over-read only refuses.
 fn rebinds_builtin_dict(source: &str) -> bool {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let tokens_of = |text: &str| -> Vec<String> {
@@ -188,9 +198,22 @@ fn rebinds_builtin_dict(source: &str) -> bool {
     let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     if compact.contains("\"dict\"")
         || compact.contains("'dict'")
-        || tokens_of(source)
-            .iter()
-            .any(|token| token == "builtins" || token == "__builtins__")
+        || tokens_of(source).iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "builtins"
+                    | "__builtins__"
+                    | "globals"
+                    | "locals"
+                    | "vars"
+                    | "__dict__"
+                    | "modules"
+                    | "setattr"
+                    | "exec"
+                    | "eval"
+                    | "__import__"
+            )
+        })
     {
         return true;
     }

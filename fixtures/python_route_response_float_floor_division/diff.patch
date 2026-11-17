@@ -1,9 +1,0 @@
-diff --git a/shop/app.py b/shop/app.py
---- a/shop/app.py
-+++ b/shop/app.py
-@@ -5,4 +5,4 @@ app = FastAPI()
- 
- @app.get("/price")
- def price():
--    return {"total": 10, "count": 3}
-+    return {"total": 3.3 // 0.3, "count": 3}
