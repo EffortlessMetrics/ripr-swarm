@@ -3314,7 +3314,8 @@ pub(super) fn bare_name_bound_only_by_std_globs(
     }
     let spells_std_glob = index.files().get(&test.file).is_some_and(|facts| {
         let source: &str = &facts.source;
-        source.contains("::*")
+        // `use std::cmp::{*};` spells the glob without `::*`.
+        source.contains('*')
             && STD_ROOTS
                 .iter()
                 .any(|root| source.contains(&format!("{root}::")))
@@ -3337,30 +3338,42 @@ pub(super) fn bare_name_bound_only_by_std_globs(
             || scope.imports_of(name).next().is_some()
             || scope.imports_of(&raw_name).next().is_some()
             || scope.defines.contains(name)
+            || scope.defines.contains(&raw_name)
             || scope.local_bindings.contains_key(name)
+            || scope.local_bindings.contains_key(&raw_name)
+    };
+    // The lexical scopes a bare name in the test body can see: the body's
+    // scopes out to, and including, the first module scope.
+    let module_at = scopes.scopes.iter().position(|scope| !scope.fn_body);
+    let Some(module_at) = module_at else {
+        return false;
+    };
+    let visible = &scopes.scopes[..=module_at];
+    // A glob's root resolves through every visible scope, so a rebinding in
+    // the enclosing module (`use crate::facade as core;`) reaches a glob
+    // written in the test body.
+    let root_rebound = |root: &String| {
+        visible.iter().any(|scope| {
+            scope.child_modules.contains(root)
+                || scope.imports_of(root).next().is_some()
+                || scope.defines.contains(root.as_str())
+        })
     };
     let std_globs_only = |scope: &NameScope| {
         scope.globs.iter().all(|glob| {
             glob.as_ref().is_some_and(|path| {
-                path.first().is_some_and(|root| {
-                    STD_ROOTS.contains(&root.as_str())
-                        && !scope.child_modules.contains(root)
-                        && scope.imports_of(root).next().is_none()
-                })
+                path.first()
+                    .is_some_and(|root| STD_ROOTS.contains(&root.as_str()) && !root_rebound(root))
             })
         })
     };
-    let mut std_glob_seen = false;
-    for scope in &scopes.scopes {
-        if binds(scope) || !std_globs_only(scope) {
-            return false;
-        }
-        std_glob_seen |= !scope.globs.is_empty();
-        if !scope.fn_body {
-            return std_glob_seen;
-        }
+    if visible
+        .iter()
+        .any(|scope| binds(scope) || !std_globs_only(scope))
+    {
+        return false;
     }
-    false
+    visible.iter().any(|scope| !scope.globs.is_empty())
 }
 
 /// Crate roots of the standard library, as a glob import spells them.
@@ -6667,6 +6680,16 @@ mod std_glob_only {
 }
 
 #[cfg(test)]
+mod grouped_std_glob_only {
+    use std::cmp::{*};
+
+    #[test]
+    fn grouped_std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
 mod body_std_glob_only {
     #[test]
     fn body_std_glob_only_case() {
@@ -6727,6 +6750,22 @@ mod rebound_std_root {
 }
 
 #[cfg(test)]
+mod enclosing_rebound_std_root {
+    mod facade {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use facade as core;
+
+    #[test]
+    fn enclosing_rebound_std_root_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
 mod qualified_beside_std_glob {
     use std::cmp::*;
 
@@ -6757,13 +6796,15 @@ fn integration_own_crate_glob_case() {
 }
 ";
 
-    const STD_GLOB_CASES: [&str; 3] = [
+    const STD_GLOB_CASES: [&str; 4] = [
         "std_glob_only_case",
+        "grouped_std_glob_only_case",
         "body_std_glob_only_case",
         "integration_std_glob_case",
     ];
 
-    const STD_GLOB_KEPT_CASES: [&str; 6] = [
+    const STD_GLOB_KEPT_CASES: [&str; 7] = [
+        "enclosing_rebound_std_root_case",
         "std_and_parent_globs_case",
         "body_std_glob_under_parent_glob_case",
         "explicit_import_beside_std_glob_case",
@@ -6834,6 +6875,42 @@ fn integration_own_crate_glob_case() {
                 "{name}: another route may bind the bare name"
             );
         }
+        Ok(())
+    }
+
+    /// A raw-identifier definition in the test's own module binds the bare
+    /// name ahead of any glob, so the standard-glob rule stays out.
+    #[test]
+    fn a_raw_definition_beside_a_std_glob_is_still_the_owner() -> Result<(), String> {
+        let index = index(&[(
+            "src/lib.rs",
+            "\
+use std::cmp::*;
+
+pub fn r#max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[test]
+fn raw_definition_case() {
+    assert_eq!(r#max(3, 3), 3);
+}
+",
+        )]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name.trim_start_matches("r#") == "max")
+            .ok_or("owner `r#max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "raw_definition_case")
+            .ok_or("test `raw_definition_case` must be indexed")?;
+        assert!(!bare_name_bound_only_by_std_globs(&index, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, test
+        ));
         Ok(())
     }
 
