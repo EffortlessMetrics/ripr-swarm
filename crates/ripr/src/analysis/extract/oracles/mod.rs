@@ -11,8 +11,8 @@ pub(crate) use arguments::{
     outer_assertion_condition,
 };
 pub(crate) use classify::{
-    classify_assertion, classify_assertion_with, is_inequality_assertion,
-    without_unfilled_expected, without_unfilled_expected_parts,
+    assertion_reads_placeholder, classify_assertion, classify_assertion_with,
+    is_inequality_assertion, without_unfilled_expected, without_unfilled_expected_parts,
 };
 pub(crate) use pattern_admission::LazyDecls;
 #[cfg(test)]

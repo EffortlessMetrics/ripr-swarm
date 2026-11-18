@@ -90,18 +90,28 @@ pub(crate) fn without_unfilled_expected(
     // not a read; a string literal, a comment and an escaped `{{expected}}`
     // are not reads; a `format!("{expected}")` interpolation is. Unknown
     // helpers keep the whole-text fallback.
-    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
-    let masked = mask_assertion_reads(&operand_text);
-    if !placeholders
-        .iter()
-        .any(|name| reads_local_name(&masked, name))
-    {
+    if !assertion_reads_placeholder(assertion, placeholders) {
         return classification;
     }
     OracleClassification {
         kind: OracleKind::Unknown,
         strength: OracleStrength::Unknown,
     }
+}
+
+/// True when the assertion's semantic operands read one of `placeholders`.
+/// This is the one read test for the #14810 lowering and for the disclosure
+/// note that explains it (#14883), so a word in the diagnostic message, a
+/// string literal or a comment cannot earn the note without the lowering.
+pub(crate) fn assertion_reads_placeholder(
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> bool {
+    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
+    let masked = mask_assertion_reads(&operand_text);
+    placeholders
+        .iter()
+        .any(|name| reads_local_name(&masked, name))
 }
 
 /// [`without_unfilled_expected`] for a caller that holds the kind and strength

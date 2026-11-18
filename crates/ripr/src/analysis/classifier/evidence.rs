@@ -25,7 +25,7 @@ use crate::analysis::classify::{
     unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
+    assertion_reads_placeholder, mask_comments_and_strings, placeholder_bound_variables,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
@@ -2318,11 +2318,11 @@ impl ClassifiedProbeEvidence {
                 if placeholders.is_empty() {
                     continue;
                 }
+                // #14883: the same read test the lowering uses, so a message
+                // word or a string literal naming the placeholder is not a read.
                 let Some(assertion) = test.assertions.iter().find(|assertion| {
                     assertion.strength == OracleStrength::Unknown
-                        && extract_identifier_tokens(&assertion.text)
-                            .iter()
-                            .any(|token| placeholders.contains(token))
+                        && assertion_reads_placeholder(&assertion.text, &placeholders)
                 }) else {
                     continue;
                 };
