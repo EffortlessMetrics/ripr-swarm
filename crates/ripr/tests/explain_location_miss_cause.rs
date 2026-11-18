@@ -28,8 +28,8 @@ const TEST_SRC: &str =
 const OTHER_LINE: &str = "No finding is at line";
 const NO_FILE: &str = "is not the path of a file from the analyzed root";
 const NO_FINDING_IN_FILE: &str = "exists, but this run has no finding anywhere in it";
-const NOT_IN_DIFF: &str = "That file is not in this run's diff";
-const LINE_CHANGED: &str = "changed, but ripr found no behavior it checks on it";
+const NOT_IN_DIFF: &str = "This run's diff changes no text line of that file";
+const LINE_CHANGED: &str = "changed, but this run has no finding on it";
 const LINE_NOT_CHANGED: &str = "is not a line this run's diff changed";
 const ONLY_REMOVES: &str = "The diff only removes lines from that file";
 const CLAUSES: [&str; 3] = [OTHER_LINE, NO_FILE, NO_FINDING_IN_FILE];
@@ -299,11 +299,25 @@ fn a_miss_in_a_changed_file_says_whether_the_named_line_changed() -> Result<(), 
         &[("tests/t.rs", &changed_test), ("notes.txt", "one\nthree\n")],
     )?;
     let changed = format!("tests/t.rs:{added_line}");
-    let cases: [(&str, String, [&str; 3]); 3] = [
+    // The same file spelled with an interior `.` and a doubled separator:
+    // the diff names it `tests/t.rs`, and the miss must still find it.
+    let dotted = format!("tests/./t.rs:{added_line}");
+    let doubled = format!("tests//t.rs:{added_line}");
+    let cases: [(&str, String, [&str; 3]); 5] = [
+        (
+            dotted.as_str(),
+            format!("Line {added_line} changed, but this run has no finding on it"),
+            [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
+        ),
+        (
+            doubled.as_str(),
+            format!("Line {added_line} changed, but this run has no finding on it"),
+            [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
+        ),
         // The comment line itself: changed, and not behavior ripr checks.
         (
             changed.as_str(),
-            format!("Line {added_line} changed, but ripr found no behavior it checks on it"),
+            format!("Line {added_line} changed, but this run has no finding on it"),
             [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
         ),
         // Another line of that file: the changed line is named.
