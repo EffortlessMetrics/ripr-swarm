@@ -29,6 +29,8 @@ mod python;
 mod schema_parity_tests;
 mod suggest;
 mod toolchain_file;
+#[cfg(test)]
+mod value_hint_tests;
 pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
@@ -210,6 +212,9 @@ suppressed = "off"
 # initializationOptions.seamDiagnostics still wins explicitly, and repo policy
 # may disable this with seam_diagnostics = false.
 seam_diagnostics = true
+# Editor diagnostic projection: "actionable" (the default when unset) shows
+# only findings with a bounded repair route; "full" keeps the audit/debug view.
+# diagnostic_profile = "actionable"
 
 [reports]
 # Default for context packets and editor collect-context commands when no
@@ -217,7 +222,7 @@ seam_diagnostics = true
 max_related_tests = 5
 
 [suppressions]
-# Repo-relative, slash-separated path. Badge renderers load this path.
+# Repo-relative, slash-separated path. SARIF and most badge formats apply it.
 path = ".ripr/suppressions.toml"
 
 [languages]
@@ -553,17 +558,65 @@ pub(crate) fn generated_init_config() -> &'static str {
 
 /// Preview languages that `ripr init` enables next to Rust for `root`: the
 /// ones marker-based no-config detection would have enabled, so writing the
-/// file does not switch off analysis the user already had. Python is listed
-/// only in builds that can run it.
+/// file does not switch off analysis the user already had, plus TypeScript
+/// source directly in a child directory that `ripr doctor` detects (see
+/// [`init_child_dir_holds_typescript_source`]). Python is listed only in
+/// builds that can run it.
 pub(crate) fn init_detected_preview_languages(root: &Path) -> Vec<LanguageId> {
     let mut detected = Vec::new();
     if detect_python_project(root) && LanguageId::Python.is_available() {
         detected.push(LanguageId::Python);
     }
-    if detect_typescript_project(root) {
+    if detect_typescript_project(root) || init_child_dir_holds_typescript_source(root) {
         detected.push(LanguageId::TypeScript);
     }
     detected
+}
+
+/// TypeScript source sitting directly in an immediate child directory of
+/// `root`, such as `web/pricing.ts` (#13788). Marker-based no-config detection
+/// does not read that layout, but `ripr doctor` does, so without this `init`
+/// wrote a config that doctor then told the user to edit. It applies only to
+/// the explicit, reviewable file `init` writes, never to no-config detection.
+/// Source is required, so `package.json` or `tsconfig.json` alone never counts.
+/// For this child-directory rule, hidden, excluded (`node_modules`, `dist`,
+/// ...) and `docs` directories never count, and beside a `Cargo.toml` neither
+/// do `test`/`tests` (host case rule), which hold Rust integration tests and
+/// fixtures (#11418). Marker detection above still reads `tests/` on its own.
+fn init_child_dir_holds_typescript_source(root: &Path) -> bool {
+    if !LanguageId::TypeScript.is_available() {
+        return false;
+    }
+    let beside_cargo = root.join("Cargo.toml").is_file();
+    let Ok(children) = std::fs::read_dir(root) else {
+        return false;
+    };
+    children
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                // Host case rule, so `Test/` beside a Cargo.toml on a
+                // case-insensitive host is excluded too.
+                let rust_test_dir = beside_cargo
+                    && javascript_led_source_dir_marker_name(name).is_some_and(|dir| dir != "src");
+                !(name.starts_with('.')
+                    || name == "docs"
+                    || is_typescript_excluded_dir_everywhere(name)
+                    || rust_test_dir)
+            })
+        })
+        .any(|entry| {
+            std::fs::read_dir(entry.path()).is_ok_and(|files| {
+                files.flatten().any(|file| {
+                    file.file_type().is_ok_and(|kind| kind.is_file())
+                        && file
+                            .file_name()
+                            .to_str()
+                            .is_some_and(is_detectable_typescript_source_name)
+                })
+            })
+        })
 }
 
 /// [`generated_init_config`] with `[languages] enabled` extended by
@@ -869,19 +922,122 @@ pub(crate) fn config_error_summary(error: &str) -> String {
 
 fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
     let first = error.lines().next().unwrap_or(error).trim();
-    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+    let is_hint_line = |line: &str| {
         suggest::is_known_suggestion_line(line)
             || KEY_HOME_TABLES
                 .iter()
-                .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+                .any(|(key, table)| line == misplaced_key_hint_line(key, table))
             || retired
                 .iter()
-                .any(|entry| *line == retired_key_hint_line(entry))
-    });
-    match hint {
-        Some(hint) => format!("{first}; {hint}"),
-        None => first.to_string(),
+                .any(|entry| line == retired_key_hint_line(entry))
+    };
+    let hint = error
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .find(|line| is_hint_line(line));
+    // #14441: the parser's reason ("unclosed table", the keys ripr accepts)
+    // is what makes the line/column actionable for a machine reader; keep
+    // it only in a source-free form.
+    let reason = parser_message_line(error, is_hint_line).and_then(machine_safe_reason_line);
+    let mut summary = first.to_string();
+    for part in [reason.as_deref(), hint].into_iter().flatten() {
+        summary.push_str("; ");
+        summary.push_str(part);
     }
+    summary
+}
+
+/// The parser's reason when it is exactly one line, or `None` (#14441).
+///
+/// toml's `Display` with a span is fixed: the location line, a gutter line,
+/// one `N | <source line>` excerpt, the caret line, then the message. Only
+/// lines after those four can be the message, and the excerpt itself never
+/// reaches the reason. A decoded key or value may hold a raw newline, which
+/// splits serde's `unknown field `<key>`, ...` message into several lines,
+/// any of which a writer controls. So a reason is read only when the message
+/// is a single line (allowlisted hint lines aside); a multi-line message
+/// keeps the location alone. Without the location header (no span) there is
+/// no fixed layout to rely on, so nothing is read.
+fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Option<&str> {
+    // The header must END in ripr's own `invalid ripr.toml: TOML parse error
+    // at line N, column M`, and whatever precedes it (a path, `candidate
+    // tree ripr.toml: `) must hold no quote or backtick. A semantic diagnostic
+    // echoes a user value inside backticks, so its value cannot pose as the
+    // header (review of #14449).
+    let mut lines = error.lines();
+    let first = lines.next()?;
+    let (prefix, position) = first.rsplit_once("invalid ripr.toml: TOML parse error at line ")?;
+    if prefix.contains(['`', '"', '\'']) {
+        return None;
+    }
+    let (line, column) = position.split_once(", column ")?;
+    let is_number = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    if !(is_number(line) && is_number(column)) {
+        return None;
+    }
+    // Then toml's fixed excerpt: a bare gutter, `N | <source>` for the same
+    // line N, and a caret line.
+    let gutter = lines.next()?.trim();
+    let excerpt = lines.next()?;
+    let caret = lines.next()?.trim();
+    let caret_marks = caret.strip_prefix('|').map(str::trim_start);
+    if gutter != "|"
+        || !excerpt.starts_with(&format!("{line} | "))
+        || !caret_marks.is_some_and(|marks| !marks.is_empty() && marks.bytes().all(|b| b == b'^'))
+    {
+        return None;
+    }
+    let mut message = lines
+        .map(str::trim)
+        // The loaders' recovery lines are ripr's own fixed text, appended
+        // after the parser's message.
+        .filter(|line| {
+            !line.is_empty()
+                && !is_hint_line(line)
+                && *line != CONFIG_LOAD_PARSE_HINT
+                && *line != CANDIDATE_CONFIG_PARSE_HINT
+        });
+    let only = message.next()?;
+    message.next().is_none().then_some(only)
+}
+
+/// A TOML/serde reason line in a form that carries no file content, or
+/// `None` (#14441). `unknown field `<key>`, expected ...` drops the key (it is
+/// file content; the summary's line and column locate it) and keeps the
+/// expected list, which names ripr's own schema fields. Grammar lines keep
+/// their fixed wording only when every backticked token is punctuation.
+fn machine_safe_reason_line(line: &str) -> Option<String> {
+    if let Some(rest) = line.strip_prefix("unknown field `") {
+        let (_, expected) = rest.split_once("`, expected ")?;
+        let schema_tokens_only = expected.split(", ").all(|item| {
+            let item = item.strip_prefix("one of ").unwrap_or(item);
+            item.strip_prefix('`')
+                .and_then(|token| token.strip_suffix('`'))
+                .is_some_and(|token| {
+                    !token.is_empty()
+                        && token.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                        })
+                })
+        });
+        return schema_tokens_only.then(|| format!("unknown key, expected {expected}"));
+    }
+    let grammar = line.strip_prefix("unclosed table, ").unwrap_or(line);
+    let grammar = grammar.strip_prefix("unclosed array, ").unwrap_or(grammar);
+    if grammar.starts_with("expected ") {
+        let mut in_tick = false;
+        let fixed_wording = grammar.chars().all(|ch| match ch {
+            '`' => {
+                in_tick = !in_tick;
+                true
+            }
+            _ if in_tick => !ch.is_alphanumeric() && !ch.is_whitespace(),
+            _ => ch.is_ascii_lowercase() || matches!(ch, ' ' | ','),
+        });
+        return (fixed_wording && !in_tick).then(|| line.to_string());
+    }
+    None
 }
 
 /// Human doctor lines for a config load error. Compact is the source-free
@@ -1163,7 +1319,11 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer){}",
+                    near_value_hint(
+                        other,
+                        &["rust", "typescript", "javascript", "python", "perl"]
+                    )
                 ));
             }
         };
@@ -1865,6 +2025,19 @@ fn assign_severity(
     Ok(())
 }
 
+/// ` (did you mean `x`?)` when a rejected closed-set value is one of the
+/// accepted spellings in another case, padded with whitespace, or a small
+/// typo of one; empty otherwise. Values are case-sensitive, so `Draft` fails
+/// the load, and without this the error lists every accepted value but does
+/// not say which one was meant. The hint is built from the fixed accepted
+/// names, never from file text.
+fn near_value_hint(value: &str, accepted: &[&'static str]) -> String {
+    let normalized = value.trim().to_ascii_lowercase();
+    suggest::did_you_mean(&normalized, accepted)
+        .map(|nearest| format!(" ({})", suggest::suggestion_line(nearest)))
+        .unwrap_or_default()
+}
+
 fn parse_mode_value(value: &str) -> Result<Mode, String> {
     match value {
         "instant" => Ok(Mode::Instant),
@@ -1873,7 +2046,8 @@ fn parse_mode_value(value: &str) -> Result<Mode, String> {
         "deep" => Ok(Mode::Deep),
         "ready" => Ok(Mode::Ready),
         _ => Err(format!(
-            "analysis.mode `{value}` is not supported; expected instant, draft, fast, deep, or ready"
+            "analysis.mode `{value}` is not supported; expected instant, draft, fast, deep, or ready{}",
+            near_value_hint(value, &["instant", "draft", "fast", "deep", "ready"])
         )),
     }
 }
@@ -1887,7 +2061,11 @@ fn parse_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, Str
         "none" => Ok(OracleStrength::None),
         "unknown" => Ok(OracleStrength::Unknown),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
+            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown{}",
+            near_value_hint(
+                value,
+                &["strong", "medium", "weak", "smoke", "none", "unknown"]
+            )
         )),
     }
 }
@@ -1902,8 +2080,16 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
             "{field} cannot be `off`; use suppressions for accepted debt"
         )),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected info, warning, or note{}",
-            if allow_off { ", or off" } else { "" }
+            "{field} `{value}` is not supported; expected info, warning, or note{}{}",
+            if allow_off { ", or off" } else { "" },
+            near_value_hint(
+                value,
+                if allow_off {
+                    &["info", "warning", "note", "off"]
+                } else {
+                    &["info", "warning", "note"]
+                }
+            )
         )),
     }
 }

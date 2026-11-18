@@ -219,7 +219,14 @@ class HistorySyncScopeTests(unittest.TestCase):
     def test_routing_and_result_consume_post_admission_scope(self) -> None:
         admission = self.source.split('  admission:\n', 1)[1].split('  rust-cx43:\n', 1)[0]
         self.assertIn('docs_only: ${{ steps.scope.outputs.docs_only }}', admission)
-        self.assertIn("docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}", admission)
+        # A merge group classifies each constituent, so the tip's own
+        # classification wins; the pull_request route leaves tip_docs_only
+        # empty and falls back to the detect-docs-only job, then 'false'.
+        self.assertIn(
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || "
+            "needs.detect-docs-only.outputs.docs_only || 'false' }}",
+            admission,
+        )
         downstream = self.source.split('  rust-cx43:\n', 1)[1]
         self.assertNotIn('needs.detect-docs-only.outputs.docs_only', downstream)
         for job in ('rust-cpx42', 'rust-cx53', 'rust-github', 'docs-gate'):

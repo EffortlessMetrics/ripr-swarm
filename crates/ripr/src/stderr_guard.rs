@@ -27,3 +27,17 @@ macro_rules! eprintln {
         }
     }};
 }
+
+/// [`eprintln!`] that never panics: a closed or broken stderr is ignored
+/// instead of panicking. For diagnostics written from `Drop`, where a panic
+/// during an unwind would abort the process. It still finishes any held-open
+/// progress row first, so the line never lands on the in-place row.
+macro_rules! eprintln_best_effort {
+    ($($arg:tt)*) => {{
+        let __ripr_notice = $crate::terminal_text::terminal_safe(::std::format!($($arg)*));
+        if !$crate::cli::progress::try_emit_notice(&__ripr_notice) {
+            use ::std::io::Write as _;
+            let _ = ::std::writeln!(::std::io::stderr(), "{}", __ripr_notice);
+        }
+    }};
+}

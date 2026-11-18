@@ -146,6 +146,7 @@ pub use ripr_contract::domain::TestCandidateRow;
 pub use ripr_contract::domain::TestCandidateSet;
 pub use ripr_contract::domain::TestEvidenceEntry;
 pub use ripr_contract::domain::TestEvidenceSummary;
+pub(crate) use ripr_contract::domain::UNREFERENCED_IN_WORKSPACE;
 pub use ripr_contract::domain::ValueContext;
 pub use ripr_contract::domain::ValueFact;
 pub use ripr_contract::domain::actionable_verify_source_is_supported;
@@ -177,7 +178,10 @@ pub(crate) use ripr_contract::domain::is_unselected_input_reason;
 pub(crate) use ripr_contract::domain::normalize_transport_path;
 #[cfg(feature = "lang-perl")]
 pub(crate) use ripr_contract::domain::perl_fact_packet_guidance;
+pub(crate) use ripr_contract::domain::pytest_verify_interpreter;
+#[cfg(feature = "lang-python")]
 pub(crate) use ripr_contract::domain::python_pytest_verify_display;
+pub(crate) use ripr_contract::domain::python_pytest_verify_display_for;
 pub(crate) use ripr_contract::domain::python_unittest_verify_display;
 #[cfg(feature = "lang-python")]
 pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
@@ -201,6 +205,7 @@ pub mod guarded_edit;
 #[doc(hidden)]
 pub mod language_availability;
 mod next_action;
+mod python_owner_result_field;
 mod repair_card;
 mod verification_result;
 
@@ -226,6 +231,9 @@ pub(crate) use next_action::{
     NextActionPilotDelegation, WHOLE_REPO_PILOT_COMMAND, current_command_platform,
     select_canonical_next_action, whole_repo_pilot_command,
 };
+#[cfg(feature = "lang-python")]
+pub(crate) use python_owner_result_field::python_owner_result_field_unread_line;
+pub(crate) use python_owner_result_field::python_unread_owner_result_field;
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,

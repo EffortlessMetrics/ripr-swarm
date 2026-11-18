@@ -1,6 +1,6 @@
 # RIPR-SPEC-0399: Native Family Evidence Contract
 
-Status: proposed
+Status: accepted
 
 Owner: analysis / native family
 
@@ -350,6 +350,7 @@ Additional shared stops:
 | `native_ffi_boundary_unregistered` | Foreign call without registered edge |
 | `native_assembly_intrinsic_builtin` | Assembly/intrinsic/builtin boundary |
 | `native_configuration_alternatives_unresolved` | Multiple admitted contexts conflict |
+| `native_test_selector_unavailable` | No exact focused selector: dynamic or macro-generated test names, value/type-parameterized instances, or filters and labels set outside static config (`--gtest_filter`, Catch2 tags, CTest labels) |
 
 ### Capability cell registry
 
