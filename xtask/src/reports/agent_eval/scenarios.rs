@@ -389,4 +389,188 @@ fn eval_reference() {
             },
         ],
     },
+    Scenario {
+        id: "match_arm_value",
+        summary: "one match arm's value changes; tests only cover the other arms",
+        crate_name: "sizes",
+        base_lib: "pub enum Size {
+    Small,
+    Medium,
+    Large,
+}
+
+pub fn price_cents(size: Size) -> u32 {
+    match size {
+        Size::Small => 300,
+        Size::Medium => 400,
+        Size::Large => 500,
+    }
+}
+",
+        head_lib: "pub enum Size {
+    Small,
+    Medium,
+    Large,
+}
+
+pub fn price_cents(size: Size) -> u32 {
+    match size {
+        Size::Small => 300,
+        Size::Medium => 450,
+        Size::Large => 500,
+    }
+}
+",
+        existing_tests: "use sizes::*;
+
+#[test]
+fn small_and_large_prices() {
+    assert_eq!(price_cents(Size::Small), 300);
+    assert_eq!(price_cents(Size::Large), 500);
+}
+",
+        weak_test: Some(
+            "use sizes::*;
+
+#[test]
+fn eval_weak() {
+    assert!(price_cents(Size::Medium) > price_cents(Size::Small));
+}
+",
+        ),
+        reference_test: Some(
+            "use sizes::*;
+
+#[test]
+fn eval_reference() {
+    assert_eq!(price_cents(Size::Medium), 450);
+}
+",
+        ),
+        gaps: &[GapKey {
+            owner: "price_cents",
+            line: 10,
+            facts: &[&["450"]],
+        }],
+    },
+    Scenario {
+        id: "private_helper",
+        summary: "a private helper's rounding changes; only the public caller is tested, far from the edge",
+        crate_name: "money",
+        base_lib: "fn round_to_nickel(cents: u32) -> u32 {
+    cents / 5 * 5
+}
+
+pub fn cash_total(cents: u32) -> u32 {
+    round_to_nickel(cents)
+}
+",
+        head_lib: "fn round_to_nickel(cents: u32) -> u32 {
+    (cents + 2) / 5 * 5
+}
+
+pub fn cash_total(cents: u32) -> u32 {
+    round_to_nickel(cents)
+}
+",
+        existing_tests: "use money::*;
+
+#[test]
+fn exact_nickels_stay() {
+    assert_eq!(cash_total(100), 100);
+}
+",
+        weak_test: Some(
+            "use money::*;
+
+#[test]
+fn eval_weak() {
+    assert_eq!(cash_total(105), 105);
+}
+",
+        ),
+        reference_test: Some(
+            "use money::*;
+
+#[test]
+fn eval_reference() {
+    assert_eq!(cash_total(103), 105);
+    assert_eq!(cash_total(102), 100);
+}
+",
+        ),
+        gaps: &[GapKey {
+            owner: "round_to_nickel",
+            line: 2,
+            facts: &[&["cents + 2", "+ 2"]],
+        }],
+    },
+    Scenario {
+        id: "inclusive_range",
+        summary: "an exclusive range becomes inclusive in a sum; tests only use n = 0",
+        crate_name: "sums",
+        base_lib: "pub fn sum_to(n: u32) -> u32 {
+    (0..n).sum()
+}
+",
+        head_lib: "pub fn sum_to(n: u32) -> u32 {
+    (0..=n).sum()
+}
+",
+        existing_tests: "use sums::*;
+
+#[test]
+fn empty_sum() {
+    assert_eq!(sum_to(0), 0);
+}
+",
+        weak_test: Some(
+            "use sums::*;
+
+#[test]
+fn eval_weak() {
+    assert!(sum_to(4) > 0);
+}
+",
+        ),
+        reference_test: Some(
+            "use sums::*;
+
+#[test]
+fn eval_reference() {
+    assert_eq!(sum_to(4), 10);
+}
+",
+        ),
+        gaps: &[GapKey {
+            owner: "sum_to",
+            line: 2,
+            facts: &[&["0..=n", "..="]],
+        }],
+    },
+    Scenario {
+        id: "refactor_control",
+        summary: "a behavior-preserving refactor (extracted local); the useful answer is silence",
+        crate_name: "temps",
+        base_lib: "pub fn to_fahrenheit(celsius: i32) -> i32 {
+    celsius * 9 / 5 + 32
+}
+",
+        head_lib: "pub fn to_fahrenheit(celsius: i32) -> i32 {
+    let scaled = celsius * 9 / 5;
+    scaled + 32
+}
+",
+        existing_tests: "use temps::*;
+
+#[test]
+fn freezing_and_boiling() {
+    assert_eq!(to_fahrenheit(0), 32);
+    assert_eq!(to_fahrenheit(100), 212);
+}
+",
+        weak_test: None,
+        reference_test: None,
+        gaps: &[],
+    },
 ];

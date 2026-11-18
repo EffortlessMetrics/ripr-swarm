@@ -1819,7 +1819,11 @@ fn check_inner(
         app::repo_inventory_with_progress(
             progress_sink,
             || analysis::inventory_classified_seams_report_at_with_config(&input.root, &config),
-            |report| {
+            |mut report| {
+                // #14139: the same withholding `render.rs` applies to every
+                // classified `repo-*` format.
+                let owner_opt_outs =
+                    output::render::withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(
                     &input.root,
                     &report.classified,
@@ -1864,6 +1868,7 @@ fn check_inner(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                     &mut handle,
                 )?;

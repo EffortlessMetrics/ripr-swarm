@@ -20,8 +20,11 @@ pub(crate) use value::{expect_path_value, expect_value, missing_value, reconcile
 /// `--from`, both flags are assertions verified against the recording
 /// (RIPR-SPEC-0140), not alternative diff sources.
 pub(crate) fn base_with_diff_conflict_error(command: &str) -> String {
-    format!(
-        "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+    crate::cli::usage_refusal::conflicting_flags(
+        "--base",
+        &format!(
+            "{command} --base cannot be combined with --diff: --base and --diff are alternative diff sources; pass one"
+        ),
     )
 }
 

@@ -1770,10 +1770,10 @@ fn write_report(root: &Path, body: &str) {
 }
 
 /// `--tree <path>` (#11385): scan and gate the goldens of another checkout with
-/// the matcher compiled into this binary. CI builds the merge-base's xtask in a
-/// separate worktree and points it at the PR tree, so the judge is the code the
-/// PR could not have changed. `.github/workflows/rust-gates.yml` looks for this literal in the
-/// base source to know whether the merge-base can do that yet.
+/// the matcher compiled into this binary. CI builds the merge-base's repo-policy
+/// (or legacy xtask) in a separate worktree and points it at the PR tree, so the
+/// judge is the code the PR could not have changed. The workflow looks for this
+/// literal in the base source to know whether the merge-base can do that yet.
 const TREE_FLAG: &str = "--tree";
 
 fn tree_root(path: &Path) -> Result<PathBuf, String> {

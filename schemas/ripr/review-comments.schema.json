@@ -1538,6 +1538,11 @@
               "type": "string",
               "minLength": 1
             },
+            "canonical_gap_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Domain-owned canonical gap identity, present when the seam has one; stable across source movement so a suppressed gap still matches its baseline entry (#13895)."
+            },
             "file": {
               "type": "string",
               "minLength": 1
@@ -1545,6 +1550,11 @@
             "line": {
               "type": "integer",
               "minimum": 1
+            },
+            "class": {
+              "description": "Grip class (ungripped, weakly_gripped, ...) of a seam withheld as a static limitation; the message names it in exposure words (#13892).",
+              "type": "string",
+              "minLength": 1
             },
             "reason": {
               "type": "string",

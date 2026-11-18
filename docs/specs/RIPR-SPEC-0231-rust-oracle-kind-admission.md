@@ -587,7 +587,19 @@ Two pattern terms are used below.
      region stops early at an item declaration or attribute at statement
      start, because a nested `fn` stays callable from earlier code; a
      divergence nested in a condition, a match arm or a closure ends only
-     its own block.
+     its own block;
+   - the statements after a statement that always diverges on a constant
+     (#14968), up to the same end: a `let PATTERN = VALUE else { .. };`
+     whose pattern is exactly one `Some(..)`, `None`, `Ok(..)` or `Err(..)`
+     variant and whose value is a literal of another variant
+     (`let Some(x) = None::<i32> else { return; };`), or a statement that
+     starts with a literal `Err(..)?` or `None?` (each optionally with a
+     turbofish). A value that can match, an or-pattern, a computed value,
+     `Ok(..)?` and `Some(..)?` stay reached. When the `else` block holds a
+     `return` at its own depth, RIPR-SPEC-0197 execution admission reads
+     that earlier return, so a strong assertion after it stays for that
+     refusal, as after a plain `return`; after any other constant
+     divergence admission reads no exit, so every oracle is dropped.
 
    One oracle stays for the authority that already decides it: a strong
    `assert_eq!` or `assert!` in a literal-false block, an uncalled closure
@@ -688,6 +700,47 @@ Two pattern terms are used below.
     to the trusted macro set also stops a verified-import invocation from
     reading as an opaque macro in the other owner-pin scans, as `assert_ok!`
     already does.
+
+11. **An unfilled placeholder expected value pins nothing (#14810).** When a
+    test body binds a local only to a diverging placeholder macro and an
+    equality assertion compares the owner's value with that local, the
+    assertion holds no expected value: it panics before it can fail for a
+    wrong result. `ripr agent stub --write` writes exactly this shape.
+
+    ```rust
+    let expected: i32 = todo!("ripr: write the value `price` should return");
+    assert_eq!(price(amount, threshold), expected);
+    ```
+
+    The line reads `unknown` / unknown instead of `exact_value` / strong
+    when all of these hold:
+
+    - an operand names a local the same test body binds with `let`, and
+      every visible `let` initializer for that name is exactly a `todo!`,
+      `unimplemented!`, `unreachable!` or `panic!` invocation, with
+      comments and string contents masked first. A second binding of the
+      same name to anything else drops the name, so an ambiguous body
+      keeps today's reading;
+    - the reading this replaces is strong (`exact_value`,
+      `whole_object_equality`, `exact_error_variant` or `snapshot`), or
+      a medium or weak one (#14882).
+
+    A weak `relational_check` is lowered too (#14882): the owner return pin
+    raises `assert!(price(amount, threshold) == expected)` to strong relative
+    to the probe, as it does the terminal guard
+    `if price(amount, threshold) != expected { return Err(..) }`, whose
+    assertion twin (#3284) takes this rule on the lexical and parser
+    extraction paths. Harness inline trials do not apply it yet. A smoke
+    or none reading claims no comparison and keeps its kind. The rule
+    only removes credit,
+    so it creates no path to `exposed`. A filled initializer
+    (`let expected: i32 = 9_990;`), a computed one
+    (`let expected = price(amount, threshold);`) and an assertion that
+    never names the placeholder keep their exact credit. The match runs on
+    the assertion with comments and string literals masked, so a message
+    that merely contains the placeholder's name does not lower it, and the
+    rule applies on both extraction paths: the parser adapter and the
+    line-scanned `ensure!`/custom-helper path.
 
 ### Reveal admission of an excluded sibling
 
@@ -833,6 +886,13 @@ rejected alternative. Any can be reversed later without touching the rest.
   API. Every negative control is the credited twin with exactly one thing
   changed. The verdict-corpus row `lib-test-case-arrow-expected-value`
   credits, and the whole Rust corpus keeps zero false verdicts.
+- Rule 11: acceptance examples 45 to 48 read as stated, through the public
+  API. Every negative control is the credited twin with exactly one thing
+  changed. The golden fixture `rust_stub_todo_expected_value` pins the
+  finding verdict (`weakly_exposed`; the test's oracle grade is `unknown`
+  and the discriminate stage stays `weak`, not `unknown`), and the
+  `scan.rs` unit tests pin the four placeholder macros, the filled and
+  computed controls, and the two ambiguity controls.
 
 ## Non-Goals
 
@@ -1051,12 +1111,31 @@ rejected alternative. Any can be reversed later without touching the rest.
     a body that rebinds `q`: nothing is bound and the finding does not read
     `exposed`.
 
+45. `let expected: i32 = todo!("ripr: write the value"); assert_eq!(price(100,
+    100), expected);` beside a `>` -> `>=` predicate change: `unknown` /
+    unknown (rule 11; `exact_value` / strong before #14810), so the finding
+    keeps its named gap instead of reading `exposed`.
+46. The same test with `let expected: i32 = 9_990;` or
+    `let expected: i32 = price(100, 100);`: `exact_value` / strong, and the
+    finding reads `exposed`.
+47. The same test with `unimplemented!()`, `unreachable!()` or `panic!(..)`
+    as the initializer: `unknown` / unknown, as example 45.
+48. The same test with `assert_eq!(price(100, 100), 9_990);` beside the
+    unfilled `let expected` (the assertion never names it), or with a second
+    `let expected: i32 = 9_990;` in the same body: `exact_value` / strong.
+
 ## Test Mapping
 
 - Rule 10: `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs`; the
   inventory rows in
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` are the
   predicate-family contrast.
+- Rule 11: `crates/ripr/src/analysis/extract/oracles/scan.rs`
+  (`unfilled_expected_tests`: the four placeholder macros, the filled and
+  computed controls, the two ambiguity controls, and the message-word
+  control), `crates/ripr/src/analysis/syntax/ra.rs` (the line-scanned
+  `ensure!` lowering and its real-value control) and the golden fixture
+  `fixtures/rust_stub_todo_expected_value` for the finding verdict.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.

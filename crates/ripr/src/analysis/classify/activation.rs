@@ -1252,13 +1252,19 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
+        // A flat prelude may rebind the flag or a constant the initializer
+        // reads (`let si = !si;`, a function-local `const KB`); read exactly,
+        // those rebindings are applied below instead of declining (#12771).
+        let prelude = super::owner_prelude::owner_prelude(owner, operand, &initializer, parameters);
+        let accounted = |name: &str| prelude.as_ref().is_some_and(|found| found.binds(name));
         // A flag-selected initializer reads its flag from the caller's row
         // and its arms from the file's constants, so neither may be rebound
-        // in the owner (`let si = !si;`, a local `KB`).
+        // in the owner (`let si = !si;`, a local `KB`) beyond the prelude.
         if initializer.trim_start().starts_with("if ")
             && free_identifiers(&initializer)
                 .iter()
                 .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .filter(|name| !accounted(name))
                 .any(|name| {
                     name_rebound_in_owner(owner, name)
                         || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
@@ -1279,11 +1285,24 @@ fn resolve_boundary_operand(
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
+                && !accounted(name)
                 && parameter_rebound_before(owner, name, declared_line, &initializer)
         }) {
             return None;
         }
-        let constants = initializer_constants(owner, &initializer, parameters, index);
+        let (initializer, constants) = match &prelude {
+            Some(found) => {
+                let rewritten = found.rewrite_initializer(&initializer)?;
+                let mut constants = initializer_constants(owner, &rewritten, parameters, index);
+                constants.retain(|(name, _)| !found.binds(name));
+                constants.extend(found.constants.iter().cloned());
+                (rewritten, constants)
+            }
+            None => {
+                let constants = initializer_constants(owner, &initializer, parameters, index);
+                (initializer, constants)
+            }
+        };
         let names = free_identifiers(&initializer);
         let mut parameters_read: Vec<&String> = names
             .iter()
@@ -2390,6 +2409,22 @@ fn missing_discriminator_facts(
 /// the probe line itself carries a binding form beside it, or when `name` is
 /// ever assigned or bound `mut`. A true result only declines the
 /// intermediate-input reading and keeps the gap (#9147).
+/// Whether a call's boundary row reaches the guarded comparison on `line`
+/// as the caller passed it, as `check`'s guarded reading requires: the
+/// compared parameter is never rebound first, and no earlier branch, early
+/// return or loop can take the row away from the line (#14873).
+pub(in crate::analysis) fn guarded_boundary_row_reaches(
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    parameter: &str,
+    line: usize,
+) -> bool {
+    !parameter_may_be_rebound(owner, parameter, line)
+        && owner_source.is_none_or(|source| {
+            changed_line_is_first_decision(owner.start_line, source, line, false)
+        })
+}
+
 fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -3146,13 +3181,39 @@ pub(in crate::analysis) fn guarded_comparison(
     probe: &Probe,
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
-    let (comparison, guards, rebound_guard) =
-        split_guarded(&probe.expression, owner, probe.location.line)?;
+    let continuation = wrapped_guard_continuation(owner, probe.location.line);
+    let with_continuation = |text: &str| match &continuation {
+        Some(rest) => format!(
+            "{} {rest}",
+            crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+        ),
+        None => text.to_string(),
+    };
+    let (comparison, guards, rebound_guard) = split_guarded(
+        &with_continuation(&probe.expression),
+        owner,
+        probe.location.line,
+    )?;
     let before = match probe.before.as_deref() {
         None => None,
         Some(before) => {
-            let (old_comparison, old_guards, _) =
-                split_guarded(before, owner, probe.location.line)?;
+            let Some((old_comparison, old_guards, _)) =
+                split_guarded(&with_continuation(before), owner, probe.location.line)
+            else {
+                // A wrapped guard the old line cannot be read with (`if a > T {`
+                // becoming `if a >= T` over `&& !x`) is a guard-touching edit:
+                // decline it rather than fall back to reading the comparison
+                // without its guards.
+                if continuation.is_some() {
+                    return Some(GuardedComparison {
+                        comparison,
+                        guards,
+                        rebound_guard: true,
+                        before: None,
+                    });
+                }
+                return None;
+            };
             let sorted = |guards: &[(String, bool)]| {
                 let mut guards = guards.to_vec();
                 guards.sort();
@@ -3189,6 +3250,89 @@ fn comparison_operator(comparison: &str) -> Option<&'static str> {
 /// The comparison, each guard with the value it must hold, and whether a
 /// guard may be rebound before the changed line.
 type GuardedSplit = (String, Vec<(String, bool)>, bool);
+
+/// The bare bool parameter guards of the predicate on one source line
+/// (`if order_cents >= FREE_OVER_CENTS && !express {`) whose comparison is
+/// `comparison`, each with the value it must hold, and whether a guard may
+/// be rebound before that line. `None` when the line is not exactly one
+/// comparison joined by top-level `&&` to bare owner parameters, or its
+/// comparison is a different one. The repo-wide seam view reads the same
+/// guards the diff reading does (#13037), so a row that misses a guard
+/// never lends the comparison a boundary row there either.
+pub(in crate::analysis) fn predicate_line_bool_guards(
+    line_text: &str,
+    comparison: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(Vec<(String, bool)>, bool)> {
+    let text = line_text.trim();
+    let text = text
+        .strip_prefix("} else if ")
+        .or_else(|| text.strip_prefix("else if "))
+        .or_else(|| text.strip_prefix("while "))
+        .unwrap_or(text);
+    let joined;
+    let text = match wrapped_guard_continuation(owner, line) {
+        // The head's own trailing comment masked, so it cannot swallow the
+        // wrapped guards joined after it (`if a >= T // note` / `&& g`).
+        Some(rest) => {
+            joined = format!(
+                "{} {rest}",
+                crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+            );
+            joined.as_str()
+        }
+        None => text,
+    };
+    let (found, guards, rebound) = split_guarded(text, owner, line)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
+/// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
+/// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
+/// read a wrapped guard as they read a one-line one (#14873). The head may
+/// already carry guards (`if a >= T && member`); its continuation adds the
+/// rest. Only lines that each open with `&&` count, up to the opening
+/// brace, with comments masked; a `||` or any other continuation is not
+/// read, which leaves the comparison as its one-line spelling reads.
+fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
+    let offset = line.checked_sub(owner.start_line)?;
+    // Comments masked to spaces, so `&& !express // note` reads its guard
+    // instead of dropping the line and the comparison's guard with it.
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    if masked.len() != owner.body.len() {
+        return None;
+    }
+    let mut lines = masked.lines().skip(offset);
+    let head = lines.next()?.trim();
+    let opens_condition = ["if ", "} else if ", "else if ", "while "]
+        .iter()
+        .any(|prefix| head.starts_with(prefix));
+    if !opens_condition || head.ends_with('{') || head.contains("||") {
+        return None;
+    }
+    let mut guards = Vec::new();
+    for next in lines {
+        let next = next.trim();
+        if next == "{" {
+            break;
+        }
+        let rest = next.strip_prefix("&&")?;
+        let (rest, done) = match rest.trim_end().strip_suffix('{') {
+            Some(rest) => (rest, true),
+            None => (rest, false),
+        };
+        if rest.contains("||") {
+            return None;
+        }
+        guards.push(format!("&& {}", rest.trim()));
+        if done {
+            break;
+        }
+    }
+    (!guards.is_empty()).then(|| guards.join(" "))
+}
 
 fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {
     let expression = clean_operand(expression);
@@ -4034,7 +4178,7 @@ fn adaptor_element_runs(
     // No direct call: bind the parameter up the resolved helper chain, each
     // hop passing exactly its caller's own, never rebound, parameter.
     let chain = helper_chain?;
-    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut position = tail.position;
@@ -7118,7 +7262,7 @@ pub(in crate::analysis) fn computed_input_parameters(
     };
     // #6614: a macro-argument hop binds no argument, so no parameter
     // value crosses it.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let Some(entry) = chain.hops.last() else {
@@ -7194,7 +7338,7 @@ fn helper_transferred_rows(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     // #6614: a macro-argument hop binds no argument rows.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let rows = chain_entry_rows(chain, related_tests, index);
@@ -7373,7 +7517,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
     chain: &super::helper_transfer::HelperChain,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut rows = chain_entry_rows(chain, related_tests, index);
@@ -8567,41 +8711,46 @@ fn replaced_equality_constant(
         .flatten()
 }
 
-fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
-    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
-        let text = text.trim();
-        let text = text.strip_prefix("if ").unwrap_or(text);
-        let text = text.strip_suffix('{').unwrap_or(text).trim();
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
-        if masked.len() != text.len()
-            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
-                .iter()
-                .any(|token| masked.contains(token))
-        {
-            return None;
-        }
-        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
-            (1, 0) => "==",
-            (0, 1) => "!=",
-            _ => return None,
-        };
-        let at = masked.find(operator)?;
-        let left = text.get(..at)?;
-        let right = text.get(at + operator.len()..)?.trim();
-        let literal = !right.is_empty()
-            && if right.starts_with('"') || right.starts_with('\'') {
-                super::match_transfer::is_single_literal(right)
-            } else {
-                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-            };
-        (literal && !left.trim().is_empty()).then(|| {
-            (
-                left.split_whitespace().collect::<String>(),
-                operator,
-                right.to_string(),
-            )
-        })
+/// A bare `left == literal` or `left != literal` comparison (whitespace-free
+/// left side, operator, literal text): one operator, no connective, and a
+/// right side that is a single string or char literal or a digits-only
+/// integer. `None` for any other shape.
+fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+    let text = text.trim();
+    let text = text.strip_prefix("if ").unwrap_or(text);
+    let text = text.strip_suffix('{').unwrap_or(text).trim();
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    if masked.len() != text.len()
+        || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+            .iter()
+            .any(|token| masked.contains(token))
+    {
+        return None;
     }
+    let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+        (1, 0) => "==",
+        (0, 1) => "!=",
+        _ => return None,
+    };
+    let at = masked.find(operator)?;
+    let left = text.get(..at)?;
+    let right = text.get(at + operator.len()..)?.trim();
+    let literal = !right.is_empty()
+        && if right.starts_with('"') || right.starts_with('\'') {
+            super::match_transfer::is_single_literal(right)
+        } else {
+            right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        };
+    (literal && !left.trim().is_empty()).then(|| {
+        (
+            left.split_whitespace().collect::<String>(),
+            operator,
+            right.to_string(),
+        )
+    })
+}
+
+fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
     let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
     let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
     if before_left != after_left
@@ -8676,10 +8825,18 @@ fn oriented_comparison_operands(
 /// text the bounded scanner cannot balance (with or without a connective)
 /// and a continuation line that starts with `&&` or `||`, has no single
 /// boundary here.
-fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) -> Option<&'a str> {
+pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
+    expression: &'a str,
+    before: Option<&str>,
+) -> Option<&'a str> {
     let operands = top_level_connective_operands(expression)?;
     if operands.len() == 1 {
         return Some(expression);
+    }
+    if let Some(added) =
+        before.and_then(|before| added_equality_disjunct(expression, &operands, before))
+    {
+        return Some(added);
     }
     let mut comparisons = operands
         .iter()
@@ -8711,6 +8868,69 @@ fn changed_comparison_conjunct<'a>(expression: &'a str, before: Option<&str>) ->
         }
     }
     Some(comparison)
+}
+
+/// #14726: the one comparison an edit added as a new `||` disjunct of a bare
+/// equality, `x == A` to `x == A || x == B` (either order). An input equal to
+/// `B` makes the added disjunct true and the kept one false, because `A` and
+/// `B` are different literal values, so that input flips the predicate and
+/// `x == B` is its boundary reading. Every part is fail-closed: the
+/// pre-edit text must be one bare `==` comparison kept verbatim as one
+/// operand, the connective must be a single top-level `||`, the added
+/// operand must be a bare `==` on the same left side, and both right sides
+/// must be literals whose values differ. Any other shape, including an added
+/// `&&` conjunct, a `!=` or ordered comparison, a third operand, a left side
+/// that is not a plain place path (a call or index), an escaped literal, or a
+/// second literal equal in value to the first (`5` and `05`), keeps the
+/// two-comparison refusal (RIPR-SPEC-0158).
+fn added_equality_disjunct<'a>(
+    expression: &'a str,
+    operands: &[&'a str],
+    before: &str,
+) -> Option<&'a str> {
+    let [first, second] = operands else {
+        return None;
+    };
+    let base = expression.as_ptr() as usize;
+    let gap_start = first.as_ptr() as usize - base + first.len();
+    let gap_end = second.as_ptr() as usize - base;
+    if expression.get(gap_start..gap_end)?.trim() != "||" {
+        return None;
+    }
+    if top_level_connective_operands(before)?.len() != 1 {
+        return None;
+    }
+    let kept = bare_equality(before)?;
+    let added = match (bare_equality(first), bare_equality(second)) {
+        (Some(one), Some(two)) if one == kept => (*second, two),
+        (Some(one), Some(two)) if two == kept => (*first, one),
+        _ => return None,
+    };
+    let (kept_left, kept_operator, kept_literal) = kept;
+    let (added_text, (added_left, added_operator, added_literal)) = added;
+    if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
+        return None;
+    }
+    // Both sides must name the same value: a plain place path (`flag`,
+    // `self.mode`), never a call or index that may read a different value on
+    // each evaluation (`it.next() == 1 || it.next() == 2`).
+    let place_path = kept_left.split('.').all(|segment| {
+        segment
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    });
+    // An escape can spell one value two ways (`"A"` and `"\x41"`), which the
+    // textual literal comparison would read as different values.
+    if !place_path || kept_literal.contains('\\') || added_literal.contains('\\') {
+        return None;
+    }
+    let kept_value = literal_operand_value(&kept_literal)?;
+    let added_value = literal_operand_value(&added_literal)?;
+    (!same_literal_value(&kept_value, &added_value)).then_some(added_text)
 }
 
 /// `text` with every string and char literal body byte replaced by `x`, so a
@@ -10157,6 +10377,67 @@ mod rebinding_scan;
 
 #[cfg(test)]
 mod tests {
+    /// #14726: `x == A` to `x == A || x == B` reads the added `x == B`; every
+    /// other two-comparison shape keeps no boundary reading (RIPR-SPEC-0158).
+    #[test]
+    fn an_added_equality_disjunct_is_the_boundary_reading() {
+        use super::changed_comparison_conjunct as conjunct;
+        let kept = Some("flag == \"-v\"");
+        assert_eq!(
+            conjunct("flag == \"-v\" || flag == \"--verbose\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        // Either order, chars and integers.
+        assert_eq!(
+            conjunct("flag == \"--verbose\" || flag == \"-v\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        assert_eq!(
+            conjunct("c == 'a' || c == 'b'", Some("c == 'a'")),
+            Some("c == 'b'")
+        );
+        assert_eq!(conjunct("n == 1 || n == 2", Some("n == 1")), Some("n == 2"));
+        // A field place path names one value too.
+        assert_eq!(
+            conjunct("self.mode == 1 || self.mode == 2", Some("self.mode == 1")),
+            Some("self.mode == 2")
+        );
+        for (expression, before) in [
+            // No pre-edit text, or a pre-edit text that is not kept verbatim.
+            ("flag == \"-v\" || flag == \"--verbose\"", None),
+            ("flag == \"-x\" || flag == \"--verbose\"", kept),
+            // `&&`, a third operand, and a mixed connective.
+            ("flag == \"-v\" && flag == \"--verbose\"", kept),
+            (
+                "flag == \"-v\" || flag == \"-q\" || flag == \"--verbose\"",
+                kept,
+            ),
+            ("flag == \"-v\" || flag == \"--verbose\" && on", kept),
+            // Another left side, a non-equality, or a non-literal right side.
+            ("flag == \"-v\" || other == \"--verbose\"", kept),
+            ("flag == \"-v\" || flag != \"--verbose\"", kept),
+            ("flag == \"-v\" || flag == VERBOSE", kept),
+            // A left side that may read another value on each evaluation.
+            ("it.next() == 1 || it.next() == 2", Some("it.next() == 1")),
+            ("xs[i] == 1 || xs[i] == 2", Some("xs[i] == 1")),
+            ("f(\"a b\") == 1 || f(\"ab\") == 2", Some("f(\"a b\") == 1")),
+            // An escape can spell the kept value again.
+            ("s == \"A\" || s == \"\\x41\"", Some("s == \"A\"")),
+            ("c == 'a' || c == '\\x61'", Some("c == 'a'")),
+            (
+                "flag != \"-v\" || flag != \"--verbose\"",
+                Some("flag != \"-v\""),
+            ),
+            // The same literal value spelled again flips nothing.
+            ("n == 5 || n == 05", Some("n == 5")),
+            ("flag == \"-v\" || flag == \"-v\"", kept),
+            // A pre-edit text that already held two comparisons.
+            ("a == 1 || a == 2 || a == 3", Some("a == 1 || a == 2")),
+        ] {
+            assert_eq!(conjunct(expression, before), None, "{expression}");
+        }
+    }
+
     #[test]
     fn a_compound_predicate_reads_only_its_one_changed_comparison() {
         use super::changed_comparison_conjunct as conjunct;
@@ -14882,6 +15163,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -14893,6 +15175,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -14970,6 +15253,7 @@ assert_eq!(input.amount, 100);"#
                 .collect(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,

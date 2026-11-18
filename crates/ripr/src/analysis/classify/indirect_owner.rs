@@ -185,7 +185,11 @@ fn judged_for_owner(
         )
     });
     for test in index.tests() {
-        if is_ignored(test) || test.assertions.is_empty() {
+        // Both forms below need a masked mention of the owner's name, and
+        // masking only blanks bytes, so a body whose raw text never spells
+        // the name cannot qualify. This pass runs over every test for each
+        // withheld finding; skipping the mask there is #13754's saving.
+        if is_ignored(test) || test.assertions.is_empty() || !test.body.contains(&*owner.name) {
             continue;
         }
         let code = mask_comments_and_strings(&test.body);
@@ -410,8 +414,12 @@ fn is_path(text: &str) -> bool {
     !text.is_empty() && text.split("::").all(is_ident)
 }
 
+/// #14089: Unicode `XID_Continue`, the set Rust identifiers use. A mark such
+/// as the virama U+094D continues an identifier without being alphanumeric,
+/// so an alphanumeric test read `क्Owner` as `Owner`; a format char such as
+/// U+200E is not an identifier char.
 fn is_ident_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch == '_' || unicode_ident::is_xid_continue(ch)
 }
 
 /// Offsets at which `name` appears as a whole identifier in `code`.
@@ -503,13 +511,21 @@ fn mention_is_value(
     let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
     let method = before.ends_with('.');
     let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    // #10604: a mention that continues a path (`thr::internal::thr(50)`, where
+    // the crate or module is spelled like the owner) is a qualifier segment,
+    // not the owner passed as a value: a value use is never followed by `::`
+    // and another segment. `::<` stays the turbofish call read above.
+    let qualifier = after
+        .strip_prefix("::")
+        .is_some_and(|rest| rest.trim_start().starts_with(is_ident_char));
     let field_label = after.starts_with(':') && !after.starts_with("::");
     !(defined
         || method
         || called
+        || qualifier
         || field_label
         || typed_fn_pointer_initializer(code, reference_at)
-        || !qualifier_may_name_owner(before, owner_names))
+        || !qualifier_may_name_owner(before, name, owner_names))
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
@@ -549,20 +565,28 @@ fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
 
 /// Whether the path written before the owner's name (`other::` in
 /// `other::inc`) can still be the owner's: no qualifier, or one whose first or
-/// last segment is among the names that locate the owner. A qualifier that
-/// names neither is a different entity with the same leaf name.
-fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
+/// last segment is among the names that locate the owner, or is spelled like
+/// the owner itself. A qualifier that names none of these is a different
+/// entity with the same leaf name.
+///
+/// The owner's own spelling counts because a module or crate-root re-export can
+/// carry it: `thr::thr` is the re-exported `thr` taken as a function value, and
+/// reading its qualifier as a stranger credited a gap the indirect-owner limit
+/// is there to withhold (review round 1, Devin).
+fn qualifier_may_name_owner(before: &str, name: &str, owner_names: &[String]) -> bool {
     let Some(path) = before.strip_suffix("::") else {
         return true;
     };
     let start = path
-        .rfind(|ch: char| !(is_ident_char(ch) || ch == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| !(is_ident_char(ch) || ch == ':'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
     let segments: Vec<&str> = path[start..]
         .split("::")
         .filter(|segment| !segment.is_empty())
         .collect();
-    let known = |segment: &&str| owner_names.iter().any(|name| name == segment);
+    let known = |segment: &&str| *segment == name || owner_names.iter().any(|name| name == segment);
     match (segments.first(), segments.last()) {
         (Some(first), Some(last)) => known(first) || known(last),
         // A leading `::` or a generic qualifier (`<T as Trait>::inc`) is not read.
@@ -580,8 +604,10 @@ fn typed_fn_pointer_initializer(code: &str, at: usize) -> bool {
     while let Some(rest) = before.strip_suffix("::") {
         let rest = rest.trim_end();
         let start = rest
-            .rfind(|ch: char| !is_ident_char(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !is_ident_char(ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         before = rest[..start].trim_end();
     }
     let Some(before) = before.strip_suffix('=') else {
@@ -1030,8 +1056,10 @@ fn executor_wraps_owner_call(code: &str, owner: &str, test: &TestFact, index: &R
         };
         let open = open.trim_end();
         let callee_start = open
-            .rfind(|ch: char| !(is_ident_char(ch) || ch == ':'))
-            .map_or(0, |at| at + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !(is_ident_char(ch) || ch == ':'))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
         let callee = &open[callee_start..];
         let leaf = callee.rsplit("::").next().unwrap_or(callee);
         if !is_ident(leaf) || leaf == owner {
@@ -1300,6 +1328,44 @@ mod tests {
         assert!(!value("let increment = 3;", "inc"));
     }
 
+    /// #10604: a path qualifier spelled like the owner is not the owner passed
+    /// as a value. In `thr::internal::thr(50)` the first `thr` names the crate
+    /// and the second is the call; only a mention that ends the path can be a
+    /// value.
+    #[test]
+    fn a_path_qualifier_spelled_like_the_owner_is_not_a_value() {
+        assert!(!value("assert!(!thr::internal::thr(50));", "thr"));
+        assert!(!value("f(thr::internal::thr(500));", "thr"));
+        // A single-segment qualifier is the same shape: a module or crate
+        // spelled like the owner, then a path into it.
+        assert!(!value("assert_eq!(thr::LIMIT, 1);", "thr"));
+        assert!(!value("f(thr::helper());", "thr"));
+        // Control 1: a genuine value keeps the limit.
+        assert!(value("let g = thr; g(50);", "thr"));
+        assert!(value(
+            "assert_eq!(rows.into_iter().map(thr).count(), 1);",
+            "thr"
+        ));
+        // Control 2: real calls and the turbofish are unchanged.
+        assert!(!value("assert!(thr(50));", "thr"));
+        assert!(!value("assert!(thr::<u8>(50));", "thr"));
+    }
+
+    /// Review round 1 (Devin): excluding the qualifier must not eat the value
+    /// behind it. In `let f = thr::thr;` the first `thr` is a module or crate
+    /// whose segment is spelled like the owner, and the terminal `thr` is the
+    /// re-exported owner itself, so the pair is a function value and keeps the
+    /// indirect-owner limit. Only the mention that ends the path can be the
+    /// value, and a qualifier spelled like the owner can still name the owner.
+    #[test]
+    fn a_function_value_behind_a_same_name_qualifier_still_keeps_the_limit() {
+        assert!(value("let f = thr::thr; assert!(!f(50));", "thr"));
+        assert!(value("let f = thr::internal::thr; f(50);", "thr"));
+        // A qualifier that names neither the owner nor the owner's own spelling
+        // stays a different entity, as before.
+        assert!(!value("let f = other::thr; f(50);", "thr"));
+    }
+
     #[test]
     fn a_qualified_path_names_the_owner_only_when_it_locates_the_owner() {
         // A same-leaf function in another module is a different entity.
@@ -1365,5 +1431,36 @@ mod tests {
         assert!(is_path("crate::def_add"));
         assert!(!is_path("2 + 3"));
         assert!(!is_path(""));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_qualifier_ending_in_a_multibyte_non_identifier_char_is_not_read() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        assert!(!super::qualifier_may_name_owner(
+            "क्::",
+            "inc",
+            &["Owner".to_string()]
+        ));
+        // A non-ASCII identifier char continues the qualifier, so `क्Owner`
+        // is not read as `Owner`.
+        assert!(!super::qualifier_may_name_owner(
+            "क्Owner::",
+            "Owner",
+            &["Owner".to_string()]
+        ));
+        // `क्::` is a path prefix like `helpers::`.
+        let code = "let f: fn(u32) -> u32 = क्::";
+        assert!(super::typed_fn_pointer_initializer(code, code.len()));
+        // The ASCII spelling still reads as before.
+        let code = "let f: fn(u32) -> u32 = helpers::";
+        assert!(super::typed_fn_pointer_initializer(code, code.len()));
+        assert!(super::qualifier_may_name_owner(
+            "Owner::",
+            "inc",
+            &["Owner".to_string()]
+        ));
     }
 }

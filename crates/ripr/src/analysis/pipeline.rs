@@ -299,7 +299,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         // #10796: the candidate subject is the requested input source; the
         // exact-tree identity below is what a deadline refusal may echo.
         super::publish_input_source_fact(super::InputSource::GitCandidate);
-        if crate::is_verbose() {
+        if crate::stderr_diagnostics() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",
                 super::git_candidate_execution::subject_identity(&resolved)
@@ -441,7 +441,7 @@ fn committed_history_overlay(
     let Some(overlay) = committed_source::probe(&options.root, options.git_timeout)? else {
         return Ok(None);
     };
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         let dirty = overlay.dirty_paths().collect::<Vec<_>>();
         eprintln!(
             "{}",
@@ -10444,6 +10444,38 @@ index 0000000..1111111 100644
             .iter()
             .map(|file| (file.path.as_str(), file.changed_lines, file.limit_env))
             .collect()
+    }
+
+    #[test]
+    fn lowered_python_limit_leaves_a_rust_only_diff_at_full_scope() -> Result<(), String> {
+        // #14172: with Rust and Python enabled and the Python limit lowered
+        // to 500, an 800-line Rust-only diff is within every limit that
+        // applies to it. The Rust adapter's partition must not clamp it to
+        // the Python limit, so the run stays at full scope.
+        let root = temp_root("py-lowered-limit-rust-only")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn seed() -> u32 { 0 }\n",
+        )?;
+        let diff = multi_file_diff(&["src/lib.rs"], 800, |index| {
+            format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+        });
+        let result =
+            with_forced_diff_limit_env(&[(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")], || {
+                run_pipeline_for_diff_text(
+                    &sample_rust_diff_options(root.clone()),
+                    &OraclePolicy::default(),
+                    &[LanguageId::Rust, LanguageId::Python],
+                    &crate::config::RustLanguageConfig::default(),
+                    &diff,
+                )
+            })?;
+        assert!(
+            result.partial_scope.is_none(),
+            "a Rust-only diff must not be partitioned by the Python limit: {:?}",
+            result.partial_scope
+        );
+        Ok(())
     }
 
     #[test]

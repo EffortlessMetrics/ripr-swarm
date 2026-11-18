@@ -414,7 +414,9 @@ wrong credits.
    availability in a test build. The existing `cfg_predicates` owner evaluates
    `test = true`, `all`/`any`/`not` and nested `cfg_attr`; `all()` is true and
    `any()` false. Feature/target/custom atoms remain unknown and cannot grant
-   credit. Ordinary lint/doc attributes and definitely enabled forms such as
+   credit. The exception for an owner and test compiled only under the same
+   refused declaration is #14463's shared gate (RIPR-SPEC-0240). Ordinary
+   lint/doc attributes and definitely enabled forms such as
    `cfg(test)` or `any(test, feature = "unknown")` remain supported. Raw attribute
    heads (including raw introduced attributes) remain unestablished; refusing
    them does not alter the cached source-role classifier. Malformed
@@ -800,6 +802,46 @@ wrong credits.
      bare call (#7082): with the cfg off, `T::name` can reach a trait
      default the index never sees. A bare `name(..)` still never names the
      associated owner (shape 1 above).
+Replaced whole-body constant (#14852). A changed `return_value` tail with
+no text cue for a returned value (`false`, `!true`, `vec![]`, `'a'`) gets the
+owner's returned-value sink and a complete direct-return witness only when
+the owner's whole body is that one constant expression on both sides of the
+diff. The base side is never the probe's paired removed line: it is the
+function the shared base-owner identity
+(`analysis::diff::verified_base_owner`) verifies as the same item. Its node
+spans the reconstructed old lines between the new item's unchanged first and
+last lines (attributes included), it has the same qualified path (every
+enclosing module, impl, trait and function header with its attributes, plus
+its own name and outer attributes), it is the only function of that name
+under its attribute-free path on both sides (so `cfg` twins and twin modules
+refuse), both sides parse cleanly, and no added line falls on an enclosing
+header or on its attributes or signature. The parent's out-of-line `mod`
+declarations count too, matched by name against every component of the owner
+file's path: an added or removed line on such a declaration, its attributes,
+an inline module header enclosing it or an inner attribute of its file, or on
+any `#[path]` declaration, refuses. A diff that swaps two scopes', `cfg`
+twins' or `#[path]` targets' functions therefore refuses. Any other
+difference inside the item (comments included) refuses, and so does a gate:
+a `cfg` or `cfg_attr` on the function, an enclosing item, the file, a
+matching `mod` declaration, an item enclosing it or its declaring file, or
+the presence of any `#[path]` declaration. A constant is built only from `bool`, integer,
+byte, `char` and string literals, `!` on a `bool`, `-` on an integer, the
+`bool` operators `&&`, `||`, `&`, `|`, `^`, `==` and `!=` (integer `==` only
+in `i8` range), parentheses, arrays and an unrebound bare `vec![..]` (not the
+repeat form); a name, path, field, call, cast, block, float or other macro on
+either side refuses. A `vec!` tail also refuses when the new-side workspace
+may rebind `vec` or a standard assertion macro, or when the base side of any
+changed Rust file may: a binding site in its reconstructed base side, a
+removed line naming `macro_use`,
+`macro_rules`, `extern crate` or `no_implicit_prelude`, or a base side that
+cannot be reconstructed (the diff parser registers no section for a deleted
+file, so a deleted file is seen only through such a removed line in a
+surviving file). Both constants fold, and the two values must differ
+provably: unequal `bool`, `char`, byte or string values, integers both in
+`i8` range, or collections of another length or with one provably different
+element. Equal folds (`false` → `!true`) refuse. The sink carries the raw
+tail text. Whether a related test pins the returned value stays the owner
+pin's decision, so a bare call reads `reachable_unrevealed`.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
@@ -2596,6 +2638,47 @@ all previously matched rows are present and there is room under the existing
 render cap; preserve the original rows and count the new row. Otherwise retain
 unknown. Runtime mutation results are evidence for the fixture truth and are
 not themselves a static propagation proof.
+
+### Guard returns the closed subset separates (#14387)
+
+A changed early `return <value>;` inside a guard is credited to an exact
+owner pin when both versions of the owner fall inside the closed integer
+subset (`owner_value`, #12716). That subset covers integer parameters of one
+type, guards of the form `if COND { return RET; }`, and an integer or
+`Ok`/`Some`/`Err`/`None` tail. The changed line must be the whole statement,
+and the old and new texts must both be `return <value>`. The diff must replace
+that one line and change no other line of the owner, and the diff's old text
+must match the line the gate rebuilds. Only that guard's returned value moves,
+so every condition and every other exit are the same in both versions. A diff
+that also moves a guard condition (`t > 500` to `t > 200`) refuses, because
+the old owner is then not the new one with the return line swapped back
+(`fixtures/rust_guard_return_changed_guard`, an evidence-promotion honesty
+case).
+
+The subset reads integer types and the prelude variants by spelling, so the
+owner's file must bind none of `Ok`, `Err`, `Some`, `None` as a value, declare
+or import no integer type name (`type u32 = u8;` would narrow the range), and
+glob-import nothing beyond `use super::*;`.
+
+The pin holds per call:
+- the pinned call is a bare owner call with plain decimal literal arguments;
+- the typed evaluator runs both versions on those arguments without overflow
+  or division by zero, and they return different values;
+- the pinned value is one of the two, so the assertion passes on one version
+  and fails on the other.
+
+A literal that takes an earlier guard or the tail, a pinned value that
+neither version returns, a non-literal argument, an `Err(..)` result whose
+payload the subset leaves unevaluated, and two versions that agree at the
+pinned input (`100 / 5` and `100 - 80`) all keep their earlier reading.
+Anything the subset cannot read refuses.
+
+The tail `if`/`else` form is read the same way. The subset reads a tail
+`if C { A } else if D { B } else { E }` whose branch blocks hold only their
+values as the guards `C -> A`, `D -> B` and the tail `E`. A changed branch
+value on its own line (the #14385 branch probe) is credited by the same per-call
+rule when the diff changes only that line. A chain without a final `else`, a
+branch holding a statement, or code after the chain is outside the subset.
 
 ## Required Evidence
 

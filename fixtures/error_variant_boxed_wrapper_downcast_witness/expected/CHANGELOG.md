@@ -792,3 +792,25 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (58)
+
+Reason:
+RIPR-SPEC-0122: grouped Hidden rows name their members' line runs instead of a covering range (#14682); a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (59)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`

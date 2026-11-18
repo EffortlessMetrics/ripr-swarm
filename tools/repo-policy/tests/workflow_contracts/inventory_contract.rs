@@ -1,4 +1,6 @@
 //! Frozen native baseline identities prevent silent omission during consolidation.
+//! #14500 explicitly replaces the temporary main-writer hold with six current
+//! cache-lifecycle controls; the eight historical identities remain accounted for.
 
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -26,6 +28,26 @@ const CONTROLS: &[&str] = &[
     "workflow_contracts::inventory_contract::missing_mapping_is_refused",
     "workflow_contracts::inventory_contract::missing_native_case_is_refused",
     "workflow_contracts::inventory_contract::changed_ignore_state_is_refused",
+    "workflow_contracts::inventory_contract::cache_migration_requires_every_active_control",
+];
+
+const RETIRED_CACHE: &[&str] = &[
+    "admission_scope_cannot_remove_the_main_push_cache_writer",
+    "broadening_saves_is_not_a_trusted_default_scope_writer",
+    "current_source_preserves_a_main_scope_writer_opportunity",
+    "disabled_hosted_job_or_filtered_push_is_not_writer_continuity",
+    "disabled_producer_or_additional_cache_is_not_writer_continuity",
+    "missing_caller_dependencies_cannot_supply_guard_outputs",
+    "missing_or_rebound_producer_is_not_a_writer_opportunity",
+    "retiring_main_push_is_not_cache_continuity",
+];
+const CURRENT_CACHE: &[&str] = &[
+    "current_source_restores_opportunistically_and_recomputes_required_proof",
+    "ordinary_warmer_cannot_return",
+    "neither_gate_nor_shard_can_broaden_write_authority",
+    "missing_changed_or_duplicate_cache_domains_refuse",
+    "hit_or_miss_never_substitutes_for_compilation_or_tests",
+    "absent_proof_or_rebound_caller_is_not_cache_continuity",
 ];
 
 fn mapping() -> Result<Mapping, String> {
@@ -76,6 +98,7 @@ fn native_inventory() -> Result<BTreeSet<(String, bool)>, String> {
 fn validate(cases: &[Case], actual: &BTreeSet<(String, bool)>) -> Result<(), String> {
     let mut old = BTreeSet::new();
     let mut expected = BTreeSet::new();
+    let mut retired = BTreeSet::new();
     for case in cases {
         if !old.insert((&case.old_binary, &case.old_test)) {
             return Err("duplicate baseline case mapping".into());
@@ -86,12 +109,28 @@ fn validate(cases: &[Case], actual: &BTreeSet<(String, bool)>) -> Result<(), Str
         {
             return Err("unexpected binary or logical-name mapping".into());
         }
+        if case.old_binary == "hosted_cache_continuity" {
+            if case.ignored || case.linux_only || !RETIRED_CACHE.contains(&case.old_test.as_str()) {
+                return Err("unreviewed historical cache migration".into());
+            }
+            retired.insert(case.old_test.as_str());
+            continue;
+        }
         if (!case.linux_only || cfg!(target_os = "linux"))
             && !expected.insert((case.new_test.clone(), case.ignored))
         {
             return Err("duplicate candidate case mapping".into());
         }
     }
+    if retired != RETIRED_CACHE.iter().copied().collect() {
+        return Err("missing historical cache migration identity".into());
+    }
+    expected.extend(CURRENT_CACHE.iter().map(|name| {
+        (
+            format!("workflow_contracts::hosted_cache_continuity::{name}"),
+            false,
+        )
+    }));
     expected.extend(CONTROLS.iter().map(|name| ((*name).to_string(), false)));
     if &expected != actual {
         return Err(format!(
@@ -138,7 +177,7 @@ fn missing_native_case_is_refused() -> Result<(), String> {
     let cases = mapping()?.cases;
     let first = cases
         .iter()
-        .find(|case| !case.linux_only)
+        .find(|case| !case.linux_only && case.old_binary != "hosted_cache_continuity")
         .ok_or("no portable baseline case")?;
     let mut actual = native_inventory()?;
     assert!(actual.remove(&(first.new_test.clone(), first.ignored)));
@@ -151,11 +190,26 @@ fn changed_ignore_state_is_refused() -> Result<(), String> {
     let cases = mapping()?.cases;
     let first = cases
         .iter()
-        .find(|case| !case.linux_only)
+        .find(|case| !case.linux_only && case.old_binary != "hosted_cache_continuity")
         .ok_or("no portable baseline case")?;
     let mut actual = native_inventory()?;
     assert!(actual.remove(&(first.new_test.clone(), first.ignored)));
     actual.insert((first.new_test.clone(), !first.ignored));
     assert!(validate(&cases, &actual).is_err());
+    Ok(())
+}
+
+#[test]
+fn cache_migration_requires_every_active_control() -> Result<(), String> {
+    let cases = mapping()?.cases;
+    let actual = native_inventory()?;
+    for name in CURRENT_CACHE {
+        let name = format!("workflow_contracts::hosted_cache_continuity::{name}");
+        let mut changed = actual.clone();
+        assert!(changed.remove(&(name.clone(), false)));
+        assert!(validate(&cases, &changed).is_err());
+        changed.insert((name, true));
+        assert!(validate(&cases, &changed).is_err());
+    }
     Ok(())
 }

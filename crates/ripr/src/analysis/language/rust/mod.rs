@@ -23,7 +23,7 @@ pub(crate) mod probes;
 mod proof_harness;
 mod repo;
 
-pub(crate) use probe_shape::producer_gap_names_seam_shape;
+pub(crate) use probe_shape::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 pub(crate) use probes::{
     changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
 };
@@ -1431,6 +1431,40 @@ fn select_partial_diff_partition_with_identity(
     )
 }
 
+/// The enabled languages this diff actually contains, for budget resolution
+/// (#13641 review). Each file is judged against its own language limit, so
+/// the aggregate line-budget clamp and the widen advice only consider limits
+/// of languages with an admitted, enabled changed file: lowering the Python
+/// limit must not shrink the budget of a Rust-only diff, nor tell the user to
+/// raise a limit no file in the diff is under.
+fn diff_budget_languages(
+    changed_files: &[ChangedFile],
+    enabled_languages: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
+) -> Vec<LanguageId> {
+    let mut languages = Vec::new();
+    for file in changed_files {
+        if file.added_lines.is_empty() && file.removed_lines.is_empty() {
+            continue;
+        }
+        let Some(language) = route(&file.path) else {
+            continue;
+        };
+        if languages.contains(&language)
+            || !language_adapter_enabled(enabled_languages, language)
+            || !crate::analysis::pipeline::language_admits_changed_path(
+                &file.path,
+                language,
+                language_config,
+            )
+        {
+            continue;
+        }
+        languages.push(language);
+    }
+    languages
+}
+
 /// Whether the enabled set runs the adapter `language` routes to. `route`
 /// maps `.js`-family paths to [`LanguageId::TypeScript`], and the TypeScript
 /// adapter serves both ids, so a JavaScript-only run enables them (#13641).
@@ -1669,7 +1703,11 @@ pub(crate) fn select_partial_diff_scope(
     enabled_languages: &[LanguageId],
     language_config: &crate::config::LanguagesConfig,
 ) -> Result<Option<PartialDiffScope>, String> {
-    let budgets = partial_diff_budgets(enabled_languages)?;
+    let budgets = partial_diff_budgets(&diff_budget_languages(
+        changed_files,
+        enabled_languages,
+        language_config,
+    ))?;
     select_admitted_partial_diff_partition(
         changed_files,
         changed_files,
@@ -2104,10 +2142,15 @@ fn apply_rust_proximity_reach_limit(
                 )
             })
     };
-    if let Some(witness) = transitive_reach
-        .transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    // With an admission rule, rank only admitted witnesses: filtering the
+    // single best one would let a nearer ineligible witness hide an
+    // eligible one and drop the limit (#14970).
+    let transitive = if cross_package_only {
+        transitive_reach.transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.transitive_witness(&owner_name)
+    };
+    if let Some(witness) = transitive {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2126,10 +2169,11 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach
-        .deep_transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    } else if let Some(witness) = if cross_package_only {
+        transitive_reach.deep_transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.deep_transitive_witness(&owner_name)
+    } {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2578,7 +2622,11 @@ impl RustAdapter {
         // partition and reported as `limited_partial_scope` instead of
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
-        let partial_budgets = partial_diff_budgets(enabled_languages)?;
+        let partial_budgets = partial_diff_budgets(&diff_budget_languages(
+            &analyzable_changed_files,
+            enabled_languages,
+            language_config,
+        ))?;
         let mut partial_scope = select_admitted_partial_diff_partition(
             &analyzable_changed_files,
             changed_files,
@@ -3219,6 +3267,37 @@ impl RustAdapter {
                 .with_diff_touched(diff_touched.clone())
                 .with_changed_consts(classify::ChangedConsts::from_changed_files(
                     &analyzable_changed_files,
+                ))
+                // #14852: every changed file, generated ones included, since
+                // a removed binding anywhere may have rebound `vec`.
+                .with_base_may_rebind_trusted_macros(classify::base_side_may_rebind_trusted_macros(
+                    changed_files,
+                    &index,
+                ))
+                // #14852: every `mod` declaration the index holds, and every
+                // changed file's declarations on both sides, for the shared
+                // base-owner identity.
+                .with_module_declarations(crate::analysis::diff::ModuleDeclarations::read(
+                    index
+                        .files()
+                        .iter()
+                        .filter(|(_, facts)| {
+                            // The facts list every parsed declaration; the
+                            // lexical test keeps a file the index could not
+                            // parse, which then reads as unreadable.
+                            !facts.module_declarations.is_empty()
+                                || facts.source.lines().any(|line| {
+                                    line.contains("mod ") && line.trim_end().ends_with(';')
+                                })
+                        })
+                        .map(|(_, facts)| facts.data().source.as_ref()),
+                    changed_files.iter().map(|changed| {
+                        (
+                            changed,
+                            crate::analysis::rust_index::find_file_facts(&index, &changed.path)
+                                .map(|facts| facts.data().source.as_ref()),
+                        )
+                    }),
                 ));
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
@@ -4105,15 +4184,16 @@ mod tests {
         PARTIAL_DIFF_LINE_BUDGET_DEFAULT, PARTIAL_DIFF_LINE_BUDGET_ENV,
         PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets, PartialDiffScope,
         PartialDiffStopReason, PartialSelection, RustAdapter, apply_probe_and_oracle_limits,
-        changed_rust_line_count, dependent_scope, diff_changed_rust_line_limit_from_env,
-        diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        diff_narrow_index_files_from_env, enforce_changed_rust_line_limit,
-        enforce_changed_rust_line_limit_on_selection, is_binary_source_path,
-        is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
-        is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
-        partial_diff_budgets, partial_diff_budgets_from_env, partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, select_partial_diff_partition,
-        select_partial_diff_partition_with_identity, selection_with_open_files, sha256_hex,
+        changed_rust_line_count, dependent_scope, diff_budget_languages,
+        diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
+        diff_index_file_limit_from_env, diff_narrow_index_files_from_env,
+        enforce_changed_rust_line_limit, enforce_changed_rust_line_limit_on_selection,
+        is_binary_source_path, is_cargo_binary_invocation, is_diff_scope_oversized,
+        is_generated_rust_file, is_generated_rust_file_with_patterns,
+        limitations_for_absent_changed_files, partial_diff_budgets, partial_diff_budgets_from_env,
+        partition_canonical_form, replace_witnessed_no_path_infection_summary,
+        select_partial_diff_partition, select_partial_diff_partition_with_identity,
+        select_partial_diff_scope, selection_with_open_files, sha256_hex,
         with_forced_diff_limit_env,
     };
     use crate::analysis::cancellation;
@@ -7514,6 +7594,47 @@ fn absent_delimiter_boundary_returns_head() {
         );
         assert_eq!(scope.selected_files, vec!["src/a.rs"]);
         assert!(scope.over_limit_files.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_lowered_limit_only_clamps_diffs_that_contain_its_language() -> Result<(), String> {
+        // #13641 review: with Rust and Python enabled and the Python limit
+        // lowered to 500, an 800-line Rust-only diff stays within every limit
+        // that applies to it, so it must run at full scope. The same Rust
+        // change beside a small Python file is clamped by the Python limit.
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let config = crate::config::LanguagesConfig::default();
+        let rust_only = vec![changed_file("src/a.rs", 800, 0)];
+        assert_eq!(
+            diff_budget_languages(&rust_only, &languages, &config),
+            vec![LanguageId::Rust]
+        );
+        let full = with_forced_diff_limit_env(
+            &[(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")],
+            || select_partial_diff_scope(&rust_only, &languages, &config),
+        )?;
+        assert!(
+            full.is_none(),
+            "a Rust-only diff must not be partitioned by the Python limit: {full:?}"
+        );
+        let mixed = vec![
+            changed_file("src/a.rs", 800, 0),
+            changed_file("pkg/mod.py", 10, 0),
+        ];
+        let partial = with_forced_diff_limit_env(
+            &[(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")],
+            || select_partial_diff_scope(&mixed, &languages, &config),
+        )?
+        .ok_or("a diff with a Python file is clamped by the Python limit")?;
+        assert_eq!(partial.line_budget, 500);
+        assert!(
+            partial
+                .widen_instruction()
+                .contains(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
+            "{}",
+            partial.widen_instruction()
+        );
         Ok(())
     }
 

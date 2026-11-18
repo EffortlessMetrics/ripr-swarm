@@ -1,0 +1,1 @@
+crates/ripr/tests/agent_unreferenced_owner_gap.rs|Command::new|1|cli-tests|#14919: reads the JSON canonical_next_action, which only the CLI JSON adapter attaches, by running the built ripr binary (`check --format json --diff`) against an isolated temp workspace the test writes. No shell, network, git, or user-repository mutation.

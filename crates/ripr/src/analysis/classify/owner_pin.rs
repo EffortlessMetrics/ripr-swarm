@@ -494,8 +494,6 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Whether every matches-binding candidate is this file's verified
     /// standard assertion argument, rather than a real or opaque binding.
     matches_arguments_clear: SyncMemo<BTreeMap<PathBuf, bool>>,
-    /// All sites, including opaque imports that never spell the bound name.
-    matches_binding_sites: OnceLock<Vec<(PathBuf, MacroBindingSite)>>,
     /// #10389: per test file, the known comparison macros it imports by name.
     comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
     /// #10389: every name a `macro_rules!` in the index defines, scanned once.
@@ -1031,11 +1029,12 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn admits_equality_assertion(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(probe.family.clone(), test, assertion, index)
+        self.admits_assertion_family(probe.family.clone(), owner, test, assertion, index)
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
@@ -1050,7 +1049,7 @@ impl OwnerPinSyntax {
         index: &RustIndex,
     ) -> bool {
         !test.attrs.iter().any(|attr| attr.contains("should_panic"))
-            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, None, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -1087,12 +1086,112 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.admits_assertion_family(ProbeFamily::SideEffect, test, assertion, index)
+        self.admits_assertion_family(ProbeFamily::SideEffect, None, test, assertion, index)
+    }
+
+    /// The family-aware refusal for one assertion, including the #14537
+    /// gated-`mod` exception. `None` when the family admits it. Shared by the
+    /// admission and its disclosure note so the note names the refusal that
+    /// actually withheld credit.
+    fn assertion_family_refusal(
+        &self,
+        family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+    ) -> Option<AssertionRefusal> {
+        let refusal = if matches_context {
+            self.context_refusal(test, assertion, index, true)
+        } else {
+            self.refusal(test, assertion, index)
+        };
+        // #14537: a predicate equality whose test file is composed through a
+        // gated `mod` declaration shares the bare `assert!`'s admission for
+        // that build-availability step only, and only under the #14463
+        // shared-gate rule: the owner must be reached solely through that same
+        // declaration, so the gate cannot separate the test from the owner.
+        // An owner reachable without the gate (an ungated `lib.rs` item), a
+        // provably-off gate, an include-only context, a shadowed macro, an
+        // uncalled closure or a conditional path still withholds credit
+        // (RIPR-SPEC-0197: an unknown gate grants no credit on its own).
+        if family != ProbeFamily::Predicate {
+            return refusal;
+        }
+        let Some(module_refusal) = refusal
+            .as_ref()
+            .filter(|refusal| matches!(refusal, AssertionRefusal::ModuleDeclaration { .. }))
+        else {
+            return refusal;
+        };
+        let shared_gate = owner.is_some_and(|owner| {
+            super::refusal_miss::owner_compiled_only_under_refused_declaration(
+                index,
+                owner,
+                test,
+                module_refusal,
+            )
+        });
+        // Read the rest of the execution context with only that Module edge
+        // skipped. A refusal that survives the skip is the real reason credit
+        // is withheld (a dead branch, an ignored test, a shadowed macro), so
+        // the disclosure names it rather than the gate. With nothing left to
+        // refuse, the shared gate decides: admitted when the owner is reached
+        // only through the declaration, otherwise the gate itself withholds.
+        let skip = self.module_edge_child_for_test(module_refusal, test, index);
+        let inner = self.context_refusal_without_provenance(
+            test,
+            assertion,
+            index,
+            matches_context,
+            skip.as_deref(),
+        );
+        if let Some(inner) = inner {
+            // #14537 review: only an unestablished gate lets the rest of the
+            // context speak. When the declaration's gate is not unestablished
+            // (`cfg(any())`, an always-off `cfg_attr`, or a declaration ripr
+            // cannot read), no build compiles that code, so a refusal read
+            // past it is not this assertion's limit - and under RIPR-SPEC-0240
+            // only a real limit withholds a gap. Keep the declaration.
+            if !self.module_gate_is_unestablished(module_refusal, index) {
+                return refusal;
+            }
+            return Some(Self::refusal_with_value_guard(inner, assertion));
+        }
+        if shared_gate {
+            return None;
+        }
+        refusal
+    }
+
+    /// Whether the `mod` declaration behind `refusal` carries a `cfg` ripr
+    /// cannot evaluate (so the shared-gate rule can apply), as opposed to a
+    /// provably-off gate, a declaration it cannot read, or a plain module.
+    /// The gate reader is the syntax layer's, the same one the producer and
+    /// the shared-gate rule use (#14537 review).
+    fn module_gate_is_unestablished(&self, refusal: &AssertionRefusal, index: &RustIndex) -> bool {
+        let Some((parent, line, declaration)) = refusal.module_declaration_site() else {
+            return false;
+        };
+        index
+            .files()
+            .get(parent)
+            .filter(|facts| !facts.used_lexical_fallback)
+            .and_then(|facts| {
+                crate::analysis::syntax::module_declaration_unestablished_gate(
+                    &facts.source,
+                    line,
+                    declaration,
+                )
+            })
+            == Some(true)
     }
 
     fn admits_assertion_family(
         &self,
         family: ProbeFamily,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
@@ -1147,11 +1246,14 @@ impl OwnerPinSyntax {
         if !gated {
             return true;
         }
-        let refusal = if matches_context {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        };
+        let refusal = self.assertion_family_refusal(
+            family.clone(),
+            owner,
+            test,
+            assertion,
+            index,
+            matches_context,
+        );
         match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
@@ -1216,22 +1318,28 @@ impl OwnerPinSyntax {
     pub(in crate::analysis) fn equality_assertion_refusal(
         &self,
         probe: &Probe,
+        owner: Option<&FunctionSummary>,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
-        if self.admits_equality_assertion(probe, test, assertion, index) {
+        if self.admits_equality_assertion(probe, owner, test, assertion, index) {
             return None;
         }
-        let refusal = if matches_return_assertion(&probe.family, assertion) {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        }
-        .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
-        .unwrap_or(AssertionRefusal::Syntax(
-            AssertionContextRefusal::UnidentifiedTest,
-        ));
+        let matches_context = matches_return_assertion(&probe.family, assertion);
+        let refusal = self
+            .assertion_family_refusal(
+                probe.family.clone(),
+                owner,
+                test,
+                assertion,
+                index,
+                matches_context,
+            )
+            .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
+            .unwrap_or(AssertionRefusal::Syntax(
+                AssertionContextRefusal::UnidentifiedTest,
+            ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
                 let site = if probe.family == ProbeFamily::FieldConstruction {
@@ -1447,7 +1555,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.context_ambiguities(test, assertion.line, index)
+        self.context_ambiguities(test, assertion.line, index, None)
             .is_ok_and(|ambiguous| {
                 !["assert", "assert_ne", "matches"]
                     .iter()
@@ -1495,7 +1603,7 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         index: &RustIndex,
     ) -> bool {
-        if self.source_provenance_refusal(test, index).is_some() {
+        if self.source_provenance_refusal(test, index, None).is_some() {
             return false;
         }
         let Some(_facts) = index.files().get(&test.file) else {
@@ -1982,6 +2090,65 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// Every `matches` binding site in the workspace, including opaque
+    /// imports that never spell the name, in index path order. Memoized per
+    /// index (#13754), so every owner-pin syntax instance over one index
+    /// shares one scan. It stays lazy: priming it before the probes cost a
+    /// large diff that never reaches this check more than it saved.
+    fn matches_binding_sites(index: &RustIndex) -> &[(PathBuf, MacroBindingSite)] {
+        index
+            .call_identity_memos
+            .matches_binding_sites
+            .get_or_init(|| {
+                let files: Vec<(&PathBuf, crate::analysis::rust_index::FileFactsView<'_>)> =
+                    index.files().iter().collect();
+                map_scans(&files, |(file, facts)| {
+                    // The stored candidates over-approximate every context's
+                    // sites, so a file that cannot bind `matches` reports
+                    // none and is not parsed (#5363). A file without stored
+                    // candidates is always scanned.
+                    if facts
+                        .macro_candidates
+                        .as_deref()
+                        .is_some_and(|candidates| !candidates.may_bind("matches"))
+                    {
+                        return Vec::new();
+                    }
+                    trusted_macro_binding_sites(
+                        &facts.source,
+                        index.macro_scope_crates(),
+                        &assertion_context_macros(),
+                        &|_, _| false,
+                        &|_| false,
+                    )
+                    .into_iter()
+                    .filter(|(name, _)| name == "matches")
+                    .map(|(_, site)| ((*file).clone(), site))
+                    .collect::<Vec<_>>()
+                })
+                .into_iter()
+                .flatten()
+                .collect()
+            })
+    }
+
+    /// The per-file `matches` argument verdict, memoized by test file. The
+    /// workspace site scan is resolved before the memo lock is taken, so a
+    /// worker that pays it does not hold every sibling on that lock (#13754).
+    fn matches_arguments_clear_for(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        clear: impl FnOnce(&[(PathBuf, MacroBindingSite)]) -> bool,
+    ) -> bool {
+        let sites = Self::matches_binding_sites(index);
+        *self
+            .matches_arguments_clear
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| clear(sites))
+    }
+
     /// #9211: pay the whole workspace macro-site scan once, before the
     /// classify workers start. The first consumer otherwise runs it in line on
     /// one worker while holding the memo lock, and every sibling worker sleeps
@@ -2010,6 +2177,7 @@ impl OwnerPinSyntax {
         &self,
         test: &TestSummary,
         index: &RustIndex,
+        skip_module_child: Option<&Path>,
     ) -> Option<AssertionRefusal> {
         let Some(facts) = index
             .files()
@@ -2027,6 +2195,14 @@ impl OwnerPinSyntax {
             .as_ref()
             .map_or(&facts.role_provenance.edges, |context| &context.edges);
         for edge in edges {
+            // #14537: a caller that has already accounted for the gated `mod`
+            // that composes the test file skips only that Module edge, so an
+            // Include edge further up the chain is still evaluated.
+            if edge.kind == SourceRoleProvenanceEdgeKind::Module
+                && skip_module_child.is_some_and(|child| edge.child == child)
+            {
+                continue;
+            }
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
@@ -2077,8 +2253,9 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         line: usize,
         index: &RustIndex,
+        skip_module_child: Option<&Path>,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
-        if let Some(refusal) = self.source_provenance_refusal(test, index) {
+        if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
             return Err(Box::new(refusal));
         }
         if index.proptest_source(test).is_some() {
@@ -2170,7 +2347,9 @@ impl OwnerPinSyntax {
             )?
             .clone()
         };
-        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        let ambiguous = self
+            .context_ambiguities(test, assertion.line, index, None)
+            .ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
 
@@ -2194,8 +2373,10 @@ impl OwnerPinSyntax {
             }
             let before = masked[..at].trim_end();
             let start = before
-                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .map_or(0, |last| last + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch.is_ascii_alphanumeric() || ch == '_' || !ch.is_ascii()))
+                .map_or(0, |(last, ch)| last + ch.len_utf8());
             let name = &before[start..];
             // A `!` with no identifier before it negates a parenthesized
             // expression; it is not a macro invocation.
@@ -2244,7 +2425,7 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
-        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index, None) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
         self.by_file
@@ -2267,13 +2448,11 @@ impl OwnerPinSyntax {
             )
     }
 
-    fn refusal(
-        &self,
-        test: &TestSummary,
+    fn refusal_with_value_guard(
+        refusal: AssertionRefusal,
         assertion: &OracleFact,
-        index: &RustIndex,
-    ) -> Option<AssertionRefusal> {
-        Some(match self.context_refusal(test, assertion, index, false)? {
+    ) -> AssertionRefusal {
+        match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
                 match value_guard_subject(&condition, &assertion.text) {
                     Some(subject) => AssertionRefusal::ValueGuard {
@@ -2286,7 +2465,19 @@ impl OwnerPinSyntax {
                 }
             }
             refusal => refusal,
-        })
+        }
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        Some(Self::refusal_with_value_guard(
+            self.context_refusal(test, assertion, index, false)?,
+            assertion,
+        ))
     }
 
     fn context_refusal(
@@ -2296,8 +2487,73 @@ impl OwnerPinSyntax {
         index: &RustIndex,
         matches_context: bool,
     ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, None)
+    }
+
+    /// [`Self::context_refusal`] with only the Module edge that composes the
+    /// test file skipped, so a caller that has already accounted for that
+    /// build-availability step can read the rest of the execution context
+    /// (#14537). An Include edge further up the chain is still evaluated.
+    fn context_refusal_without_provenance(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+        skip_module_child: Option<&Path>,
+    ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, skip_module_child)
+    }
+
+    /// The Module edge child to skip for a predicate equality whose test file
+    /// is composed through a gated `mod`. The edge is the refused declaration,
+    /// so a test in an ungated child module of that `mod`
+    /// (`lib.rs: mod python;`, `src/python.rs: mod tests;`) skips
+    /// `src/python.rs` rather than the inner declaration (#14537 review). An
+    /// include fragment keeps its parent, and anything unreadable falls back to
+    /// the test file. The Include edge further up the chain is left in place,
+    /// so an include fragment still refuses as `IncludedFile` (#14537).
+    fn module_edge_child_for_test(
+        &self,
+        refusal: &AssertionRefusal,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<PathBuf> {
+        let facts = index.files().get(&test.file)?;
+        let context = self.execution_context(&test.file, index);
+        let edges = context
+            .as_ref()
+            .as_ref()
+            .map_or(&facts.role_provenance.edges, |context| &context.edges);
+        if let Some((parent, line, declaration)) = refusal.module_declaration_site()
+            && let Some(edge) = edges.iter().find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Module
+                    && edge.parent == parent
+                    && edge.line == line
+                    && edge.declaration == declaration
+            })
+        {
+            return Some(edge.child.clone());
+        }
+        edges
+            .iter()
+            .find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Include && edge.child == test.file
+            })
+            .map(|edge| edge.parent.clone())
+            .or_else(|| Some(test.file.clone()))
+    }
+
+    fn context_refusal_inner(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+        skip_module_child: Option<&Path>,
+    ) -> Option<AssertionRefusal> {
         if let Some((source, offset)) = index.proptest_source(test) {
-            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
                 return Some(refusal);
             }
             let (Some(start), Some(end), Some(line)) = (
@@ -2322,10 +2578,11 @@ impl OwnerPinSyntax {
                 )
                 .map(AssertionRefusal::Syntax);
         }
-        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index) {
-            Ok(ambiguous) => ambiguous,
-            Err(refusal) => return Some(*refusal),
-        };
+        let mut ambiguous =
+            match self.context_ambiguities(test, assertion.line, index, skip_module_child) {
+                Ok(ambiguous) => ambiguous,
+                Err(refusal) => return Some(*refusal),
+            };
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
@@ -2378,50 +2635,25 @@ impl OwnerPinSyntax {
                     .root_sites
                     .keys()
                     .any(|(name, _)| name == "matches")
-                && *self
-                    .matches_arguments_clear
-                    .borrow_mut()
-                    .entry(test.file.clone())
-                    .or_insert_with(|| {
-                        // Check every site, not only the earliest disclosure site:
-                        // a later definition must not hide behind std::assert!.
-                        self.matches_binding_sites
-                            .get_or_init(|| {
-                                index
-                                    .files()
-                                    .iter()
-                                    .flat_map(|(file, facts)| {
-                                        trusted_macro_binding_sites(
-                                            &facts.source,
-                                            index.macro_scope_crates(),
-                                            &assertion_context_macros(),
-                                            &|_, _| false,
-                                            &|_| false,
-                                        )
-                                        .into_iter()
-                                        .filter(|(name, _)| name == "matches")
-                                        .map(|(_, site)| (file.clone(), site))
-                                        .collect::<Vec<_>>()
-                                    })
-                                    .collect()
-                            })
-                            .iter()
-                            .all(|(file, site)| {
-                                let MacroBindingKind::MacroArgument(path) = &site.kind else {
-                                    return false;
-                                };
-                                let path: String = path.split_whitespace().collect();
-                                file == &test.file
-                                    && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                                    && rooted.is_unrebound(&path, &facts.source)
-                                    && self.targeted_macro_binding_is_unambiguous(
-                                        test,
-                                        assertion.line,
-                                        &path,
-                                        index,
-                                    )
-                            })
-                    });
+                && self.matches_arguments_clear_for(test, index, |sites| {
+                    // Check every site, not only the earliest disclosure site:
+                    // a later definition must not hide behind std::assert!.
+                    sites.iter().all(|(file, site)| {
+                        let MacroBindingKind::MacroArgument(path) = &site.kind else {
+                            return false;
+                        };
+                        let path: String = path.split_whitespace().collect();
+                        file == &test.file
+                            && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                            && rooted.is_unrebound(&path, &facts.source)
+                            && self.targeted_macro_binding_is_unambiguous(
+                                test,
+                                assertion.line,
+                                &path,
+                                index,
+                            )
+                    })
+                });
             if clear {
                 ambiguous.remove("matches");
             }
@@ -5151,6 +5383,19 @@ enum ReturnPathGate {
     /// `Result`/`Option`). The pinned value must be a literal of that type,
     /// in the same wrapper, naming the field with an independent value.
     WholeValueField(WholeValueField),
+    /// #14387: the changed line is `return <value>;` inside one guard
+    /// `if COND { return ..; }` of an owner the closed integer subset reads
+    /// in both versions (`owner_value::ClosedChange`). The pinned call must
+    /// pass literal arguments on which the two versions provably return
+    /// different values, and the pinned value must be one of the two, so the
+    /// exact pin fails on one version. Any shape the subset cannot evaluate
+    /// refuses.
+    ClosedGuardReturn {
+        change: super::owner_value::ClosedChange,
+        /// The changed line's old text as the gate rebuilt it, which the
+        /// diff's own old line must match.
+        old_line: String,
+    },
 }
 
 /// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
@@ -5425,6 +5670,21 @@ impl OwnerReturnPin {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
     }
 
+    /// #14387: whether a guard-return pin's rebuilt old line is the diff's own
+    /// old text for the owner's only changed line (`sole_change`). Every
+    /// other gate does not read it and answers `true`.
+    pub(in crate::analysis) fn closed_guard_old_line_matches(
+        &self,
+        sole_change: Option<&str>,
+    ) -> bool {
+        match &self.path {
+            ReturnPathGate::ClosedGuardReturn { old_line, .. } => {
+                sole_change.is_some_and(|old| old.trim() == old_line.trim())
+            }
+            _ => true,
+        }
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
@@ -5524,6 +5784,17 @@ impl OwnerReturnPin {
                                         )?,
                                     })
                                 })
+                        })
+                        // #14387: a changed early `return` inside a guard of
+                        // an owner the closed subset reads in both versions.
+                        .or_else(|| {
+                            closed_guard_return(
+                                &owner.body,
+                                name,
+                                changed_line,
+                                &probe.expression,
+                                probe.before.as_deref(),
+                            )
                         })?
                 }
             }
@@ -5570,6 +5841,11 @@ impl OwnerReturnPin {
                 .get(&owner.file)
                 .is_none_or(|facts| source_binds_value_name(&facts.source, name))
         }) {
+            return None;
+        }
+        if matches!(path, ReturnPathGate::ClosedGuardReturn { .. })
+            && !owner_file_keeps_integer_names(owner, index)
+        {
             return None;
         }
         let call = pin_call(owner, index)?;
@@ -7028,6 +7304,21 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #14387: a guard-return pin holds only where the two versions
+        // provably return different values for this call's literal arguments
+        // and the pin names one of them.
+        if let ReturnPathGate::ClosedGuardReturn { change: closed, .. } = &self.path
+            && !(helper.is_none()
+                && substituted.is_none()
+                && !unwrapped
+                && matches!(self.call, PinCall::Bare)
+                && call_text
+                    .map(str::to_string)
+                    .or_else(|| owner_call_in(&assertion.text, &self.name, false))
+                    .is_some_and(|call| closed.pin_discriminates(&self.name, &call, expected)))
         {
             return false;
         }
@@ -8523,6 +8814,9 @@ impl ReturnPathGate {
             Self::Adaptor {
                 requires_ok: true, ..
             } => &["Ok", "Err"],
+            // The closed subset reads `Ok(..)`, `Some(..)` and `None` by
+            // spelling (#14786 review).
+            Self::ClosedGuardReturn { .. } => &["Ok", "Err", "Some", "None"],
             _ => &[],
         }
     }
@@ -8553,6 +8847,9 @@ impl ReturnPathGate {
             }
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
+            // Read per call in `admits_candidate`, where the call's literal
+            // arguments are known.
+            Self::ClosedGuardReturn { .. } => true,
         }
     }
 }
@@ -9386,6 +9683,46 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
     let masked = mask_comments_and_strings(text);
     let closing = matching_close(&masked, head.len(), b'(', b')')?;
     text[closing + 1..].trim().is_empty().then_some(closing)
+}
+
+/// #14387: [`ReturnPathGate::ClosedGuardReturn`] when the changed line is
+/// the whole statement `return <value>;` (the changed expression `return
+/// <value>` before and after) or a tail branch's bare `<value>`, so the change
+/// moves only that exit's returned value, and the closed integer subset reads
+/// the owner in both versions. The
+/// guard condition and every other exit are then the same in both, and the
+/// pin's literal arguments decide per call which exit runs.
+fn closed_guard_return(
+    body: &str,
+    name: &str,
+    changed_line: usize,
+    expression: &str,
+    before: Option<&str>,
+) -> Option<ReturnPathGate> {
+    let (expression, before) = (expression.trim(), before?.trim());
+    let value = |text: &str| !text.trim().is_empty() && !text.contains([';', '{', '}']);
+    let returned = |text: &str| text.strip_prefix("return ").is_some_and(value);
+    let after = body.lines().nth(changed_line)?;
+    // A guard's `return <value>;`, or a tail branch's bare `<value>` on its
+    // own line (`if c { .. } else { .. }`, probed since #14385): the closed subset then
+    // reads both versions, so the line's place in the owner is its reading.
+    let (statement, old_statement) = if returned(expression) && returned(before) {
+        (format!("{expression};"), format!("{before};"))
+    } else if value(expression)
+        && value(before)
+        && !expression.starts_with("return ")
+        && !before.starts_with("return ")
+    {
+        (expression.to_string(), before.to_string())
+    } else {
+        return None;
+    };
+    if after.trim() != statement {
+        return None;
+    }
+    let old_line = after.replacen(&statement, &old_statement, 1);
+    let change = super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)?;
+    Some(ReturnPathGate::ClosedGuardReturn { change, old_line })
 }
 
 /// Whether the owner's return value can only have come through the changed
@@ -14654,29 +14991,57 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
     if !SCALARS.contains(&returned.as_str()) {
         return false;
     }
+    index
+        .files()
+        .get(&owner.file)
+        .is_some_and(|facts| !source_binds_type_name(&facts.source, &returned))
+}
+
+/// Whether `source` declares a type named `name` (`type u32 = u8;`,
+/// `struct u32`) or imports one under that name (`use a::Gauge as u32;`,
+/// `use a::{u32};`).
+fn source_binds_type_name(source: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // #7835 review: `type r#u32` declares the same name.
+        let before = masked[..offset]
+            .strip_suffix("r#")
+            .unwrap_or(&masked[..offset]);
+        let before = before.trim_end();
+        ["struct", "enum", "union", "type", "trait"]
+            .iter()
+            .any(|keyword| before.ends_with(keyword))
+    });
+    let imported = whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            let rest = &masked[offset..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            contains_as_whole_word(&rest[..end], name)
+        });
+    declared || imported
+}
+
+/// #14387 (#14786 review): the closed subset checks arithmetic in the
+/// built-in range of each integer type it reads by spelling, so a guard-return
+/// credit needs the owner's file to leave every integer type name unbound
+/// (`type u32 = u8;` would narrow it) and to glob-import nothing beyond its
+/// parent module (`use crate::narrow::*;` could bind one).
+fn owner_file_keeps_integer_names(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.files().get(&owner.file).is_some_and(|facts| {
         let masked = mask_comments_and_strings(&facts.source);
-        let declared = whole_word_offsets(&masked, &returned)
-            .into_iter()
-            .any(|offset| {
-                // #7835 review: `type r#u32` declares the same name.
-                let before = masked[..offset]
-                    .strip_suffix("r#")
-                    .unwrap_or(&masked[..offset]);
-                let before = before.trim_end();
-                ["struct", "enum", "union", "type", "trait"]
-                    .iter()
-                    .any(|keyword| before.ends_with(keyword))
-            });
-        // `use a::Gauge as u32;` or `use a::{u32};` binds the name.
-        let imported = whole_word_offsets(&masked, "use")
+        let foreign_glob = whole_word_offsets(&masked, "use")
             .into_iter()
             .any(|offset| {
                 let rest = &masked[offset..];
                 let end = rest.find(';').unwrap_or(rest.len());
-                contains_as_whole_word(&rest[..end], &returned)
+                let item: String = rest[..end].split_whitespace().collect();
+                item.contains('*') && item != "usesuper::*"
             });
-        !declared && !imported
+        !foreign_glob
+            && !INTEGER_TYPES
+                .iter()
+                .any(|name| source_binds_type_name(&facts.source, name))
     })
 }
 
@@ -15246,58 +15611,79 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
+///
+/// The per-file parses are independent, so they go through [`map_scans`]:
+/// off the pool (the single-seam review stage of a cold `ripr check`) they
+/// fan out instead of parsing the whole corpus on one thread, and on a pool
+/// worker they stay in line under the #8756 memo-lock guard. Results are
+/// folded in index file order, so the table is the same either way.
 fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let files: Vec<(&PathBuf, &str)> = index
+        .files()
+        .iter()
+        .map(|(path, facts)| (path, facts.data().source.as_ref()))
+        .collect();
+    let per_file = map_scans(&files, |(_, source)| file_constants(source));
     let mut table = ConstantTable::new();
-    for (path, facts) in index.files().iter() {
-        let source = &facts.source;
-        if !source.contains("const") && !source.contains("static") {
-            continue;
-        }
-        let mut add = |name: &str, initializer: String, declared: Option<String>| {
-            let name = name.strip_prefix("r#").unwrap_or(name);
+    for ((path, _), constants) in files.iter().zip(per_file) {
+        for (name, initializer, declared) in constants {
             table
-                .entry(name.to_string())
+                .entry(name)
                 .or_default()
-                .push((path.clone(), initializer, declared));
-        };
-        let Some(parsed) = parse_clean_source_file(source) else {
-            for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                let declared = declared_type(&initializer).map(str::to_string);
-                add(&name, initializer, declared);
-            }
-            continue;
-        };
-        for node in parsed.tree().syntax().descendants() {
-            let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name()
-                    .zip(item.body())
-                    .map(|(name, body)| (name, body, item.ty()))
-            } else {
-                if let Some(macro_call) = ast::MacroCall::cast(node)
-                    && let Some(tokens) = macro_call.token_tree()
-                {
-                    let text = mask_comments_and_strings(&tokens.syntax().to_string());
-                    for (name, initializer) in text_declared_constants(&text) {
-                        let declared = declared_type(&initializer).map(str::to_string);
-                        add(&name, initializer, declared);
-                    }
-                }
-                None
-            };
-            if let Some((item_name, body, ty)) = item {
-                add(
-                    item_name.text(),
-                    mask_comments_and_strings(&body.syntax().to_string()),
-                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
-                );
-            }
+                .push(((*path).clone(), initializer, declared));
         }
     }
     table
+}
+
+/// One file's `const`/`static` items for [`workspace_constant_table`], in
+/// source order: `(name, masked initializer, declared type)`.
+fn file_constants(source: &str) -> Vec<(String, String, Option<String>)> {
+    let mut found = Vec::new();
+    if !source.contains("const") && !source.contains("static") {
+        return found;
+    }
+    let mut add = |name: &str, initializer: String, declared: Option<String>| {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        found.push((name.to_string(), initializer, declared));
+    };
+    let Some(parsed) = parse_clean_source_file(source) else {
+        for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
+            let declared = declared_type(&initializer).map(str::to_string);
+            add(&name, initializer, declared);
+        }
+        return found;
+    };
+    for node in parsed.tree().syntax().descendants() {
+        let item = if let Some(item) = ast::Const::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else if let Some(item) = ast::Static::cast(node.clone()) {
+            item.name()
+                .zip(item.body())
+                .map(|(name, body)| (name, body, item.ty()))
+        } else {
+            if let Some(macro_call) = ast::MacroCall::cast(node)
+                && let Some(tokens) = macro_call.token_tree()
+            {
+                let text = mask_comments_and_strings(&tokens.syntax().to_string());
+                for (name, initializer) in text_declared_constants(&text) {
+                    let declared = declared_type(&initializer).map(str::to_string);
+                    add(&name, initializer, declared);
+                }
+            }
+            None
+        };
+        if let Some((item_name, body, ty)) = item {
+            add(
+                item_name.text(),
+                mask_comments_and_strings(&body.syntax().to_string()),
+                ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
+            );
+        }
+    }
+    found
 }
 
 /// `const NAME: T = init;` and `static [ref] [mut] NAME: T = init;` read
@@ -16052,8 +16438,10 @@ fn index_operand(before: &str) -> bool {
                 // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
                 // starts an array pattern or value, not an index.
                 let word_start = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map_or(0, |at| at + 1);
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, c)| !(c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()))
+                    .map_or(0, |(at, c)| at + c.len_utf8());
                 // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
                 // indexed place either.
                 if head[..word_start].ends_with('\'')
@@ -17063,8 +17451,14 @@ pub(super) fn unit_struct_value(
             let before = masked[..offset].trim_end();
             let after = masked[offset + name.len()..].trim_start();
             let word_start = before
-                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .map_or(0, |position| position + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, character)| {
+                    !(character.is_ascii_alphanumeric()
+                        || character == '_'
+                        || !character.is_ascii())
+                })
+                .map_or(0, |(position, character)| position + character.len_utf8());
             let word = &before[word_start..];
             let item_end = after.starts_with('{') || starts_with_word(after, "where");
             let inert = match word {
@@ -17593,6 +17987,15 @@ fn test_module_shadows_item(
     kind: ShadowKind,
     index: &RustIndex,
 ) -> bool {
+    // Every shadow below needs `base` spelled in `source`: a declaration
+    // (`declares_type`/`declares_trait` over the masked copy, which keeps the
+    // code bytes in place), a `type` alias, or the raw `r#base` spelling all
+    // contain it. A file that never spells it is answered without fetching
+    // (and possibly re-parsing) the file's snapshot, which dominated probe
+    // classification on large test files (#12947).
+    if !source.contains(base) {
+        return false;
+    }
     // A caller supplying different source bytes must never borrow the indexed
     // snapshot. Standalone/macro-shaped inputs retain the same fallback logic.
     let snapshot = index

@@ -44,7 +44,7 @@ mod typescript_repo_mode_repair_failclosed;
 #[cfg(feature = "lang-typescript")]
 mod typescript_table_row_packets;
 
-fn sample_finding(file: &str, line: usize) -> Finding {
+pub(super) fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         confidence_basis: Vec::new(),

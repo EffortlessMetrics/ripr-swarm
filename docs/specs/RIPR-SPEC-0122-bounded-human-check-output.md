@@ -220,11 +220,14 @@ window and a row inside that window can have no stub route (#14687).
 
 Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
-print as one row that names the line span, the count, the owner and the
-kinds, for example:
+print as one row that names the members' lines, the count, the owner and the
+kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
+when there are at most three runs, so a row never names a line that no member
+is on; more runs print the covering span with the distinct line count
+(`1078-1241 (31 distinct lines)`) (#14682). For example:
 
 ```text
-- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (31 distinct lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -233,6 +236,12 @@ keeps its own row. The 20-row window then bounds rows, not findings: beyond
 20 rows it keeps the rows whose best member ranks highest in the priority
 order above, printed in the order of each row's first finding, and the
 remainder line counts the findings in the rows it left out (#14299).
+
+A row whose reason is longer than 40 bytes and equal to the reason of the row
+printed just above it prints `reason: same as above` instead of repeating the
+sentence, so a run of rows that differ only by file or kind states a shared
+limitation once (#14308). Shorter reasons print on every row. `human-full` and
+machine formats keep every reason.
 
 The canonical next action's two `considered finding` alternates are chosen by
 the same priority order from the findings `Start here` did not select, so a
@@ -319,7 +328,10 @@ and the machine formats are unchanged.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
-command; for a Python preview finding it is a repair card from the Python
+command, and only when the finding is not static-limited: a static-limited
+finding (`no_static_path`, the unknown classes, or a named static limit)
+never prints a repair route, so its advisory next step does not rank it as
+routed (#14266); for a Python preview finding it is a repair card from the Python
 repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
@@ -410,7 +422,10 @@ selector is deterministic:
    different owner, is likewise not shadowed.
 3. Non-preview findings outrank preview-language findings.
 4. Non-exposed findings with repair routes outrank findings without repair
-   routes.
+   routes. A static-limited finding counts as having no repair route, matching
+   the route the screen prints, and all static-limited findings share one tier
+   behind every gap and ahead of `exposed`, so the keys in step 6 order them
+   among themselves (#14266).
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
 6. Gap metadata, related tests, missing evidence, confidence, exposure class,
@@ -521,6 +536,41 @@ as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
 Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
 could be shadowed, still refuses as `parameter_unsupported`.
 
+A method stub placed in an inline test module builds its receiver from a
+constructor instead of a labelled `todo!()` when one is established
+(#8361, #14825). A constructor is an associated function of an inherent impl
+of the same self type, beside the owner's impl in the same module, that takes
+no `self`, has no type or const generics, is not `async`, `unsafe` or
+cfg-gated, and returns `Self` or the type. No receiver is built when the
+target test module declares or imports another item of the type's name,
+including a module, a glob import or an import in a nested module; only
+`use super::Type;` and `use super::*;` outside a nested module are known to
+name the owner.
+In order:
+
+1. the first call in the target test module to such a constructor whose
+   arguments are all literals with no control characters, written directly in
+   a `#[test]` function body (not inside a closure or `async` block) that is not `should_panic`
+   and is not a ripr stub, and not under `cfg` or `cfg_attr` on the test, a
+   statement or a nested module; the call is copied with its arguments;
+2. a no-argument constructor named `new`, `empty` or `default`, in that order;
+3. `<Type as ::core::default::Default>::default()` for a `#[derive(Default)]`
+   type spelled without generic arguments, in a file that declares or imports
+   no other item named `Default`. A hand-written `impl Default` is not read
+   (its trait path is not resolved), and the `::core` path assumes edition
+   2018 or later, where `core` is in the extern prelude.
+
+Otherwise the receiver stays a `todo!()`. The receiver line carries a comment
+naming its source, and human output prints it on a `Receiver:` line; the JSON
+document is unchanged apart from `text` and one fewer `fill_ins` entry. The
+expected value stays a `todo!()`. A second run over a stub this version wrote
+recomputes the same text and reports it already written. A stub written by an
+earlier version, whose receiver is still a `todo!()`, does not match the new
+text, so a rerun writes a second stub with a `_2` suffix beside it; delete or
+fill in the old stub first. Human output also escapes control and bidi
+characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
+lines, since they carry repository text.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
@@ -571,7 +621,7 @@ literal the owner does not return are refused by name.
 
 | State | Meaning |
 | --- | --- |
-| `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. |
+| `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. The human action line points at the instruction the digest prints (#14173): `Safe next action: follow the Next step below; this is static advisory evidence only` when the digest carries a `Next step` line, and `Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only` when it carries none. |
 | `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
@@ -1042,6 +1092,48 @@ the extra findings. Any printed difference keeps the rows apart. Folding is
 display-only: the folded findings stay gaps for `limits=` and `stop=`, count
 in `verify=`, and stay listed in `--format json`.
 
+A `predicate` gap on one struct-literal field initializer also folds into
+the `field_construction` gap for that initializer (#14713). The field
+probe's expression is `<field>: <value>` and the predicate's is `<value>`.
+Both must have the same class, `FILE:LINE`, strongest related test (file,
+line, name, oracle kind and oracle, though not its `miss=` wording, which
+differs between the two families for one assertion) and `stages=` row, and
+the predicate must name no missing discriminator of its own, and every
+`missing` line the predicate carries must also be on the field row. A
+predicate-only line, such as the boundary-input, pairing or mask advice,
+keeps the predicate row. The field row names the value to assert and is
+kept wherever it ranks; `next=` names the first printed row. The fold says
+only that the predicate row would repeat the field row, not that a test of
+the field settles the predicate.
+
+### Unreferenced owners are agent gaps (#14820)
+
+A test-side gap in `check --format agent` (and the `open=` predicate of
+`explain --format agent`) is a weakly exposed or reachable-unrevealed finding,
+or a `no_static_path` finding for which `Finding::is_unreferenced_no_static_path`
+holds: candidate-current, no named `static_limit_kind`, reach `no`, and a reach
+summary ending with the RIPR-SPEC-0219 `(unreferenced in workspace)` marker.
+The producer sets that marker only when the whole workspace is indexed, the
+owner is not an entry point, and its name appears nowhere outside its own
+definition. That whole-word naming scan is the evidence: no test in the
+workspace runs the changed code, so the repair (write a test that calls it)
+needs no further analysis. The scan cannot see names built by macros such as
+`paste!` or callers outside the workspace; for those the advice still holds
+for this workspace's tests. Such a finding counts in `gaps=`, its row prints
+``missing=no test calls `<owner>`; assert its exact result in a new test``
+when no missing discriminator is named, and it suppresses the all-limited
+`stop=`, and gap rows fold on that printed hint. The verdict corpus already
+scores the same shape as a gap. Since #14919 the human check triage and the
+JSON canonical next action read the same predicate: `triage::is_static_limited`
+is false for such a finding, so `Start here` selects it with
+`State: a test gap to inspect or repair`, it ranks by class among the gaps
+(behind every gap whose repair route prints, since the repair gate still
+offers it no start), and the
+JSON `canonical_next_action` stops on `top_gap` instead of `static_limited`.
+Every other `no_static_path`, unknown or static-limited finding stays
+a fail-closed limit: an owner some code calls on a path ripr cannot trace may
+already be tested, so reading it as a gap would be a wrong actionable signal.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
@@ -1203,6 +1295,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
 - `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_an_unprintable_route_as_a_repair_route`
+- `crates/ripr/src/output/human/triage.rs::tests::start_here_orders_static_limited_findings_by_evidence_not_class`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

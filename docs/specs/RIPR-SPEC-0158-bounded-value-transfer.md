@@ -190,7 +190,18 @@ exercised boundary from a missing one.
   (including a continuation line that starts with `&&` or `||`), a block
   comment, or text the scan cannot balance, with or without a connective,
   give no boundary reading, so the stage falls back to its existing unknown
-  or connective-change reason. A `//` line comment ends the scanned text.
+  or connective-change reason. One two-comparison shape is read (#14726): a
+  bare equality `x == A` edited to `x == A || x == B` (either order), where
+  the pre-edit text is that one comparison kept verbatim, the connective is a
+  single top-level `||`, the added operand is a bare `==` on the same left
+  side, and `A` and `B` are literals of different value. The reading is the
+  added `x == B`: an input equal to `B` makes it true and the kept `x == A`
+  false, so the predicate flips. An added `&&` conjunct, a third operand, a
+  `!=` or ordered comparison, another left side, a left side that is not a
+  plain place path (`it.next()`, `xs[i]`), a non-literal side, an escaped
+  literal (`"\x41"`), or a second literal equal in value to the first (`5`
+  and `05`) keeps no reading.
+  A `//` line comment ends the scanned text.
   A balanced predicate with no top-level connective and no block comment is
   read whole, as before. A
   single-comparison compound is newly readable, so a test input at that
@@ -202,6 +213,9 @@ exercised boundary from a missing one.
   boundary rule in RIPR-SPEC-0001 (#13037) instead: only a row that holds
   every guard sits on its boundary, and a guarded shape that rule declines
   gets no boundary reading here.
+  The Rust canonical gap discriminator reads the same single comparison
+  (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
+  shape keeps the whole-line discriminator it minted before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
@@ -401,6 +415,17 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
   string quotes stripped, so a computed `"a_b"` compares equal to a
   literal `"ab"`. The normalization is pre-existing and applies
   identically to parameter operands.
+- A flat owner prelude (#12771) may rebind what a boundary local reads.
+  Every statement between the owner's opening brace and the local's `let`
+  must be either `let NAME = !NAME;` for a parameter or
+  `const NAME: <integer type> = <decimal literal>;`. There must be no
+  braces, calls, macros or other statements, and no macro anywhere in the
+  body. Each rebound name may be mentioned elsewhere in the owner only in
+  the local's own initializer. A negated flag may appear there only as the
+  `if` condition, which is then read flipped. A constant replaces the
+  file's constant of that name. Any other shape keeps the earlier
+  rebinding refusal (`local-boundary-flag-loop`'s `for si in [false]`
+  stays unresolved).
 
 - A local that folds to a plain integer is compared only against an
   integer cell of the other operand's parameter. A string cell is the
@@ -444,14 +469,21 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
    false)`: each input is the other flag's boundary, no row sits on
    `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-9. Reject: `let si = !si;` before the same local, with tests at
-   `(1_024, true)`: the flag the local reads is the opposite of the
-   caller's literal, so the pinned 1_024 is not the boundary and the
-   verdict stays unresolved (`local-boundary-flag-shadowed`).
+9. Accept: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`, `(1_023, true)` and `(999, true)`: the flag the local
+   reads is the opposite of the caller's literal, so `unit` is `1000` under
+   every row, the pinned 1_024 is not the boundary, no row sits on `unit`,
+   and the verdict is a gap (`local-boundary-flag-shadowed`, #12771). The
+   rebinding is read only in a flat owner prelude (see Required guards);
+   any other rebinding shape keeps the verdict unresolved.
 10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
     with tests at `(1_024, true)` (`local-boundary-flag-loop`).
-11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
-    `KB` (`local-boundary-flag-alias`).
+11. Accept: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB`, read by `let unit = KB;`: `unit` is `2000`, the rows at `1_000`
+    and `2_500` are off it, and the verdict is a gap
+    (`local-boundary-flag-alias`, #12771). Only a plain decimal integer
+    `const` item in a flat owner prelude replaces the file constant; any
+    other declaration keeps the verdict unresolved.
 12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
     whose only direct row binds `bytes` to a string literal: the verdict
     stays `infection_unknown` (`bytesize-format-unit-first-run`).

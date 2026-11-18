@@ -9,6 +9,10 @@ mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
 mod const_flow;
+mod constant_tail_change;
+pub(in crate::analysis) use constant_tail_change::{
+    ConstantTailChange, base_side_may_rebind_trusted_macros, constant_tail_change,
+};
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
 #[cfg(feature = "lang-rust")]
@@ -44,6 +48,7 @@ mod match_transfer;
 mod operand_pin;
 mod out_parameter;
 mod owner_pin;
+mod owner_prelude;
 mod owner_shape;
 mod owner_value;
 mod owner_value_sink;
@@ -63,6 +68,7 @@ mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
+mod unary_tail;
 mod unpolled_future;
 mod value_transfer;
 mod variant_field_pattern;
@@ -71,10 +77,13 @@ pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
     assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
-    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
+    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
+    comparison_operands, computed_input_parameters,
+    function_parameters as whole_signature_parameters, guarded_boundary_row_reaches,
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
-    owner_receiver_borrow, owner_writes_field_only_at_probe, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts, test_binds_owner_type,
+    owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
+    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
+    test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -84,8 +93,8 @@ pub(in crate::analysis) use binding_return_flow::{
     BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
 };
 pub(in crate::analysis) use boundary_pairing::{
-    WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
-    wrapper_return_boundary_pinned,
+    WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
+    same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
@@ -93,8 +102,9 @@ pub(in crate::analysis) use builder_override::{
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{
-    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
-    shared_owner_call_identity, test_calls_only_through_local_rival_module, text_calls_owner,
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
+    bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
+    test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
@@ -118,7 +128,9 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
-pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
+pub(in crate::analysis) use field_reach::{
+    FieldTable, mentions_in, owner_name_mentions, test_can_name_field,
+};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
     propagation_evidence_with_witness, same_line_arm_result_in,
@@ -164,6 +176,9 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{
     assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
 };
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::SCAN_LOG;
+pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
     claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
@@ -173,10 +188,10 @@ pub(in crate::analysis) use owner_pin::{
     trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
-#[cfg(test)]
-pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
-pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
+pub(in crate::analysis) use owner_value_sink::{
+    bool_field_assertion, owner_record_read_masked_anywhere, use_may_rebind_owner,
+};
 pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };
@@ -190,8 +205,8 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, early_return_literal_witness, fallible_literal_witness,
-    format_tail_witness, result_map_witness,
+    constant_tail_change_witness, constant_tail_witness, early_return_literal_witness,
+    fallible_literal_witness, format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;
@@ -240,6 +255,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;
+pub(in crate::analysis) use unary_tail::{UnaryOperator, UnaryTailChange, unary_tail_change};
 pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

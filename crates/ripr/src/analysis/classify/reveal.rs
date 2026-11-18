@@ -69,6 +69,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact wrapper assertion observing the boundary of a private boolean
     /// whole-return tail (#9849). Separate from direct owner-pin credit.
     pub(in crate::analysis) wrapper_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #13037: an exact pin of a bare owner call that statically runs into
+    /// the branch whose tail returns the changed expression, so the pinned
+    /// value is that expression's value (`base * 2` under `if express`).
+    pub(in crate::analysis) reached_tail_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
     /// no such dispatch; `Some(false)` withholds kind-only credit even on a
@@ -206,6 +210,7 @@ fn reveal_evidence(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -258,6 +263,7 @@ fn reveal_evidence_with_exit(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -328,6 +334,7 @@ fn reveal_evidence_proximity_reach_pinning(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -2112,7 +2119,9 @@ fn plain_let_binding_name(prefix: &str) -> Option<&str> {
 /// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
 /// no block, closure or nested macro other than `vec!`/`format!`.
 fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     let mentions: Vec<usize> = statement
         .match_indices(binding)
         .map(|(at, _)| at)
@@ -2134,8 +2143,10 @@ fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
         inner.match_indices('!').all(|(bang, _)| {
             let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
             let name_start = inner[..bang]
-                .rfind(|ch: char| !ident(ch))
-                .map_or(0, |index| index + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !ident(ch))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
             !invoked
                 || (matches!(&inner[name_start..bang], "vec" | "format")
                     && !inner[..name_start].ends_with(':'))
@@ -2171,7 +2182,9 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
     method: &str,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     masked.match_indices(method).any(|(at, name)| {
         let before = &masked[..at];
         if before.chars().next_back().is_some_and(ident)
@@ -2191,8 +2204,10 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
         };
         let receiver_end = masked[..receiver_end].trim_end().len();
         let receiver_start = masked[..receiver_end]
-            .rfind(|ch: char| !ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !ident(ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         masked[..receiver_start].trim_end().ends_with('.')
             || masked[receiver_start..receiver_end] != *binding
     })
@@ -3221,6 +3236,12 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || wrapper_pinned
+                                        || (!match_context.owner_shadowed
+                                            && !import_defeats_owner
+                                            && !cross_package_defeats_owner
+                                            && (return_admission.reached_tail_pin)(
+                                                test, assertion,
+                                            ))
                                         || (is_effect_family(&probe.family)
                                             && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
@@ -6919,6 +6940,7 @@ mod tests {
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -8498,6 +8520,7 @@ mod tests {
                 owner_return_pin: &pin,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8600,6 +8623,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -8788,6 +8812,7 @@ mod tests {
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -8904,6 +8929,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -9333,6 +9359,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9431,6 +9458,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10854,6 +10882,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11364,6 +11393,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11441,6 +11471,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11489,6 +11520,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11556,6 +11588,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11625,6 +11658,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11874,6 +11908,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11925,6 +11960,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -12407,6 +12443,7 @@ return Err(\"typed pin\".into());
                         owner_return_pin: &|_, _| false,
                         fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
+                        reached_tail_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
@@ -12492,6 +12529,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
                         (test.name == "implicit_observer").then_some(true)
@@ -12584,6 +12622,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -12926,6 +12965,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13038,6 +13078,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -13093,6 +13134,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13599,6 +13641,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -14153,6 +14196,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -14679,6 +14723,40 @@ return Err(\"typed pin\".into());
             body,
             "other",
             "Inventory"
+        ));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_macro_or_receiver_named_with_a_multibyte_mark_fails_closed() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        // A nested macro that is not `vec!`/`format!` may write the binding.
+        assert!(!plain_assertion_or_unrelated(
+            "assert!(क्!(order.items))",
+            "order"
+        ));
+        assert!(plain_assertion_or_unrelated(
+            "assert_eq!(order.items, vec![1])",
+            "order"
+        ));
+        // A call on another receiver counts, whatever its spelling.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्.add(1); }",
+            "order",
+            "add"
+        ));
+        // A mark inside the receiver keeps it whole: `क्order` is not `order`.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्order.add(1); }",
+            "order",
+            "add"
+        ));
+        assert!(!owner_called_on_other_receiver(
+            "fn t() { order.add(1); }",
+            "order",
+            "add"
         ));
     }
 }

@@ -1189,6 +1189,13 @@ verify=complete|outcome=O|findings=N|exposed=N
   separate. Folding is display-only: every folded finding is still a gap (it
   never moves to `limits=`) and still counts in `verify=`; `--format json`
   lists each finding.
+  A `predicate` gap on a struct-literal field initializer (`<value>`) also
+  folds into the `field_construction` gap for that initializer
+  (`<field>: <value>`) when class, `FILE:LINE`, strongest related test
+  (ignoring its `miss=` wording) and `stages=` agree and the predicate names
+  no missing discriminator of its own and only `missing` lines the field row
+  also carries (#14713). The field row is kept, and
+  `next=` names the first printed row.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
@@ -1601,7 +1608,17 @@ stubs), and `repair` (`seam_id` or `canonical_gap_id`,
 `ready`) only for the finding the pipeline selected for repair, by the same gates
 the human screen applies (the gap-bound route wins over the seam route, and a
 static-limited finding gets none). A blocked start names `uncommitted_file` or
-`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+`uncommitted_files` and carries no `command`: a seam route names
+`uncommitted_file` for a held inline test target and `uncommitted_files` for the
+uncommitted production files `ripr repair` refuses to start over (#13636), and a
+gap route names `uncommitted_files`. Both routes spell the files relative to the
+analyzed root (files outside it as `../...`). The seam route lists the dirty files
+the start's early preflight refuses; a `ready` seam route can still be refused by
+the start's full check (for example a dirty production file carrying an inline
+test module), which names the files itself.
+When the check did not analyze those files (a committed-only run, or source or
+test changes it left unanalyzed), neither route prints a commit step and the
+route is refused instead. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it. The schema
@@ -1939,6 +1956,16 @@ classes are:
 - a value flag with no value or an empty one (for example `check --json
   --base` with nothing after it, or `agent status --json --attempt ""`), as
   `missing_value` with the flag as `token` (#11979, #14859);
+- a required flag the invocation left out (for example `ripr agent verify
+  --json` without `--before`, or `ripr context --json` with no `--at`), as
+  `missing_required` with the flag to add as `token`; where the refusal
+  offers alternatives (`--diff`, `--base`, `--files` or `--seam-id`), the
+  token is the first one it names (#14877);
+- two given flags that cannot be used together (for example `ripr context
+  --json --base main --diff a.diff`, or `ripr rerun --json --changed-test
+  tests/a.rs --gap-ledger ledger.json`), as `conflicting_flags` with one of
+  the conflicting flags as `token`; outside `check`, whose conflicts keep
+  their own check refusal (#14925);
 - a malformed number caught by the CLI's shared numeric parsers (for example
   `context --max-related-tests zz` or `check --timeout zz`), as
   `invalid_value` with the typed value as `token` (#11979); an empty entry in
@@ -1948,15 +1975,19 @@ classes are:
   more than one, or could not be decided.
 
 Every other argv usage error keeps empty stdout even under a JSON request,
-with the cause on stderr only: a missing required flag (`requires --X`),
-a missing or malformed value rejected by a command's own parser rather than
-the shared readers (for example `impacted-evidence`), conflicting or disagreeing flags, an unrecognized value
+with the cause on stderr only: required-flag refusals not yet typed,
+including those whose wording #14076 is revising (`calibrate cargo-mutants`,
+`zero status`, `pr-ledger record`, `cache export`, `reports gap-ledger`,
+`pr-review front-panel`), a missing or malformed value rejected by a
+command's own parser rather than the shared readers (for example
+`impacted-evidence`), conflicting flags not yet typed, an unrecognized value
 rejected outside the CLI's shared builder (for example a gate mode), and any
 other argv error. These are a named gap, not a clean result.
 
 The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
-`unknown_command`, `unknown_value`, `missing_value`, `invalid_value`,
+`unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
+`conflicting_flags`, `invalid_value`,
 `selector_miss`. `token` is the offending argument, command, flag, value or
 selector (an empty malformed value has none); `next` is a fixed help pointer
 (`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
@@ -1964,6 +1995,33 @@ always carries `next: null`, because its message embeds the caller's selector
 and nothing is lifted from caller-controlled text. No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
+
+Typed `repair`/`continue` refusals (#14931). Under `--json`, a `ripr
+repair`, `ripr continue` or `ripr status` refusal that stops before any check
+runs and writes the stderr `refusal code=<code> disposition=<disposition>`
+line (exit `3`) also writes this document. Its `code` is that reason code
+(the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
+`retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
+the plain-words prose without the code line. `next` is always `null`:
+these prose steps can quote a user-supplied item or selector, so the document
+never lifts one into a runnable field. The step is in `message`. A
+selection refusal also carries `choices` (#14980): `several_eligible_seams`
+lists one `ripr repair <seam> --root <root>` per eligible seam, and
+`ambiguous_attempts` one `ripr continue --attempt <id> --root <root>` per
+current attempt. Each item has a plain-words `label`, a runnable `command`
+(for seams, exactly the command stderr prints; for attempts, the stderr retry
+line with that listed attempt's id filled in), and a `powershell_command`
+only when PowerShell needs a different line and an honest translation exists;
+`total` counts every choice when the listing is bounded.
+These commands are composed from typed seam and attempt ids, never lifted
+from prose. `repair_needs_item` (its canonical next-action block) and
+`attempt_baseline_blocked` (the attempt status) still print that context on
+stderr only. For
+example, `ripr continue --json` with no attempt
+writes `code: "no_current_attempt"` and `disposition: "not_started"`.
+Refusals inside the after-phase check keep their own documents
+(`repair_after_refusal`, `repair_after_failure`, the verify document) and
+never add this one. Exit code and stderr are unchanged.
 
 ```json
 {
@@ -2782,6 +2840,14 @@ The evidence-first fields are additive in schema `0.2`:
   assertion than the strength-only pick, which can be equally strong).
   `oracle_alignment` keeps what the selected assertions show.
 
+  An `orthogonal` card is delegated to an agent packet only when its finding's
+  `evidence` carries `python_owner_result_field_unread: <binding>.<field>
+  (<test>)` for the card's selected test and `self.<field>` discriminator
+  (reason `python_unread_owner_result_field_with_bounded_repair_route`,
+  RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
+  repaired read on that binding surfaces `direct` with
+  `strong_oracle_observes_owner_result_field`.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
@@ -3346,6 +3412,18 @@ JSON fields:
   `target shape (not delegatable)` together with a stop condition forbidding
   reuse of the observed call input. A complete packet must not instruct a
   duplicate of a non-discriminating assertion.
+  Pinned error message (#13827): `typescript_error_message_pin: <message>`
+  evidence names the literal message of a changed `throw new Error('<message>')`.
+  It is emitted only when that line is the owner's sole throw site and the old
+  side cannot satisfy the same substring check, either because the line is a
+  pure addition or because the old message (of a built-in error class, with
+  no other call on the old line) does not contain the new one. Every related
+  test must call the owner itself, not an exported wrapper. Any
+  removed line that could have thrown (a `throw`, `reject`, `Promise` or a
+  call other than a pure `Math` method) must be that throw's own paired old
+  line. With
+  it, a bare `toThrow()` packet targets `toThrow('<message>')` (RIPR-SPEC-0087
+  G-C). Without it, the generic `Error` gets no packet.
   Derived boundary input (#4215 follow-up): when the finding carries
   `typescript_boundary_input: parameter=<p>;index=<i>;operand=<o>;value=<v>`
   evidence, the analysis side has pinned the call input that hits the
@@ -3458,7 +3536,10 @@ JSON fields:
   (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
   #5268): the normalized discriminator is derived from the changed line
   itself, so a comparison seam names the same equality boundary the
-  classifier's missing-discriminator statement renders. Static-limit
+  classifier's missing-discriminator statement renders. A compound
+  `&&`/`||` predicate with exactly one top-level comparison names that
+  comparison's boundary (`a && s.len() > 1` gives `s.len==1`, #14719);
+  other predicate shapes keep the whole-line reading. Static-limit
   findings and probes with no owner identity may omit this field until a
   non-actionable gap-state projection exists. TypeScript preview findings
   that carry a preview card state the content-addressed
@@ -3930,15 +4011,23 @@ suppression.
 
 ### `owner_opt_outs` and withheld findings (top-level additive, #13819)
 
-Emitted only when a changed Rust owner function or method carries
-cargo-mutants' `#[mutants::skip]`, written directly or as
+Emitted only when a changed Rust owner function or method, or a scope that
+encloses it, carries cargo-mutants' `#[mutants::skip]`, written directly or as
 `#[cfg_attr(<predicate>, mutants::skip)]` (the predicate is not evaluated).
 Absent otherwise, so runs without the attribute see byte-identical output.
-Does not bump `schema_version`. Only the owner's own attributes count: a skip
-on a sibling function, on the enclosing `impl` block or on a module does not
-withhold, and a file read through the lexical fallback (no parser-backed
-attributes) is never withheld. Diff-scoped `ripr check` only; repo scope
-reports every owner.
+Does not bump `schema_version`. The scopes follow cargo-mutants (#13910): the
+owner function itself, a function whose body declares it, an enclosing `impl`
+or `trait` block, an enclosing inline `mod name { .. }` at any depth, and the
+owner's file through an inner `#![mutants::skip]`. Inner attributes on those
+scopes count like outer ones. A skip on a sibling function or on a different
+`impl` block of the same type does not withhold. Enclosing scopes are read
+from the parsed syntax tree; a file that does not parse cleanly, a file read
+through the lexical fallback, and an owner the parser cannot name exactly once
+are never withheld. A `#[mutants::skip] mod name;` declaration is not followed
+into the module's own file (put `#![mutants::skip]` at the top of that file
+instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats withhold
+seams instead of findings, and read only the owner function's own attributes
+for now (see [Repo scope](#repo-scope-owner-opt-outs-14139) below).
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
@@ -3950,6 +4039,9 @@ and ripr makes no runtime claim about it. Three surfaces change:
   `withheld_by_owner_opt_out` add back up to `summary.findings`.
 - `findings[].withheld_by` — the reason token, `"owner_mutants_skip"`. The
   finding stays fully rendered.
+- `findings[].withheld_scope` — present with `withheld_by`: the scope that
+  carried the attribute, one of `"fn"`, `"impl"`, `"trait"`, `"module"` or
+  `"file"` (#13910). The innermost skipped scope wins.
 - top-level `owner_opt_outs` object — `withheld` (count) and `reason`
   (`"owner_mutants_skip"`).
 
@@ -3959,13 +4051,14 @@ once, under `suppression_policy`, and is not listed again here.
 ```json
 "summary": {"findings": 1, "no_static_path": 0, "withheld_by_owner_opt_out": 1},
 "findings": [
-  {"id": "probe:src_lib.rs:predicate:401600b6", "withheld_by": "owner_mutants_skip", "classification": "no_static_path", ...}
+  {"id": "probe:src_lib.rs:predicate:401600b6", "withheld_by": "owner_mutants_skip", "withheld_scope": "impl", "classification": "no_static_path", ...}
 ],
 "owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip"}
 ```
 
 Human output prints a `Withheld by owner opt-out (owner_mutants_skip)` block
-with one line per withheld finding (location, class, owner) and names the
+with one line per withheld finding (location, class, owner, scope such as
+`fn`, `impl Cart` or `module a`) and names the
 count on the `Summary` line; the findings leave the triage selection the same
 way policy-suppressed findings do. GitHub output skips their annotations and
 counts them in the denominator `::notice`. SARIF (`sarif`, `sarif-compact`)
@@ -3990,9 +4083,99 @@ removed before the out-of-scope test-file partition; the partition therefore
 cannot reduce it. The fixed `owner_mutants_skip` reason holds while
 the editor supplies no suppression policy (#14610).
 
+`ripr explain <finding>` (default human format, fresh run) still renders a
+withheld finding and starts with one line stating the withholding, taken from
+the same run's `owner_opt_outs`, for example
+``Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)``.
+`explain --format agent` and `explain --from <artifact>` do not add it (the
+check artifact does not record opt-outs).
+
+#### Repo scope owner opt-outs (#14139)
+
+The `ripr check --format` repo formats
+`repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
+`repo-seams-json`, `repo-seams-md`, `repo-badge-json`, `repo-badge-shields`,
+`repo-badge-plus-json` and `repo-badge-plus-shields` withhold every seam whose
+owner function itself carries the attribute. An enclosing `impl`, `trait`,
+module or file skip does not withhold a repo seam yet (tracked in #15000), so
+those seams keep reporting. The decision is
+the same parser-backed recognizer, read once when the seam is extracted and
+carried with the seam through the classified seam caches; the cache key's
+`files_content_hash` covers the attribute's bytes, so adding or removing it
+never replays the other state. A withheld seam is removed from the format's
+`seams` list and from every count derived from it (`metrics`, class counts,
+`unsuppressed_exposure_gaps`, `top_files`, the badge count). It is not
+reclassified. The JSON formats add one top-level member, emitted only when at
+least one seam was withheld, so a workspace without the attribute keeps
+byte-identical repo output and no schema version changes:
+
+```json
+"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["...", "..."], "owners": ["src/lib.rs::fn_level"]}
+```
+
+`withheld` counts seams (not findings or canonical gaps); `seam_ids` names each
+withheld seam and `owners` each withheld seam's `owner` (`file::name`, the same
+key every repo seam records), both sorted.
+
+Owners are resolved by source line, so the opt-out attaches only when no other
+function starts or ends on the seam's lines. A seam on a line shared with
+another function (two functions written on one line, say) keeps reporting
+rather than inherit a neighbour's opt-out, even when its own owner carries the
+attribute: the line cannot say which function holds it.
+
+`ripr outcome` and `ripr agent verify` compare two snapshots by seam id. A seam
+is excluded from both sides before matching when either snapshot names its id
+in `owner_opt_outs.seam_ids` or its recorded `owner` in `owner_opt_outs.owners`.
+The owner match is what covers an inserted attribute line: a seam id hashes the
+seam's byte offset, so inserting `#[mutants::skip]` gives the owner's seams new
+ids on the withheld side, and the other snapshot's old ids are matched by owner.
+Same-named owners (cfg-gated twins) are told apart by a `#L<start_line>` owner
+suffix, which the inserted line moves as well. Every withheld owner is
+therefore also matched by its base key (the suffix removed when present): every
+seam on either side whose owner has the same base key is excluded too. An
+unsuffixed withheld owner reaches suffixed seams on the other side, which covers
+an edit that deletes one twin and skips the survivor. That also excludes the
+twin's seams, the conservative direction, and they are disclosed like any other
+excluded seam.
+A seam withheld on one side only (a `ripr pilot` snapshot, which keeps every
+seam, against a `ripr check` one, or the attribute added or removed between two
+snapshots) is therefore never reported as removed, resolved or new. Those
+documents then add a top-level `owner_opt_outs` member (`withheld`, `reason`,
+`seam_ids` and `owners` of everything excluded, with
+`"excluded_from": "both_snapshots"`), the Markdown summary and the review
+receipt's `what_changed` name the excluded count, and nothing changes when no
+snapshot withheld a seam. A snapshot whose `owner_opt_outs` does not name every
+withheld seam in `seam_ids` and at least one owner in `owners` is refused, as
+byte-bounded and seam-limited snapshots are.
+
+Other consumers of a check-produced `repo-exposure-json` read only its
+remaining `seams` and do not read `owner_opt_outs`: `ripr gate
+--repo-exposure`, gap ledgers and the baselines derived from them never see a
+withheld seam, and a baseline entry recorded before the attribute was added
+reads as resolved there (not reconciled yet; tracked in #14898). The Markdown formats
+print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
+under the summary table (`repo-exposure-md`) or the seam total
+(`repo-seams-md`). The repo badges withhold the seams from their count and add
+no member, like the diff-scope badges. A seam-limit cut
+(`RIPR_REPO_EXPOSURE_SEAM_LIMIT`) is applied before withholding, so its
+`seams_analyzed` counts withheld seams too.
+
+The MCP adapter consumes the same set (#14138): `ripr mcp --stdio` serves no
+canonical item for a finding id in `CheckOutput::withheld_finding_ids`. The gap
+list and `ripr://snapshot/{snapshot_id}` resource disclose
+`owner_opt_outs: {"withheld": N, "reason": "owner_mutants_skip"}` (plus
+`"all_withheld": true` and `clean: false` when no item is left), the refresh and
+status snapshot summaries carry the same object, and a gap, limitation,
+repair-card or repair-start read of a withheld id refuses with the typed
+`owner_opt_out` failure (`data.reason: "owner_mutants_skip"`). See
+`docs/interop/mcp.md`.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
-(`repo-*`), which do not read the attribute at all. The canonical next-action stop
+the repo formats `repo-sarif`,
+`repo-sarif-compact` and `agent-seam-packets-json`, which `ripr check` renders
+from the full inventory; and the repo-exposure artifacts written by `ripr
+pilot` and the agent workflow snapshots. Those keep every seam and carry no
+`owner_opt_outs` member. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 
@@ -10973,10 +11156,26 @@ Field contract:
   `navigation_only_cross_language_target`, `nearby_test_changed`,
   `summary_cap`, `missing_verification_command`. Free-text values are
   forbidden per RIPR-SPEC-0068; adding a new token requires amending the spec.
-- `suppressed[]` - bounded records for recommendations hidden by caps or
-  nearby test changes on non-headline-eligible seams. Nearby test changes do
-  not hide unresolved headline-eligible recommendations or strengthen their
-  evidence; `summary.unchanged_tests` still records that tests changed.
+- `suppressed[]` - bounded records for recommendations hidden by caps,
+  nearby test changes on non-headline-eligible seams, or an explicit
+  suppression policy. Nearby test changes do not hide unresolved
+  headline-eligible recommendations or strengthen their evidence;
+  `summary.unchanged_tests` still records that tests changed. A record with
+  `reason: "suppressed_by_policy"` was matched by `--suppression-policy` (or a
+  suppression recorded in `--check-output`) and its `message` names the entry;
+  `gate evaluate` reads such records as non-blocking. Seam records carry the
+  optional `canonical_gap_id` when the seam has one, so a suppressed gap that
+  moved still matches its baseline entry instead of reading as resolved.
+  A gap-class seam on a changed line or in a changed owner that selection
+  withholds as a static limitation is itemized here with `seam_id`, `file`,
+  `line`, its grip `class` (`ungripped`, `weakly_gripped`, ...; the vocabulary
+  gate policy reads), `reason = "static_limitation"` and a `message` naming the
+  limitation category in exposure words (for example `no_static_path`) (#13892).
+  `ripr check` can list such a seam (for example as `no_static_path` when no
+  test calls the changed owner), so it is disclosed instead of appearing only
+  in `warnings[]` and `omitted_by_policy`. The record is not a repair card and
+  does not mean the gap is resolved; `ripr gate evaluate --pr-guidance`
+  evaluates it as `suppressed` under that reason and never blocks on it.
 - `warnings[]` - selection warnings from the agent brief selection path.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 
@@ -11965,7 +12164,9 @@ Field contract:
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
-  gate candidates, so a nonzero or malformed value adds a gate warning and the
+  blocking candidates (the changed-line or changed-owner gap seams among them
+  are itemized in `suppressed[]` and evaluated as `suppressed`, #13892), so a
+  nonzero or malformed value adds a gate warning and the
   status is never `pass`; seams omitted because they are configured off or are
   not gaps do not count. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
@@ -16501,6 +16702,12 @@ Field notes:
   status.
 - `static_movement` is copied from the receipt and remains a static
   before/after artifact relationship.
+- A receipt that supplies the movement but does not record the `advisory`
+  status (it is `invalid` or `incomplete`, or carries no recognized status)
+  keeps `status` at `incomplete`. `static_movement` is still copied, and
+  `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
+  Markdown `Receipt:` line say that the recorded movement is not review
+  evidence. The wording is fixed per case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
@@ -17914,7 +18121,8 @@ Field contract:
   focused test edit at the same HEAD starts nothing and prints that
   attempt's `agent_attempt_status` document (what `ripr status --attempt
   <id> --json` prints) instead, so it carries no `repair_attempt` block.
-  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout;
+  `ripr repair --json` refusals keep exit `3` and stderr prose and write the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
   an unknown flag under `ripr repair --json` keeps exit `2` and its stderr
   prose and writes the standalone `cli_refusal` document.
   It names the durable transaction the packet was prepared
@@ -17948,6 +18156,19 @@ Field contract:
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
   document.
+- `repair_start_scope` — optional top-level block, present only in the
+  stdout of a bare `ripr repair --json` (no item) whose start was not
+  narrowed to the change (#13701): no diff could be read (no base resolved,
+  or an unreadable `--base`), the diff changes nothing, or the diff changes
+  no Rust production code (only tests, docs or other files). A repeated
+  `--json` start that resumes the awaiting attempt adds the same block to
+  the status document it prints. Members: `narrowed_to_change` (always
+  `false`), `note` (the plain note the human start prints on stderr, naming
+  why the start is not narrowed) and `base_command` (the `ripr repair --root
+  <root> --base <ref>` rerun template; `<ref>` is the reader's to name, so it
+  is not a runnable step). A start whose diff touches a repairable spot
+  carries no such block. The selection menu under `--json` carries the same
+  note in its `cli_refusal` `error.message` instead.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
@@ -20530,7 +20751,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.181",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.182",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21302,7 +21523,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.61",
+    "schema_version": "1.62",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -21315,7 +21536,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.181",
+      "schema_version": "1.182",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

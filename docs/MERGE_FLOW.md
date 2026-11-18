@@ -1,38 +1,47 @@
 # Merge flow for swarm PRs
 
-## Current route and October 21 target
+## Live route and October 21 target
+
+**Live order: label PR qualification -> final published-head review -> native
+enqueue -> required queue run -> GitHub's protected squash.** The native queue is
+active and landing PRs: [#14710 entered the queue on November 14, 2026 and landed
+through it on November 15](https://github.com/EffortlessMetrics/ripr-swarm/pull/14710).
+Direct expected-head squash is refused
+([#14247](https://github.com/EffortlessMetrics/ripr-swarm/issues/14247)); the old
+no-queue and conditional-activation prose below is retained only as history.
 
 Steven selected native queue-time qualification on October 21, 2026 under
 [#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-The target replaces the earlier no-queue mechanism; it does not weaken review,
-proof, ordinary protected squash, or separate release authority.
-
-**Target selected; live queue activation is not established by this document.**
+That target is now live; it does not weaken review, proof, protected squash, or
+separate release authority.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
-[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
-use a group size of 1 and the queued commit must be a single squash commit on the
-group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
-still requests PR qualification on the explicit `merge-ready` label and runs on
-main/master push and manual dispatch. The branch summary names
+[CI](CI.md#merge-queue-request-cutover)). Admission is per constituent PR in
+`merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit
+must form a linear single-parent squash chain, bind to its live PR head and
+queue entry, pass candidate/cut/review/thread admission, and belong to the
+base repository before self-hosted runners are selected. The workflow also
+still requests full PR qualification on the explicit `merge-ready` label and
+retains manual dispatch. Ordinary main/master product replay is retired;
+[the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
 `Ripr Rust Small Result` (application 15368); a complete current enforcement
-readback is still required before changing settings, and whether the repository's
-merge queue is enabled for `main` is a live setting this document does not
-establish. A file or issue edit does not install new protection.
+readback is still required before changing settings. A file or issue edit does
+not install new protection.
 
-Until the replacement is qualified and activated, use the installed label route
-below. Do not treat a proposed enqueue command, Ready state, or this target as
-permission to skip its checks. Current user rulings and controller decisions
-supersede older no-queue target prose; source, rehearsed, active and accepted
-remain separate states.
+The installed `merge-ready` label requests PR qualification; Ready alone requests
+nothing, and neither one enqueues the PR. After reviewing those results and the
+current findings, use the native queue procedure below. Do not treat either state
+as permission to skip checks or merge directly. Current user rulings and controller
+decisions supersede older no-queue target prose; source, rehearsed, active and
+accepted remain separate states.
 
 ## Who owns the change
 
 Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. The two legacy label subscribers and the
-required caller's main cache writer remain explicit cutover obligations; source
-retirement alone does not establish the final zero-label/native-queue state.
+#4842 auxiliary-trigger retirement. Label cutover and hosted App activation remain
+open. Main replay is retired with full H/G protection, opportunistic caches and
+mandatory cold recomputation; no recurring warmer is introduced (#7827).
 See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
 
 This source stage retains the installed required H producer. While GitHub still
@@ -87,23 +96,25 @@ required result.
   a current-subject in-flight run; reapplying the label cancels it.
 - Do not dispatch `routed-rust.yml` on a PR branch (#5394).
 - Inspect the real check results and current findings, make the final integration
-  judgment, then use an expected-head protected squash. Do not arm generic
-  auto-merge as a substitute for that legacy final judgment.
+  judgment, then enqueue the exact reviewed head. GitHub performs the protected
+  squash after successful queue qualification. Do not arm generic auto-merge or
+  use the refused direct expected-head squash route (#14247).
 
 The existing docs-only route requires positive surface classification and the
 actual docs gate. Skipped Rust work is not described as executed Rust proof.
 Main being red does not justify repeating known-failing broad work; identify the
 existing incident/repair owner and preserve unrelated candidate evidence.
 
-## Selected native-queue procedure after verified activation
+## Native queue landing procedure
 
 ```text
 cheap development / Draft publication
 -> focused proof + substantive review + joined repairs
+-> apply merge-ready and inspect the current PR qualification results
 -> exact-head product/scope judgment and conditional merge authorization
 -> native enqueue
 -> one expensive required qualification on current merge-group G
--> native protected squash if required conditions remain satisfied
+-> GitHub queue-driven protected squash if required conditions remain satisfied
 -> cheap landed M reconciliation
 ```
 
@@ -153,11 +164,12 @@ Sequence the rollout:
    PR fields; an added event alone cannot adapt them. Group scope is the union
    of applicable constituent and integration risks, not one guessed PR number.
 3. Prove every required G result, negative controls and frozen-source review.
-   Keep full legacy PR qualification during the bounded queue bootstrap.
+   Full legacy PR qualification was kept during the bounded queue bootstrap.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
-5. Retire duplicate expensive label/main-push and child routes coherently. Keep
-   cheap main reconciliation and distinct incident/deep/release obligations.
+5. Retire the remaining duplicate label and child routes coherently. The bounded
+   main-push retirement already keeps full H/G authority, cold recomputation and
+   cheap landed observation. Distinct incident/deep/release obligations remain.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
 
 Rollback restores and verifies full PR qualification before queue-only protection
@@ -170,18 +182,22 @@ an old fixture pin can hide it even on current G. Preserve the existing repair
 owner and prove declared fixture preparation from a cold dependency state; do not
 repin audited fixture authority merely to follow the workspace's cache contents.
 
-## History-sync route (source and swarm merges)
+## Historical history-sync route (source and swarm merges)
 
-This is the interim history-sync profile under the currently installed
-`merge-ready` label route (#12437). It is valid only until queue-only
-enforcement (`Require merge queue`, #4838, accepted under #4840) is active, and
-it is not a new pull_request-triggered CI lane: it rides the existing
-merge-ready-requested run and adds no workflow trigger. The selected steady
-state (#4984) runs product CI only on `merge_group`; history-preserving syncs
-and release transactions are a separate exceptional profile there. The
-successor is a history-sync profile in the #4984 design, which must keep the
-S/B/H/G identity binding, the privileged authorization and the typed
-diff-scoped `not_applicable: history_sync` semantics described here.
+This section records the former interim history-sync profile under the
+`merge-ready` label route (#12437). Queue-only enforcement is now active, so the
+ordinary landing procedure above does not offer this true-merge route. History-sync
+PRs require an explicitly authorized protection exception or a separately decided
+route; a normal direct merge is not permitted.
+
+The former profile was not a new pull_request-triggered CI lane: it rode the
+merge-ready-requested run and added no workflow trigger. Queue landing now runs
+product CI on `merge_group`; the explicit `merge-ready` request and manual
+dispatch remain installed until the label route retires, and history-preserving
+syncs and release transactions remain a
+separate exceptional profile. Any successor must keep the S/B/H/G identity
+binding, privileged authorization and typed diff-scoped
+`not_applicable: history_sync` semantics described here.
 
 Use it only for a history-preserving sync merge between
 `EffortlessMetrics/ripr` and `EffortlessMetrics/ripr-swarm`: the source-to-swarm
@@ -234,13 +250,14 @@ same head. Any other run that carries it fails.
 
 The merge queue is never relaxed: a `merge_group` run keeps the squash-only
 queued-commit rule, admission does not honor `history-sync` there, and a
-two-parent queued commit is refused. A history-sync PR therefore qualifies
-through the pull_request-mode `merge-ready` request and lands as a true merge
+two-parent queued commit is refused. A history-sync PR formerly qualified
+through the pull_request-mode `merge-ready` request and landed as a true merge
 commit, never a squash or rebase, bound to the qualified head `H`:
-`gh pr merge <n> --merge --match-head-commit <H>`. That works only while
-queue-only enforcement (#4838) is not active. After activation, a history sync
-needs an explicitly authorized protection exception or a separately decided
-route (#4838, #4840); neither is provided here.
+`gh pr merge <n> --merge --match-head-commit <H>`. That command belonged to the
+pre-queue-enforcement profile and is not an alternative landing route now. With
+queue-only enforcement active, a history sync needs an explicitly authorized
+protection exception or a separately decided route (#4838, #4840); neither is
+provided here.
 
 ## Conflicts, incidents and landing
 

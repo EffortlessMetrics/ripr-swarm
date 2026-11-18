@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python repair: `ripr continue` also refuses to report a gap closed when the stale old-type assertion is written as `pytest.raises(expected_exception=Old, ...)` or as a tuple whose every member is `Old`, and when the changed raises are bare `raise Old` / `raise New` (no call). Dotted raises or expected classes, `pytest.raises(Exception)` and any other shape the analyzer cannot read exactly keep the previous closure behavior. Exposure classification is unchanged (#13753).

@@ -122,7 +122,18 @@ equivalent rewrite or when the owner has other callers. A range handed to a call
 (`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
 unchecked or mutable forms slice like `v[a..b]`, and an assertion that
 never runs (a literal-false block, an uncalled closure, after a `return`, even
-on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
+on the same line as live code) reads nothing. An assertion inside code that may
+run zero times or not at all (a nested `fn` or `macro_rules!`, a closure, an
+`async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+`#[cfg]`-gated statement) reads nothing too (#14538). A line where several
+ranges change at once is gated unless every changed range keeps a
+length-preserving reading with no range nested inside it. An edit inside a
+macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
+when a range's written endpoints or operator differ between the versions
+(an edit beside the ranges, or a change in how many ranges the line holds, is
+not gated), and a
+moved char endpoint
+(`'a'..='z'` to `'b'..='y'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
 establish what the tests see (arms it cannot read such as `&str` results, or
 rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
@@ -138,6 +149,54 @@ length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
 non-empty input. A set collect or an input where both ranges are empty is the
 known limit there.
 
+A free owner whose whole body is one single-line tail that is a parameter,
+bare on one side of the diff and under one prefix `-` (a signed `i8`-`i64`
+parameter) or `!` (a `bool` or primitive integer parameter) on the other,
+gets the owner's return as its flow sink (#14815), but only when, inside the
+owner's span, the diff adds exactly that tail line and removes exactly its
+positional counterpart, so the base-side owner is the current owner with that
+line restored; the paired removed line alone never stands in for the old
+owner. The base-side item must be the one the shared base-owner identity
+verifies as the same function (same qualified path and attributes, unique
+under that path on both sides, no added line on its signature or an
+enclosing header, no changed `mod` declaration on its module chain), and
+that item must equal the current one with the tail line restored. A `cfg`
+on the function, an enclosing item, the file or a `mod` declaration on its
+chain, or any `#[path]` module declaration, refuses, so a swapped module,
+`#[cfg]` twin or `#[path]` target cannot supply another function's body.
+Because that identity does not see a `cfg` outside `mod` declarations
+(#14952), the reading also refuses when the index holds another function of
+the owner's name, or any indexed file renames an import to that name, calls
+`include!`, or defines a `macro_rules!` that may emit a module or such a
+function.
+The parameter and return types must be the same unshadowed primitive.
+`!` differs from its operand at every input, so the ordinary infection
+reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
+an exact assertion pins a bare literal call whose folded result differs
+between the base-side and current owner, or every owner call in every related
+test that names it is such a literal call; agreeing asserted calls read
+`weak`, and an argument ripr cannot fold (a local, a loop row, a constant)
+reads `unknown`. So `-a` to `a` tested by `assert_eq!(f(0), 0)` is not
+`exposed`.
+Such a literal call counts only where it runs: a call in a closure, nested
+`fn`, loop, branch, `async` block, `let`-`else` `else` block, `cfg`-gated
+statement, after a `return` or
+after a statement that always diverges on a constant (a `let`-`else` whose
+one-variant pattern cannot match its literal value, a literal `Err(..)?` or
+`None?`; RIPR-SPEC-0231 rule 8) refuses the reading. So does a call in the
+right operand of `&&` or `||` (unless the left operand is the literal `true`
+or `false` that always evaluates it), and a call in the input of any macro
+other than `vec!`, `dbg!`, the `assert*` / `debug_assert*` family and the
+`format!` / `print!` / `write!` family, because that input is token text
+(`stringify!(f(5))`). An assertion macro evaluates only its operands (one for
+`assert!` / `debug_assert!`, two for the `*_eq!` / `*_ne!` forms) and formats
+any message only when it fails, so a call in the message arguments refuses
+(`assert!(true, "{}", f(5))`) while a call in an operand still counts. A call
+in a `let`-`else` `else` block refuses; one in its initializer still counts. An evaluating macro's input that holds `&&`, `|`, `?`, a
+nested macro or a control-flow keyword refuses too, even when the call would
+run (`assert!(true && f(5) == 5)`), because the parser does not read inside
+macro input (#14968).
+
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
 `static_unknown` probe when its positional replacement in the same block
@@ -145,6 +204,24 @@ already carries a modeled-family probe whose `before` is that literal
 (#14325). That probe judges the replaced value; a base-side catch-all would
 keep verification refused for code no test can reach. An equal literal
 deleted with no replacement keeps its own probe.
+
+A changed line that lies wholly inside a statement (`let`, expression
+statement or item) of a closure or `async` body nested in a multi-line
+returned expression is a statement of that body, not part of the returned
+value (#14192). A trailing comment on the line does not count. Examples are
+`let doubled = item * 2;` inside `with(|| { .. })`, inside
+`Box::pin(async move { .. })`, or inside an `async { .. }` tail. The
+`return_value` and `error_path` shapes of the outer expression do not select
+it, so it reads the families the same statement reads in a function body or a
+plain `if` tail block. A `return` on that line keeps its own narrower shape.
+The nested block's own tail expression, a method-chain link and an argument
+line are part of the returned value and keep the outer shape. A shape or line
+the parse cannot place keeps the earlier selection.
+Known under-credit: the rule is syntactic, so a `let` that feeds the nested
+tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
+in a function body does, not as the returned value. The lexical fallback
+that classifies such a line still reads its text the way it reads any
+function-body statement (a `?` reads `error_path`).
 
 ## Required Evidence
 
@@ -270,6 +347,16 @@ and literal consumer controls are specified by
 - GitHub annotations
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
+
+For the same workspace, diff and root path, `ripr check --diff` stdout in the
+pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
+`github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
+cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
+and the workspace's files written in reverse order. Not covered by this
+contract: `check-findings-json`, whose artifact stamps a per-run time, and
+the human digest's one-time first-run legend (#10481), which is intended
+state. Rerun commands carry the absolute root, so output also differs by
+checkout location (#14230).
 
 ## Classifications
 
@@ -705,6 +792,26 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
   follows it.
 
+Integer and char arms read the same way (#15027): `n == 1 || n == 2` with
+`n` declared as a primitive integer (`u8` to `u128`, `usize`, `i8` to
+`i128`, `isize`), and `c == ',' || c == ';'` with `c: char`. Every arm
+uses one literal kind. Integer literals are plain decimal, with no sign,
+suffix, underscore, radix prefix or leading zero, and at most 18 digits, so
+two distinct spellings are two distinct values (`5` and `05`, `5_u32` or
+`0x5` decline). A longer literal declines too, which costs only recall. A char
+literal is one unescaped character that cannot read as an operator, so
+`'|'`, `'!'`, `'('` and any escape decline. A newtype, a float, a reference
+or a `u8` compared with a char literal declines. The infection summary names
+the kind: "every original integer-equality arm is false".
+
+When such a chain (string, integer or char) is the owner's returned tail on
+the changed line, propagation reads `yes` through the return sink. Any input
+equal to the new literal flips the whole chain, so the chain's change is the
+returned change. Any other `||` or `&&` tail keeps no sink, because a changed
+operand of `x > 1 || y` may be masked by `y`. The sink establishes
+propagation only. A test that passes only an original arm's literal still
+leaves infection short of `yes`.
+
 Guarded boundary rule (#13037): a changed comparison joined by top-level
 `&&` to guards that are each a bare owner parameter or its negation
 (`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with
@@ -755,7 +862,41 @@ Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
 case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
 boundary row as `infection_unknown`.
 
+The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
+repair` reads) applies the same rule to the comparison seam it splits from
+such a predicate (#14872). The seam's activation is `unknown` with the guards
+named, and it carries no missing value, unless one related test call sits on
+the boundary value while holding every guard, and a discriminating
+assertion's compared operands observe that same call (the call, or `r`
+from `let r = call;` with `r` bound once, as a whole operand; a line
+with two owner calls, a call buried in a larger expression, or a name only
+in the assertion message or a comment, does not count).
+A literal, a test local bound once and never shadowed or reassigned, or
+the boundary constant's own name each count; any other local, a `mut` or
+rebound guard parameter, or a compared side that is not a plain parameter,
+counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
+`check` orients it. The call must resolve to the changed owner, not a
+same-named function in another module, and the seam keeps `unknown` without
+crediting any row when the tested parameter may be rebound before the
+comparison or an earlier decision in the owner can return first, the same
+reachability `check` requires. Such a seam is not offered as a `ripr repair`
+start (a `stock > 0 && blocked` change tested only with `blocked = false`
+starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
+while `check` reads the same change as unclear. Both views read the guard
+from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
+wraps under it that each open with `&&`, up to the opening brace, with
+comments masked; an edit
+whose old line cannot be read with the wrapped guards is declined; a predicate
+written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+
 ## Test Mapping
+
+Output determinism (#14230):
+
+- `crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order`
 
 Fixture coverage:
 

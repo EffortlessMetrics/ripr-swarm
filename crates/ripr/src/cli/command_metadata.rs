@@ -210,6 +210,9 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         // `gate check` composes review-comments with the same evaluator and
         // exit mapping (RIPR-SPEC-0435): a producer failure is config_error.
         "cmd:gate.evaluate" | "cmd:gate.check" => Some(EXIT_GATE_EVALUATE),
+        // The CI packet runs the gate as a required step: a blocked gate is
+        // its only exit 3, every other required failure is 2.
+        "cmd:reports.ci-packet" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
         "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
@@ -222,12 +225,14 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
             Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
-        // with prose on stderr and an empty stdout, like the card family.
-        // #12417: the unanchored discovery refusal joins both, and status
-        // spells it too instead of reporting state for a non-project.
-        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-        // #11584: selection-arm refusals leave stdout empty; under `--json`
-        // a typed after-phase refusal or failure prints its document.
+        // with prose on stderr. #12417: the unanchored discovery refusal
+        // joins both, and status spells it too instead of reporting state
+        // for a non-project. #14931: under `--json` their typed refusals
+        // write the `cli_refusal` document on stdout.
+        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+        // #11584/#14931: under `--json` a selection-arm refusal prints the
+        // `cli_refusal` document and a typed after-phase refusal or failure
+        // prints its own document.
         "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
@@ -1533,9 +1538,10 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["reports ci-summary", "reports index", "first-pr"],
         stop_states: &[
             "advisory steps log a failure and continue",
-            "a failed diff capture, gate evaluation, or blocking-mode producer exits nonzero after the packet is written",
+            "a blocked gate exits 3 after the packet is written",
+            "a failed diff capture, gate evaluation, or blocking-mode producer exits 2 after the packet is written",
         ],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_GATE_EVALUATE,
         limitations: "runs the same ripr commands the workflow steps ran; it reads no token and posts no PR comments.",
         not_applicable_reason: None,
     },
@@ -1966,7 +1972,7 @@ const METADATA: &[CommandMetadata] = &[
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
         not_applicable_reason: None,
     },
@@ -2022,7 +2028,7 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[
             "no workspace, package or Git repository anchors the current directory (unanchored_root): state is not reported for a non-project; run from inside the project or pass `--root <dir>`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "reads workflow state; it does not resume or mutate the loop.",
         not_applicable_reason: None,
     },
@@ -3322,6 +3328,14 @@ mod tests {
     }
 
     #[test]
+    fn ci_packet_row_cannot_drop_the_blocked_gate_exit() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:reports.ci-packet", |row| {
+            row.exit = EXIT_COMPLETED_OR_FAILED;
+        })?;
+        expect_single_violation(&rows, "contradicts the implemented mapping")
+    }
+
+    #[test]
     fn check_row_cannot_drop_advisory_findings() -> Result<(), String> {
         let rows = with_mutated_row("cmd:check", |row| {
             row.exit = EXIT_COMPLETED_OR_FAILED;
@@ -3639,7 +3653,7 @@ mod tests {
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
-            ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",

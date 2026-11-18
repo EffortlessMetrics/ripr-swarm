@@ -321,6 +321,9 @@ esac
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
         .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
+        // #14932: the workflow always hands the anchor in; the mock live ref is
+        // d*40, so that is the pinned trusted source for these controls.
+        .env("ADMISSION_TRUSTED_SHA", "d".repeat(40))
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -801,6 +804,9 @@ esac
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
         .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
+        // #14932: the workflow always hands the anchor in; the mock live ref is
+        // d*40, so that is the pinned trusted source for these controls.
+        .env("ADMISSION_TRUSTED_SHA", "d".repeat(40))
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;

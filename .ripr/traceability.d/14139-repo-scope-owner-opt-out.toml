@@ -1,0 +1,35 @@
+# Registers the repo-scope owner opt-out tests (#14139): repo-scope formats
+# withhold the seams of a `#[mutants::skip]` owner and disclose the count,
+# and outcome/verify exclude those seams instead of reading them as resolved.
+[[extend]]
+id = "RIPR-SPEC-0005"
+tests = [
+  "crates/ripr/src/analysis/owner_opt_out.rs::tests::parser_backed_owner_decision_reads_only_a_real_mutants_skip",
+  "crates/ripr/src/analysis/owner_opt_out.rs::tests::lexically_read_owner_is_never_opted_out",
+  "crates/ripr/src/analysis/seams.rs::tests::owner_opt_out_is_absent_by_default_and_survives_a_cache_round_trip",
+  "crates/ripr/src/analysis/rust_index.rs::tests::owns_lines_alone_refuses_lines_shared_with_another_function",
+  "crates/ripr/src/output/outcome/mod.rs::tests::owner_opt_out_withheld_seams_are_excluded_not_resolved",
+  "crates/ripr/src/output/outcome/mod.rs::tests::owner_opt_out_owner_match_excludes_seams_whose_ids_moved",
+  "crates/ripr/src/output/outcome/mod.rs::tests::owner_opt_out_suffixed_owner_excludes_its_base_key_on_both_sides",
+  "crates/ripr/src/output/outcome/mod.rs::tests::owner_opt_out_count_without_ids_refuses_the_comparison",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::repo_exposure_json_and_summary_withhold_mutants_skip_owner_seams",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::repo_scope_formats_agree_on_the_withheld_count",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::doc_string_naming_mutants_skip_does_not_withhold",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::lexically_read_file_yields_no_repo_seams_and_no_disclosure",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::cached_repo_results_follow_the_attribute_being_added_and_removed",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::outcome_does_not_resolve_seams_withheld_between_two_check_snapshots",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::outcome_does_not_resolve_seams_a_pilot_snapshot_kept",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::outcome_still_reports_real_movement_on_the_plain_owner",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::outcome_does_not_resolve_seams_whose_ids_moved_when_the_attribute_is_inserted",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::outcome_does_not_resolve_a_cfg_gated_twin_whose_owner_suffix_moved",
+  "crates/ripr/tests/repo_scope_mutants_skip.rs::repo_formats_do_not_withhold_a_plain_owner_sharing_a_line_with_a_skipped_one",
+]
+code = [
+  "crates/ripr/src/analysis/owner_opt_out.rs",
+  "crates/ripr/src/analysis/rust_index.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
+  "crates/ripr/src/output/repo_exposure.rs",
+  "crates/ripr/src/output/repo_seams.rs",
+  "crates/ripr/src/output/render.rs",
+]

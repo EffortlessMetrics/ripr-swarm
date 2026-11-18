@@ -118,6 +118,14 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_string_continuations = old_source
         .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
+    // #14181: lines of a build-time `const { assert!(..) }` block, also when
+    // rustfmt splits it, select no runtime family.
+    let added_const_assertions = find_file_facts(index, &changed.path)
+        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_const_assertions = old_source
+        .map(super::lexical::inline_const_assertion_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -282,12 +290,17 @@ pub(crate) fn probes_for_file_with_relations(
     };
     // Added lines whose only lexical family is `static_unknown`: a type-bound
     // line, or (#14094) a string-literal continuation line, whose text is
-    // data even when it reads like code. A removed line pairs with them on
-    // that family alone.
+    // data even when it reads like code, or (#14181) a line of a build-time
+    // `const { assert!(..) }` block. A removed line pairs with them on that
+    // family alone.
     let added_static_only = added_bounds
         .iter()
         .zip(&changed.added_lines)
-        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .map(|(bound, line)| {
+            *bound
+                || added_string_continuations.contains(&line.new_side_line)
+                || added_const_assertions.contains(&line.new_side_line)
+        })
         .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
@@ -447,8 +460,10 @@ pub(crate) fn probes_for_file_with_relations(
             text,
             removed_counterpart.as_deref(),
         );
+        let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
             .into_iter()
+            .filter(|_| !in_const_assertion)
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
             .filter(|shape| propagation_subject.is_none() || shape.family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
@@ -585,9 +600,24 @@ pub(crate) fn probes_for_file_with_relations(
                         match removed_span_of_shape(text, &shape_text, removed.trim()) {
                             Some(old) => old == shape_text,
                             // No locatable cut: unchanged only when the old
-                            // line still holds the same text as a token run
-                            // (`total > limit` is not inside `subtotal > limit`).
-                            None => super::classify::contains_token_run(removed, &shape_text),
+                            // line holds the text, with no operand syntax
+                            // extending it, at least as often as the new one.
+                            // `total > limit` is not inside `subtotal > limit`,
+                            // `total > limit.max` or `x.total > limit`, and a
+                            // comparison repeated on the new line is not all
+                            // unchanged when the old line held it once.
+                            None => {
+                                let old = super::classify::operand_bounded_token_run_count(
+                                    removed,
+                                    &shape_text,
+                                );
+                                old > 0
+                                    && old
+                                        >= super::classify::operand_bounded_token_run_count(
+                                            text,
+                                            &shape_text,
+                                        )
+                            }
                         }
                     })
                     && canonical_shapes.iter().any(|header| {
@@ -727,7 +757,9 @@ pub(crate) fn probes_for_file_with_relations(
         // code. Its text (`if x > 3 { return Err(e) }` in a help message)
         // selects no behavioral family; the literal's own rule below decides
         // whether the edited text keeps one `static_unknown`.
-        let families = if added_string_continuations.contains(&added.new_side_line) {
+        let families = if added_string_continuations.contains(&added.new_side_line)
+            || in_const_assertion
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line_against(text, removed_counterpart.as_deref())
@@ -869,6 +901,7 @@ pub(crate) fn probes_for_file_with_relations(
         // #14094: deleted string-literal text is not deleted code either.
         let families = if removed_bounds.lines[removed_index]
             || removed_string_continuations.contains(&removed.line)
+            || removed_const_assertions.contains(&removed.line)
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
@@ -894,6 +927,19 @@ pub(crate) fn probes_for_file_with_relations(
                     || probes
                         .iter()
                         .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
+            {
+                continue;
+            }
+            // #14181: an edited line of a build-time `const { assert!(..) }`
+            // block is judged by its replacement's probe, which carries this
+            // text as `before`; the short operands (`N`) give the token
+            // pairing above nothing to match.
+            if family == ProbeFamily::StaticUnknown
+                && removed_const_assertions.contains(&removed.line)
+                && added_const_assertions.contains(&removed.new_side_line)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
             {
                 continue;
             }
@@ -1190,7 +1236,7 @@ fn retarget_changed_const_readers(
     if readers.is_empty()
         || readers
             .iter()
-            .any(|shape| changed_lines.contains(&shape.start_line))
+            .any(|shape| changed_lines.contains(&shape.start_line()))
     {
         return None;
     }
@@ -1199,8 +1245,8 @@ fn retarget_changed_const_readers(
             .iter()
             .map(|shape| {
                 let line = ChangedLine {
-                    line: shape.start_line,
-                    new_side_line: shape.start_line,
+                    line: shape.start_line(),
+                    new_side_line: shape.start_line(),
                     text: shape.text.to_string(),
                 };
                 let mut seeded = SeededProbe::from_probe(build_probe(
@@ -2277,7 +2323,7 @@ fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
             // Out-of-line `mod name;` (no brace index) and self-closed
             // blocks contribute no scope; the composer owns cross-file
             // roles and bare syntax lines stay eligible.
-            let (opens, closes) = brace_delta(&masked_line[brace..]);
+            let (opens, closes) = brace_delta(masked_line.get(brace..).unwrap_or_default());
             if opens > closes {
                 stack.push((depth + 1, requires_test, line_number));
             }
@@ -2330,7 +2376,13 @@ fn parse_inline_module(
     index: usize,
 ) -> Option<(bool, Option<usize>)> {
     let mut attributes: Vec<String> = Vec::new();
-    let mut masked_rest = masked_lines[index].trim();
+    let masked_line = masked_lines[index];
+    // #14089: every step below only drops a prefix, so `masked_rest` stays a
+    // suffix of `masked_line` and the brace offset can be returned relative
+    // to the whole line. Trimming the end too left the offset relative to
+    // the rest after attributes and indentation, and the caller sliced the
+    // whole line there, inside a multibyte char on `#[cfg(test)] mod dक्x {`.
+    let mut masked_rest = masked_line.trim_start();
     let mut original_rest = original_lines[index].trim();
     // Same-line attributes, in lockstep: structure from masked text, text
     // from the original. Divergence fails closed (fewer attributes).
@@ -2339,7 +2391,7 @@ fn parse_inline_module(
         split_leading_attribute(original_rest),
     ) {
         attributes.push(attribute.to_string());
-        masked_rest = masked_remainder.trim();
+        masked_rest = masked_remainder.trim_start();
         original_rest = original_remainder.trim();
     }
     let masked_rest = strip_visibility(masked_rest);
@@ -2347,15 +2399,16 @@ fn parse_inline_module(
     if after_mod
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return None;
     }
     let name_start = masked_rest.len() - after_mod.trim_start().len();
     let name = after_mod.trim_start();
-    // Module name: one identifier; anything else is not an item we scope.
+    // Module name: one identifier (Unicode `XID_Continue`, #14089); anything
+    // else is not an item we scope.
     let end = name
-        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|character: char| !(character == '_' || unicode_ident::is_xid_continue(character)))
         .unwrap_or(name.len());
     if end == 0 {
         return None;
@@ -2387,9 +2440,10 @@ fn parse_inline_module(
             }
         }
     }
+    let rest_start = masked_line.len() - masked_rest.len();
     Some((
         attributes_require_test(&attributes),
-        Some(name_start + end + brace_offset),
+        Some(rest_start + name_start + end + brace_offset),
     ))
 }
 
@@ -2406,7 +2460,7 @@ pub(super) fn strip_visibility(text: &str) -> &str {
     if after_pub
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return text;
     }
@@ -3740,8 +3794,10 @@ mod tests {
                 ProbeShapeFact {
                     start_line: 3,
                     end_line: 3,
-                    start_byte,
-                    end_byte: start_byte + shape_text.len(),
+                    start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+                    end_byte: crate::analysis::facts::probe_shape_position(
+                        start_byte + shape_text.len(),
+                    ),
                     kind: *kind,
                     text: (*shape_text).into(),
                     value_consumed: false,
@@ -5316,6 +5372,44 @@ mod tests {
         assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
     }
 
+    /// #14722 review: the old line holding the comparison's text only as
+    /// part of a longer operand (`total > limit.max`, `x.total > limit`) does
+    /// not make the comparison unchanged, so it keeps its own probe.
+    #[test]
+    fn a_comparison_found_only_inside_a_longer_old_operand_is_kept() {
+        for removed in [
+            "match (total > limit.max, false) {",
+            "match (x.total > limit, false) {",
+            "match (total > limit as u64, false) {",
+            "match (total > limit | mask, false) {",
+            "match (total > limit << 1, false) {",
+            "match (total > limit!(x), false) {",
+            "match (a | total > limit, false) {",
+            "match (a >> total > limit, false) {",
+        ] {
+            let probes = shapes_probes(
+                "match (total > limit, true) {",
+                removed,
+                &[
+                    (ProbeShapeKind::MatchArm, "match (total > limit, true)"),
+                    (ProbeShapeKind::Predicate, "total > limit"),
+                ],
+                "",
+            );
+
+            let mut families = probes
+                .iter()
+                .map(|probe| probe.family.as_str().to_string())
+                .collect::<Vec<_>>();
+            families.sort();
+            assert_eq!(
+                families,
+                vec!["predicate", "static_unknown"],
+                "{removed}: {probes:?}"
+            );
+        }
+    }
+
     /// #14722 review: a `=>` inside a string literal in the scrutinee is not
     /// an arm, so the scrutinee-only header still reads as unclassified.
     #[test]
@@ -5893,8 +5987,10 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: producer,
-                        end_byte: producer + PREDICATE.len(),
+                        start_byte: crate::analysis::facts::probe_shape_position(producer),
+                        end_byte: crate::analysis::facts::probe_shape_position(
+                            producer + PREDICATE.len(),
+                        ),
                         kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.into(),
                         value_consumed: false,
@@ -6001,7 +6097,7 @@ mod tests {
                         start_line: 10,
                         end_line: 13,
                         start_byte: 0,
-                        end_byte: expression.len(),
+                        end_byte: crate::analysis::facts::probe_shape_position(expression.len()),
                         kind: ProbeShapeKind::CallDeletion,
                         text: expression.into(),
                         value_consumed: false,
@@ -8228,6 +8324,31 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+
+    /// #14089: the module brace offset was measured from the text after the
+    /// same-line attribute and indentation, then used to slice the whole
+    /// line, which landed inside a multibyte char of the module name.
+    #[test]
+    fn cfg_test_module_scope_reads_a_same_line_attribute_before_a_non_ascii_name() {
+        let source = "#[cfg(test)] mod dक्iscarded {\n\
+             \x20   const DEEP: u32 = 1;\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(source, 2));
+        assert!(!line_in_cfg_test_module(source, 4));
+        // Indented, with visibility, and a same-line nested block.
+        let nested = "    #[cfg(test)] pub(crate) mod 日本 { mod inner {\n\
+             \x20       const DEEP: u32 = 1;\n\
+             \x20   }\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(nested, 2));
+        assert!(line_in_cfg_test_module(nested, 3));
+        assert!(!line_in_cfg_test_module(nested, 5));
+        // `modé` is one identifier, not the `mod` keyword.
+        let not_a_module = "#[cfg(test)]\nmodé {\n    const X: u32 = 1;\n}\n";
+        assert!(!line_in_cfg_test_module(not_a_module, 3));
     }
     fn macro_source_index(path: &Path, source: &str) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
