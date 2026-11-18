@@ -137,7 +137,17 @@ pub(crate) enum FlagPlacement {
 /// must not name one.
 const HELP_ONLY_FLAGS: &[&str] = &["--all"];
 
+/// The flag name of a typed option: `--root=.` names `--root`
+/// (RIPR-SPEC-0438 accepts the `--name=value` spelling after a command).
+pub(crate) fn flag_name(arg: &str) -> &str {
+    match arg.split_once('=') {
+        Some((name, _)) if name.starts_with("--") => name,
+        _ => arg,
+    }
+}
+
 pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
+    let arg = flag_name(arg);
     let Some(help_text) = help::help_text_for(command) else {
         return FlagPlacement::Unknown;
     };

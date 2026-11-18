@@ -331,7 +331,8 @@ fn unknown_command_message(command: &str) -> String {
                 "unknown command {command:?}; options go after the command. Did you mean `ripr check {flag}`? Run `ripr --help`."
             ),
             FlagPlacement::Unknown => format!(
-                "unknown command {command:?}; options go after the command, and `ripr check` has no `{command}` option. Run `ripr --help`."
+                "unknown command {command:?}; options go after the command, and `ripr check` has no `{}` option. Run `ripr --help`.",
+                crate::cli::suggest::flag_name(command)
             ),
         };
     }

@@ -73,6 +73,18 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`\n",
     },
+    // `--name=value` is an accepted spelling after the command, so the
+    // assignment keeps its example and is judged by its flag name.
+    Case {
+        args: &["--root=.", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--root=.\"; options go after the command, e.g. `ripr check --root=. ...`\n",
+    },
+    Case {
+        args: &["--bogus=1", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--bogus=1\"; options go after the command, and `ripr check` has no `--bogus` option. Run `ripr --help`.\n",
+    },
     Case {
         args: &["-q", "check"],
         exit: 2,
