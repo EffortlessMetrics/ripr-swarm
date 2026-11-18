@@ -36,9 +36,21 @@ fn result_step() -> TestResult<&'static str> {
     Ok(step)
 }
 
+fn detector_step() -> TestResult<&'static str> {
+    let detector = job("detect-docs-only")?;
+    let marker = "      - name: Check whether every changed file is docs/spec/markdown\n";
+    assert_eq!(detector.matches(marker).count(), 1);
+    let (_, tail) = detector.split_once(marker).ok_or("classification step")?;
+    tail.split("\n      - ")
+        .next()
+        .ok_or_else(|| "classification step body".into())
+}
+
 fn shell(name: &str) -> TestResult<String> {
     let source = if name == "result" {
         result_step()?
+    } else if name == "detect-docs-only" {
+        detector_step()?
     } else {
         job(name)?
     };
@@ -510,7 +522,7 @@ impl Drop for Fixture {
 #[test]
 fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     let detector = job("detect-docs-only")?;
-    let (step, _) = detector
+    let (step, _) = detector_step()?
         .split_once("        run: |\n")
         .ok_or("detector step")?;
     let (_, env) = step
