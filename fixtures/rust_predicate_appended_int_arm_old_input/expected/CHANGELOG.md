@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_predicate_appended_int_arm_old_input (2)
+
+Reason:
+RIPR-SPEC-0001: re-bless #15027 fixtures for the #14944 Safe next action wording
+
+Command:
+`cargo xtask goldens bless rust_predicate_appended_int_arm_old_input --reason "..."`
+
+Updated:
+- `expected/human.txt`
