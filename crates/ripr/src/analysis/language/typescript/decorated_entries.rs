@@ -115,6 +115,7 @@ pub(crate) fn assign_decorated_entries(
                     instance_factory: false,
                     hops: 0,
                     cross_module: None,
+                    closure: false,
                     decorated: Some(TypeScriptDecoratedMethod {
                         class_name: class_name.clone(),
                         default_export: *default_export,

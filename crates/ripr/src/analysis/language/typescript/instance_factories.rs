@@ -139,6 +139,7 @@ pub(crate) fn assign_instance_factories(
                     instance_factory: true,
                     hops: 0,
                     cross_module: None,
+                    closure: false,
                 });
             }
         }

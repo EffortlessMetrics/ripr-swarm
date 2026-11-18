@@ -198,6 +198,7 @@ fn class_entries_for(
                 instance_factory: false,
                 hops: 0,
                 cross_module: None,
+                closure: false,
             })
             .collect();
         entries.sort();

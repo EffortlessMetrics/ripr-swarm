@@ -1007,6 +1007,60 @@ Candidates come from the first non-empty tier:
    it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
    (file-fact schema 8), so resolution never re-parses an importer, and run
    only for owners of changed files.
+   **Closure continuation (#13592).** The same-module graph also records
+   closure edges: a reference to another top-level declaration that is not a
+   recorded bare call, read from the AST of the declaration's code (a
+   function with its nested callbacks, or the whole initializer of a
+   call-built constant, callee included). As for calls, a function's directly
+   returned functions are not its own code: calling a factory does not run
+   them, so only a value the factory builds reaches what they reference. This covers a function passed as
+   a value (`JSON.parse(text, reviver)`, `keys.sort(compare)`), a call-built
+   constant passed or referenced as a value (`parse(input, Grammar)`), the
+   callbacks of such a constant (`const Rule = match(re, (s) => upper(s))`)
+   and the combinator that built it (`match`). A name the referencing code
+   binds anywhere (parameter, local, inner function, nested callback
+   parameter, catch binding), a name the module ever assigns or updates, and
+   a reference in a type position add no edge. An owner reached from an
+   export only along paths that take at least one closure edge gets a
+   closure entry: at most 3 bare-call edges before the first closure edge
+   and at most 8 edges in total (`MODULE_CLOSURE_MAX_HOPS`), and only when
+   no bare-call path within its own bound reaches the owner from that export.
+   A call-built constant owner (`ModuleFunction`) that is a graph node (a
+   factory product, not a B2 value such as `Symbol(...)`, a literal or
+   `new X()`) reads every entry as a closure entry, a bare call of it
+   (`Rule(s)`) included, because what runs is the callback it was built from.
+   A B2 value keeps its reader entries as B2 reads them. A test that names
+   the constant itself keeps the `module_value_use` relation (#8568) and its
+   closure entries are not consulted, so a direct value use never reads worse
+   than it did before #13592's closure continuation. An
+   owner with more than 32 closure entries
+   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them and reads as it did
+   before closure reach (possibly `no_static_path`); the cap is not yet
+   disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
+   `[x] = ...`, `({ x } = ...)`); a member write (`obj.x = ...`) rebinds
+   nothing. A factory the module reassigns lends its product no returned
+   references, and a named function expression's own name
+   (`const label = function helper() { ... }`) binds inside its body, so it is
+   never an edge to a top-level `helper`. A module value (B2) continues across
+   importers only on its closure entries. A reference that
+   invokes nothing (`typeof helper === "function"`, an identity comparison)
+   still adds an edge; that can only turn a `no_static_path` into
+   `static_unknown`, never credit a test. When some related tests reach the
+   owner through plain same-module calls and others through closure entries,
+   the same-module rule decides the class and the text says "same-module or
+   callback callers".
+   Closure entries continue across importers like call entries, within the
+   closure bound, and a call chain is preferred over a closure chain for the
+   same importer export. Reach whose every entry is cross-module or closure
+   reads `static_unknown` whatever the oracle, is never `exposed` or
+   `weakly_exposed`, and starts no repair; the missing-evidence line says
+   "only through callback or value-passing callers". When or whether the
+   value runs is not modeled: a callback stored and never invoked, or run
+   only at import, still counts as reach. On the eight-package unjs Stryker
+   corpus (`benchmarks/mutation_spot_check/corpus-typescript.json`), this
+   moves 296 caught mutants and 49 missed ones from `no_static_path` to
+   `static_unknown` against main with #13719, and changes no other verdict.
+   File-fact schema 10 carries the `closure` flag.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -2737,6 +2791,18 @@ keys); do not take the next number.
   the receiver-call stand-in that tier 2 checks, and
   `tests/class_entry_tests.rs` pins the credited chains against each shape
   that records no edge.
+- #13592 (closure continuation): `module_entries.rs` records closure edges
+  (`References`, `reassigned_names`) and closure entries
+  (`reachable_through_closures`, `MODULE_CLOSURE_MAX_HOPS`), `owners.rs` gives
+  call-built constants their closure entries, `related_tests.rs`
+  `ReExportIndex::cross_module_entries` continues them across importers, and
+  `classifier.rs` reads opaque-only reach (`module_entry_reach_is_opaque_only`)
+  as `static_unknown`. `tests/closure_entry_tests.rs` pins the credited shapes
+  (a passed reviver and comparator, a combinator-built constant, its callback
+  and its combinator, a function both called and passed, an importer chain)
+  against each refusal (a parameter, local, inner function, nested callback
+  parameter, reassignment and type-position reference; the hop bounds; a test
+  of an export that reaches nothing; a mocked module).
 - #13592: `module_entries.rs` (`module_entries_and_outbound`) records, from the
   same module graph as the entries, the imported bindings each export's code
   bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);

@@ -360,6 +360,7 @@ fn mock_payload_through_a_module_entry_is_not_credited() -> Result<(), String> {
         instance_factory: false,
         hops: 0,
         cross_module: None,
+        closure: false,
     }];
     let tests = extract_tests(
         Path::new("tests/lib.test.ts"),

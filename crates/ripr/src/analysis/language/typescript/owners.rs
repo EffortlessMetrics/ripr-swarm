@@ -70,14 +70,30 @@ pub(crate) fn owners_from_program(
         &extract_imports_for_test_file(&program.body),
     );
     for owner in &mut owners {
-        // A `ModuleFunction` owner is a non-callable `const` initializer; it
-        // carries entries only when it is a followable read-only value node
-        // (#13592 B2), never through the bare-call edges of a factory const.
+        // A `ModuleFunction` owner is a non-callable `const` initializer. A
+        // followable read-only value node (#13592 B2) keeps its reader
+        // entries as they are; any other (a call-built constant) reads every
+        // entry as a closure entry.
         if owner.class_name.is_none()
-            && (owner.owner_kind != OwnerKind::ModuleFunction || value_names.contains(&owner.name))
             && let Some(owner_entries) = entries.get(&owner.name)
         {
-            owner.module_entries = owner_entries.clone();
+            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction
+                && !value_names.contains(&owner.name)
+            {
+                // A call-built constant runs its callbacks when the value is
+                // invoked, which the graph does not model (#13592): even a
+                // bare call of it (`Rule(s)`) reaches its initializer's code
+                // only as a closure does, so every entry reads as one.
+                owner_entries
+                    .iter()
+                    .map(|entry| TypeScriptModuleEntry {
+                        closure: true,
+                        ..entry.clone()
+                    })
+                    .collect()
+            } else {
+                owner_entries.clone()
+            };
         }
     }
     let instance_fields = class_instance_field_names(program);

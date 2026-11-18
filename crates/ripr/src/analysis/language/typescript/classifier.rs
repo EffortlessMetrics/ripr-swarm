@@ -7783,6 +7783,36 @@ pub(crate) fn classify_resolved_owner(
                     workspace_root,
                 )
             });
+    // #13592: reach whose every path passes a closure edge (the owner, or a
+    // function on the way to it, is passed or stored as a value) or another
+    // module's export. When, or whether, the value runs is not modeled, so
+    // any oracle there reads unknown.
+    let reach_only_through_opaque_entry = reach_only_through_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| {
+                module_entry_reach_is_opaque_only(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
+    let reach_through_closure_entry = reach_only_through_opaque_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                module_entry_reach_includes_closure(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Mixed entry reach: some related test reaches the owner through another
     // module's export, but not every one does, so neither "same-module" nor
     // "cross-module" alone describes it.
@@ -8183,7 +8213,8 @@ pub(crate) fn classify_resolved_owner(
         // assertion in the same test says nothing about the entry's result.
         let entry_oracle_is_strong = (strongest_strength >= OracleStrength::Strong.rank()
             && ts_entry_result_is_asserted(related_candidates))
-            || reach_only_through_cross_module_entry;
+            || reach_only_through_cross_module_entry
+            || reach_only_through_opaque_entry;
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -8669,6 +8700,10 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
+    } else if ladder_entry_unknown && reach_through_closure_entry {
+        // #13592: the path to the owner passes a function or constant used
+        // as a value (a callback, a reviver, a combinator-built rule).
+        "TypeScript preview adapter: the related tests reach the changed owner only through code that passes it, or a function that leads to it, as a value (a callback or a combinator-built constant); when that value runs is not modeled, so discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown && reach_only_through_cross_module_entry {
         // #13592: the caller is an export of another module that imports and
         // calls the owner (RIPR-SPEC-0243).
@@ -8763,6 +8798,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_entry_unknown && reach_through_closure_entry => {
+            "TypeScript preview advisory: the related test reaches the changed owner only through a callback or a value passed between functions, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown
             if ladder_entry_unknown && reach_only_through_cross_module_entry =>
@@ -10976,8 +11014,19 @@ fn module_entry_reach_summary(
         .iter()
         .filter(|entry| entry.cross_module.is_some())
         .count();
+    let closure_called = called_entries.iter().any(|entry| entry.closure);
+    let opaque_only = called_entries
+        .iter()
+        .all(|entry| entry.closure || entry.cross_module.is_some());
     let scope = if owner.class_name.is_some() {
         "same-class"
+    } else if closure_called && opaque_only {
+        // #13592: every path passes the owner, or a function on the way to
+        // it, as a value, or crosses a module.
+        "callback or value-passing"
+    } else if closure_called {
+        // Some tests reach it through plain same-module calls too.
+        "same-module or callback"
     } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
         // #13592: every entry the tests call is an export of another module
         // that reaches the owner through an imported binding.
