@@ -821,6 +821,9 @@ pub(super) struct RelatedTestRankKey {
     relation_reason: u8,
     oracle_strength: Reverse<u8>,
     activation_overlap: Reverse<usize>,
+    /// The test calls the owner or a function that reaches it (#15026), so
+    /// it leads otherwise equal rows instead of name order.
+    owner_near: Reverse<bool>,
     file: PathBuf,
     test_name: String,
     line: usize,
@@ -875,6 +878,11 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             .as_ref()
             .is_none_or(|views| views.len() == related.len())
     );
+    // #15026: one reverse owner-reach walk for the seam, and only when there
+    // is an order to decide.
+    let owner_near = owner_fn
+        .filter(|_| related.len() > 1)
+        .map(|owner| context.transitive_reach.owner_reach(&owner.name));
     let mut ranked: Vec<_> = related
         .iter()
         .enumerate()
@@ -899,8 +907,18 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 context.pin_syntax(),
                 boolean_pin.as_ref(),
             );
-            let key =
-                related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);
+            let near = owner_near
+                .as_ref()
+                .is_some_and(|reach| reach.test_calls_owner_or_caller(indexed.test));
+            let key = related_test_rank_key(
+                seam,
+                context,
+                indexed,
+                reason,
+                owner.as_ref(),
+                &oracle,
+                near,
+            );
             (key, entry, oracle)
         })
         .collect();
@@ -921,6 +939,7 @@ pub(super) fn related_test_rank_key(
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
     best_oracle: &BestOracle,
+    owner_near: bool,
 ) -> RelatedTestRankKey {
     let oracle_strength = &best_oracle.1;
     RelatedTestRankKey {
@@ -928,6 +947,7 @@ pub(super) fn related_test_rank_key(
         relation_reason: reason.priority(),
         oracle_strength: Reverse(oracle_strength.rank()),
         activation_overlap: Reverse(activation_overlap_score(seam, context, indexed, owner)),
+        owner_near: Reverse(owner_near),
         file: indexed.test.file.clone(),
         test_name: indexed.test.name.clone(),
         line: indexed.test.start_line,

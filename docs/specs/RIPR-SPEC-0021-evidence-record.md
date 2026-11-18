@@ -230,13 +230,19 @@ deterministic and uses:
 2. relation reason priority;
 3. oracle strength;
 4. activation-value overlap;
-5. file, name, and line.
+5. whether the test calls the owner or a function the bounded caller walk
+   says reaches it (#15026);
+6. file, name, and line.
 
 The rank affects the capped `related_tests` array and the nearest related test
 to imitate. It must not change `related_tests_total`, mint a new seam identity,
 or turn a weak relationship into a strong one. Activation overlap is a static
 tie-breaker from values RIPR already observes, for example a direct owner call
 whose predicate-boundary arguments are equal at the changed boundary.
+Owner nearness is a tie-breaker too: among otherwise equal rows, a test that
+reaches the owner through a caller chain is named before a same-file
+neighbour that only sorts earlier by name. It never fails open (an unknown
+call or implicit dispatch does not count), so it can only reorder equal rows.
 
 ## Oracle Semantics
 
@@ -511,6 +517,7 @@ count by itself and it does not claim mutation execution.
 | Generated canonical identity groups equivalent raw seams | `canonical_gap_identities_report_group_size_for_equivalent_gaps` |
 | Related-test ranking prefers strong oracle imitation targets inside the same relation | `given_related_tests_with_same_relation_when_ranked_then_strong_oracle_precedes_smoke_oracle` |
 | Related-test ranking uses activation overlap before file ordering inside the same relation and oracle strength | `given_related_tests_with_same_relation_and_oracle_when_ranked_then_activation_overlap_precedes_file_order` |
+| Related-test ranking names a test that reaches the owner through a caller chain before name-order neighbours | `related_tests_name_the_owner_caller_test_before_name_order_neighbours` |
 | Fixture contract corpus pins representative record shapes | `evidence_record_contract_fixture_corpus_is_valid` |
 | Fixture contract checker reports record-shape drift | `evidence_record_contract_fixture_guard_reports_missing_fields` |
 | Fixture contract checker requires oracle semantics shape | `evidence_record_contract_fixture_guard_requires_oracle_semantics` |

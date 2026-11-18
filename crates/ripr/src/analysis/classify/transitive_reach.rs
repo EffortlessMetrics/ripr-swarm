@@ -1579,6 +1579,23 @@ impl OwnerReach<'_, '_> {
             })
     }
 
+    /// Whether `test` calls the owner or a function the bounded name walk says
+    /// reaches it. Unlike [`Self::test_may_reach`] it never fails open (no
+    /// implicit dispatch, untraced path or unindexed call counts): it only
+    /// orders related tests so the one nearest the owner is named first
+    /// (#15026), and an unknown call must not move a row.
+    pub(in crate::analysis) fn test_calls_owner_or_caller(&self, test: &TestFact) -> bool {
+        test.calls.iter().any(|call| {
+            let name = call.name.as_str();
+            let own_declaration = name == test.name
+                && contains_identifier(&call.text, "fn")
+                && call.text.contains(&format!("fn {name}"));
+            !is_macro_call(name)
+                && !own_declaration
+                && (name == self.owner_name || self.reaching.contains(name))
+        })
+    }
+
     /// Whether `test` may run the owner, by name only (#6297). It may when
     /// it calls the owner, calls a production function that reaches the
     /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
