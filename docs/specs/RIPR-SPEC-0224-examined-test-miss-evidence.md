@@ -499,8 +499,10 @@ written and must not copy these gaps.
   whose test calls the owner or a function the bounded caller walk says
   reaches it ranks ahead of name order (#15026). In a single-file crate every
   inline test is `same_test_file`, so without this the window filled with
-  name-order neighbours while tests calling the owner's wrapper were cut. The
-  rule only orders rows; it never admits, drops or lifts a row a tier.
+  name-order neighbours while tests calling the owner's wrapper were cut.
+  Matching is by called name, not type, so a common name can mark an
+  unrelated row near; that only moves it within its tier. The rule only
+  orders rows; it never admits, drops or lifts a row a tier.
 - On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
   probe whose paired base line and head line each hold exactly one `Err`
   construction, with differing literal variants, and are otherwise identical
