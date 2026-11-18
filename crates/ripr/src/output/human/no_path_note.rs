@@ -51,8 +51,7 @@ mod tests {
         ExposureClass, Finding, RelatedTest, RelatedTestMiss, RelationReason, StageState, Summary,
     };
 
-    const NO_CALL_PATH: &str =
-        "related test(s) with no established call path to the changed code.";
+    const NO_CALL_PATH: &str = "related test(s) with no established call path to the changed code.";
     const LINKED: &str = "statically linked related test(s)";
 
     fn no_path_finding(tests: Vec<RelatedTest>) -> Finding {
