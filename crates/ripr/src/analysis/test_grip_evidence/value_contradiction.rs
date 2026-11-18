@@ -1225,10 +1225,9 @@ fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
             reaching = Some(initializer.clone());
         }
         if found.replace(initializer).is_some() {
+            // Without an anchor, a second plain binding is ambiguous.
+            anchor?;
             found = None;
-            if anchor.is_none() {
-                return None;
-            }
         }
     }
     match anchor {
