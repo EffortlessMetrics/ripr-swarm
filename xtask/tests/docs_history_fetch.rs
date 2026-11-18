@@ -22,13 +22,13 @@ impl Scratch {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&dir).map_err(|error| error.to_string())?;
+        eprintln!("docs history fixture: {}", dir.display());
         Ok(Self(dir))
     }
-}
 
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+    // On an assertion or a returned error, retain the fixture for diagnosis.
+    fn clean_after_pass(self) -> Result<(), String> {
+        fs::remove_dir_all(&self.0).map_err(|error| error.to_string())
     }
 }
 
@@ -227,7 +227,7 @@ fn exact_blobless_and_full_paths_classify_the_same_real_git_histories() -> Resul
         classify(&shallow, &shallow_subject, "")?,
         "docs_only=false\n"
     );
-    Ok(())
+    scratch.clean_after_pass()
 }
 
 #[test]
