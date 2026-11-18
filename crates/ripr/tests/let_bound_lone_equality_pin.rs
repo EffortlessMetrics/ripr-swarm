@@ -205,15 +205,6 @@ fn refused_bindings_and_conditions_lend_no_lone_equality_pin() -> Result<(), Str
 ",
         ),
         (
-            "the binding named again in a message argument",
-            SCORE,
-            "",
-            "",
-            "        let v = score(2);
-        assert!(v == 4, \"{}\", v);
-",
-        ),
-        (
             "a use of the binding outside an assertion",
             SCORE,
             "",
@@ -386,6 +377,87 @@ fn an_equality_the_test_never_runs_stays_unrevealed() -> Result<(), String> {
     ] {
         let class = class(SCORE, "", "", body)?;
         assert_eq!(class, ExposureClass::ReachableUnrevealed, "{name}");
+    }
+    Ok(())
+}
+
+/// A binding named again in the reviewed assertion's message arguments is
+/// formatted only once the comparison has failed, so it never decides the
+/// test: the pin reads the compared operands alone.
+#[test]
+fn a_binding_named_again_in_the_message_arguments_still_pins() -> Result<(), String> {
+    for (name, owner, body) in [
+        (
+            "assert_eq! with the binding as a message argument",
+            SCORE,
+            "        let v = score(2);
+        assert_eq!(v, 4, \"v = {}\", v);
+",
+        ),
+        (
+            "a lone equality with the binding as a message argument",
+            SCORE,
+            "        let v = score(2);
+        assert!(v == 4, \"v = {}\", v);
+",
+        ),
+        (
+            "two message arguments and a named one",
+            SCORE,
+            "        let v = score(2);
+        assert_eq!(v, 4, \"{} {:?} {got}\", v, v, got = v);
+",
+        ),
+        (
+            "a non-scalar binding read in the message",
+            LABEL,
+            "        let v = label(2);
+        assert_eq!(v, \"n2\", \"got {} ({})\", v, v.len());
+",
+        ),
+    ] {
+        let class = class(owner, "", "", body)?;
+        assert_eq!(class, ExposureClass::Exposed, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_message_mention_lends_nothing_the_compared_operands_do_not() -> Result<(), String> {
+    for (name, body) in [
+        (
+            "the binding compared with itself",
+            "        let v = score(2);
+        assert_eq!(v, v, \"{}\", v);
+",
+        ),
+        (
+            "the binding on both compared sides",
+            "        let v = score(2);
+        assert_eq!(v, v + 0, \"{}\", v);
+",
+        ),
+        (
+            "the binding only in the message of an equality",
+            "        let v = score(2);
+        assert_eq!(4, 4, \"{}\", v);
+",
+        ),
+        (
+            "the binding only in the message of a bare assert",
+            "        let v = score(2);
+        assert!(true, \"{}\", v);
+",
+        ),
+        (
+            "an input the edit cannot change",
+            "        let v = score(0);
+        assert_eq!(v, 0, \"{}\", v);
+",
+        ),
+    ] {
+        let class = class(SCORE, "", "", body)?;
+        assert_eq!(class, ExposureClass::WeaklyExposed, "{name}");
     }
     Ok(())
 }
