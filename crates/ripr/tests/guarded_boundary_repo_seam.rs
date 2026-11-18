@@ -626,27 +626,71 @@ fn a_call_to_a_same_named_function_in_another_module_is_not_the_owner() -> Resul
 
 #[test]
 fn a_rebound_compared_parameter_or_an_earlier_decision_is_not_reached() -> Result<(), String> {
-    for source in [
-        SOURCE.replace(
-            "    if order_cents >= FREE_OVER_CENTS && !express {",
-            "    let order_cents = order_cents + 1;\n    if order_cents >= FREE_OVER_CENTS && !express {",
+    // Each row's expected value is what the source really returns, so no
+    // contradicted assertion can be what refuses the credit.
+    for (source, below) in [
+        (
+            // `order_cents + 1` puts 4999 on the boundary too: both rows return 0.
+            SOURCE.replace(
+                "    if order_cents >= FREE_OVER_CENTS && !express {",
+                "    let order_cents = order_cents + 1;\n    if order_cents >= FREE_OVER_CENTS && !express {",
+            ),
+            0,
         ),
-        SOURCE.replace(
-            "    if order_cents >= FREE_OVER_CENTS && !express {",
-            "    if order_cents == FREE_OVER_CENTS {\n        return 0;\n    }\n    if order_cents >= FREE_OVER_CENTS && !express {",
+        (
+            SOURCE.replace(
+                "    if order_cents >= FREE_OVER_CENTS && !express {",
+                "    if order_cents == FREE_OVER_CENTS {\n        return 0;\n    }\n    if order_cents >= FREE_OVER_CENTS && !express {",
+            ),
+            100,
         ),
     ] {
         let seam = TempRepo::create(
             &source,
-            "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
+            &format!(
+                "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), {below});"
+            ),
         )?
         .comparison_seam()?;
-        assert_ne!(
+        assert_eq!(
             field(&seam, "/evidence/activate"),
-            Some("yes"),
+            Some("unknown"),
             "{source}: {seam}"
         );
+        assert!(missing_values(&seam).is_empty(), "never actionable: {seam}");
+        let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+        assert!(
+            summary.contains("`express = false`"),
+            "the guarded reading refuses the rows and names the guard: {summary}"
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn a_while_head_reads_its_guard() -> Result<(), String> {
+    let source = SOURCE.replace(
+        "    if order_cents >= FREE_OVER_CENTS && !express {",
+        "    while order_cents >= FREE_OVER_CENTS && !express {",
+    );
+    let missing = TempRepo::create(
+        &source,
+        "assert_eq!(shipping_cost(100, 5000, true), 200);\n    assert_eq!(shipping_cost(100, 4999, true), 200);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(
+        field(&missing, "/evidence/activate"),
+        Some("unknown"),
+        "{missing}"
+    );
+    let summary = field(&missing, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
+    assert!(summary.contains("`express = false`"), "{summary}");
+    let held = TempRepo::create(
+        &source,
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
+    )?
+    .comparison_seam()?;
+    assert_eq!(field(&held, "/evidence/activate"), Some("yes"), "{held}");
     Ok(())
 }
 

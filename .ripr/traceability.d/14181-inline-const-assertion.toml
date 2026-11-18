@@ -6,6 +6,11 @@ tests = [
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::added_inline_const_assertion_is_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_inline_const_assertion_is_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::value_const_block_keeps_its_predicate_reading",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::split_inline_const_assertion_lines_cover_the_block",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::added_split_inline_const_assertion_is_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_inline_const_assertion_is_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_assertion_arguments_are_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::split_value_const_block_keeps_its_predicate_reading",
 ]
 
 # #14181 part 2: an in-function inline const assertion names compile_time_invariant.
@@ -15,4 +20,9 @@ tests = [
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::added_inline_const_assertion_is_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_inline_const_assertion_is_not_a_runtime_predicate",
   "crates/ripr/tests/inline_const_assertion_probe_family.rs::value_const_block_keeps_its_predicate_reading",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::added_split_inline_const_assertion_is_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_inline_const_assertion_is_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::edited_split_assertion_arguments_are_not_a_runtime_predicate",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::split_value_const_block_keeps_its_predicate_reading",
+  "crates/ripr/tests/inline_const_assertion_probe_family.rs::deleted_line_above_a_split_block_is_not_a_build_time_check",
 ]

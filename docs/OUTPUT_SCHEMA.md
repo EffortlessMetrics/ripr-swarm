@@ -1189,6 +1189,13 @@ verify=complete|outcome=O|findings=N|exposed=N
   separate. Folding is display-only: every folded finding is still a gap (it
   never moves to `limits=`) and still counts in `verify=`; `--format json`
   lists each finding.
+  A `predicate` gap on a struct-literal field initializer (`<value>`) also
+  folds into the `field_construction` gap for that initializer
+  (`<field>: <value>`) when class, `FILE:LINE`, strongest related test
+  (ignoring its `miss=` wording) and `stages=` agree and the predicate names
+  no missing discriminator of its own and only `missing` lines the field row
+  also carries (#14713). The field row is kept, and
+  `next=` names the first printed row.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
@@ -1997,10 +2004,19 @@ line (exit `3`) also writes this document. Its `code` is that reason code
 `retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
 the plain-words prose without the code line. `next` is always `null`:
 these prose steps can quote a user-supplied item or selector, so the document
-never lifts one into a runnable field. The step is in `message`, except
-that a refusal pointing at text printed above it (the choice commands of
-`several_eligible_seams`, `repair_needs_item` and `ambiguous_attempts`, the
-status of `attempt_baseline_blocked`) prints that text on stderr only. For
+never lifts one into a runnable field. The step is in `message`. A
+selection refusal also carries `choices` (#14980): `several_eligible_seams`
+lists one `ripr repair <seam> --root <root>` per eligible seam, and
+`ambiguous_attempts` one `ripr continue --attempt <id> --root <root>` per
+current attempt. Each item has a plain-words `label`, a runnable `command`
+(for seams, exactly the command stderr prints; for attempts, the stderr retry
+line with that listed attempt's id filled in), and a `powershell_command`
+only when PowerShell needs a different line and an honest translation exists;
+`total` counts every choice when the listing is bounded.
+These commands are composed from typed seam and attempt ids, never lifted
+from prose. `repair_needs_item` (its canonical next-action block) and
+`attempt_baseline_blocked` (the attempt status) still print that context on
+stderr only. For
 example, `ripr continue --json` with no attempt
 writes `code: "no_current_attempt"` and `disposition: "not_started"`.
 Refusals inside the after-phase check keep their own documents
@@ -4001,7 +4017,9 @@ from the parsed syntax tree; a file that does not parse cleanly, a file read
 through the lexical fallback, and an owner the parser cannot name exactly once
 are never withheld. A `#[mutants::skip] mod name;` declaration is not followed
 into the module's own file (put `#![mutants::skip]` at the top of that file
-instead). Diff-scoped `ripr check` only; repo scope reports every owner.
+instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats withhold
+seams instead of findings, and read only the owner function's own attributes
+for now (see [Repo scope](#repo-scope-owner-opt-outs-14139) below).
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
@@ -4064,6 +4082,76 @@ the same run's `owner_opt_outs`, for example
 `explain --format agent` and `explain --from <artifact>` do not add it (the
 check artifact does not record opt-outs).
 
+#### Repo scope owner opt-outs (#14139)
+
+The `ripr check --format` repo formats
+`repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
+`repo-seams-json`, `repo-seams-md`, `repo-badge-json`, `repo-badge-shields`,
+`repo-badge-plus-json` and `repo-badge-plus-shields` withhold every seam whose
+owner function itself carries the attribute. An enclosing `impl`, `trait`,
+module or file skip does not withhold a repo seam yet (tracked in #15000), so
+those seams keep reporting. The decision is
+the same parser-backed recognizer, read once when the seam is extracted and
+carried with the seam through the classified seam caches; the cache key's
+`files_content_hash` covers the attribute's bytes, so adding or removing it
+never replays the other state. A withheld seam is removed from the format's
+`seams` list and from every count derived from it (`metrics`, class counts,
+`unsuppressed_exposure_gaps`, `top_files`, the badge count). It is not
+reclassified. The JSON formats add one top-level member, emitted only when at
+least one seam was withheld, so a workspace without the attribute keeps
+byte-identical repo output and no schema version changes:
+
+```json
+"owner_opt_outs": {"withheld": 2, "reason": "owner_mutants_skip", "seam_ids": ["...", "..."], "owners": ["src/lib.rs::fn_level"]}
+```
+
+`withheld` counts seams (not findings or canonical gaps); `seam_ids` names each
+withheld seam and `owners` each withheld seam's `owner` (`file::name`, the same
+key every repo seam records), both sorted.
+
+Owners are resolved by source line, so the opt-out attaches only when no other
+function starts or ends on the seam's lines. A seam on a line shared with
+another function (two functions written on one line, say) keeps reporting
+rather than inherit a neighbour's opt-out, even when its own owner carries the
+attribute: the line cannot say which function holds it.
+
+`ripr outcome` and `ripr agent verify` compare two snapshots by seam id. A seam
+is excluded from both sides before matching when either snapshot names its id
+in `owner_opt_outs.seam_ids` or its recorded `owner` in `owner_opt_outs.owners`.
+The owner match is what covers an inserted attribute line: a seam id hashes the
+seam's byte offset, so inserting `#[mutants::skip]` gives the owner's seams new
+ids on the withheld side, and the other snapshot's old ids are matched by owner.
+Same-named owners (cfg-gated twins) are told apart by a `#L<start_line>` owner
+suffix, which the inserted line moves as well. Every withheld owner is
+therefore also matched by its base key (the suffix removed when present): every
+seam on either side whose owner has the same base key is excluded too. An
+unsuffixed withheld owner reaches suffixed seams on the other side, which covers
+an edit that deletes one twin and skips the survivor. That also excludes the
+twin's seams, the conservative direction, and they are disclosed like any other
+excluded seam.
+A seam withheld on one side only (a `ripr pilot` snapshot, which keeps every
+seam, against a `ripr check` one, or the attribute added or removed between two
+snapshots) is therefore never reported as removed, resolved or new. Those
+documents then add a top-level `owner_opt_outs` member (`withheld`, `reason`,
+`seam_ids` and `owners` of everything excluded, with
+`"excluded_from": "both_snapshots"`), the Markdown summary and the review
+receipt's `what_changed` name the excluded count, and nothing changes when no
+snapshot withheld a seam. A snapshot whose `owner_opt_outs` does not name every
+withheld seam in `seam_ids` and at least one owner in `owners` is refused, as
+byte-bounded and seam-limited snapshots are.
+
+Other consumers of a check-produced `repo-exposure-json` read only its
+remaining `seams` and do not read `owner_opt_outs`: `ripr gate
+--repo-exposure`, gap ledgers and the baselines derived from them never see a
+withheld seam, and a baseline entry recorded before the attribute was added
+reads as resolved there (not reconciled yet; tracked in #14898). The Markdown formats
+print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
+under the summary table (`repo-exposure-md`) or the seam total
+(`repo-seams-md`). The repo badges withhold the seams from their count and add
+no member, like the diff-scope badges. A seam-limit cut
+(`RIPR_REPO_EXPOSURE_SEAM_LIMIT`) is applied before withholding, so its
+`seams_analyzed` counts withheld seams too.
+
 The MCP adapter consumes the same set (#14138): `ripr mcp --stdio` serves no
 canonical item for a finding id in `CheckOutput::withheld_finding_ids`. The gap
 list and `ripr://snapshot/{snapshot_id}` resource disclose
@@ -4075,8 +4163,11 @@ repair-card or repair-start read of a withheld id refuses with the typed
 `docs/interop/mcp.md`.
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-the repo-scope formats
-(`repo-*`), which do not read the attribute at all. The canonical next-action stop
+the repo formats `repo-sarif`,
+`repo-sarif-compact` and `agent-seam-packets-json`, which `ripr check` renders
+from the full inventory; and the repo-exposure artifacts written by `ripr
+pilot` and the agent workflow snapshots. Those keep every seam and carry no
+`owner_opt_outs` member. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 

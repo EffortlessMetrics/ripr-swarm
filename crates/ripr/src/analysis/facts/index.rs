@@ -154,6 +154,12 @@ pub struct RustIndex {
     /// composition pass; transient like `execution_module_parents`, and
     /// cleared on any membership change so a stale verdict cannot linger.
     pub(crate) cfg_kani_module_files: BTreeSet<PathBuf>,
+    /// Files whose tests composition withheld because every execution root
+    /// is a target `cargo test` does not run (#14962: `[lib] test = false`
+    /// and kin, from cargo metadata). Transient like
+    /// `cfg_kani_module_files`; the same-run extension reads it to refuse a
+    /// merge that revives those tests (#12947).
+    pub(crate) cargo_test_skipped_files: BTreeSet<PathBuf>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -223,6 +229,8 @@ pub struct FileData {
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// See [`FileFacts::external_docs`].
+    pub(crate) external_docs: Option<bool>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -398,7 +406,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 13)?;
+        let mut state = serializer.serialize_struct("FileFacts", 14)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -415,6 +423,7 @@ impl serde::Serialize for FileFactsView<'_> {
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
+        state.serialize_field("external_docs", &self.external_docs)?;
         state.end()
     }
 }
@@ -652,6 +661,7 @@ impl RustIndex {
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -669,6 +679,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -711,6 +722,7 @@ impl RustIndex {
                     source,
                     item_scopes,
                     macro_candidates,
+                    external_docs,
                 },
                 functions,
                 tests,
@@ -749,6 +761,7 @@ impl RustIndex {
         self.call_identity_memos.clear();
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear
@@ -1067,6 +1080,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -1083,6 +1097,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         })
     }
     #[cfg(test)]
