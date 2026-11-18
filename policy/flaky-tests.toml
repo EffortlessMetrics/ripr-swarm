@@ -307,3 +307,15 @@ evidence = ["run 42509427189 (PR #13789, job 128819051627)", "#13912 records the
 symptom = "Error: \"expected 1 disk reads, got 2\" on PRs that do not touch LSP code; the test passes alone and under nextest."
 root_cause = "reset_disk_equality_read_cache_for_tests() cleared the process-wide DISK_EQUALITY_DIGEST_CACHE as well as the thread-local read counter. Under cargo test the module's tests run in parallel threads, so a peer test's reset evicted this test's cached digest between its first and second lookup and the next lookup read the disk again. Fixed by #13912: the reset now clears only the calling thread's counter, and every test digests its own per-thread temp path. nextest runs one process per test, so the required lane never showed it."
 guard = "peer_reset_keeps_a_cached_disk_digest"
+
+[[flake]]
+id = "python-runtime-deadline-live-descendant-at-return"
+test = "installed_python_typescript_journeys::python_runtime_deadline_reaps_primary_and_stops_descendant"
+lane = "merge-queue test shard 4 (Linux)"
+class = "process-tree"
+status = "fixed"
+first_seen = "2026-11-13"
+evidence = ["merge-queue run for PR #14491, test shard 4 (a Rust analyzer change; run id not retained)", "#14503"]
+symptom = "Error: \"shared runtime owner left a live descendant at return\" on a queue entry that does not touch process ownership."
+root_cause = "Read from source, not reproduced: the shared process owner sent SIGKILL to the owned group at the deadline and reaped its leader without waiting for the other group members to reach a terminal state, so the test's /proc read straight after return could still see the descendant running under load. Fixed by #14503: on Linux the owner observes group quiescence under one signal-bound settlement deadline before it reaps the leader, and an expired or unobservable settlement is a retained cleanup failure rather than a success."
+guard = "linux_wait_refuses_expired_settlement_before_reaping"
