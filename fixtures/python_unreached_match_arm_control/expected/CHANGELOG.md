@@ -218,3 +218,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_unreached_match_arm_control (18)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_unreached_match_arm_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

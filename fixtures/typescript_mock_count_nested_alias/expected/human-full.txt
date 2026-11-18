@@ -90,5 +90,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_mock_count_nested_alias/input --diff <cwd>/fixtures/typescript_mock_count_nested_alias/diff.patch --mode fast probe:src_notify.ts:typescript_preview:ea4f6421
   ripr context --root <cwd>/fixtures/typescript_mock_count_nested_alias/input --diff <cwd>/fixtures/typescript_mock_count_nested_alias/diff.patch --mode fast --at probe:src_notify.ts:typescript_preview:ea4f6421
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

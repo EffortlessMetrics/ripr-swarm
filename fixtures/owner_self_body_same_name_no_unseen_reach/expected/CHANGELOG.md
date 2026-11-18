@@ -199,3 +199,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (17)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

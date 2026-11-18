@@ -367,3 +367,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — property_macro_noop_property_assertion (29)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_property_assertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

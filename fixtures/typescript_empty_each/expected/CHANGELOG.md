@@ -309,3 +309,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_empty_each (25)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_empty_each --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

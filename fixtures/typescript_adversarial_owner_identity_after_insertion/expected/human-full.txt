@@ -164,7 +164,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
 
-
 Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
   analyzed: 2 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or

@@ -165,3 +165,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_assertion_helper_modified_code (14)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_modified_code --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

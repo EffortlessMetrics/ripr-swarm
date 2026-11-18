@@ -101,3 +101,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_call_chain_subclass_override (9)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_call_chain_subclass_override --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

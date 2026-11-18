@@ -194,6 +194,8 @@ The block ends with one blank line. A trailing `Note:` after it (an empty
 range caveat, a working-tree or preview-language disclosure) opens directly
 after that blank line, so exactly one blank line separates them; a report
 with no trailing note keeps its final blank line (#14318).
+`--format human-full` follows the same rule: its last finding block ends
+with one blank line, and a trailing `Note:` opens directly after it.
 
 Hidden finding locations use the same shared location renderer as selected
 and full findings: paths under the analysis root carry `./` and a
@@ -715,7 +717,9 @@ cannot donate shared content. Existing evidence-window disclosures stay local.
 When a visible finding contains multiline literal content, the CLI keeps the
 complete unshared layout so source text and whitespace cannot collide with
 catalogue/reference structure. Without CLI navigation, the public library preserves the previous complete
-per-finding report bytes, including repeated evidence and guidance.
+per-finding report bytes, including repeated evidence and guidance; only the
+blank line before a trailing `Note:` follows the one-blank-line rule above
+(#14318).
 
 When `ripr check` renders `human-full` itself, each rendered finding ends with
 a `Drill in:` block holding the same `ripr explain` / `ripr context --at`

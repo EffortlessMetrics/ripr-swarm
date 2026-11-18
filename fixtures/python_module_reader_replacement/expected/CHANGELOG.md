@@ -228,3 +228,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_module_reader_replacement (19)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_module_reader_replacement --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

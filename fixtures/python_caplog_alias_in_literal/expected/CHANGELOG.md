@@ -178,3 +178,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_caplog_alias_in_literal (15)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_in_literal --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

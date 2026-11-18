@@ -283,3 +283,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_self_comparing_oracle (23)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_self_comparing_oracle --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

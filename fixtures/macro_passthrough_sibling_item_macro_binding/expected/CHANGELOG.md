@@ -163,3 +163,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (13)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
