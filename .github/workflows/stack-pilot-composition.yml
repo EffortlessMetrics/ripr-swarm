@@ -1,0 +1,101 @@
+name: Stack Pilot Composition
+on:
+  pull_request:
+    types: [labeled]
+    branches:
+      - codex/stack-qualification-probe/trunk
+      - codex/stack-qualification-probe/lower
+  merge_group:
+    types: [checks_requested]
+    branches:
+      - codex/stack-qualification-probe/trunk
+permissions:
+  contents: read
+jobs:
+  composition:
+    name: ${{ (github.event_name == 'merge_group' || github.event.label.name == 'merge-ready') && 'Stack Pilot Composition' || 'Stack Pilot Nonrequest' }}
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name == 'merge_group' || github.event.label.name == 'merge-ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate fixture composition
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          REPO = 'EffortlessMetrics/ripr-swarm'
+          PREFIX = 'codex/stack-qualification-probe/'
+          
+          def require(ok, message):
+              if not ok:
+                  raise SystemExit(message)
+          
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          kind = os.environ['GITHUB_EVENT_NAME']
+          require(os.environ['GITHUB_REPOSITORY'] == REPO, 'wrong repository')
+          if kind == 'pull_request':
+              pr = event['pull_request']
+              require(event['action'] == 'labeled' and event['label']['name'] == 'merge-ready', 'not an explicit pilot request')
+              require(pr['head']['repo']['full_name'] == REPO and pr['base']['repo']['full_name'] == REPO, 'foreign repository')
+              pair = (pr['base']['ref'], pr['head']['ref'])
+              require(pair in [(PREFIX+'trunk', PREFIX+'lower'), (PREFIX+'lower', PREFIX+'upper')], 'wrong pilot branch pair')
+              upper = pair[1] == PREFIX+'upper'
+              base, head = pr['base']['sha'], pr['head']['sha']
+              subject = 'H'
+          elif kind == 'merge_group':
+              group = event['merge_group']
+              require(event['action'] == 'checks_requested', 'not a queue request')
+              require(group['base_ref'] == 'refs/heads/'+PREFIX+'trunk', 'wrong queue base')
+              base, head = group['base_sha'], group['head_sha']
+              require(head == os.environ['GITHUB_SHA'], 'wrong event G')
+              upper = None
+              subject = 'G'
+          else:
+              raise SystemExit('unsupported event')
+          for sha in (base, head):
+              require(re.fullmatch('[0-9a-f]{40}', sha) is not None, 'invalid commit identity')
+              require(git('cat-file', '-t', sha).strip() == b'commit', 'not a commit')
+          require(git('rev-parse', 'HEAD').decode().strip() == head, 'checkout does not match exact subject')
+          require(git('merge-base', '--is-ancestor', base, head) == b'', 'base is not an ancestor')
+          
+          def fixture(name, expected, required):
+              path = '.stack-pilot/'+name+'.txt'
+              entry = git('ls-tree', head, '--', path)
+              if not entry:
+                  require(not required, 'missing '+path)
+                  return None
+              require(entry.startswith(b'100644 blob '), 'wrong fixture mode')
+              data = git('show', head+':'+path)
+              require(data == expected, 'wrong '+path+' contents')
+              return hashlib.sha256(data).hexdigest()
+          
+          low = fixture('lower', b'stack-pilot-lower-v1\n', True)
+          high = fixture('upper', b'stack-pilot-upper-v1\n', upper is True)
+          require(upper is not False or high is None, 'lower H unexpectedly contains upper fixture')
+          receipt = {
+              'schema': 'stack-pilot-composition-v1', 'subject': subject,
+              'base_sha': base, 'candidate_sha': head,
+              'candidate_tree': git('rev-parse', head+'^{tree}').decode().strip(),
+              'candidate_parents': git('show', '-s', '--format=%P', head).decode().split(),
+              'composition': 'lower_and_upper' if high else 'lower_only',
+              'lower_sha256': low, 'upper_sha256': high,
+              'changed_paths': [p.decode('utf-8', 'backslashreplace') for p in git('diff', '--no-renames', '--name-only', '-z', base, head).split(b'\0') if p],
+              'claim': 'fixture composition only; not PR membership, production qualification or G-to-M settlement',
+          }
+          rendered = json.dumps(receipt, sort_keys=True, indent=2)
+          print(rendered)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('### Exact pilot composition\n```json\n'+rendered+'\n```\n')
