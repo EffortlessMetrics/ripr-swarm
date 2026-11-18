@@ -1,0 +1,9 @@
+# Repo-scope consumption of the shared owner-value sink (#15071).
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_masked_owner_values_cannot_strongly_grip_either_tail_seam",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observed_owner_values_keep_both_tail_seams_strong",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observing_assertion_keeps_credit_beside_a_masked_assertion",
+]
+code = ["crates/ripr/src/analysis/test_grip_evidence.rs"]

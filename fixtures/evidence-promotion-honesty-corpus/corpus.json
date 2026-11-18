@@ -20246,6 +20246,58 @@
           "class": "exposed"
         }
       ]
+    },
+    {
+      "id": "rust_repo_owner_value_masked",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-masked.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/owner-value-masked",
+      "vector": "repo_owner_return_value_must_reach_the_compared_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "test": "at_the_boundary",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_owner_value_observed",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-observed.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/owner-value-observed",
+      "vector": "repo_owner_return_value_must_reach_the_compared_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "test": "at_the_boundary",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
     }
   ]
 }

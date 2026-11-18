@@ -807,6 +807,28 @@ Proof: `crates/ripr/src/analysis/classify/owner_value_sink.rs` unit tests,
 and `crates/ripr/tests/predicate_owner_value_masked.rs` through
 `check_workspace` (every row of the issue's two tables).
 
+## Repo-scope owner-value masking (#15071)
+
+Repo `predicate_boundary` and `return_value` seams consult the same
+`owner_field_value_flow` owner for the whole returned value. `Masked` refuses
+strong discrimination and caps the assertion's related-test strength at weak;
+`Absent` and `Reaches` retain existing evidence. Both the full report and the
+compact repo reading use this rule. An observing assertion beside a masked
+one retains its own credit, regardless of assertion order.
+
+For `over(qty)` returning `qty >= 10`,
+`assert_eq!(Some(over(10)).is_some(), true)` leaves both seams weakly gripped;
+`assert_eq!(Some(over(10)), Some(true))` keeps both strongly gripped. The
+return seam follows the same rule because the discarded payload is precisely
+the owner's returned value. This is whole-owner value flow, not new field
+projection or alias resolution. Static evidence only; no runtime claim.
+
+Proof: the `repo_*` controls in
+`crates/ripr/tests/predicate_owner_value_masked.rs`, and the regenerable
+`rust_repo_owner_value_masked` / `rust_repo_owner_value_observed` honesty-corpus
+cases. Their selectors cover both seams, and the public API tests require
+exactly one predicate and one return seam.
+
 ## A predicate that sets one field of the returned record (#14562)
 
 A predicate probe whose changed line is exactly one field initializer of a

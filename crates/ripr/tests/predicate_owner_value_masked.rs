@@ -41,18 +41,24 @@ impl Drop for Scratch {
     }
 }
 
-/// The predicate finding for `qty > 10` changed to `qty >= 10`, with `body`
-/// as the body of the one unit test beside the owner.
-fn predicate_finding(body: &str) -> Result<Value, String> {
+/// A small subject shared by the diff and repo-scope readings.
+fn subject(body: &str) -> Result<Scratch, String> {
     let scratch = Scratch::create()?;
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
     let lib = format!(
         "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
     );
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
+
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+
+    Ok(scratch)
+}
+
+fn predicate_finding(body: &str) -> Result<Value, String> {
+    let scratch = subject(body)?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
     let diff_file = scratch.0.join("change.diff");
     std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
@@ -154,6 +160,99 @@ fn an_observing_assertion_beside_a_masked_one_keeps_the_credit() -> Result<(), S
     ] {
         let finding = predicate_finding(body)?;
         assert_eq!(finding["classification"], "exposed", "{body}: {finding}");
+    }
+    Ok(())
+}
+
+/// The real repo renderer, including per-test grades and canonical repair
+/// evidence, must agree about both seams on the owner's boolean tail (#15071).
+fn assert_repo_grips(body: &str, expected: &str) -> Result<(), String> {
+    let scratch = subject(body)?;
+    let output = ripr::app::repo_seam_inventory_input(CheckInput {
+        root: scratch.0.clone(),
+        mode: Mode::Fast,
+        ..CheckInput::default()
+    });
+    // Exercise the compact path cold before the full renderer can populate caches.
+    let summary = render_check(&output, &OutputFormat::RepoExposureSummaryJson)?;
+    let summary: Value = serde_json::from_str(&summary).map_err(|error| error.to_string())?;
+    assert_eq!(summary["metrics"]["raw_seams"], 2, "{body}: {summary}");
+    assert_eq!(
+        summary["metrics"]["grip_class"][expected], 2,
+        "{body}: {summary}"
+    );
+    let rendered = render_check(&output, &OutputFormat::RepoExposureJson)?;
+    let report: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    assert_eq!(report["run_status"], "complete");
+    let seams: Vec<_> = report["seams"]
+        .as_array()
+        .ok_or("missing repo seams")?
+        .iter()
+        .filter(|seam| seam["owner"] == "src/lib.rs::over")
+        .collect();
+    assert_eq!(
+        seams.len(),
+        2,
+        "must inspect both actual owner seams: {report}"
+    );
+    for kind in ["predicate_boundary", "return_value"] {
+        let seam = seams
+            .iter()
+            .find(|seam| seam["kind"] == kind)
+            .ok_or_else(|| format!("missing {kind}: {report}"))?;
+        assert_eq!(seam["grip_class"], expected, "{body}: {seam}");
+        let strength = if expected == "strongly_gripped" {
+            "strong"
+        } else {
+            "weak"
+        };
+        let related = seam["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        assert_eq!(related.len(), 1, "{body}: {seam}");
+        assert_eq!(related[0]["oracle_strength"], strength, "{body}: {seam}");
+        let discriminate = &seam["evidence_record"]["evidence_path"]["discriminate"];
+        assert_eq!(
+            discriminate["state"],
+            if strength == "strong" { "yes" } else { "weak" },
+            "{body}: {seam}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_masked_owner_values_cannot_strongly_grip_either_tail_seam() -> Result<(), String> {
+    for body in MASKED {
+        assert_repo_grips(body, "weakly_gripped")?;
+    }
+    assert_repo_grips(
+        "let got = Some(over(10)); assert_eq!(got.is_some(), true);",
+        "weakly_gripped",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn repo_observed_owner_values_keep_both_tail_seams_strong() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10), true);",
+        "assert_eq!(Some(over(10)), Some(true));",
+        "let got = Some(over(10)); assert_eq!(got, Some(true));",
+        "assert_eq!((over(10), 1).0, true);",
+    ] {
+        assert_repo_grips(body, "strongly_gripped")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_observing_assertion_keeps_credit_beside_a_masked_assertion() -> Result<(), String> {
+    for body in [
+        "assert_eq!(Some(over(10)).is_some(), true); assert_eq!(over(10), true);",
+        "assert_eq!(over(10), true); assert_eq!(Some(over(10)).is_some(), true);",
+    ] {
+        assert_repo_grips(body, "strongly_gripped")?;
     }
     Ok(())
 }
