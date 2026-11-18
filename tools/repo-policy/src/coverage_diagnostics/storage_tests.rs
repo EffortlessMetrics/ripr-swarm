@@ -382,10 +382,14 @@ fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result
     )
     .map_err(|e| e.to_string())?;
     let mut command = std::process::Command::new("sh");
-    command.args(["-c", "sleep 0.15; exit 37"]);
+    let release = fixture.0.join("release");
+    command.args(["-c", "i=0; while [ ! -f \"$1\" ] && [ $i -lt 200 ]; do sleep 0.01; i=$((i+1)); done; [ -f \"$1\" ] || exit 99; exit 37", "observer-child"]).arg(&release);
     let mut output = Vec::new();
     let mut sequence = 0;
     let status = run_observed(command, Duration::from_millis(10), 1, |event| {
+        if event["phase"] == "during" {
+            fs::write(&release, b"release").expect("release child");
+        }
         let path = if event["phase"] == "final" {
             fixture.0.join("missing")
         } else {
