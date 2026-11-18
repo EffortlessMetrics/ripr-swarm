@@ -3274,6 +3274,7 @@ fn sole_forwarding_wrapper<'a>(
                 mentions_identifier(body, &wrapper.name) || mentions_identifier(body, &owner.name)
             })
         })
+        || !names_stay_in_their_readers(index, &[owner, wrapper], test_summaries, owner, wrapper)
     {
         return None;
     }
@@ -3287,6 +3288,51 @@ fn sole_forwarding_wrapper<'a>(
     (tail.split_whitespace().collect::<String>()
         == forwarded.split_whitespace().collect::<String>())
     .then_some(wrapper)
+}
+
+/// Whether every source line naming the owner or the wrapper sits inside the
+/// owner, the wrapper or a related test, or is a plain unaliased `use` line.
+/// Any other mention (a `static TOTAL: fn(u32) -> u32 = cash_total;`, a
+/// `const`, a trait impl or an aliased import) can feed the wrapper or owner
+/// an input the fold never reads, so the wrapper reading declines.
+fn names_stay_in_their_readers(
+    index: &RustIndex,
+    readers: &[&FunctionSummary],
+    test_summaries: &[&TestSummary],
+    owner: &FunctionSummary,
+    wrapper: &FunctionSummary,
+) -> bool {
+    let inside_reader = |path: &Path, line: usize| {
+        readers.iter().any(|function| {
+            function.file == path && (function.start_line..=function.end_line).contains(&line)
+        }) || test_summaries
+            .iter()
+            .any(|test| test.file == path && (test.start_line..=test.end_line).contains(&line))
+    };
+    index.files().iter().all(|(path, file)| {
+        let source: &str = &file.source;
+        if !source.contains(owner.name.as_str()) && !source.contains(wrapper.name.as_str()) {
+            return true;
+        }
+        mask_comments_and_strings(source)
+            .lines()
+            .enumerate()
+            .all(|(at, line)| {
+                let names = |name: &str| {
+                    line.split(|character: char| {
+                        !character.is_ascii_alphanumeric() && character != '_'
+                    })
+                    .any(|token| token == name)
+                };
+                if !names(&owner.name) && !names(&wrapper.name) {
+                    return true;
+                }
+                let trimmed = line.trim_start();
+                let plain_use = (trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
+                    && !names("as");
+                plain_use || inside_reader(path, at + 1)
+            })
+    })
 }
 
 /// The plain identifier parameter names of the function text `function`
@@ -3639,6 +3685,12 @@ mod tests {
             "    assert_eq!(cash_total(105), 105);\n    assert_eq!(round_to_nickel(105), 105);"
         )?);
         assert!(!read("", "    assert_eq!(105, 105);")?);
+        // A function pointer outside any function body feeds the wrapper an
+        // input the fold never reads (Devin review on #15070).
+        assert!(!read(
+            "static TOTAL: fn(u32) -> u32 = cash_total;\n",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
         // A macro body that names the wrapper may feed it other inputs.
         assert!(!read(
             "macro_rules! total {\n    ($c:expr) => { cash_total($c + 1) };\n}\n",
