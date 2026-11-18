@@ -1,0 +1,99 @@
+name: RIPR Protected Workflow Pilot
+on:
+  merge_group:
+    types: [checks_requested]
+permissions:
+  contents: read
+jobs:
+  exact-graph:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.event.action == 'checks_requested' && github.event.merge_group.base_ref == 'refs/heads/codex/headgreen-v2/bad/trunk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      complete: ${{ steps.scope.outputs.complete }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact frozen isolated candidate
+        id: scope
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          original = "3171ec5ab2d4b9d4a19acb30972c6bc9a76e1bc4"
+          heads = (
+              "1eeafb8d748d4f93182707015dabd8eb5c10b409",
+              "40df00a340720d6998d7c3a930f51d30187f3bf5",
+              "dcd66f8135fc714379b51687663feb585328f554",
+          )
+          refs = "refs/heads/codex/headgreen-v2/bad/trunk"
+
+          def require(ok, reason):
+              if not ok:
+                  raise SystemExit(reason)
+
+          def git(*args):
+              return subprocess.check_output(
+                  ["git", "-c", "core.hooksPath=/dev/null", *args], timeout=30,
+              ).strip().decode()
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          group = event["merge_group"]
+          head, base = group["head_sha"], group["base_sha"]
+          require(os.environ["GITHUB_REPOSITORY"] == "EffortlessMetrics/ripr-swarm", "wrong repo")
+          require(os.environ["GITHUB_EVENT_NAME"] == "merge_group" and event["action"] == "checks_requested", "wrong event")
+          require(group["base_ref"] == refs, "not isolated trunk")
+          require(head == os.environ["GITHUB_SHA"] == git("rev-parse", "HEAD"), "wrong exact G")
+          require(all(re.fullmatch("[0-9a-f]{40}", v) for v in (head,base)), "invalid SHAs")
+          require(not any(x.startswith("merge.") and x.endswith(".driver") for x in git("config","--name-only","--list").splitlines()), "custom driver")
+          chain = []
+          current = head
+          while current != original:
+              require(len(chain) < len(heads), "foreign earlier entry or wrong trunk")
+              parents = git("show", "-s", "--format=%P", current).split()
+              require(len(parents) == 1, "not native squash chain")
+              chain.append(current)
+              current = parents[0]
+          chain.reverse()
+          require(chain and base == (chain[-2] if len(chain) > 1 else original), "wrong native event base")
+          previous = original
+          for rounded, exact_h in zip(chain, heads):
+              require(git("merge-tree","--write-tree",previous,exact_h) == git("rev-parse",rounded+"^{tree}"), "native tree mismatch")
+              previous = rounded
+          complete = len(chain) == len(heads)
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+              print("complete="+str(complete).lower(),file=out)
+          print(json.dumps({"candidate":head,"event_base":base,"frozen_base":original,"complete":complete}))
+  product:
+    if: needs.exact-graph.outputs.complete == 'true'
+    needs: [exact-graph]
+    name: RIPR Protected Exact Product Pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.merge_group.head_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Test exact RIPR contract package
+        env:
+          EXACT_G: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_G"
+          cargo +1.95.0 test --locked -p ripr-contract
+      - name: Reject composed bad middle after product work
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          if any(json.loads(p.read_text())["state"] != "good" for p in Path(".headgreen-pilot").glob("*.json")):
+              raise SystemExit("bad-middle control: complete candidate must not pass")
