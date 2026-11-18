@@ -166,3 +166,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (14)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`
