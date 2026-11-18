@@ -381,28 +381,55 @@ fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result
         "MemTotal: 100 kB\nMemAvailable: 30 kB\nSwapTotal: 20 kB\nSwapFree: 5 kB\n",
     )
     .map_err(|e| e.to_string())?;
+    let during_source = fixture.0.join("during-meminfo");
+    fs::write(
+        &during_source,
+        "MemTotal: 100 kB\nMemAvailable: 20 kB\nSwapTotal: 20 kB\nSwapFree: 4 kB\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (mut release, child_input) =
+        std::os::unix::net::UnixStream::pair().map_err(|e| e.to_string())?;
+    let timeout_socket = release.try_clone().map_err(|e| e.to_string())?;
+    let (done, finished) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        if finished.recv_timeout(Duration::from_secs(5)).is_err() {
+            let _ = timeout_socket.shutdown(std::net::Shutdown::Both);
+        }
+    });
     let mut command = std::process::Command::new("sh");
-    let release = fixture.0.join("release");
-    command.args(["-c", "i=0; while [ ! -f \"$1\" ] && [ $i -lt 200 ]; do /bin/sleep 0.01; i=$((i+1)); done; [ -f \"$1\" ] || exit 99; exit 37", "observer-child"]).arg(&release);
+    command
+        .args([
+            "-c",
+            "read answer || exit 99; [ \"$answer\" = release ] || exit 99; exit 37",
+        ])
+        .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            child_input,
+        )));
     let mut output = Vec::new();
     let mut sequence = 0;
     let mut observer_error = None;
-    let status = run_observed(command, Duration::from_millis(10), 1, |event| {
-        if event["phase"] == "during"
-            && let Err(error) = fs::write(&release, b"release")
-        {
-            observer_error = Some(error.to_string());
-        }
+    let result = run_observed(command, Duration::from_millis(10), 1, |event| {
         let path = if event["phase"] == "final" {
             fixture.0.join("missing")
+        } else if event["phase"] == "during" {
+            during_source.clone()
         } else {
             source.clone()
         };
         if let Err(error) = observe_event(&mut output, &event, &[], &path, sequence, 0) {
             observer_error = Some(error.to_string());
         }
+        if event["phase"] == "during" {
+            std::thread::sleep(Duration::from_millis(100));
+            if let Err(error) = writeln!(release, "release") {
+                observer_error = Some(error.to_string());
+            }
+        }
         sequence += 1;
-    })?;
+    });
+    let _ = done.send(());
+    watchdog.join().map_err(|_panic| "watchdog failed")?;
+    let status = result?;
     if let Some(error) = observer_error {
         return Err(error);
     }
@@ -418,11 +445,26 @@ fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result
     assert_eq!(summaries.len(), 3);
     assert_eq!(summaries[0]["event"]["phase"], "before");
     assert_eq!(summaries[1]["event"]["phase"], "during");
-    assert_eq!(summaries[1]["host_memory"]["mem_available"], 30);
-    assert_eq!(summaries[1]["host_memory"]["swap_free"], 5);
+    assert_eq!(summaries[0]["host_memory"]["mem_available"], 30);
+    assert_eq!(summaries[1]["host_memory"]["mem_available"], 20);
+    assert_eq!(summaries[1]["host_memory"]["swap_free"], 4);
     assert_eq!(summaries[2]["event"]["phase"], "final");
     assert_eq!(summaries[2]["event"]["shell_status"], 37);
     assert_eq!(summaries[2]["event"]["periodic_samples"], 1);
     assert_eq!(summaries[2]["host_memory"]["status"], "unavailable");
+    Ok(())
+}
+
+#[test]
+fn oversized_summary_keeps_bounded_memory_in_partial_record() -> Result<()> {
+    let value = json!({"kind": "summary", "sequence": 9, "event": {"phase": "during"}, "host_memory": {"status": "available", "mem_available": 30, "swap_free": 5}, "padding": "x".repeat(LINE_BYTES)});
+    let (line, partial) = encoded_record(&value);
+    assert!(partial);
+    assert!(line.len() <= LINE_BYTES);
+    let record: Value =
+        serde_json::from_str(line.trim().trim_start_matches("ripr-coverage-storage "))
+            .map_err(|e| e.to_string())?;
+    assert_eq!(record["kind"], "partial_record");
+    assert_eq!(record["host_memory"]["mem_available"], 30);
     Ok(())
 }

@@ -519,21 +519,28 @@ fn encoded_record(value: &Value) -> (String, bool) {
     let mut line = format!("\nripr-coverage-storage {value}\n");
     let partial = line.len() > LINE_BYTES;
     if partial {
-        line = format!(
-            "\nripr-coverage-storage {}\n",
-            json!({
-                "schema_version": "coverage_storage.v1",
-                "sequence": value["sequence"].as_u64(),
-                "kind": "partial_record",
-                "phase": value["event"]["phase"].as_str().filter(|phase| {
-                    matches!(*phase, "before" | "during" | "final")
-                }),
-                "exit": value["event"]["exit"].as_i64(),
-                "signal": value["event"]["signal"].as_i64(),
-                "partial": true,
-                "error": "receipt_byte_limit",
-            })
-        );
+        let mut fallback = json!({
+            "schema_version": "coverage_storage.v1",
+            "sequence": value["sequence"].as_u64(),
+            "kind": "partial_record",
+            "phase": value["event"]["phase"].as_str().filter(|phase| {
+                matches!(*phase, "before" | "during" | "final")
+            }),
+            "exit": value["event"]["exit"].as_i64(),
+            "signal": value["event"]["signal"].as_i64(),
+            "partial": true,
+            "error": "receipt_byte_limit",
+        });
+        if value["kind"] == "summary" {
+            fallback["host_memory"] = value["host_memory"].clone();
+        }
+        line = format!("\nripr-coverage-storage {fallback}\n");
+        if line.len() > LINE_BYTES {
+            fallback
+                .as_object_mut()
+                .map(|object| object.remove("host_memory"));
+            line = format!("\nripr-coverage-storage {fallback}\n");
+        }
     }
     (line, partial)
 }

@@ -32,6 +32,13 @@ fn parse(text: &str) -> Value {
     let mut values = [None; 4];
     for line in text.lines() {
         let Some((name, rest)) = line.split_once(':') else {
+            if line
+                .split_whitespace()
+                .next()
+                .is_some_and(|name| FIELDS.contains(&name))
+            {
+                return json!({"status": "unavailable", "reason": "malformed_field"});
+            }
             continue;
         };
         let Some(index) = FIELDS.iter().position(|field| *field == name) else {
@@ -71,6 +78,10 @@ mod tests {
         );
         assert_eq!(
             read(input.replace("30 kB", "bad kB").as_bytes())["reason"],
+            "malformed_field"
+        );
+        assert_eq!(
+            read(format!("{input}MemAvailable 99 kB\n").as_bytes())["reason"],
             "malformed_field"
         );
         assert_eq!(
