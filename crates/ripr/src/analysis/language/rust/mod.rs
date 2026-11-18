@@ -16,6 +16,7 @@
 //! diff, dispatches to this adapter, and applies sort + summary on the
 //! returned findings.
 
+mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
@@ -1829,6 +1830,10 @@ fn apply_probe_and_oracle_limits(
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    // #14951: after every reach-witness limit (an uncalled owner has none) and
+    // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
+    // limit-free, whichever related-test roles the finding carries.
+    boundary_input::apply_limit(finding, probe, index);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);

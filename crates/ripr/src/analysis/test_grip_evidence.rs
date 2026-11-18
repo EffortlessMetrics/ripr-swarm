@@ -3749,6 +3749,16 @@ fn observed_argument_selection(
     ObservedArgumentSelection::UnresolvedBoundaryOperands
 }
 
+/// The typed limit the unresolved boundary-input summary names (#14951).
+const BOUNDARY_INPUT_LIMIT: crate::domain::StaticLimitKind =
+    crate::domain::StaticLimitKind::ActivationBoundaryInputUnresolved;
+
+/// The activate-stage summary for an unresolved boundary input. It leads with
+/// the typed `activation_boundary_input_unresolved` token, so the evidence
+/// record and [`TestGripEvidence::names_static_limit`] read the kind the
+/// producer chose instead of re-deriving it from the sentence (#14951). The
+/// sentence keeps the iterator / closure / local-or-computed sub-case, which
+/// the evidence record carries as the repair route.
 fn boundary_activation_operands_unresolved_summary(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
@@ -3758,19 +3768,75 @@ fn boundary_activation_operands_unresolved_summary(
         .lines()
         .next()
         .unwrap_or(seam.expression());
+    let limit = BOUNDARY_INPUT_LIMIT.as_str();
     if boundary_activation_operands_are_iterator_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
         )
     } else if boundary_activation_operands_are_closure_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
     } else {
         format!(
-            "Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
         )
     }
+}
+
+/// #14951: whether [`activate_evidence`] names
+/// `activation_boundary_input_unresolved` for a predicate seam whose owner no
+/// test calls, so `ripr check` can carry the same typed limit on the diff
+/// finding the seam withholds.
+///
+/// With no owner call there is no observed value, no boundary-equality
+/// overlap and no held guard, so the activate stage reduces to this order:
+/// an undeclared or ambiguous boundary constant names its own limit, an
+/// input-free-but-unfoldable local boundary names this one, an unheld bool
+/// guard names its own, and otherwise an operand that binds to no owner
+/// argument (or binds only through a projection nothing observed) names this
+/// one. The caller supplies the premise (no test calls the owner, at least one
+/// related test); `boundary_input_limit_agrees_with_the_seam_for_uncalled_owners`
+/// pins this against the full producer.
+pub(in crate::analysis) fn boundary_input_unresolved_for_uncalled_owner(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: &FunctionSummary,
+) -> bool {
+    if owner_fn.name.is_empty() || !requires_concrete_activation_values(seam) {
+        return false;
+    }
+    let constant = boundary_constant_operand(seam, index, owner_fn);
+    if constant
+        .as_ref()
+        .is_some_and(|constant| !constant.lookup.is_declared_once())
+    {
+        return false;
+    }
+    let boundary = predicate_boundary_operand(seam, owner_fn);
+    if boundary
+        .as_ref()
+        .is_some_and(PredicateBoundaryOperand::local_unresolved)
+    {
+        return true;
+    }
+    if guarded_boundary_unheld(
+        seam,
+        owner_fn,
+        index,
+        boundary.as_ref(),
+        constant.as_ref(),
+        &[],
+    )
+    .is_some()
+    {
+        return false;
+    }
+    let selection = observed_argument_selection(seam, owner_fn);
+    matches!(
+        selection,
+        ObservedArgumentSelection::UnresolvedBoundaryOperands
+    ) || selection.requires_projection()
 }
 
 fn boundary_activation_operands_are_iterator_derived(
