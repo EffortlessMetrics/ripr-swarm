@@ -5,6 +5,7 @@ mod module_extraction;
 pub(super) mod panic_marker;
 mod shared_execution_context;
 mod unread_owner_result_field;
+mod unselected_arm;
 mod warm_entrypoint;
 
 use super::related_tests::context::*;

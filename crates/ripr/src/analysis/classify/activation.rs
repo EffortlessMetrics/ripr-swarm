@@ -4587,6 +4587,64 @@ fn missing_error_variant_discriminator(
 /// it to keep an unselected arm from counting as activated.
 pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 
+/// #12078: the repo seam view's reading of [`missing_match_arm_discriminator`]
+/// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
+/// select other arms grips the arm as `ripr check` reads it, never strongly.
+/// The seam has no diff, so the arm is read as one whose pattern did not
+/// change: the probe is the owner's own source line at the seam. The index
+/// is read as complete. That holds for the workspace inventories `repair`,
+/// `agent brief` and repo exposure read. The check screen's in-file seam view
+/// indexes only the finding's file and its related tests; there a rival
+/// outside the subset could go unseen, but that view only chooses which
+/// refusal to print (it never starts a repair), and `ripr repair` re-reads the
+/// full inventory. The same refusals apply as in `check` (a same-named
+/// function, a helper or unreadable use of the owner, a computed input), each
+/// leaving the arm unnamed.
+pub(in crate::analysis) fn repo_seam_unselected_arm(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    let probe = Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    // The selector read is cheap and refuses most arms (a computed or
+    // guarded arm, a non-parameter scrutinee) before the workspace lookups.
+    super::arm_selection::ArmSelector::establish(&probe, owner)?;
+    let fact =
+        missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)?;
+    // The check-side callee-identity defeat (`classifier::evidence`): a test
+    // file that imports the owner's name from a foreign path may call that
+    // item instead, so its bare call's input says nothing about which arm
+    // the owner runs (#15006 review). A same-named function in the test's
+    // package is already refused by the unique-name read above.
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
+    let imports_foreign = related_tests.iter().any(|test| {
+        index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        })
+    });
+    (!imports_foreign).then_some(fact)
+}
+
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
 /// discriminator when every related test calls the owner directly and every
 /// call's scrutinee input provably selects a different arm (`reason(Some(5))`
@@ -4603,6 +4661,19 @@ fn missing_match_arm_discriminator(
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may select the arm and no mention scan below can see it.
+    // An unestablished container may be one, so only a known non-trait
+    // owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return None;
+    }
     // A same-named function elsewhere makes a direct call ambiguous, and a
     // partial index cannot show that the name is unique.
     if related_tests.is_empty()
@@ -4613,6 +4684,16 @@ fn missing_match_arm_discriminator(
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
         .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Every test's inputs first: one test that selects the arm, or an input
+    // that does not read, refuses before the workspace-wide lookups below.
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
     // Built once per probe: the helper walk below looks names up for every
     // related test.
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
@@ -4622,16 +4703,20 @@ fn missing_match_arm_discriminator(
             .or_default()
             .push(function);
     }
-    let mut inputs = Vec::new();
-    for test in related_tests {
-        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
-            return None;
-        }
-        let observed = selector.observed_inputs(test)?;
-        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
-            return None;
-        }
-        inputs.extend(observed.inputs);
+    if related_tests
+        .iter()
+        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
+    {
+        return None;
+    }
+    // A call's input names the first arm it enters, not every arm it runs
+    // (#12078 review): an owner that may run again from inside its own call
+    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
+    // that calls it back, an operator or `Display` impl that names it) can
+    // run the arm from a call that selects another one. Read after every
+    // test, so a test that selects the arm skips the workspace scan.
+    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
+        return None;
     }
     inputs.sort();
     inputs.dedup();
@@ -4727,6 +4812,29 @@ fn missing_guard_entry_discriminator(
     Some(guard_unentered_fact(&guard, inputs, flow_sinks))
 }
 
+/// Whether `owner` may run again from inside its own call, so a test input
+/// that selects one arm can still run another. The same refusals as
+/// [`missing_guard_entry_discriminator`]: a callee may call it back
+/// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
+/// read, or anything outside the related tests names it
+/// ([`owner_named_outside_related_tests`]): its own body (a direct,
+/// `Self::`-qualified or `self.` self-call), a helper passed as a function
+/// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
+/// and strings are masked; any other mention refuses even when it cannot
+/// run inside the owner's call (a production caller the owner never reaches,
+/// a same-named local), which costs coverage but never names an arm a test
+/// may run.
+fn owner_may_call_itself(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    owner_may_reenter(owner, functions_by_name)
+        || invokes_unread_macro(&owner.body)
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
+}
+
 /// Whether a function the owner reaches through its calls names the owner
 /// or invokes an unread macro, so the owner may run again with an argument
 /// computed inside the call chain rather than passed by a test.
@@ -4810,14 +4918,41 @@ fn may_reach_owner_unread(
 }
 
 /// Whether any indexed file mentions `owner` more often than the related
-/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
-/// paths do not count ([`unread_mentions`]); every other mention must be
-/// one a related test's body holds, since only those calls are read.
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions
+/// in the owner's `fn` header and in plain `use` paths do not count
+/// ([`unread_mentions`]), nor do mentions inside a function that provably
+/// never runs ([`never_runs`]); every other mention must be one a related
+/// test's body holds, since only those calls are read.
 fn owner_named_outside_related_tests(
     index: &crate::analysis::rust_index::RustIndex,
     owner: &str,
     related_tests: &[&TestSummary],
 ) -> bool {
+    // A mention inside a function nothing can run (#15006 review: an unused
+    // `advertised_small_price()` wrapper) cannot run the owner either.
+    let unreachable = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name != owner
+                && unread_mentions(&function.body, owner) > 0
+                && never_runs(index, function)
+        })
+        .collect::<Vec<_>>();
+    // A nested `fn` is its own function and also sits in its parent's body:
+    // count each mention once, from the outermost function only.
+    let unreachable = unreachable
+        .iter()
+        .filter(|inner| {
+            !unreachable.iter().any(|outer| {
+                outer.id != inner.id
+                    && outer.file == inner.file
+                    && outer.start_line <= inner.start_line
+                    && inner.end_line <= outer.end_line
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
     index.files().iter().any(|(path, file)| {
         let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
@@ -4825,11 +4960,125 @@ fn owner_named_outside_related_tests(
             .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
             .map(|test| unread_mentions(&test.body, owner))
             .sum();
-        unread_mentions(&file.source, owner) > read
+        let unreached: usize = unreachable
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| unread_mentions(&function.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read + unreached
             || doc_comment_names(&file.source, owner)
             || crate::analysis::extract::mask_comments_and_strings(&file.source)
                 .contains("include!")
     })
+}
+
+/// Whether `function` provably never runs: an attribute-free production
+/// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
+/// attribute) outside any trait and outside an attributed `impl`, not
+/// `main`, whose name appears nowhere in the workspace but its own header
+/// (no call, `use`, comment or string names it; not a raw `r#` name; no
+/// file uses `paste` or `concat_idents`), and whose body declares no item and
+/// invokes no macro at all. A trait method runs from calls that never name
+/// it, an attribute may register a function with a harness or a linker, a
+/// nested `impl` runs without its parent, and a macro may expand to either,
+/// so any of those keeps the function reachable.
+fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    function.source_role == FunctionSourceRole::Production
+        && function.attrs.is_empty()
+        && function.impl_attrs.is_empty()
+        && matches!(
+            function.item.container,
+            FunctionContainer::Free | FunctionContainer::Inherent { .. }
+        )
+        && function.name != "main"
+        && !function.name.is_empty()
+        // `fn r#name` is called as `name`, which the count below would miss.
+        && !function.name.starts_with("r#")
+        // An item nested in the body can run without its parent: an `impl`
+        // (`impl From<Forward> for u32` reached by `.into()`), an exported
+        // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
+        && !declares_free_standing_item(&function.body)
+        // A macro it invokes may expand to such an item (`reg!(price_cents)`
+        // emitting an `impl Drop`), which no file read here shows. A read
+        // macro's name may be rebound (`macro_rules! dbg`), so none is
+        // trusted here.
+        && !invokes_any_macro(&function.body)
+        // Every whole-word spelling of the name, in code, comments and
+        // strings alike, must be its own `fn` header: a string can name it
+        // to a derive (`#[serde(default = "medium_price")]`) that runs it.
+        && index
+            .files()
+            .iter()
+            .map(|(_, file)| whole_word_count(&file.source, &function.name))
+            .sum::<usize>()
+            == 1
+        // A macro that pastes identifiers together can spell a call to it
+        // that no file holds whole.
+        && !index.files().iter().any(|(_, file)| {
+            whole_word_count(&file.source, "paste") > 0
+                || whole_word_count(&file.source, "concat_idents") > 0
+        })
+}
+
+/// Whether `body` holds an item that runs or is visible without the
+/// enclosing function running: any `impl`, `macro_rules!`, `extern` or
+/// attribute. Comments and strings are masked. Any `#` refuses, since an
+/// attribute may put whitespace or a comment between `#` and `[`
+/// (`# [unsafe(export_name = "cb")]`); an `impl Trait` return type or a raw
+/// identifier also refuses, which only keeps the function counted as
+/// reachable.
+fn declares_free_standing_item(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains('#')
+        || ["impl", "macro_rules", "extern"]
+            .iter()
+            .any(|word| whole_word_count(&masked, word) > 0)
+}
+
+/// Whether `body` invokes any macro (`name!(`, `name! [`, `name !{`),
+/// standard or not. Comments and strings are masked.
+fn invokes_any_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let head = masked[..offset].trim_end();
+        let name_start = head
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &head[name_start..];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
+    })
+}
+
+/// How many times `word` appears in `source` with no identifier character on
+/// either side, unmasked.
+fn whole_word_count(source: &str, word: &str) -> usize {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    source
+        .match_indices(word)
+        .filter(|(offset, _)| {
+            !source[..*offset].chars().next_back().is_some_and(is_word)
+                && !source[offset + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count()
 }
 
 /// Whether a doc comment in `source` names `owner`, or a doc attribute
