@@ -796,8 +796,9 @@ Integer and char arms read the same way (#15027): `n == 1 || n == 2` with
 `n` declared as a primitive integer (`u8` to `u128`, `usize`, `i8` to
 `i128`, `isize`), and `c == ',' || c == ';'` with `c: char`. Every arm
 uses one literal kind. Integer literals are plain decimal, with no sign,
-suffix, underscore, radix prefix or leading zero, so two distinct spellings
-are two distinct values (`5` and `05`, `5_u32` or `0x5` decline). A char
+suffix, underscore, radix prefix or leading zero, and at most 18 digits, so
+two distinct spellings are two distinct values (`5` and `05`, `5_u32` or
+`0x5` decline). A longer literal declines too, which costs only recall. A char
 literal is one unescaped character that cannot read as an operator, so
 `'|'`, `'!'`, `'('` and any escape decline. A newtype, a float, a reference
 or a `u8` compared with a char literal declines. The infection summary names

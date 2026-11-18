@@ -827,11 +827,10 @@ fn predicate_as_owner_tail(
     // then flips the whole chain, so the chain's change is the returned
     // change. Every other connective tail keeps no sink: a changed operand
     // of `x > 1 || y` may be masked by `y`.
-    let appended_arm = matches!(
-        binary.op_kind(),
-        Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or))
-    ) && super::infection::appended_equality_arm(probe, owner).is_some();
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
+    let op = binary.op_kind();
+    let appended_arm = matches!(op, Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or)))
+        && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(op, Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
