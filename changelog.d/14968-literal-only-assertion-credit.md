@@ -6,4 +6,5 @@
   `reachable_unrevealed` and an `unwrap()` / `unwrap_err()` keeps its weak
   reading. A literal inside an `if`, `match` arm or other guard keeps its
   earlier reading. An assertion that reads the function's result keeps its
-  class (#14968).
+  class, and the dropped literal never hands credit to an unrelated assertion
+  beside it (#14968).

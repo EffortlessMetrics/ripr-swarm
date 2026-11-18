@@ -968,14 +968,30 @@ outermost known assertion macro (`assert!`, `assert_eq!`, `assert_ne!`, their
 answers yes when every compared operand holds only numeric literals,
 `true`/`false`, string or character literals and operators. Such an
 assertion that is also a top-level statement (or the tail expression) of the
-test body, at its own line, is unconditional: reveal treats it as absent.
-It supplies no oracle, does not count toward the single-assertion fallback,
-and does not displace the implicit reading the test has without it. A test
-whose only assertions are such literals is listed with
-`assertion_not_observing`.
+test body, at its own line, is unconditional: reveal drops it from the
+assertions it credits. It supplies no oracle. A test whose only assertions
+are such literals is listed with `assertion_not_observing`.
 
-Invariant: adding an unconditional literal-only assertion never changes a
-test's class from the same test without it, in either direction.
+The dropped literal still counts toward the single-assertion fallback, so
+dropping it never hands that fallback to an unrelated sibling assertion:
+
+```rust
+let mut s = S { v: vec![] }; s.add(5); let o = other();
+assert!(true); assert!(!o.is_empty());      // side_effect stays reachable_unrevealed
+let _ = g(2); assert!(true); assert_eq!(other(), 4);  // error_path stays reachable_unrevealed
+```
+
+Only an implicit observer that is not an assertion macro and calls the owner
+by name itself (`g(2).unwrap_err()`, `g(3).unwrap()`) is counted as in the
+test without the literal, so the literal does not displace that reading.
+
+Invariant: an unconditional literal-only assertion never raises a test's
+class, and never lowers it below the same test without it, except where that
+no-literal reading was itself single-assertion fallback credit on a sibling
+that does not call the owner (`assert!(!o.is_empty())` or
+`assert_eq!(other(), 4)` above, which read `weakly_exposed` without the
+literal). There the test keeps the `reachable_unrevealed` it had before this
+rule.
 
 ```rust
 g(2).unwrap_err(); assert!(true);              // weakly_exposed, as without assert!(true)
@@ -1017,7 +1033,10 @@ Known limits:
 Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
 `crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
 `crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
-(bare-call, owner-read, guarded-literal and implicit-observer rows).
+(bare-call, owner-read, guarded-literal, implicit-observer and
+unrelated-sibling rows), and
+`implicit_owner_call_observers_are_plain_reads_of_the_owner_call` in
+`crates/ripr/src/analysis/classify/literal_assertion.rs`.
 
 ## Test Mapping
 

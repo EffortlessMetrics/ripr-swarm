@@ -7,4 +7,6 @@ tests = [
   "crates/ripr/tests/literal_only_assertion_credit.rs::assertions_that_read_the_owner_keep_their_class",
   "crates/ripr/tests/literal_only_assertion_credit.rs::a_guarded_literal_assertion_keeps_its_guards_reading",
   "crates/ripr/tests/literal_only_assertion_credit.rs::an_unconditional_literal_assertion_never_lowers_the_implicit_reading",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling",
+  "crates/ripr/src/analysis/classify/literal_assertion.rs::tests::implicit_owner_call_observers_are_plain_reads_of_the_owner_call",
 ]

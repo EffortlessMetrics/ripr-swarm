@@ -4,10 +4,12 @@
 //! Such a test reads at most `reachable_unrevealed`. An assertion that reads
 //! the owner's result, directly or through a binding, keeps its class.
 //!
-//! Only an unconditional (top-level) literal-only assertion is dropped, and it
-//! is dropped as if absent: adding one never lowers a test's class below the
-//! same test without it. A literal inside an `if`, `match` arm or other guard
-//! runs only on a path the test's own read selects, so it keeps its reading.
+//! Only an unconditional (top-level) literal-only assertion is dropped. It
+//! still counts toward the single-assertion fallback, so it never hands that
+//! fallback to an unrelated sibling, while an `unwrap()` / `unwrap_err()` of
+//! the owner's own call keeps the reading it has without the literal. A
+//! literal inside an `if`, `match` arm or other guard runs only on a path the
+//! test's own read selects, so it keeps its reading.
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 
@@ -273,5 +275,111 @@ fn an_unconditional_literal_assertion_never_lowers_the_implicit_reading() -> Res
             "{ assert!(true); let _ = g(3); }",
             UNREVEALED,
         ),
+        // An `unwrap_err()` on a binding reads nothing without the literal,
+        // and the literal adds nothing to it.
+        (
+            "bound_unwrap_err_alone",
+            "{ let r = g(2); r.unwrap_err(); }",
+            UNREVEALED,
+        ),
+        (
+            "bound_unwrap_err_assert_true",
+            "{ let r = g(2); r.unwrap_err(); assert!(true); }",
+            UNREVEALED,
+        ),
     ])
+}
+
+/// The class of the candidate-current `family` finding on the changed line of
+/// `template`, where `@@` reads `1` at base and `2` at head.
+fn marked_class(key: &str, template: &str, family: &str) -> Result<String, String> {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("literal_only_assertion_credit")
+        .join(key);
+    if root.exists() {
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"issue14968_sibling_subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let marked = template
+        .lines()
+        .position(|line| line.contains("@@"))
+        .ok_or_else(|| format!("{key}: no @@ marker"))?;
+    let changed_line = marked + 1;
+    let marked_text = template.lines().nth(marked).unwrap_or_default();
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed_line},1 +{changed_line},1 @@\n-{}\n+{}\n",
+        marked_text.replace("@@", "1"),
+        marked_text.replace("@@", "2"),
+    );
+    std::fs::write(root.join("src/lib.rs"), template.replace("@@", "2"))
+        .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let findings = report
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family.as_str() == family && finding.probe.location.line == changed_line
+        })
+        .collect::<Vec<_>>();
+    let class = match findings.as_slice() {
+        [finding] => finding.class.as_str().to_string(),
+        _ => return Err(format!("{key}: {family}: {:#?}", report.findings)),
+    };
+    std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(class)
+}
+
+const SIDE_EFFECT_OWNER: &str = "pub struct S { pub v: Vec<i32> }\nimpl S {\n    pub fn add(&mut self, a: i32) {\n        self.v.push(a + @@);\n    }\n}\npub fn other() -> Vec<i32> { vec![1] }\n";
+const RESULT_OWNER_WITH_OTHER: &str = "pub fn g(a: i32) -> Result<i32, String> {\n    if a > @@ { Ok(a) } else { Err(\"small\".into()) }\n}\npub fn other() -> i32 { 4 }\n";
+
+fn with_test(owner: &str, body: &str) -> String {
+    format!(
+        "{owner}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn t() {{\n        {body}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling() -> Result<(), String> {
+    let mut credited = Vec::new();
+    for (key, owner, body, family) in [
+        (
+            "side_effect_literal_beside_unrelated_read",
+            SIDE_EFFECT_OWNER,
+            "let mut s = S { v: vec![] }; s.add(5); let o = other(); assert!(true); assert!(!o.is_empty());",
+            "side_effect",
+        ),
+        (
+            "side_effect_literal_eq_beside_unrelated_eq",
+            SIDE_EFFECT_OWNER,
+            "let mut s = S { v: vec![] }; s.add(5); assert_eq!(1, 1); assert_eq!(other(), vec![1]);",
+            "side_effect",
+        ),
+        (
+            "error_path_literal_beside_unrelated_eq",
+            RESULT_OWNER_WITH_OTHER,
+            "let _ = g(2); assert!(true); assert_eq!(other(), 4);",
+            "error_path",
+        ),
+    ] {
+        let class = marked_class(key, &with_test(owner, body), family)?;
+        if class != "reachable_unrevealed" {
+            credited.push(format!("{key}: {family} reads {class}"));
+        }
+    }
+    // The unrelated sibling observes nothing the owner does.
+    assert_eq!(credited, Vec::<String>::new());
+    Ok(())
 }

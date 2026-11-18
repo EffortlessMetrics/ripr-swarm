@@ -2695,10 +2695,11 @@ fn analyze_related_assertions(
             Vec::new()
         };
         // #14968: an unconditional literal-only assertion (`assert!(true)`
-        // as a top-level statement) reads nothing, so the test reads exactly
-        // as it would without it: it is neither credited nor counted toward
-        // the single-assertion fallback, and it never displaces the implicit
-        // unwrap / `unwrap_err` / smoke reading the test has without it.
+        // as a top-level statement) reads nothing, so it is never credited.
+        // It still counts toward the single-assertion fallback (below), except
+        // for an implicit observer of the owner's own call, so it neither
+        // hands that fallback to an unrelated sibling nor displaces the
+        // `unwrap` / `unwrap_err` reading the test has without it.
         let literal_only = test
             .assertions
             .iter()
@@ -2785,12 +2786,23 @@ fn analyze_related_assertions(
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
-        // for an otherwise unrelated surviving oracle. An unconditional
-        // literal-only assertion (#14968) is absent rather than refused: the
-        // count is the one the test has without it.
-        let assertion_count = test.assertions.len().saturating_sub(literal_only);
+        // for an otherwise unrelated surviving oracle. A dropped unconditional
+        // literal-only assertion (#14968) still counts, so it never hands the
+        // fallback to an unrelated sibling assertion; only an implicit
+        // observer of the owner's own call (`g(2).unwrap_err()`) gets the
+        // count the test has without the literal.
+        let full_assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            let assertion_count = if literal_only > 0
+                && super::literal_assertion::is_implicit_owner_call_observer(
+                    assertion,
+                    match_context.owner_callee,
+                ) {
+                full_assertion_count.saturating_sub(literal_only)
+            } else {
+                full_assertion_count
+            };
             // #11552: per assertion, because the same proximity test may hold
             // one assertion on the owner's enum and another on a different
             // function's result of the same enum.
