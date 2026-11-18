@@ -32,8 +32,8 @@ use std::collections::BTreeSet;
 /// Spellings that make item order observable somewhere in a file.
 const ORDER_OBSERVERS_IN_FILE: [&str; 2] = ["macro_rules", "macro_use"];
 
-/// Spellings that make a block's position observable.
-const POSITION_OBSERVERS_IN_BLOCK: [&str; 2] = ["line!", "column!"];
+/// Macros that make a block's position observable.
+const POSITION_MACROS: [&str; 2] = ["line", "column"];
 
 /// Block keywords under which item order carries no meaning.
 const UNORDERED_OWNERS: [&str; 3] = ["mod", "impl", "trait"];
@@ -187,6 +187,23 @@ fn masked_text<'s>(side: &'s Side<'_>, (first, last): (usize, usize)) -> Option<
     (first..=last).map(|line| side.masked_text(line)).collect()
 }
 
+/// Whether `masked` code invokes `line!` or `column!`. Rust allows blanks
+/// and comments (blanked here) between the name and its `!`, also across
+/// lines.
+fn invokes_position_macro(masked: &str) -> bool {
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    POSITION_MACROS.iter().any(|name| {
+        masked.match_indices(name).any(|(at, _)| {
+            let before = at.checked_sub(1).and_then(|at| masked.as_bytes().get(at));
+            let after = &masked[at + name.len()..];
+            let after = after.trim_start();
+            !before.is_some_and(|byte| is_word(*byte))
+                && after.starts_with('!')
+                && !after.starts_with("!=")
+        })
+    })
+}
+
 /// Maximal runs of consecutive line numbers, as `(first, last)`.
 fn runs(lines: impl IntoIterator<Item = usize>) -> Vec<(usize, usize)> {
     let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -246,11 +263,9 @@ pub(super) fn moved_item_lines(
             == 1;
         let masked = masked_text(&old, removed_run);
         let same_code = masked.is_some() && masked == masked_text(&new, added_run);
-        let position_observed = masked.iter().flatten().any(|line| {
-            POSITION_OBSERVERS_IN_BLOCK
-                .iter()
-                .any(|observer| line.contains(observer))
-        });
+        let position_observed = masked
+            .as_ref()
+            .is_some_and(|lines| invokes_position_macro(&lines.join("\n")));
         if !unique_on_old_side || !same_code || position_observed {
             continue;
         }
@@ -357,9 +372,23 @@ mod tests {
         assert_eq!(counts(&old, &new, &changed), (0, 0));
 
         // A source position macro inside the block.
-        let old = "fn where_am_i() -> u32 {\n    line!()\n}\n\nfn other() {}\n\nfn last() {}\n";
+        for invocation in [
+            "line!()",
+            "line !()",
+            "line /* here */ !()",
+            "column\n    !()",
+        ] {
+            let old = format!(
+                "fn where_am_i() -> u32 {{\n    {invocation}\n}}\n\nfn other() {{}}\n\nfn last() {{}}\n"
+            );
+            let last = old.lines().count();
+            let (new, changed) = moved(&old, 1, last - 3, last);
+            assert_eq!(counts(&old, &new, &changed), (0, 0), "{invocation}");
+        }
+        // A name that only ends in `line`, and a negated `line`, are not it.
+        let old = "fn f(line: bool, outline: bool) -> bool {\n    line != outline\n}\n\nfn other() {}\n\nfn last() {}\n";
         let (new, changed) = moved(old, 1, 4, 7);
-        assert_eq!(counts(old, &new, &changed), (0, 0));
+        assert_eq!(counts(old, &new, &changed), (3, 3));
     }
 
     #[test]
