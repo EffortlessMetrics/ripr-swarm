@@ -3880,6 +3880,47 @@ fold that fails, overflows the declared width or meets a float, an unsupported
 method or a `let` is not evaluable and changes nothing. It asks nothing of
 the oracle's strength and is not a runtime claim.
 
+#### Through one forwarding wrapper (#15034)
+
+Condition 2 declines whenever another function holds the owner, because that
+caller may feed the owner inputs the tests never write. One caller feeds the
+owner only what the tests write: a forwarding wrapper. The owner's only holder
+must be a free production function `w` whose whole body is one call
+`owner(e1, .., en)`. Each `ei` is `w`'s own plain parameter or a closed integer
+expression over those parameters and integer literals (`+ - * / %` and
+parentheses), and every parameter of `w` reaches some argument. Nothing else
+may hold `w` (no function, test helper or `macro_rules!` body). When the
+arguments are `w`'s parameters in declaration order, a test's `w(args)` is
+`owner(args)` and the reading folds the owner as written. Otherwise each owner
+parameter in the owner's body, the change and its baseline is replaced by its
+argument expression, and the reading folds that composition at the test's
+literal inputs. An owner body with a `let`, `match`, loop, closure, range,
+nested `fn`, path or macro, or one that uses a name of `w`'s parameters for anything
+but an owner parameter, declines that substitution. Every related test must
+call `w`, and none may name the owner. The summary names the wrapper ("Every
+related test calls `cash_total`, which passes its arguments straight to the
+owner, ...", or "which computes the owner's arguments from its own").
+
+`fn round_to_nickel(cents: u32) -> u32 { cents / 5 * 5 }` changed to
+`(cents + 2) / 5 * 5`, reached through
+`pub fn cash_total(cents: u32) -> u32 { round_to_nickel(cents) }`, reads
+`weak` under `assert_eq!(cash_total(105), 105)`, since 105 gives 105 on both
+versions. It stays `yes` under `assert_eq!(cash_total(103), 105)`. Through
+`round_to_nickel(cents + 1)`, `cash_total(105)` hands the owner 106, where both
+versions give 105, so it reads `weak`. `cash_total(103)` hands it 104, where
+they give 100 and 105, so it stays `yes`. A wrapper that drops a parameter
+(`fn w(a, b) { owner(b) }`), passes anything but a closed integer expression
+(`owner(c.min(3))`, `owner(LIMIT)`, `owner(c as u32)`), or is itself called by
+another function keeps today's reading. So does a wrapper whose name or the
+owner's name is declared by another function anywhere in the index, a body
+that is not a single expression (`return owner(c);`, a block, a statement), a
+body holding a comment or a string or char literal, a generic signature, or a
+receiver. So does any occurrence of the owner's or `w`'s name outside the
+text of the owner, `w` and the related tests, other than on a single-line
+plain unaliased `use`: a `static TOTAL: fn(u32) -> u32 = w;` or a `const`
+could feed `w` an input the reading never sees, even on `w`'s own closing
+line. Like the rest of this section, this only downgrades.
+
 ### A partly changed struct literal confirms only through its changed fields (#10916)
 
 A probe on a returned struct literal (`Request { url: self.url, timeout_ms:
