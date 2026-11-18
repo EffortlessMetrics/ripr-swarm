@@ -1693,7 +1693,7 @@ fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total(
         )
     );
     assert_eq!(avoidable.1, total.1);
-    // The committed corpus has rows a spec Reject example asks to abstain.
+    // The committed corpus has rows a spec example asks to abstain.
     assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
     Ok(())
 }
