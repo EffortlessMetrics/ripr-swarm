@@ -156,6 +156,15 @@ impl TempRepo {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        // The printed commands quote a path that contains whitespace, and the
+        // relations below match and split them unquoted. Refuse such a host
+        // here with a clear message instead of failing later on a count.
+        if root.to_string_lossy().contains(char::is_whitespace) {
+            return Err(format!(
+                "temp root {} contains whitespace; set TMPDIR (TEMP on Windows) to a path without it for this suite",
+                root.display()
+            ));
+        }
         let repo = Self { root };
         for (name, content) in files {
             repo.write(name, content)?;
@@ -173,18 +182,26 @@ impl TempRepo {
             .map_err(|error| format!("write {} failed: {error}", path.display()))
     }
 
+    /// A path as the product prints it in a command: on Windows `\` is a
+    /// separator and renders as `/` (`agent::loop_commands`), and the binary
+    /// accepts that spelling as an argument too. Elsewhere the text is kept.
     fn path(&self, name: &str) -> String {
-        self.root.join(name).display().to_string()
+        let text = self.root.join(name).display().to_string();
+        if cfg!(windows) {
+            text.replace('\\', "/")
+        } else {
+            text
+        }
     }
 
-    /// Runs the built binary. Progress lines are switched off so stdout and
-    /// stderr carry only the command's own output.
+    /// Runs the built binary. `RIPR_PROGRESS=0` silences progress for the
+    /// machine formats; a human-format run may still print progress lines on
+    /// stderr, which no relation compares.
     fn ripr(&self, args: &[&str]) -> Result<Ran, String> {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(args)
             .current_dir(&self.root)
             .env("RIPR_PROGRESS", "0")
-            .env("NO_COLOR", "1")
             .output()
             .map_err(|error| format!("start ripr {args:?} failed: {error}"))?;
         Ok(Ran {
