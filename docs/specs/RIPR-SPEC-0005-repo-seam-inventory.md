@@ -306,10 +306,10 @@ diff scope applies to findings (`owner_opt_out::decide_in_file`,
 RIPR-SPEC-0450), made once per production file at extraction, so `ripr check`
 and the repo formats withhold the same owners. It shares diff scope's
 fail-closed rules: only parser-backed attributes count, an owner the parsed
-tree does not name exactly once on its `fn` line gets no enclosing scope, a
-seam on a line another function starts or ends on keeps reporting, and a
+tree does not name exactly once on its `fn` line gets no enclosing scope, and a
 `#[mutants::skip] mod name;` declaration is not followed into the module's own
-file. A same-named owner outside the skipped scope keeps its seams. Withheld
+file. Repo scope adds one rule of its own, from its line-based owner lookup: a
+seam on a line another function starts or ends on keeps reporting. A same-named owner outside the skipped scope keeps its seams. Withheld
 seams leave every count and are disclosed in `owner_opt_outs`
 (`docs/OUTPUT_SCHEMA.md`, "Repo scope owner opt-outs").
 
