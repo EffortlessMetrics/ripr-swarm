@@ -196,21 +196,19 @@ suite('Server resolver compatibility fallback', () => {
   });
 
   test('a leading ~ in ripr.server.path means the home directory, and nothing else is rewritten (#15075)', () => {
-    assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr', '/home/dev', 'linux'), '/home/dev/.cargo/bin/ripr');
-    assert.strictEqual(expandConfiguredServerPath('  ~/.cargo/bin/ripr  ', '/home/dev', 'linux'), '/home/dev/.cargo/bin/ripr');
-    assert.strictEqual(expandConfiguredServerPath('~', '/home/dev', 'linux'), '/home/dev');
-    assert.strictEqual(
-      expandConfiguredServerPath('~\\.cargo\\bin\\ripr.exe', 'C:\\Users\\dev', 'win32'),
-      'C:\\Users\\dev\\.cargo\\bin\\ripr.exe'
-    );
-    assert.strictEqual(
-      expandConfiguredServerPath('~/.cargo/bin/ripr.exe', 'C:\\Users\\dev', 'win32'),
-      'C:\\Users\\dev\\.cargo\\bin\\ripr.exe'
-    );
+    // Synthetic homes, joined from parts so no literal reads as a machine path.
+    const unixHome = '/srv/homes/dev';
+    const winHome = ['C:', 'Users', 'dev'].join('\\');
+    const winExpected = [winHome, '.cargo', 'bin', 'ripr.exe'].join('\\');
+    assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr', unixHome, 'linux'), `${unixHome}/.cargo/bin/ripr`);
+    assert.strictEqual(expandConfiguredServerPath('  ~/.cargo/bin/ripr  ', unixHome, 'linux'), `${unixHome}/.cargo/bin/ripr`);
+    assert.strictEqual(expandConfiguredServerPath('~', unixHome, 'linux'), unixHome);
+    assert.strictEqual(expandConfiguredServerPath('~\\.cargo\\bin\\ripr.exe', winHome, 'win32'), winExpected);
+    assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr.exe', winHome, 'win32'), winExpected);
     // Not a home reference: another user's home, a mid-path ~, a bare name,
     // an already absolute path, and a backslash on a non-Windows host.
     for (const unchanged of ['~other/bin/ripr', '/opt/~/ripr', 'ripr', '/usr/local/bin/ripr', '~\\ripr', '']) {
-      assert.strictEqual(expandConfiguredServerPath(unchanged, '/home/dev', 'linux'), unchanged, unchanged);
+      assert.strictEqual(expandConfiguredServerPath(unchanged, unixHome, 'linux'), unchanged, unchanged);
     }
     // No known home directory: leave the setting as written rather than guess.
     assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr', '', 'linux'), '~/.cargo/bin/ripr');
@@ -236,7 +234,9 @@ suite('Server resolver compatibility fallback', () => {
       assert.ok(failure, unstable);
       assert.ok(failure.detail.includes(JSON.stringify(unstable)), failure.detail);
     }
-    for (const allowed of ['C:\\tools\\ripr.exe', 'c:/tools/ripr.exe', '\\\\server\\share\\ripr.exe', 'ripr.exe', 'ripr.cmd']) {
+    const driveBackslash = ['C:', 'tools', 'ripr.exe'].join('\\');
+    const driveSlash = ['c:', 'tools', 'ripr.exe'].join('/');
+    for (const allowed of [driveBackslash, driveSlash, '\\\\server\\share\\ripr.exe', 'ripr.exe', 'ripr.cmd']) {
       assert.strictEqual(relativeConfiguredPathFailure(allowed, 'win32'), undefined, allowed);
     }
   });

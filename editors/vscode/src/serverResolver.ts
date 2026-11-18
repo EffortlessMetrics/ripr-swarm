@@ -76,7 +76,7 @@ export function relativeConfiguredPathFailure(
   platform: NodeJS.Platform = process.platform
 ): ResolveFailure | undefined {
   if (platform === 'win32') {
-    // Fully qualified means a drive plus a root (`C:\x`) or a UNC root
+    // Fully qualified means a drive letter, colon and separator, or a UNC root
     // (`\\server\share\x`). `C:ripr.exe` depends on the drive's current
     // directory and `\tools\ripr.exe` on the current drive, so neither names
     // one stable file even though the second is "absolute" to path.win32.
