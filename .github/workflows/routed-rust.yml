@@ -920,7 +920,8 @@ jobs:
       - name: Doc/spec gates (full precommit table)
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
-        run: cargo xtask precommit
+        run: |
+          cargo xtask precommit
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
       # checks need a `ripr` build, so they run only when such a file changed;
