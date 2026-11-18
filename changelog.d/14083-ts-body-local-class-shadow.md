@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript class receivers: a body-local `class Url {}` now withholds credit even when the test also imports the owner's class under that name. This covers the constructor through a named import, a named-import alias or a default import, and a static method called through the class name (`Url.scheme(..)`), which used to read `exposed` for a test that only called its own local class (#14083, follow-up to #13726). The import binding used to put the shadowed name back among the candidate names.
