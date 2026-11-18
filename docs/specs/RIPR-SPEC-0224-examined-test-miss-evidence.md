@@ -491,9 +491,10 @@ written and must not copy these gaps.
   those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
-- Oracle rows are ranked and packed into the eight-row window exactly as
-  before; `assertion_not_observing` rows take only the slots left free, so no
-  window, fix site, exact-oracle alignment or repair readiness changes.
+- Oracle rows are ranked and packed into the eight-row window by the rules
+  below; `assertion_not_observing` rows take only the slots left free, so
+  adding them changes no window, fix site, exact-oracle alignment or repair
+  readiness.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
 - Within one relation-confidence tier, after diff-touched tests (#8387), a row
   whose test calls the owner or a function the bounded caller walk says
@@ -501,8 +502,10 @@ written and must not copy these gaps.
   inline test is `same_test_file`, so without this the window filled with
   name-order neighbours while tests calling the owner's wrapper were cut.
   Matching is by called name, not type, so a common name can mark an
-  unrelated row near; that only moves it within its tier. The rule only
-  orders rows; it never admits, drops or lifts a row a tier.
+  unrelated row near; that only moves it within its tier. The rule never
+  lifts a row a tier, but when a tier holds more rows than the window it
+  decides which of them fill it, so the window and what reads it (fix site,
+  exact-oracle alignment, next step) can change.
 - On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
   probe whose paired base line and head line each hold exactly one `Err`
   construction, with differing literal variants, and are otherwise identical
