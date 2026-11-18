@@ -3625,13 +3625,17 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
 - Dropped or added guard operands (#8361): `owner_pin/short_circuit.rs`
   unit tests `a_guard_operand_change_is_whole_top_level_operands_only`,
-  `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value` and
-  `layout_whitespace_cannot_invert_the_chain_direction`;
+  `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`,
+  `layout_whitespace_cannot_invert_the_chain_direction`,
+  `layout_whitespace_does_not_hide_a_retained_operand`,
+  `a_char_literal_operator_is_not_an_arithmetic_split` and
+  `a_quote_char_literal_does_not_flip_the_literal_scan`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
-  `an_added_guard_follows_the_same_agreement_rule` and
-  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin`.
+  `an_added_guard_follows_the_same_agreement_rule`,
+  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin` and
+  `a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter`.
   The corpus case is
   `benchmarks/stub_quality/cases/D_unsafe_const`. In the evidence-promotion
   honesty corpus (RIPR-SPEC-0108), `rust_guard_operand_dropped_agreement`

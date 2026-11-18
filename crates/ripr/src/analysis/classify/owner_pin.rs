@@ -7581,7 +7581,11 @@ impl OwnerReturnPin {
                 if let Some(guards) = &self.guard_operands
                     && guards.pinned_call_agrees(
                         test,
-                        loan.as_ref(),
+                        // A substituted pin reads its call in the test's own
+                        // scope, so a helper parameter that shares a name with
+                        // a test binding must not supply the argument value
+                        // (#14194 review).
+                        loan.as_ref().filter(|_| substituted.is_none()),
                         guard_site,
                         assertion.line,
                         &self.name,

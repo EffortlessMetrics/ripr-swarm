@@ -21,7 +21,7 @@
 
 use super::closure_adaptor::{call_count, literal_boundary, top_level_arguments};
 use super::whole_word_offsets;
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{mask_comments_and_strings, rust_identity_spans};
 use crate::analysis::rust_index::TestSummary;
 use crate::analysis::syntax::{HelperLoan, constant_table_column_around};
 
@@ -386,46 +386,26 @@ impl GuardOperandChange {
     }
 }
 
-/// `text` with every whitespace run outside a string literal collapsed to
-/// one space and the ends trimmed. Whitespace inside a literal is content,
-/// so it is copied verbatim: an edit to it is a rewritten operand, not a
-/// retained one.
+/// `text` with every layout whitespace removed outside a literal, and every
+/// literal copied verbatim. Layout whitespace is not part of an operand's
+/// identity (`n % 2 == 0` and `n%2==0` are the same tokens), while
+/// whitespace inside a literal is content, so an edit to it is a rewritten
+/// operand, not a retained one. The literal ranges come from the shared
+/// lexical scanner, so a quote inside a char literal (`'"'`) or a raw string
+/// cannot flip the string tracking (#14194 review).
 fn compact_operand(text: &str) -> String {
+    let spans = rust_identity_spans(text);
     let mut out = String::with_capacity(text.len());
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut pending_space = false;
-    for ch in text.chars() {
-        if in_string {
-            out.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
+    let mut at = 0;
+    for (start, end) in spans.literal_ranges {
+        if start < at || end >= text.len() {
             continue;
         }
-        if ch == '"' {
-            if pending_space && !out.is_empty() {
-                out.push(' ');
-            }
-            pending_space = false;
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-        if ch.is_whitespace() {
-            pending_space = true;
-            continue;
-        }
-        if pending_space && !out.is_empty() {
-            out.push(' ');
-        }
-        pending_space = false;
-        out.push(ch);
+        out.extend(text[at..start].chars().filter(|ch| !ch.is_whitespace()));
+        out.push_str(&text[start..=end]);
+        at = end + 1;
     }
+    out.extend(text[at..].chars().filter(|ch| !ch.is_whitespace()));
     out
 }
 
@@ -613,6 +593,12 @@ fn parse_operand(text: &str, parameters: &[String]) -> Option<Operand> {
 
 fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
     let text = text.trim();
+    // A literal is read before the arithmetic split: a char literal like
+    // `'/'` holds the operator character, and splitting it would reject the
+    // operand before the literal reader (#14194 review).
+    if let Some(literal) = literal_boundary(text) {
+        return Value::read(&literal).map(|_| Atom::Literal(literal));
+    }
     for operator in ['%', '/'] {
         if let Some((left, right)) = text.split_once(operator) {
             let parameter = parameters.iter().position(|name| name == left.trim())?;
@@ -631,12 +617,10 @@ fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
             });
         }
     }
-    if let Some(parameter) = parameters.iter().position(|name| name == text) {
-        return Some(Atom::Parameter(parameter));
-    }
-    // Masked strings and floats are not read; `Value::read` refuses them.
-    let literal = literal_boundary(text)?;
-    Value::read(&literal).map(|_| Atom::Literal(literal))
+    parameters
+        .iter()
+        .position(|name| name == text)
+        .map(Atom::Parameter)
 }
 
 /// Whether `changed` is all the owner's body holds between its braces,
@@ -1132,6 +1116,68 @@ mod tests {
                 "n != 0 &&   check(n,   \"a b\")"
             )
             .is_some()
+        );
+    }
+
+    #[test]
+    fn layout_whitespace_does_not_hide_a_retained_operand() {
+        // #14194 review: `compact_operand` kept the presence of a space, so
+        // `n % 2 == 0` and `n%2==0` compared unequal and the dropped guard
+        // was not read (fail-open). Layout whitespace is not part of the
+        // operand's identity.
+        let compact = "fn f(n: u32) -> bool {\n    n%2==0\n}";
+        let change = GuardOperandChange::read(compact, "n%2==0", "n != 0 && n % 2 == 0");
+        assert_eq!(
+            change.as_ref().map(|change| change.differing.len()),
+            Some(1)
+        );
+        // The same edit with the spacing on the other side reads the same.
+        let spaced = "fn f(n: u32) -> bool {\n    n % 2 == 0\n}";
+        let change = GuardOperandChange::read(spaced, "n % 2 == 0", "n != 0 && n%2==0");
+        assert_eq!(
+            change.as_ref().map(|change| change.differing.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_char_literal_operator_is_not_an_arithmetic_split() -> Result<(), String> {
+        // #14194 review: `parse_atom` split `'/'` as a division operator, so
+        // the dropped `c != '/'` guard was refused and the rule was skipped.
+        let function = "fn f(c: char) -> bool {\n    c != 'x'\n}";
+        let change = GuardOperandChange::read(function, "c != 'x'", "c != '/' && c != 'x'")
+            .ok_or("the dropped char guard must read")?;
+        assert_eq!(change.differing.len(), 1);
+        // `'y'` is neither `'/'` nor `'x'`, so both versions return true;
+        // `'/'` is where the dropped guard decided.
+        assert!(change.runs_agree(&[run(&["'y'"])]));
+        assert!(!change.runs_agree(&[run(&["'/'"])]));
+        Ok(())
+    }
+
+    #[test]
+    fn a_quote_char_literal_does_not_flip_the_literal_scan() {
+        // #14194 review: a `'"'` char literal flipped the quote-and-escape
+        // scan, so whitespace inside the following string collapsed and the
+        // literal edit read as a retained operand.
+        let function = "fn f(n: u32) -> bool {\n    check(n, '\"', \"a b\")\n}";
+        assert_eq!(
+            GuardOperandChange::read(
+                function,
+                "check(n, '\"', \"a b\")",
+                "n != 0 && check(n, '\"', \"a  b\")"
+            ),
+            None
+        );
+        // A raw string is literal data too.
+        let raw = "fn f(n: u32) -> bool {\n    check(n, r#\"a b\"#)\n}";
+        assert_eq!(
+            GuardOperandChange::read(
+                raw,
+                "check(n, r#\"a b\"#)",
+                "n != 0 && check(n, r#\"a  b\"#)"
+            ),
+            None
         );
     }
 }

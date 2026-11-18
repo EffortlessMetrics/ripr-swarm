@@ -14,4 +14,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_guard_operand_change_is_whole_top_level_operands_only",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::guard_operand_runs_agree_only_when_every_run_reads_the_identity_value",
   "crates/ripr/tests/short_circuit_or_tail.rs::the_substituted_rendered_call_withholds_exactly_like_the_direct_pin",
+  "crates/ripr/tests/short_circuit_or_tail.rs::a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::layout_whitespace_does_not_hide_a_retained_operand",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_char_literal_operator_is_not_an_arithmetic_split",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_quote_char_literal_does_not_flip_the_literal_scan",
 ]

@@ -197,6 +197,14 @@ const EVEN_SOURCE: &str = "pub fn is_even(n: u32) -> bool {\n    n != 0 && n % 2
 const EVEN_OLD: &str = "    n % 2 == 0";
 const EVEN_TAIL: &str = "n != 0 && n % 2 == 0";
 
+// The same owner with the guard dropped. The substituted-call regression
+// needs a deletion: an added guard is refused by the short-circuit run check
+// before the agreement gate, so the helper case would pass without ever
+// reading the derived call (#14194 review).
+const EVEN_DROPPED_SOURCE: &str = "pub fn is_even(n: u32) -> bool {\n    n % 2 == 0\n}\n";
+const EVEN_DROPPED_OLD: &str = "    n != 0 && n % 2 == 0";
+const EVEN_DROPPED_TAIL: &str = "n % 2 == 0";
+
 #[test]
 fn a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed() -> Result<(), String> {
     let agreeing = direct_test(
@@ -335,6 +343,9 @@ fn the_substituted_rendered_call_withholds_exactly_like_the_direct_pin() -> Resu
     // `n != 0 && n % 2 == 0`, and the pin reaches it through a borrowed
     // helper whose assertion names only its parameters
     // (`assert_eq!(actual, expected)`), so the assertion text holds no call.
+    // A deletion, not an addition: an added guard is refused by the
+    // short-circuit run check before the agreement gate, so the helper case
+    // would pass without ever reading the derived call (#14194 review).
     for (name, test) in [
         ("helper", helper_test("is_even(4)", "true")),
         (
@@ -342,14 +353,69 @@ fn the_substituted_rendered_call_withholds_exactly_like_the_direct_pin() -> Resu
             direct_test("short_circuit_or_tail", &["assert!(is_even(4));"]),
         ),
     ] {
-        let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &test)
-            .map_err(|error| format!("{name}: {error}"))?;
+        let (class, _) = return_value_class(
+            EVEN_DROPPED_SOURCE,
+            EVEN_DROPPED_OLD,
+            EVEN_DROPPED_TAIL,
+            &test,
+        )
+        .map_err(|error| format!("{name}: {error}"))?;
         assert_ne!(
             class,
             ExposureClass::Exposed,
             "{name} pin must withhold the credit, not expose: {test}"
         );
     }
+    // The deciding helper input is the positive control: `is_even(0)` is
+    // where the dropped `n != 0` was false, so the edit changes the result.
+    for (name, test) in [
+        ("helper", helper_test("is_even(0)", "false")),
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(!is_even(0));"]),
+        ),
+    ] {
+        let (class, _) = return_value_class(
+            EVEN_DROPPED_SOURCE,
+            EVEN_DROPPED_OLD,
+            EVEN_DROPPED_TAIL,
+            &test,
+        )
+        .map_err(|error| format!("{name} deciding: {error}"))?;
+        assert_eq!(
+            class,
+            ExposureClass::Exposed,
+            "{name} deciding input must keep the credit: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter() -> Result<(), String>
+{
+    // The helper's third parameter is also named `n`. The substituted call
+    // `is_even(n)` must read the test's `n = 0`, not the helper's `4`: the
+    // dropped guard decides at 0, so the pin stays exposed (#14194 review).
+    let collision = "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String, n: u32) {\n    assert_eq!(actual, expected);\n    let _ = n;\n}\n\n#[test]\nfn helper() {\n    let n = 0;\n    let actual = format!(\"{}\", is_even(n));\n    let expected = String::from(\"false\");\n    check(actual, expected, 4);\n}\n";
+    let (class, _) = return_value_class(
+        EVEN_DROPPED_SOURCE,
+        EVEN_DROPPED_OLD,
+        EVEN_DROPPED_TAIL,
+        collision,
+    )
+    .map_err(|error| format!("collision: {error}"))?;
+    assert_eq!(class, ExposureClass::Exposed, "{collision}");
+    // The literal control reads the same deciding value without the loan.
+    let literal = "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String, n: u32) {\n    assert_eq!(actual, expected);\n    let _ = n;\n}\n\n#[test]\nfn helper() {\n    let actual = format!(\"{}\", is_even(0));\n    let expected = String::from(\"false\");\n    check(actual, expected, 4);\n}\n";
+    let (class, _) = return_value_class(
+        EVEN_DROPPED_SOURCE,
+        EVEN_DROPPED_OLD,
+        EVEN_DROPPED_TAIL,
+        literal,
+    )
+    .map_err(|error| format!("literal: {error}"))?;
+    assert_eq!(class, ExposureClass::Exposed, "{literal}");
     Ok(())
 }
 
