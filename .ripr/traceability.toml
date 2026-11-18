@@ -6309,6 +6309,7 @@ tests = [
   "editors/vscode/test/suite/download_hardening.test.ts::a refused connection names the URL and classifies as a network failure (#13638)",
   "editors/vscode/test/suite/download_hardening.test.ts::a connection dropped mid-body classifies as a network failure (#13638)",
   "editors/vscode/test/suite/download_hardening.test.ts::a request error with an empty message keeps its code and still classifies as network (#13638)",
+  "editors/vscode/test/suite/walkthrough_contract.test.ts::the check-setup step runs a contributed command and names the missing-server fixes (#13638)",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
