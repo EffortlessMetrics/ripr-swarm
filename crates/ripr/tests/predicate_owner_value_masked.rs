@@ -304,6 +304,54 @@ fn repo_mem_replace_observes_only_the_old_temporary_on_both_seams() -> Result<()
 }
 
 #[test]
+fn repo_mem_replace_distinguishes_glob_shadow_from_absolute_path() -> Result<(), String> {
+    let scratch = subject("")?;
+    let root = &scratch.0;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "mod fake;
+pub fn over(qty: u32) -> bool { qty >= 10 }
+         #[cfg(test)] mod tests {
+             use super::over;
+             use crate::fake::*;
+             #[test] fn relative() { assert_eq!(std::mem::replace(&mut over(10), false), true); }
+             #[test] fn absolute() { assert_eq!(::std::mem::replace(&mut (over(10)), false), true); }
+         }
+",
+    ).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/fake.rs"),
+        "pub mod std { pub mod mem { pub fn replace(_: &mut bool, _: bool) -> bool { true } } }",
+    )
+    .map_err(|error| error.to_string())?;
+    let output = ripr::app::repo_seam_inventory_input(CheckInput {
+        root: root.clone(),
+        mode: Mode::Fast,
+        ..CheckInput::default()
+    });
+    let rendered = render_check(&output, &OutputFormat::RepoExposureJson)?;
+    let report: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    let seams = report["seams"].as_array().ok_or("missing repo seams")?;
+    for kind in ["predicate_boundary", "return_value"] {
+        let seam = seams
+            .iter()
+            .find(|s| s["owner"] == "src/lib.rs::over" && s["kind"] == kind)
+            .ok_or_else(|| format!("missing {kind}: {report}"))?;
+        let related = seam["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        for (name, strength) in [("relative", "weak"), ("absolute", "strong")] {
+            let test = related
+                .iter()
+                .find(|t| t["name"] == name)
+                .ok_or_else(|| format!("missing {name}: {seam}"))?;
+            assert_eq!(test["oracle_strength"], strength, "{kind}: {test}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn repo_observing_assertion_keeps_credit_beside_a_masked_assertion() -> Result<(), String> {
     for body in [
         "assert_eq!(Some(over(10)).is_some(), true); assert_eq!(over(10), true);",

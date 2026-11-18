@@ -598,19 +598,82 @@ fn macro_arguments(call: &ast::MacroCall) -> Option<Vec<String>> {
     Some(arguments)
 }
 
-// This bounded spelling rule needs the test file to rule out visible
-// declarations and imports named std. It does not resolve imported aliases.
-fn std_path_is_unshadowed(source: &str) -> bool {
+// Relative paths can pick up a module via an imported glob. Only a plain
+// super glob in an inline module can be checked from this complete file.
+fn std_path_is_unshadowed(source: &str, absolute: bool) -> bool {
     let Some(parse) = parse_clean_source_file_memoized(source) else {
         return false;
     };
     let file = parse.tree();
-    !crate::analysis::syntax::use_rebinds_crate_name(file.syntax(), "std")
+    let file = file.syntax();
+    let named_std = |name: ast::Name| name.text().trim_start_matches("r#") == "std";
+    let rebinds_std = |node: &ra_ap_syntax::SyntaxNode| {
+        crate::analysis::syntax::use_rebinds_crate_name(node, "std")
+    };
+    let uncertain_glob = |tree: ast::UseTree| {
+        tree.star_token().is_some()
+            && !(tree
+                .path()
+                .is_some_and(|path| path.syntax().text() == "super")
+                && tree.syntax().parent().is_some_and(|item| {
+                    ast::Use::can_cast(item.kind())
+                        && item
+                            .parent()
+                            .and_then(|list| list.parent())
+                            .is_some_and(|module| ast::Module::can_cast(module.kind()))
+                }))
+    };
+    // Keep even edition-2015 crate-root shadows outside the absolute-path
+    // rule. Module-local imports cannot change the absolute root.
+    if absolute {
+        return file.children().all(|item| {
+            if let Some(module) = ast::Module::cast(item.clone()) {
+                return !module.name().is_some_and(named_std);
+            }
+            if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+                return !extern_crate
+                    .rename()
+                    .and_then(|rename| rename.name())
+                    .is_some_and(named_std);
+            }
+            if ast::Use::can_cast(item.kind()) {
+                return !rebinds_std(&item)
+                    && !item
+                        .descendants()
+                        .filter_map(ast::UseTree::cast)
+                        .any(uncertain_glob);
+            }
+            !ast::MacroCall::can_cast(item.kind())
+        });
+    }
+    !rebinds_std(file)
         && !file
-            .syntax()
             .descendants()
             .filter_map(ast::Name::cast)
-            .any(|name| name.text().trim_start_matches("r#") == "std")
+            .any(named_std)
+        && !file
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(uncertain_glob)
+        && !file.descendants().any(|node| {
+            ast::MacroCall::can_cast(node.kind())
+                && node.parent().is_some_and(|parent| {
+                    matches!(
+                        parent.kind(),
+                        ra_ap_syntax::SyntaxKind::SOURCE_FILE | ra_ap_syntax::SyntaxKind::ITEM_LIST
+                    )
+                })
+        })
+}
+
+fn is_replace_temporary(mut value: ast::Expr) -> bool {
+    while let ast::Expr::ParenExpr(paren) = &value {
+        let Some(inner) = paren.expr() else {
+            return false;
+        };
+        value = inner;
+    }
+    matches!(value, ast::Expr::CallExpr(_) | ast::Expr::Literal(_))
 }
 
 struct Reader<'a> {
@@ -866,16 +929,17 @@ impl Reader<'_> {
         // The replacement may carry the owner call, but it is stored rather
         // than returned. An arbitrary helper named replace proves nothing.
         if name == "replace"
-            && matches!(
-                callee.syntax().text().to_string().as_str(),
-                "std::mem::replace" | "::std::mem::replace"
-            )
+            && let Some(absolute) = match callee.syntax().text().to_string().as_str() {
+                "std::mem::replace" => Some(false),
+                "::std::mem::replace" => Some(true),
+                _ => None,
+            }
             && let [ast::Expr::RefExpr(destination), _] = arguments.as_slice()
             && destination.mut_token().is_some()
-            && destination.expr().is_some_and(|value| {
-                matches!(value, ast::Expr::CallExpr(_) | ast::Expr::Literal(_))
-            })
-            && self.test_source.is_some_and(std_path_is_unshadowed)
+            && destination.expr().is_some_and(is_replace_temporary)
+            && self
+                .test_source
+                .is_some_and(|source| std_path_is_unshadowed(source, absolute))
             && let [old, replacement] = parts.as_slice()
         {
             return match (*old, *replacement) {
