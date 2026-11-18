@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/routed-rust.yml");
 const PUBLIC_URL: &str = "https://github.com/EffortlessMetrics/ripr-swarm.git";
@@ -16,8 +17,12 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Result<Self, String> {
         let base = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
         let dir = base.join(format!(
-            "ripr-docs-history-control-{}-{}",
+            "ripr-docs-history-control-{}-{stamp}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -90,6 +95,7 @@ fn actual_step(name: &str) -> Result<String, String> {
 fn classify(dir: &Path, subject: &Subject<'_>, bare: &str) -> Result<String, String> {
     let result = subject.tmp.join("scope-output");
     let summary = subject.tmp.join("scope-summary");
+    fs::write(&summary, "").map_err(|error| error.to_string())?;
     fs::write(&result, "").map_err(|error| error.to_string())?;
     output(
         command(dir, "bash")
