@@ -105,14 +105,12 @@ fn two_changed_operands_report_each_predicate_once() -> Result<(), String> {
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,5 +1,5 @@
+@@ -1,3 +1,3 @@
  pub fn len(head: u64, tail: u64, mask: u64, cap: usize) -> usize {
 -    let hix = head & mask;
 -    let tix = tail & mask;
 +    let hix = (head & mask) as usize;
 +    let tix = (tail & mask) as usize;
- 
-     if hix < tix {
 ";
     let findings = TempRepo::create(LIB, diff)?.findings()?;
     let predicates = predicates(&findings);
@@ -146,13 +144,11 @@ fn one_changed_operand_reports_the_same_predicates() -> Result<(), String> {
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,5 +1,5 @@
+@@ -1,3 +1,3 @@
  pub fn len(head: u64, tail: u64, mask: u64, cap: usize) -> usize {
      let hix = (head & mask) as usize;
 -    let tix = tail & mask;
 +    let tix = (tail & mask) as usize;
- 
-     if hix < tix {
 ";
     let findings = TempRepo::create(LIB, diff)?.findings()?;
     let predicates = predicates(&findings);
