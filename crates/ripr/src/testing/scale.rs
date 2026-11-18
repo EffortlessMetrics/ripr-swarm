@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn inflated_retry_small_samples_cannot_hide_observed_quadratic_growth() {
+    fn inflated_retry_small_samples_cannot_hide_observed_quadratic_growth() -> Result<(), String> {
         let mut initial_pairs = 0;
         let mut retry_small = 0;
         let mut retry_large = 0;
@@ -328,7 +328,10 @@ mod tests {
         assert_eq!(initial_pairs, 15);
         assert!(retry_small >= 3);
         assert_eq!(retry_small, retry_large);
-        let failure = result.expect_err("the observed quadratic trace must not pass");
+        let failure = match result {
+            Ok(()) => return Err("the observed quadratic trace must not pass".to_owned()),
+            Err(failure) => failure,
+        };
         let message = failure
             .downcast_ref::<String>()
             .map(String::as_str)
@@ -338,6 +341,7 @@ mod tests {
             message.contains("inflated retry: growth exceeded"),
             "{message}"
         );
+        Ok(())
     }
 
     #[test]
