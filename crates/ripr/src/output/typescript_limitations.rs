@@ -179,8 +179,8 @@ pub(crate) fn render_typescript_limitation_leaderboard_markdown(
 ) -> String {
     let mut out = String::new();
     out.push_str("# RIPR TypeScript Limitation Leaderboard\n\n");
-    out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
-    out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    out.push_str(&format!("Status: {}\n\n", md_code(&report.status)));
+    out.push_str(&format!("Root: {}\n\n", md_code(&report.root)));
     out.push_str(
         "Authority: advisory TypeScript-family preview backlog signal only. Gate-decision and badge artifacts keep their existing authority.\n\n",
     );
@@ -199,7 +199,7 @@ pub(crate) fn render_typescript_limitation_leaderboard_markdown(
         .top_limitation_kind
         .as_deref()
         .unwrap_or("none");
-    out.push_str(&format!("- Top limitation: `{}`\n\n", md_inline(top)));
+    out.push_str(&format!("- Top limitation: {}\n\n", md_code(top)));
 
     if !report.warnings.is_empty() {
         out.push_str("## Warnings\n\n");
@@ -225,8 +225,8 @@ pub(crate) fn render_typescript_limitation_leaderboard_markdown(
                 .map(sample_label)
                 .unwrap_or_else(|| "none".to_string());
             out.push_str(&format!(
-                "| `{}` | `{}` | {} | {} |\n",
-                md_inline(&entry.kind),
+                "| {} | `{}` | {} | {} |\n",
+                md_code(&entry.kind),
                 entry.count,
                 md_inline(&sources),
                 md_inline(&sample)
@@ -419,8 +419,18 @@ fn sample_label(sample: &TypeScriptLimitationSample) -> String {
     }
 }
 
+/// Imported text for a table cell or list item, through the shared Markdown
+/// owner: `<` cannot open raw HTML, `@name` (a Next.js `app/@modal/...` path,
+/// for example) cannot notify an account, a line ending cannot end the row
+/// and `|` cannot split the cell.
 fn md_inline(value: &str) -> String {
-    value.replace('|', "\\|").replace(['\r', '\n'], " ")
+    crate::output::markdown::table_cell_text(value)
+}
+
+/// Imported value shown as an inline code span. The fence outgrows any
+/// backtick run in the value, so a backtick cannot close the span early.
+fn md_code(value: &str) -> String {
+    crate::output::markdown::table_code_span(value)
 }
 
 #[cfg(test)]
@@ -467,6 +477,46 @@ mod tests {
             import_graph.samples[0].file.as_deref(),
             Some("src/view.jsx")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn limitation_leaderboard_markdown_shows_imported_text_literally() -> Result<(), String> {
+        let mut report =
+            build_typescript_limitation_leaderboard_report(TypeScriptLimitationLeaderboardInput {
+                root: ".".to_string(),
+                generated_at: "123".to_string(),
+                check_output_path: "check.json".to_string(),
+                check_output_json: Ok(sample_check_output()),
+            });
+        // A Next.js parallel route, a generic in the id and a pipe: the
+        // shapes that used to notify an account, vanish as HTML or split.
+        let file = "app/@modal/Array<T>/a|b.tsx";
+        let kind = "limit`kind";
+        let entry = report
+            .limitations
+            .first_mut()
+            .ok_or("fixture limitation missing")?;
+        entry.kind = kind.to_string();
+        entry.sources = vec!["src|one".to_string(), "<two>".to_string()];
+        let sample = entry.samples.first_mut().ok_or("fixture sample missing")?;
+        sample.file = Some(file.to_string());
+        sample.line = Some(7);
+        sample.finding_id = "probe:x".to_string();
+
+        let markdown = render_typescript_limitation_leaderboard_markdown(&report);
+        let rows = crate::output::test_support::rendered_markdown_table_rows(&markdown)?;
+        let row = rows
+            .iter()
+            .find(|row| row.first().is_some_and(|cell| cell == kind))
+            .ok_or_else(|| format!("no row for the limitation kind:\n{markdown}"))?;
+        assert_eq!(row.len(), 4, "limitation row keeps four cells: {row:?}");
+        assert_eq!(row[2], "src|one, <two>");
+        assert_eq!(
+            row[3], "app/@\u{2060}modal/Array<T>/a|b.tsx:7 (probe:x)",
+            "the path shows whole, with the mention broken by a word joiner"
+        );
+        assert!(!markdown.contains("@modal"), "live mention:\n{markdown}");
         Ok(())
     }
 
