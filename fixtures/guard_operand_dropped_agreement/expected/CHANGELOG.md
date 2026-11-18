@@ -24,3 +24,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — guard_operand_dropped_agreement (3)
+
+Reason:
+RIPR-SPEC-0053: restack #14194 on main d51a0a21e7 after #14944 changed the top-gap Safe next action line
+
+Command:
+`cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
+
+Updated:
+- `expected/human.txt`
