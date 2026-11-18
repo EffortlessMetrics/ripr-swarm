@@ -1,0 +1,13 @@
+# Registers the #8467 residual tests: a statement-position invocation of a
+# macro whose definition is unread, spelling an item declaration of the
+# owner's name, withholds the credit (finding 3); a std macro that expands to
+# a literal defines nothing, while `include!` stays an unread defining
+# invocation (finding 7).
+[[extend]]
+id = "RIPR-SPEC-0229"
+tests = [
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_statement_macro_spelling_a_same_named_fn_does_not_expose_the_arm",
+  "crates/ripr/tests/match_arm_helper_selection.rs::a_std_expression_macro_spelling_a_same_named_fn_still_exposes_the_arm",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_statement_position_external_macro_spelling_the_item_may_define_it",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_std_literal_macro_defines_nothing_and_include_stays_unread",
+]
