@@ -3511,6 +3511,9 @@ fn names_stay_in_their_readers(
                     && !trimmed.contains('{')
                     && !trimmed.contains('}')
                     && trimmed.trim_end().ends_with(';')
+                    // One declaration only: `use a::b; static T: .. = w;`
+                    // would otherwise lend the pointer the `use` allowance.
+                    && trimmed.matches(';').count() == 1
                     && !inside_reader(path, at + 1)
             })
             .map(|(_, line)| occurrences(line))
@@ -3898,6 +3901,11 @@ mod tests {
         // wrapper (exact-head review on #15070).
         assert!(!read(
             " static TOTAL: fn(u32) -> u32 = cash_total;",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
+        // Nor does a pointer after a `use` on one line.
+        assert!(!read(
+            "\nuse std::fmt::Debug; static TOTAL: fn(u32) -> u32 = cash_total;",
             "    assert_eq!(cash_total(105), TOTAL(103));"
         )?);
         // A macro body that names the wrapper may feed it other inputs.
