@@ -272,7 +272,10 @@ changed body. The identity reports a gate when any of these holds:
 - the owner file is not a crate root and no out-of-line `mod` declaration is
   named like its module (or no module is named like a directory above it),
   as for a file reached only through `include!`, however the macro is
-  spelled (#14952);
+  spelled (#14952). A crate root is `src/lib.rs`, `src/main.rs`, a file
+  directly under `src/bin`, `tests`, `examples` or `benches`, or such a
+  directory's `x/main.rs`; its `x/mod.rs` (`tests/common/mod.rs`) is module
+  `x` of a sibling root, not a root (#15035);
 - an `include!` whose literal path, resolved against the including file's
   directory, is the owner file; a literal that cannot be resolved (absolute,
   or climbing above the including path) gates the owner file's stem by name.

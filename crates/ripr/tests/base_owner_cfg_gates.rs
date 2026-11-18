@@ -1143,3 +1143,86 @@ fn a_non_literal_include_is_a_gate() -> Result<(), String> {
         },
     ])
 }
+
+/// The class of the changed tail of `src/bin/helper/mod.rs` (module
+/// `helper` of the bin `src/bin/app.rs`, whose text is `app`), pinned by a
+/// test in `app` through `super::helper::ready`.
+fn bin_module_tail_class(path: TailPath, app: &str) -> Result<(ExposureClass, Finding), String> {
+    const OWNER: &str = "src/bin/helper/mod.rs";
+    let call = match path {
+        TailPath::Constant => "assert_eq!(super::helper::ready(), false);",
+        TailPath::Unary => "assert_eq!(super::helper::ready(5), 5);",
+    };
+    let twin = format!(
+        "#[cfg(test)]\nmod helper {{\n    {}\n        {}\n    }}\n}}\n",
+        path.signature(),
+        path.new_tail()
+    );
+    let app = format!(
+        "{}fn main() {{}}\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn pins() {{\n        {call}\n    }}\n}}\n",
+        app.replace("@TWIN@", &twin)
+    );
+    let files = vec![
+        ("src/lib.rs", "pub fn other() {}\n".to_string()),
+        ("src/bin/app.rs", app),
+        (OWNER, path.owner()),
+    ];
+    let findings = TempRepo::create(&files, &path.patch(OWNER))?.findings()?;
+    let tail = path.new_tail();
+    let mut matching = findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::ReturnValue
+            && finding.probe.location.file.ends_with(OWNER)
+            && finding.probe.location.line == 2
+            && finding.probe.expression.trim() == tail
+    });
+    match (matching.next(), matching.next()) {
+        (Some(finding), None) => Ok((finding.class.clone(), finding.clone())),
+        other => Err(format!(
+            "premise: exactly one return_value finding for `{tail}` in {OWNER}, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+/// #15035 review: a target directory's `x/mod.rs` (`src/bin/helper/mod.rs`,
+/// `tests/common/mod.rs`) is module `x`, not a crate root, so the
+/// declaration and macro-scope checks apply to it. Gap: the bin declares
+/// `helper` only through a macro emitting a gated `mod $m;`, beside a
+/// test-only inline twin. Control: a plain `mod helper;` keeps main's
+/// credit.
+#[test]
+fn a_target_directory_mod_file_is_not_a_crate_root() -> Result<(), String> {
+    const MACRO: &str = "macro_rules! declare {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        mod $m;\n    };\n}\ndeclare!(helper);\n@TWIN@";
+    let mut wrong = Vec::new();
+    for (index, path) in [TailPath::Constant, TailPath::Unary]
+        .into_iter()
+        .enumerate()
+    {
+        for (name, app, expected) in [
+            (
+                "macro-declared module with a test-only twin",
+                MACRO,
+                ExposureClass::PropagationUnknown,
+            ),
+            (
+                "plain module declaration",
+                "mod helper;\n",
+                [
+                    ExposureClass::WeaklyExposed,
+                    ExposureClass::InfectionUnknown,
+                ][index]
+                    .clone(),
+            ),
+        ] {
+            let (class, finding) = bin_module_tail_class(path, app)?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            if class != expected || credited == (expected == ExposureClass::PropagationUnknown) {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}

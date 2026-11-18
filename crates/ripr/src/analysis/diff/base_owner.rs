@@ -370,7 +370,10 @@ fn anchored_components(file: &Path) -> Option<(Vec<String>, usize)> {
 /// `benches` directory): empty for a crate root (`src/lib.rs`,
 /// `src/main.rs`, a file directly under `src/bin` or `tests`, or such a
 /// directory's `main.rs`), otherwise each directory and the file stem, a
-/// final `mod` dropped. `None` when no such directory is on the path.
+/// final `mod` dropped. A target directory's `x/mod.rs` is no target of its
+/// own but module `x` of a sibling root (`tests/common/mod.rs` under
+/// `mod common;`, #15035 review). `None` when no such directory is on the
+/// path.
 fn module_path(file: &Path) -> Option<Vec<String>> {
     let (components, anchor) = anchored_components(file)?;
     let mut rest: Vec<String> = components
@@ -402,7 +405,7 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
     if root {
         return Some(Vec::new());
     }
-    if target_dir {
+    if target_dir && !matches!(rest.as_slice(), [_, second] if second == "mod") {
         rest.drain(..1);
     }
     if rest.last().is_some_and(|component| component == "mod") {
@@ -2309,6 +2312,9 @@ mod tests {
         assert_eq!(path("src/bin/tool/cli.rs"), owned(&["cli"]));
         assert_eq!(path("tests/it.rs"), owned(&[]));
         assert_eq!(path("tests/it/common.rs"), owned(&["common"]));
+        assert_eq!(path("tests/common/mod.rs"), owned(&["common"]));
+        assert_eq!(path("src/bin/helper/mod.rs"), owned(&["helper"]));
+        assert_eq!(path("tests/it/sub/mod.rs"), owned(&["sub"]));
         assert_eq!(path("benches/b/main.rs"), owned(&[]));
         assert_eq!(path("build.rs"), None);
         assert_eq!(path("src"), None);
