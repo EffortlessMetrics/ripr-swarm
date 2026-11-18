@@ -24,6 +24,8 @@ Linked issues:
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
+- #14972 (targets `cargo test` never runs: a conventional crate root under
+  `autolib`/`autobins`/... `= false`, and an example's default `test = false`)
 - #15079 (`required-features` met only through another workspace member's
   dependency on the package)
 
@@ -159,8 +161,41 @@ The file and its functions stay indexed. Doctests are a separate rustdoc run
 credit. An integration test under `tests/` is its own `test` target, so it
 keeps its credit while the library's unit tests are withheld. A module that a
 tested target also compiles (a `src/main.rs` declaring the library's module)
-keeps its tests. Unavailable metadata, a root cargo does not list, and an
-`example`, `bench` or build-script root never establish a skip.
+keeps its tests. Unavailable metadata, a root cargo does not list (outside
+the auto-discovery rule below), and a `bench` or build-script root never
+establish a skip.
+
+#14972 extends rule 2 to two more shapes, through the same metadata owner:
+
+- An `example` target is modelled like a `bin`: metadata reports an
+  example's default `test = false`, and plain `cargo test` then builds the
+  example as an executable without running its `#[test]` functions. An
+  `[[example]] test = true` (with its `required-features` met) runs them, so
+  that example `Runs` and keeps the credit. `cargo test --examples` is an
+  explicit opt-in, as `cargo test --lib` is for a `test = false` library.
+- A root cargo metadata does not list is a skip only when its package
+  manifest sets a `[package]` `autolib`, `autobins`, `autoexamples`,
+  `autotests` or `autobenches` key to `false` and cargo metadata lists that
+  package as a workspace member
+  (`ManifestInventory::crate_root_undiscovered`). Cargo did not discover the
+  file as a target, so `cargo test` builds no crate from it. A root the
+  manifest declares explicitly (`[lib] path`, `[[bin]] path`) is listed and
+  keeps its credit.
+
+Rule 3's probe premise widens accordingly: a false `auto*` key, an
+`[[example]]` table, or a holder or root under the package's `examples/`
+directory also spends the probe. Rule 5's mount scan and ancestry check
+cover both shapes in full: unlike a metadata-listed skipped `lib` or `bin`
+root, neither an undiscovered root nor a skipped example root is exempt from
+rule 5's name-or-stem test. An undiscovered root is no listed target, and a
+skipped example is no target another crate builds, so a source outside the
+ancestry that spells its file name or declares a `mod` of its stem keeps its
+tests even when the run's index does not hold that source or records no edge
+for it. Examples: a `#[path = "../../a/src/main.rs"]` in another member, and
+`mod ex { include!("../examples/demo.rs"); }` in `src/lib.rs` or
+`tests/it.rs` (the index records no edge for an `include!` inside a module
+body). The exemption for skipped `lib` and `bin` roots is unchanged from
+#14962.
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
@@ -171,9 +206,10 @@ Scope decision: ripr reads the tests of every workspace member as run, so its
 analysis scope is a workspace-wide `cargo test` (a virtual workspace root, or
 `cargo test --workspace`), not `cargo test -p <member>`. That build selects
 every member with its default features and unifies each package's features
-across them. The `required-features` check (for a `[[bin]]` here and a
-`[[test]]` under #7266) therefore compares against a member's unified set,
-computed from the same `cargo metadata --no-deps --offline` document:
+across them. The `required-features` check (for a `[[bin]]` or a `test =
+true` `[[example]]` here, and a `[[test]]` under #7266) therefore compares
+against a member's unified set, computed from the same `cargo metadata
+--no-deps --offline` document:
 
 1. Each member starts from its own `default` closure.
 2. A normal or dev dependency of any member whose metadata `path` is a member
@@ -231,12 +267,29 @@ change.
   `#[path = "m.txt"]` mount of a non-`.rs` file, and a macro mount
   `mod /* c */ $n` after a `"http://x"` string, read in every mode what
   their tests-on controls read (`exposed`).
+- Undiscovered and example targets (#14972): `#[test]` in `src/main.rs`
+  under `autobins = false`, in `src/lib.rs` under `autolib = false`, and in
+  `examples/demo.rs` (default `test = false`) does not credit a
+  discriminator in any `--mode`. The autodiscovered controls and the same
+  root declared explicitly under `auto* = false` read `exposed` in every
+  mode. `[[example]] test = true` reads `exposed` in every mode except
+  `instant`, which does not index `examples/` and reads `no_static_path` on
+  base too. An `autobins = false` `src/main.rs` that another member mounts
+  through `#[path]` reads `exposed` in every mode. The withheld shapes read
+  exactly `no_static_path` in every mode: the undiscovered bin and lib, a
+  default example, a multi-file `examples/demo/` directory, an `[[example]]
+  test = true` whose `required-features` are unmet, and an example whose
+  `required-features` are on by default but which leaves `test` at `false`.
+  An example root that `src/lib.rs` (`#[cfg(test)] mod ex { include!(..) }`)
+  or `tests/it.rs` (`mod demo { include!(..) }`) compiles credits a
+  discriminator in every mode except `instant`, as on base (#14972
+  review).
 
 - Feature unification (#15079): a `[[bin]]` whose required feature only a
   member's renamed dev dependency, a normal dependency, a default-enabled
   `a/special` chain, an enabled optional dependency or a chain through a
-  third member requests reads `exposed` with its test related, as does a
-  `[[test]]` target under the same request; a request for another feature,
+  third member requests reads `exposed` with its test related, as do a
+  `[[test]]` target and a `test = true` example under the same request; a request for another feature,
   no request, a chain behind a feature left off, an inactive optional or
   weak `a?/special` edge and a build dependency keep the skip.
 
@@ -279,6 +332,32 @@ change.
   token the scan recognizes, and the file's tests are then withheld
   although `cargo test` of that target runs them.
 
+- Undiscovered and example targets (#14972): a file in another package
+  compiled only through `#[path]` by a skipped target is still judged by its
+  own package's premise (the #14962 limit). Within one package, a `src/`
+  module mounted through `#[path]` only by an example that `cargo test`
+  skips also keeps its credit when the package manifest has no `[[example]]` table and no
+  false `auto*` key, because the holder's package then sets no skip premise;
+  with either, the probe runs and the module's tests are withheld. A bench
+  root is not modelled.
+- Undiscovered and example targets, over-credit (#14972 review): the mount
+  scan stays textual for `include!`, so an example `include!`d only by
+  another target that `cargo test` does not run (another skipped example, a
+  `test = false` lib or bin, a bench, or an undiscovered test file) keeps
+  its credit, as on base. The same mount through `#[path]` is an indexed
+  edge, so the skipped holder is seen and the credit is withheld.
+- Undiscovered and example targets (#14972 review, resolved by #15079): the
+  `required-features` check of a `test = true` example uses the same
+  workspace-unified feature set as bins and `[[test]]` targets, so an
+  example whose required feature only another member's dependency edge
+  enables keeps its credit (see Workspace feature unification).
+- `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
+  lists the library, which keeps the credit.
+- Undiscovered and example targets, over-credit (#14972 review): cargo
+  metadata does not report `harness`, so an `[[example]] test = true
+  harness = false` or a `[[bin]] harness = false` reads as a running target,
+  and its `#[test]` functions keep their credit on base and here alike,
+  although the harness-less binary runs none of them.
 - Feature unification (#15079), under-credit kept from #7266: a resolver 1
   workspace also unifies build-dependency features, and a non-member path
   dependency or a `[patch]` entry can request a member's features where

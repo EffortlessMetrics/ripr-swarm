@@ -1071,8 +1071,8 @@ impl ClassifiedProbeEvidence {
             })
             .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
-        // computed once per owner per run through the attached memo and only
-        // when an assertion asks. The memo answers under its borrow without
+        // computed once per owner per run through the attached memo, when an
+        // assertion asks or when the related-test window is ordered (#15026). The memo answers under its borrow without
         // cloning; unit-test contexts without a memo keep the per-probe cell.
         let owner_callers = std::cell::OnceCell::new();
         let expected_reaches_owner = |ty: Option<&str>, name: &str| {
@@ -1659,6 +1659,11 @@ impl ClassifiedProbeEvidence {
             },
             arm_selector.as_ref(),
             context.diff_touched,
+            &|test| {
+                test.calls
+                    .iter()
+                    .any(|call| expected_reaches_owner(None, call.name.as_str()))
+            },
         );
         let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
         let (observe, discriminate, mut related_tests, matched_total) = (
