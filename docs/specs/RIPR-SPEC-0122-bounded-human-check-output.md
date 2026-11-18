@@ -604,7 +604,10 @@ an entry, edition-2015 packages whose explicit entries disable discovery,
 `harness = false`, a name-only entry whose `tests/<n>.rs` and
 `tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
 `required-features`, which is omitted conservatively without default-feature
-resolution) the command is `null` and the human output says so.
+resolution) the command is `null` and the human output says so. A
+`tests/*.rs` file left undeclared under `autotests = false` is not a Cargo
+target at all, so its tests are not related tests (RIPR-SPEC-0356, #14972)
+and the stub is placed as if the file were absent.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
