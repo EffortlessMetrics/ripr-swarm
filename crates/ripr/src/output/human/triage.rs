@@ -783,7 +783,7 @@ pub(crate) fn render_human_triage(
                             // target seam is not one in the seam view, so say
                             // that and point at the existing test instead.
                             out.push_str(
-                                "No test stub here: the seam a stub would target is not a reported gap in the seam view; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
+                                "No test stub here: the spot a stub would target is not a reported gap; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
                             );
                         } else {
                             out.push_str(&format!("No test stub here: {reason}\n"));

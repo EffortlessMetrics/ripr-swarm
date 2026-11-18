@@ -186,6 +186,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         owner,
         kept_field,
         credit: false,
+        strict: false,
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -196,6 +197,59 @@ pub(in crate::analysis) fn owner_field_value_flow(
         }
     }
     flow
+}
+
+/// #14726: whether any part of `assertion_text`'s compared operands reads
+/// the owner's returned record other than through `kept_field`, read as
+/// [`owner_field_value_flow`] reads it but with a masked part masking the
+/// whole operand and an unfollowed `let` local counting as masked. Same-test
+/// boundary pairing for a predicate on that field refuses such an
+/// assertion: `assert_eq!((boundary.retries, opts("-v").verbose), (3, true))`
+/// mentions the boundary binding, yet the field it reads there is another
+/// one. Fail-closed: text the reader cannot parse masks when it names the
+/// owner.
+pub(in crate::analysis) fn owner_record_read_masked_anywhere(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &str,
+    kept_field: &str,
+) -> bool {
+    if owner.is_empty() {
+        return false;
+    }
+    let Some(operands) = assertion_oracle_text(assertion_text) else {
+        return true;
+    };
+    let Some(ast::Expr::MacroExpr(invocation)) = parse_expression(&operands) else {
+        return true;
+    };
+    let Some(operands) = invocation
+        .macro_call()
+        .and_then(|call| macro_arguments(&call))
+    else {
+        return true;
+    };
+    let reader = Reader {
+        test,
+        owner,
+        kept_field: Some(kept_field),
+        credit: false,
+        strict: true,
+    };
+    // A sub-expression the operand's own reading never visits (a closure
+    // argument, an `if` branch, a method argument of the owner's value:
+    // `over(9).big.then(|| b.retries)`) can still read another field, so
+    // every expression inside the operand is read too.
+    operands
+        .iter()
+        .any(|operand| match parse_expression(operand) {
+            Some(parsed) => parsed
+                .syntax()
+                .descendants()
+                .filter_map(ast::Expr::cast)
+                .any(|expr| reader.sink(&expr, 0) == Sink::Masked),
+            None => reader.mentions(operand),
+        })
 }
 
 /// #14701: whether `assertion_text` is a plain `assert!(owner(..).field)` or
@@ -271,6 +325,7 @@ pub(in crate::analysis) fn bool_field_assertion(
         owner,
         kept_field: Some(field),
         credit: true,
+        strict: false,
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -537,6 +592,11 @@ struct Reader<'a> {
     /// function) and a followed binding must be immutable (a `mut` local
     /// may be overwritten, `o.big = true`, before the read).
     credit: bool,
+    /// #14726: a masked reading anywhere masks the whole operand, so one
+    /// reaching part cannot hide a sibling-field read beside it
+    /// (`(boundary.retries, opts("-v").verbose)`), and a local this module
+    /// cannot follow to one `let` is not read as unrelated.
+    strict: bool,
 }
 
 impl Reader<'_> {
@@ -586,6 +646,10 @@ impl Reader<'_> {
     /// The strongest reading among `parts` when any one of them decides the
     /// result (operands of a comparison or arithmetic operator).
     fn any_value(&self, parts: impl IntoIterator<Item = Sink>) -> Sink {
+        let parts = parts.into_iter().collect::<Vec<_>>();
+        if self.strict && parts.contains(&Sink::Masked) {
+            return Sink::Masked;
+        }
         let mut result = Sink::Absent;
         for part in parts {
             if part.reaches() {
@@ -640,7 +704,9 @@ impl Reader<'_> {
             ast::Expr::IndexExpr(index) => {
                 let base = self.inner(index.base(), depth);
                 let position = self.inner(index.index(), depth);
-                if base == Sink::Value || position.reaches() {
+                if self.strict && (base == Sink::Masked || position == Sink::Masked) {
+                    Sink::Masked
+                } else if base == Sink::Value || position.reaches() {
                     Sink::Value
                 } else {
                     // An element of a test-built array is not followed.
@@ -785,6 +851,7 @@ impl Reader<'_> {
         // argument whatever the receiver is.
         if ARGUMENT_COMPARING_METHODS.contains(&name.as_str())
             && receiver != Sink::Absent
+            && !(self.strict && receiver == Sink::Masked)
             && call.arg_list().is_some_and(|list| {
                 list.args()
                     .any(|argument| self.sink(&argument, depth).reaches())
@@ -940,19 +1007,24 @@ impl Reader<'_> {
         else {
             return Sink::Absent;
         };
-        if depth >= LET_DEPTH
-            || self
-                .test
-                .let_bindings
-                .iter()
-                .filter(|binding| binding.name == name)
-                .count()
-                != 1
-        {
-            return Sink::Absent;
+        let lets = self
+            .test
+            .let_bindings
+            .iter()
+            .filter(|binding| binding.name == name)
+            .count();
+        // #14726: under `strict`, a local bound by a `let` this module
+        // cannot follow may hold the owner's record, so it masks.
+        let unfollowed_local = if self.strict && lets > 0 {
+            Sink::Masked
+        } else {
+            Sink::Absent
+        };
+        if depth >= LET_DEPTH || lets != 1 {
+            return unfollowed_local;
         }
         let Some(parse) = parse_body(&self.test.body) else {
-            return Sink::Absent;
+            return unfollowed_local;
         };
         let mut initializers = parse
             .tree()
@@ -968,7 +1040,7 @@ impl Reader<'_> {
                 )
             });
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
-            return Sink::Absent;
+            return unfollowed_local;
         };
         if self.credit
             && matches!(
@@ -1074,6 +1146,64 @@ mod tests {
             generated: None,
         };
         owner_field_value_flow(&test, assertion, "over", kept_field)
+    }
+
+    /// #14726: under the strict pairing reading, one reaching part does not
+    /// hide a sibling-field read beside it, and a local this reader cannot
+    /// follow to one `let` counts as masked.
+    #[test]
+    fn a_sibling_field_read_anywhere_masks_the_pairing_reading() {
+        let masked = |body: &str, assertion: &str| {
+            let (_, let_bindings) = shadow_facts_for_body_text(body);
+            let test = TestSummary {
+                name: "t".to_string(),
+                body: body.to_string().into(),
+                assertions: Vec::new(),
+                file: "src/lib.rs".into(),
+                start_line: 1,
+                end_line: 1,
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
+                generated: None,
+            };
+            owner_record_read_masked_anywhere(&test, assertion, "over", "big")
+        };
+        let boundary = "let b = over(10);\n";
+        for assertion in [
+            "assert_eq!((b.retries, over(9).big), (3, true));",
+            "assert_eq!([b.retries == 3, over(9).big], [true, true]);",
+            "assert_eq!(b.retries + u32::from(over(9).big), 4);",
+            "assert!(b.retries.eq(&u32::from(over(9).big)));",
+            "assert_eq!(over(10).retries, 3);",
+            "assert!(b.summary().is_empty() || over(9).big);",
+            "assert_eq!(over(9).big.then(|| b.retries), Some(3));",
+            "assert_eq!(if over(9).big { b.retries } else { 0 }, 3);",
+            "assert_eq!(match over(9).big { true => b.retries, false => 0 }, 3);",
+        ] {
+            let body = format!("{boundary}{assertion}");
+            assert!(masked(&body, assertion), "{assertion}");
+        }
+        // A local bound twice may be the record.
+        let twice = "let b = over(10);\nlet b = over(10);\nassert_eq!((b.retries, over(9).big), (3, true));";
+        assert!(masked(
+            twice,
+            "assert_eq!((b.retries, over(9).big), (3, true));"
+        ));
+        // Every read through the kept field or the whole record stays clear,
+        // and so does a local that does not hold the record.
+        for assertion in [
+            "assert!(b.big);",
+            "assert_eq!(b.big, true);",
+            "assert_eq!((b.big, over(9).big), (true, false));",
+            "assert_eq!(over(10), want);",
+            "assert_eq!(over(10).big, want);",
+        ] {
+            let body = format!("{boundary}let want = true;\n{assertion}");
+            assert!(!masked(&body, assertion), "{assertion}");
+        }
     }
 
     /// #14701: only a plain `assert!` whose whole condition is the kept field
