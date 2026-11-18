@@ -380,3 +380,5 @@ permission to stop available investigation.
 An issue filed, PR opened, busy compiler, behind-only branch, conceivable
 alternative design, unavailable review bot, exhausted local checklist or lack
 of newly found issues is not sufficient to complete the parent goal.
+
+<!-- Observation-only canary for #14989 Markdown contract execution; discard after preserving hosted step evidence. -->
