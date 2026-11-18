@@ -4008,9 +4008,9 @@ from the parsed syntax tree; a file that does not parse cleanly, a file read
 through the lexical fallback, and an owner the parser cannot name exactly once
 are never withheld. A `#[mutants::skip] mod name;` declaration is not followed
 into the module's own file (put `#![mutants::skip]` at the top of that file
-instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats withhold
-seams instead of findings, and read only the owner function's own attributes
-for now (see [Repo scope](#repo-scope-owner-opt-outs-14139) below).
+instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats make the
+same decision and withhold seams instead of findings (see
+[Repo scope](#repo-scope-owner-opt-outs-14139) below).
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
