@@ -149,6 +149,17 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_comments = old_source
         .map(super::unchanged_code_line::line_comment_columns)
         .unwrap_or_default();
+    // Both files as the lexical scanner reads them, built only when a pair
+    // needs it. Without the old file there is no reading of the removed
+    // side, so such a pair stays probed.
+    let lexical_lines = std::cell::OnceCell::new();
+    let read_lexical_lines = || {
+        let new = find_file_facts(index, &changed.path)?;
+        Some((
+            super::unchanged_code_line::LexicalLines::of(&new.source),
+            super::unchanged_code_line::LexicalLines::of(old_source?),
+        ))
+    };
     let added_at = changed
         .added_lines
         .iter()
@@ -182,15 +193,15 @@ pub(crate) fn probes_for_file_with_relations(
                 && !added_string_continuations.contains(&new_side_line)
                 && !removed_string_continuations.contains(&removed.line);
         // #14175: the same code with a trailing line comment added, removed
-        // or reworded is the same program. Without the old file there is no
-        // lexical reading of the removed side, so the edit stays probed.
-        let comment_only = old_source.is_some()
-            && super::unchanged_code_line::is_trailing_line_comment_only_change(
-                added_text,
-                added_comments.get(&new_side_line).copied(),
-                removed_text,
-                removed_comments.get(&removed.line).copied(),
-            );
+        // or reworded is the same program.
+        let added_comment = added_comments.get(&new_side_line).copied();
+        let removed_comment = removed_comments.get(&removed.line).copied();
+        let comment_only = super::unchanged_code_line::is_trailing_line_comment_only_change(
+            added_text,
+            added_comment,
+            removed_text,
+            removed_comment,
+        );
         // #14175: a positional pair whose parsed text is the same changed
         // only in bytes the diff reader drops: its line ending (a CRLF/LF
         // rewrite, a final newline added or removed) or a line-1 byte-order
@@ -198,7 +209,31 @@ pub(crate) fn probes_for_file_with_relations(
         // so the pair is the same program text.
         let line_ending_only =
             added_text.trim_end_matches('\r') == removed_text.trim_end_matches('\r');
-        if respelling || whitespace_only || comment_only || line_ending_only {
+        // Equal text can still change meaning when another edited line moved
+        // a comment or string boundary (a block comment turned into line
+        // comments around a statement), so both rules also need the two
+        // lines to read as the same code in their own files.
+        let unchanged_code = (comment_only || line_ending_only)
+            && match (lexical_lines.get_or_init(read_lexical_lines), comment_only) {
+                (Some((new, old)), true) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    added_comment,
+                    old,
+                    removed.line,
+                    removed_comment,
+                ),
+                (Some((new, old)), false) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    None,
+                    old,
+                    removed.line,
+                    None,
+                ),
+                (None, _) => false,
+            };
+        if respelling || whitespace_only || unchanged_code {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }

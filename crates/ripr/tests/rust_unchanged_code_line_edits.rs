@@ -261,3 +261,73 @@ fn line_ending_only_rewrites_report_nothing_and_an_edit_inside_one_still_does() 
         Err(failures.join("\n"))
     }
 }
+
+/// Equal text is not unchanged code when another edited line moved a comment
+/// boundary or turned a comment into a documentation attribute.
+#[test]
+fn equal_text_that_changed_meaning_keeps_its_finding() -> Result<(), String> {
+    let mut failures = Vec::new();
+
+    // A block comment replaced by line comments during an LF -> CRLF rewrite:
+    // the statement between them pairs with identical text but is now live.
+    let old = [
+        "pub fn f() {",
+        "    /* disabled",
+        "    println!(\"live\");",
+        "    */",
+        "}",
+    ];
+    let new = [
+        "pub fn f() {",
+        "    // disabled",
+        "    println!(\"live\");",
+        "    //",
+        "}",
+    ];
+    let mut body = String::from("@@ -1,5 +1,5 @@\n");
+    for line in old {
+        body.push_str(&format!("-{line}\n"));
+    }
+    for line in new {
+        body.push_str(&format!("+{line}\r\n"));
+    }
+    let activated = check(&format!("{}\r\n", new.join("\r\n")), &body)?;
+    if !activated.2.iter().any(|(line, _)| *line == 3) {
+        failures.push(format!(
+            "a statement activated by a moved comment boundary lost its finding: {activated:?}"
+        ));
+    }
+
+    // `//` -> `///` inside a macro invocation adds a `#[doc]` token the macro
+    // can match.
+    let source = |comment: &str| {
+        format!(
+            "macro_rules! flag {{\n    (0) => {{ 0 }};\n    (0 #[$m:meta]) => {{ 1 }};\n}}\n\npub fn f() -> u32 {{\n    flag!(0 {comment} note\n    )\n}}\n"
+        )
+    };
+    let documented = check(
+        &source("///"),
+        "@@ -7 +7 @@\n-    flag!(0 // note\n+    flag!(0 /// note\n",
+    )?;
+    if !documented.2.iter().any(|(line, _)| *line == 7) {
+        failures.push(format!(
+            "a comment turned into a documentation attribute lost its finding: {documented:?}"
+        ));
+    }
+    // Control: rewording the ordinary comment in the same place stays quiet.
+    let reworded = check(
+        &source("//"),
+        "@@ -7 +7 @@\n-    flag!(0 // remark\n+    flag!(0 // note\n",
+    )?;
+    failures.extend(expect_no_findings(
+        "ordinary comment in a macro",
+        &reworded,
+        &[],
+    ));
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
