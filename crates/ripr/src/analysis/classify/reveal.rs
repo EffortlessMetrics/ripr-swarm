@@ -2736,8 +2736,13 @@ fn analyze_related_assertions(
                 oracle_strength: OracleStrength::None,
                 relation_reason,
                 relation_confidence,
+                // A dropped literal in a test whose relation cannot credit an
+                // oracle (a proximity-only test beside one that reaches the
+                // owner) keeps the `no_call_path` row its assertion had.
                 miss: Some(if refused_here {
                     RelatedTestMiss::AssertionNotCredited
+                } else if literal_only > 0 && !credits_oracle {
+                    RelatedTestMiss::NoCallPath
                 } else if literal_only > 0 {
                     RelatedTestMiss::AssertionNotObserving
                 } else {
