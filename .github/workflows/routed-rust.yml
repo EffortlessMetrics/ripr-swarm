@@ -894,20 +894,20 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
-      - name: Doc/spec gates (full precommit table)
+      - name: Docs policy preflight
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
-        run: |
-          cargo policy preflight
-          cargo xtask precommit
+        run: cargo policy preflight
       # #14986: a docs-only PR edits markdown that Rust tests pin to exact
       # prose, and this is the only lane such a PR runs. #14992 routes the
       # agent-contract skills and docs/agent-context through the Rust lanes, so
       # what remains here is the markdown the classifier still calls docs-only:
       # AGENTS.md, CLAUDE.md, .factory/skills/**, docs/AGENT_WORKFLOWS.md,
       # docs/PR_AUTOMATION.md, the public guides and READMEs, the spec template
-      # and the repo-policy executable-file fixtures. Reuses the build the
-      # precommit step above already paid for.
+      # and the repo-policy executable-file fixtures. Run after policy preflight
+      # and before the full precommit table so a separate precommit failure does
+      # not hide the direct markdown-contract execution receipt. Both remain
+      # required; precommit can reuse the test binaries built here.
       - name: Markdown contract tests (prose pinned by Rust tests)
         run: |
           cargo test -p xtask \
@@ -916,6 +916,10 @@ jobs:
             --test spec_template_contract \
             --test pr_readiness_workflow_contract \
             --test executable_frontdoor
+      - name: Doc/spec gates (full precommit table)
+        env:
+          RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        run: cargo xtask precommit
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
       # checks need a `ripr` build, so they run only when such a file changed;
