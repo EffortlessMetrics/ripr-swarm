@@ -380,3 +380,5 @@ permission to stop available investigation.
 An issue filed, PR opened, busy compiler, behind-only branch, conceivable
 alternative design, unavailable review bot, exhausted local checklist or lack
 of newly found issues is not sufficient to complete the parent goal.
+
+Docs-gate observation canary for #14989: this line exists to make one docs-only markdown change.
