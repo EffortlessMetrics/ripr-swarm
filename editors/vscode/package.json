@@ -519,7 +519,7 @@
       {
         "id": "ripr.getStarted",
         "title": "ripr: Get Started",
-        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, diagnose, act.",
+        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, check setup, read, act.",
         "steps": [
           {
             "id": "ripr.trustWorkspace",
@@ -541,6 +541,17 @@
             },
             "completionEvents": [
               "onContext:resourceLangId == rust"
+            ]
+          },
+          {
+            "id": "ripr.checkSetup",
+            "title": "Check that the server started",
+            "description": "See which ripr server is running, or why none was found.\n[Diagnose Setup](command:ripr.diagnoseSetup)",
+            "media": {
+              "markdown": "walkthrough/setup.md"
+            },
+            "completionEvents": [
+              "onCommand:ripr.diagnoseSetup"
             ]
           },
           {
