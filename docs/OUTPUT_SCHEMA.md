@@ -21946,7 +21946,7 @@ Field contract:
 
 ## Python repair verification records
 
-`ripr agent repair --phase prepare` retains a schema-`0.1`
+`ripr agent repair --phase before` retains a schema-`0.1`, `phase: "prepare"`
 `python_repair_driver_binding` record (RIPR-SPEC-0176) under the attempt and
 projects it to `target/ripr/workflow/python-repair-trust-binding.json`.
 `--phase after` writes a separate
