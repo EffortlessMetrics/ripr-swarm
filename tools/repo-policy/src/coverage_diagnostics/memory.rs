@@ -42,6 +42,13 @@ fn parse(text: &str) -> Value {
             continue;
         };
         let Some(index) = FIELDS.iter().position(|field| *field == name) else {
+            if name
+                .split_whitespace()
+                .next()
+                .is_some_and(|field| FIELDS.contains(&field))
+            {
+                return json!({"status": "unavailable", "reason": "malformed_field"});
+            }
             continue;
         };
         let mut parts = rest.split_whitespace();
@@ -82,6 +89,14 @@ mod tests {
         );
         assert_eq!(
             read(format!("{input}MemAvailable 99 kB\n").as_bytes())["reason"],
+            "malformed_field"
+        );
+        assert_eq!(
+            read(format!("{input}MemAvailable : 99 kB\n").as_bytes())["reason"],
+            "malformed_field"
+        );
+        assert_eq!(
+            read(format!("{input}MemAvailable 99 kB: junk\n").as_bytes())["reason"],
             "malformed_field"
         );
         assert_eq!(
