@@ -824,8 +824,9 @@ return seam follows the same rule because the discarded payload is precisely
 the owner's returned value. The existing `BooleanBoundaryPin` selects this
 scope for both seams. Other return shapes retain their own admission, including
 explicitly polled futures and predicates whose tests observe a Result branch.
-A literal `false` on either side of `&&` masks the owner value. A literal
-`true` leaves the other operand observable.
+A literal `false` on either side of `&&` or a literal `true` on either side of
+`||` forces the result and masks the owner value. The identity literals
+(`true` for `&&` and `false` for `||`) carry the other operand’s value.
 This is whole-owner value flow, not new field
 projection or alias resolution. Static evidence only; no runtime claim.
 

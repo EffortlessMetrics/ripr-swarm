@@ -167,6 +167,14 @@ fn an_observing_assertion_beside_a_masked_one_keeps_the_credit() -> Result<(), S
 /// The real repo renderer, including per-test grades and canonical repair
 /// evidence, must agree about both seams on the owner's boolean tail (#15071).
 fn assert_repo_grips(body: &str, expected: &str) -> Result<(), String> {
+    assert_repo_grips_with_summary(body, expected, None)
+}
+
+fn assert_repo_grips_with_summary(
+    body: &str,
+    expected: &str,
+    summary_fragment: Option<&str>,
+) -> Result<(), String> {
     let scratch = subject(body)?;
     let output = ripr::app::repo_seam_inventory_input(CheckInput {
         root: scratch.0.clone(),
@@ -212,11 +220,11 @@ fn assert_repo_grips(body: &str, expected: &str) -> Result<(), String> {
         assert_eq!(related.len(), 1, "{body}: {seam}");
         assert_eq!(related[0]["oracle_strength"], strength, "{body}: {seam}");
         let discriminate = &seam["evidence_record"]["evidence_path"]["discriminate"];
-        if body.contains("&& false") || body.contains("false &&") {
+        if let Some(fragment) = summary_fragment {
             assert!(
                 discriminate["summary"]
                     .as_str()
-                    .is_some_and(|s| s.contains("masks")),
+                    .is_some_and(|summary| summary.contains(fragment)),
                 "{body}: {seam}"
             );
         }
@@ -242,12 +250,25 @@ fn repo_masked_owner_values_cannot_strongly_grip_either_tail_seam() -> Result<()
 }
 
 #[test]
-fn repo_false_conjunction_masks_both_tail_seams() -> Result<(), String> {
+fn repo_forcing_boolean_literals_mask_both_tail_seams() -> Result<(), String> {
     for body in [
         "assert_eq!(over(10) && false, false);",
         "assert_eq!(false && over(10), false);",
+        "assert_eq!(over(10) || true, true);",
+        "assert_eq!(true || over(10), true);",
     ] {
-        assert_repo_grips(body, "weakly_gripped")?;
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_or_identity_preserves_existing_relational_credit() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10) || false, true);",
+        "assert_eq!(false || over(10), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("kind-match true"))?;
     }
     Ok(())
 }
@@ -257,6 +278,7 @@ fn repo_observed_owner_values_keep_both_tail_seams_strong() -> Result<(), String
     for body in [
         "assert_eq!(over(10), true);",
         "assert_eq!(over(10) && true, true);",
+        "assert_eq!(true && over(10), true);",
         "assert_eq!(Some(over(10)), Some(true));",
         "let got = Some(over(10)); assert_eq!(got, Some(true));",
         "assert_eq!((over(10), 1).0, true);",

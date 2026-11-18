@@ -141,14 +141,17 @@ enum Sink {
     Payload,
 }
 
-fn is_literal_false(mut expr: ast::Expr) -> bool {
+fn boolean_literal(mut expr: ast::Expr) -> Option<bool> {
     while let ast::Expr::ParenExpr(paren) = &expr {
-        let Some(inner) = paren.expr() else {
-            return false;
-        };
-        expr = inner;
+        expr = paren.expr()?;
     }
-    matches!(expr, ast::Expr::Literal(literal) if matches!(literal.kind(), ast::LiteralKind::Bool(false)))
+    match expr {
+        ast::Expr::Literal(literal) => match literal.kind() {
+            ast::LiteralKind::Bool(value) => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 impl Sink {
@@ -774,31 +777,35 @@ impl Reader<'_> {
     }
 
     fn binary(&self, binary: &ast::BinExpr, expr: &ast::Expr, depth: usize) -> Sink {
-        use ast::BinaryOp;
-        match binary.op_kind() {
-            // `a || b` holds whenever one side does, so neither side's value
-            // is established as deciding it.
-            Some(BinaryOp::LogicOp(ast::LogicOp::Or))
-            | Some(BinaryOp::Assignment { .. })
-            | None => self.unfollowed(expr.syntax()),
-            Some(BinaryOp::LogicOp(ast::LogicOp::And))
-                if [binary.lhs(), binary.rhs()]
-                    .into_iter()
-                    .flatten()
-                    .any(is_literal_false) =>
-            {
-                match (
-                    self.inner(binary.lhs(), depth),
-                    self.inner(binary.rhs(), depth),
-                ) {
+        use ast::{BinaryOp, LogicOp};
+        let lhs = binary.lhs();
+        let rhs = binary.rhs();
+        let op = binary.op_kind();
+        if let Some(BinaryOp::LogicOp(logic)) = op {
+            let lhs_literal = lhs.clone().and_then(boolean_literal);
+            let rhs_literal = rhs.clone().and_then(boolean_literal);
+            let identity = logic == LogicOp::And;
+            let forcing = Some(!identity);
+            if lhs_literal == forcing || rhs_literal == forcing {
+                return match (self.inner(lhs, depth), self.inner(rhs, depth)) {
                     (Sink::Absent, Sink::Absent) => self.unfollowed(expr.syntax()),
                     _ => Sink::Masked,
-                }
+                };
             }
-            Some(_) => self.any_value([
-                self.inner(binary.lhs(), depth),
-                self.inner(binary.rhs(), depth),
-            ]),
+            if lhs_literal == Some(identity) {
+                return self.inner(rhs, depth);
+            }
+            if rhs_literal == Some(identity) {
+                return self.inner(lhs, depth);
+            }
+            // Without a literal identity, either side of OR may decide it.
+            if logic == LogicOp::Or {
+                return self.unfollowed(expr.syntax());
+            }
+        }
+        match op {
+            Some(BinaryOp::Assignment { .. }) | None => self.unfollowed(expr.syntax()),
+            Some(_) => self.any_value([self.inner(lhs, depth), self.inner(rhs, depth)]),
         }
     }
 
