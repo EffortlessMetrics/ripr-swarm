@@ -1827,7 +1827,9 @@ fn apply_probe_and_oracle_limits(
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
-    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    let literal_only_related = finding.class == ExposureClass::ReachableUnrevealed
+        && related_tests_assert_only_dropped_literals(finding, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe, literal_only_related);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.

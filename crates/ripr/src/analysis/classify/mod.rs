@@ -117,8 +117,9 @@ pub(in crate::analysis) use const_flow::{
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
-    missing_evidence, recommended_next_step, recommended_next_step_with_boundary, stop_reasons,
+    WRAPPER_ERROR_BINDING_NEXT_STEP, classify, confidence_score, ensure_unknown_stop_reason,
+    exact_oracle_gap_next_step, missing_evidence, recommended_next_step,
+    recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;

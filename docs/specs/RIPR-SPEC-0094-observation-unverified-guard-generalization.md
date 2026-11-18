@@ -1054,7 +1054,11 @@ one admits only a cross-package witness (#10127). A finding that reads
 dropped literals keeps the weak reading's admission: it stays
 `reachable_unrevealed` and names the same limit. A related test with no
 assertion, or with any other assertion, keeps the #10127 rule, as does a
-related-test list at its render cap.
+related-test list at its render cap. The same holds for the #3700 wrapper
+error seam: a `map_err` conversion into a boxed error whose related tests
+assert only dropped literals reads `reachable_unrevealed` and keeps the
+`wrapper_error_binding_unresolved` limitation and its typed next step,
+instead of asking for an assertion the suite may already contain.
 
 Known limits:
 
@@ -1085,7 +1089,12 @@ twin rows), `owner_result_readers_call_the_owner_or_read_its_binding` in
 `crates/ripr/src/analysis/classify/literal_assertion.rs`, and
 `a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit` with
 `a_same_package_generator_limits_reachable_unrevealed_only_for_dropped_literals`
-in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`.
+in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`,
+`wrapper_error_binding_limit_names_map_err_error_and_return_families_only` in
+`crates/ripr/src/analysis/language/rust/oracles.rs`, and
+`wrapper_error_retains_specific_guidance_for_proximity_reach` with
+`unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim` in
+`crates/ripr/tests/unindexed_guidance.rs`.
 
 ## Test Mapping
 
