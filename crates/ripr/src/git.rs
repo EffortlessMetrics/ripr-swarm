@@ -1300,12 +1300,6 @@ impl CatFileBatch {
     pub(crate) fn spawn(root: &Path, budget: Duration) -> Result<Self, CoreError> {
         let describe = format!("git -C {} cat-file --batch", root.display());
         let args = ["cat-file", "--batch"];
-        // #15148: as in the output collectors, a cancelled analysis starts no
-        // session, so a refused filter-pin call cannot exit with a usage
-        // error that reads as the session's own failure.
-        if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
-            return Err(cancelled.into());
-        }
         // The session enforces its budget itself, including a zero one, so
         // only a non-zero budget is shared with the filter listing.
         let (mut command, budget) = if budget.is_zero() {
@@ -1318,6 +1312,13 @@ impl CatFileBatch {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // #15148: as in the output collectors, a cancelled analysis starts no
+        // session. The check follows the filter listing, so a deadline that
+        // expires during the listing cannot start a session whose refused
+        // filter-pin call would read as the session's own failure.
+        if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+            return Err(cancelled.into());
+        }
         let spawn_site = SpawnSite::of(&command);
         let mut child = OwnedProcess::spawn_without_console(command)
             .map_err(|err| spawn_site.failure_message(&describe, &err))?;
@@ -3014,6 +3015,21 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         }
         if test_process_spawns() != spawns_before {
             return Err("a cancelled analysis must not spawn the git call".to_string());
+        }
+        // The batch session spawns outside the collectors and is held to
+        // the same rule.
+        match with_token(&token, || {
+            CatFileBatch::spawn(&root, Duration::from_secs(30))
+        }) {
+            Err(error)
+                if error.is_analysis_cancelled()
+                    && error.to_string() == "analysis cancelled: Superseded" => {}
+            Err(error) => {
+                return Err(format!(
+                    "expected the cancellation from the batch session, got: {error}"
+                ));
+            }
+            Ok(_) => return Err("a cancelled analysis started a cat-file session".to_string()),
         }
         // Control: the same calls run once the analysis is live again.
         let output = run_git_output_with_deadline(&root, &args, Some(Duration::from_secs(30)))
