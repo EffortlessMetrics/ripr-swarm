@@ -241,18 +241,23 @@ changed body. The identity reports a gate when any of these holds:
   owner file's path, on an item enclosing one or on its declaring file, or any
   `#[path]` declaration;
 - a `use` with its own `cfg`/`cfg_attr`, or a `pub` one under a gated item or
-  file, whose leaf or rename is the owner's name, or whose glob or `self`
-  import names a module named like a component of the owner file's path
-  (#14952). A test module's private import gated only by its module's
+  file, whose leaf or rename is the owner's name, or any segment of whose
+  path names a module named like a component of the owner file's path, since
+  the leaf may itself be a module (`use real as imp;`, `use a::imp;`)
+  (#14952, #15035). A test module's private import gated only by its module's
   `#[cfg(test)]` is not a gate. Two gated imports are not gates either. One
   rooted at a sysroot crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in
   a module whose items cannot shadow that root (no item, `use`, `extern
   crate`, non-sysroot glob or macro call naming it) names that crate, which
-  holds no workspace function. A private `use super::name;` directly inside
-  a `#[cfg(test)]` module in which nothing else can bind `name` (no other
-  `use` binding it, no glob but `super::*`, no item, `extern crate` or macro
-  call naming it) binds `name` to the parent's item or to nothing, so it
-  cannot swap the function a test reaches. Every other root (`crate`,
+  holds no workspace function, unless an `extern crate .. as` anywhere in the
+  workspace (an item, or macro tokens spelling one) renames a crate to a
+  sysroot name (`extern crate self as std;`): then it gates like any other
+  root. A private `use super::name;` directly inside a `#[cfg(test)]` module
+  in which nothing else can bind `name` (no other `use` binding it, no glob
+  but `super::*`, no item or `extern crate` naming it, and no module-level
+  macro call at all, since a macro may emit the import) binds `name` to the
+  parent's item or to nothing, so it cannot swap the function a test
+  reaches. Every other root (`crate`,
   `self`, `super`, a module or any other crate name) counts as crate-local:
   telling a third-party crate from a workspace package or local module would
   need the manifests, so the fail-closed reading keeps those gates;
@@ -262,7 +267,11 @@ changed body. The identity reports a gate when any of these holds:
   spelled (#14952);
 - an `include!` whose literal path, resolved against the including file's
   directory, is the owner file; a literal that cannot be resolved (absolute,
-  or climbing above the including path) gates the owner file's stem by name;
+  or climbing above the including path) gates the owner file's stem by name.
+  An `include!` whose argument is not one plain string literal
+  (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) gates, by name, the
+  stem of its last string literal when that ends in a `.rs` file name, and
+  every owner otherwise (#15035);
 - a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
   followed by a name and no `{` body), an `include!` or a `#[path]`
   (`path =`), and the owner file is not a crate root of the package that
@@ -273,16 +282,19 @@ changed body. The identity reports a gate when any of these holds:
 
 A diff that adds or removes any of these refuses the identity. Names
 approximate the module chain, so among these checks a name can only gate more
-owners than the exact chain would, with two exceptions: a module of the same
-name in another directory satisfies the declaration check for a file reached
-only through a renamed `include!`, and a package scope is read from the path
-layout, so a non-exported macro reaches every target of its package but no
-other package. Not read: an `include!` whose path is not
-a literal (`concat!(env!("OUT_DIR"), ..)`, which names a generated file), a
-module or re-export emitted by a procedural macro, and a private `use`
-gated only through its enclosing module. Each claim that relies on the
-identity keeps its own refusals for these (the unary-tail reading's
-same-name, rename, `include!` and `macro_rules!` checks above).
+owners than the exact chain would, with these exceptions, which are
+name-coincidence limits: a module of the same name in another directory
+satisfies the declaration check for a file reached only through a renamed
+`include!`, or only through a `mod` inside a macro call the reading cannot
+expand (a `cfg_if::cfg_if!` block declaring `mod real;` beside an unrelated
+`mod real;` in another directory credits `src/real.rs`); and a package scope
+is read from the path layout, so a non-exported macro reaches every target of
+its package but no other package. Not read: a module or re-export emitted by
+a procedural macro, and a private `use` gated only through its enclosing
+module. The unary-tail reading alone keeps its own refusals for these (its
+same-name, rename, `include!` and `macro_rules!` checks above); the
+constant-tail reading has no such second check, so on that path these limits
+can credit.
 
 ## Required Evidence
 

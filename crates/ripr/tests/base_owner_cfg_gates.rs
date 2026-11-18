@@ -576,3 +576,155 @@ fn gates_must_name_crate_local_paths() -> Result<(), String> {
         ),
     ])
 }
+
+/// One #15035 round-4 gap: `(name, owner file, lib.rs items, test-module
+/// import, extra files for a tail path)`.
+type GapCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    fn(TailPath) -> Vec<(&'static str, String)>,
+);
+
+/// Each gap shape must withhold propagation credit and read
+/// `propagation_unknown` on both tail paths.
+fn check_gap_cases(cases: Vec<GapCase>) -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for path in [TailPath::Constant, TailPath::Unary] {
+        for (name, owner_file, items, import, extra) in &cases {
+            let extra = extra(path);
+            let extra: Vec<(&str, &str)> = extra
+                .iter()
+                .map(|(file, text)| (*file, text.as_str()))
+                .collect();
+            let (class, finding) = tail_class_with(path, owner_file, items, import, &extra)?;
+            if class != ExposureClass::PropagationUnknown
+                || finding.ripr.propagate.state == StageState::Yes
+            {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// A module whose `ready` is the test-only stand-in.
+fn alias_stand_in(_: TailPath) -> Vec<(&'static str, String)> {
+    vec![(
+        "src/alt.rs",
+        "pub use crate::fake::stub as ready;\n".to_string(),
+    )]
+}
+
+/// #15035 review F1: a gated `use` of a module (a plain alias, a `pub use
+/// crate::..` alias, or two same-named modules in different directories)
+/// swaps which file the test reaches, so it gates every owner in the
+/// modules its path names.
+#[test]
+fn a_gated_module_alias_is_a_gate() -> Result<(), String> {
+    check_gap_cases(vec![
+        (
+            "gated module alias",
+            "src/real.rs",
+            "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse real as imp;\n#[cfg(test)]\nuse alt as imp;\n",
+            "use super::imp::ready;",
+            alias_stand_in,
+        ),
+        (
+            "gated pub crate module alias",
+            "src/real.rs",
+            "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\npub use crate::real as imp;\n#[cfg(test)]\npub use crate::alt as imp;\n",
+            "use super::imp::ready;",
+            alias_stand_in,
+        ),
+        (
+            "gated import of same-named modules in two directories",
+            "src/a/imp.rs",
+            "mod a;\nmod b;\nmod fake;\n#[cfg(not(test))]\nuse a::imp;\n#[cfg(test)]\nuse b::imp;\n",
+            "use super::imp::ready;",
+            |_| {
+                vec![
+                    ("src/a.rs", "pub mod imp;\n".to_string()),
+                    ("src/b.rs", "pub mod imp;\n".to_string()),
+                    (
+                        "src/b/imp.rs",
+                        "pub use crate::fake::stub as ready;\n".to_string(),
+                    ),
+                ]
+            },
+        ),
+    ])
+}
+
+/// #15035 review F2: a module-level macro call in the `#[cfg(test)]` module
+/// may emit the import that rebinds `ready`, so the gated `use
+/// super::ready;` beside it stays a gate.
+#[test]
+fn a_macro_call_in_the_test_module_keeps_the_gate() -> Result<(), String> {
+    check_gap_cases(vec![(
+        "gated super import beside a module-level macro call",
+        "src/real.rs",
+        "mod real;\nmod fake;\npub use real::ready;\nmacro_rules! test_imports {\n    () => {\n        #[cfg(not(unix))]\n        use crate::fake::stub as ready;\n    };\n}\n",
+        "use super::*;\n    #[cfg(unix)]\n    use super::ready;\n    test_imports!();",
+        |_| Vec::new(),
+    )])
+}
+
+/// #15035 review F3: an `extern crate .. as std` anywhere in the crate makes
+/// `std::` a crate-local root, so a gated `use std::..` is a gate.
+#[test]
+fn a_renamed_extern_crate_disables_the_sysroot_exemption() -> Result<(), String> {
+    check_gap_cases(vec![(
+        "extern crate self as std",
+        "src/real.rs",
+        "extern crate self as std;\nmod real;\nmod fake;\nmod api;\npub use api::*;\n",
+        GLOB,
+        |_| {
+            vec![(
+                "src/api.rs",
+                "#[cfg(not(test))]\npub use std::real::ready;\n#[cfg(test)]\npub use std::fake::stub as ready;\n"
+                    .to_string(),
+            )]
+        },
+    )])
+}
+
+/// #15035 review F4: a `;` inside a string literal of the `cfg` predicate
+/// does not hide a private gated import from the caller's prefilter.
+#[test]
+fn a_semicolon_in_a_cfg_string_does_not_hide_the_gate() -> Result<(), String> {
+    check_gap_cases(vec![(
+        "private gated import under a string predicate holding a semicolon",
+        "src/real.rs",
+        "mod real;\nmod fake;\nmod api;\npub use api::ready_api as ready;\n",
+        GLOB,
+        |path| {
+            vec![(
+                "src/api.rs",
+                format!(
+                    "#[cfg(not(feature = \"x;y\"))]\nuse crate::real::ready;\n#[cfg(feature = \"x;y\")]\nuse crate::fake::stub as ready;\npub fn ready_api() -> i32 {{ 0 }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pins() {{\n        {}\n    }}\n}}\n",
+                    path.pin()
+                ),
+            )]
+        },
+    )])
+}
+
+/// #15035 review F5: an `include!` whose path is not a single literal
+/// (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) in a cfg-twin
+/// module gates the file its trailing literal names.
+#[test]
+fn a_non_literal_include_is_a_gate() -> Result<(), String> {
+    check_gap_cases(vec![(
+        "cfg-twin modules including through concat",
+        "src/real.rs",
+        "mod real;\nmod fake;\n#[cfg(not(test))]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n#[cfg(test)]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/alt.rs\"));\n}\n",
+        "use super::imp::ready;",
+        alias_stand_in,
+    )])
+}
