@@ -3181,7 +3181,7 @@ fn forwarding_wrapper_invisibility(
     after: &str,
     test_summaries: &[&TestSummary],
 ) -> Option<StageEvidence> {
-    let wrapper = sole_forwarding_wrapper(index, owner, test_summaries)?;
+    let (wrapper, arguments) = sole_forwarding_wrapper(index, owner, test_summaries)?;
     // Every related test must call the wrapper, and none may name the owner:
     // the fold reads only the wrapper's calls, so an owner call or a test
     // reaching through some other path would go unread.
@@ -3191,14 +3191,48 @@ fn forwarding_wrapper_invisibility(
     }) {
         return None;
     }
-    let stand_in = FunctionSummary {
-        name: wrapper.name.clone(),
-        ..owner.clone()
+    // The stand-in is the owner seen from the wrapper's signature: when the
+    // wrapper passes its parameters straight through it is the owner renamed;
+    // when it passes closed integer expressions (`round(cents * 10)`), each
+    // owner parameter in the body, the change and its baseline is replaced by
+    // its argument, so the fold evaluates the composition at the wrapper's
+    // literal inputs.
+    let computed = inlined_owner(owner, wrapper, &arguments).is_some();
+    let hands = if computed {
+        "which computes the owner's arguments from its own"
+    } else {
+        "which passes its arguments straight to the owner"
+    };
+    let (stand_in, before, after) = match inlined_owner(owner, wrapper, &arguments) {
+        None => (
+            FunctionSummary {
+                name: wrapper.name.clone(),
+                ..owner.clone()
+            },
+            before.to_string(),
+            after.to_string(),
+        ),
+        Some(substitute) => {
+            let header = &wrapper.body[..mask_comments_and_strings(&wrapper.body).find('{')?];
+            let masked_owner = mask_comments_and_strings(&owner.body);
+            let open = masked_owner.find('{')?;
+            let close = masked_owner.rfind('}')?;
+            let inner = owner.body.get(open + 1..close)?;
+            (
+                FunctionSummary {
+                    name: wrapper.name.clone(),
+                    body: format!("{header}{{{}}}", substitute(inner)?).into(),
+                    ..owner.clone()
+                },
+                substitute(before)?,
+                substitute(after)?,
+            )
+        }
     };
     match crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
         &stand_in,
-        before,
-        after,
+        &before,
+        &after,
         test_summaries,
     )? {
         crate::analysis::test_grip_evidence::InvisibilityReason::SameValueAtEveryAssertedInput => {
@@ -3206,7 +3240,7 @@ fn forwarding_wrapper_invisibility(
                 StageState::Weak,
                 Confidence::Medium,
                 format!(
-                    "Every related test calls `{}`, which passes its arguments straight to the owner, with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
+                    "Every related test calls `{}`, {hands}, with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
                     wrapper.name
                 ),
             ))
@@ -3216,7 +3250,7 @@ fn forwarding_wrapper_invisibility(
                 StageState::Weak,
                 Confidence::Medium,
                 format!(
-                    "Every related test's assertions on `{}`, which passes its arguments straight to the owner, hold with the same truth value on the baseline and the change, so no assertion tells the versions apart",
+                    "Every related test's assertions on `{}`, {hands}, hold with the same truth value on the baseline and the change, so no assertion tells the versions apart",
                     wrapper.name
                 ),
             ))
@@ -3233,7 +3267,7 @@ fn sole_forwarding_wrapper<'a>(
     index: &'a RustIndex,
     owner: &FunctionSummary,
     test_summaries: &[&TestSummary],
-) -> Option<&'a FunctionSummary> {
+) -> Option<(&'a FunctionSummary, Vec<String>)> {
     use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
     let is_related_test = |function: &FunctionSummary| {
         test_summaries
@@ -3280,14 +3314,143 @@ fn sole_forwarding_wrapper<'a>(
     }
     let wrapper_parameters = plain_parameter_names(&wrapper.body)?;
     let owner_parameters = plain_parameter_names(&owner.body)?;
-    if wrapper_parameters.len() != owner_parameters.len() {
+    let tail = whole_body_text(&wrapper.body)?;
+    let arguments = tail
+        .strip_prefix(owner.name.as_str())?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    let arguments = split_top_level_commas(arguments)?;
+    // Each argument is the wrapper's parameter itself or a closed integer
+    // expression over the wrapper's parameters (`cents * 10 + 2`), and every
+    // wrapper parameter reaches the owner.
+    let closed_integer = |argument: &str| {
+        argument.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '_' | ' ' | '+' | '-' | '*' | '/' | '%' | '(' | ')'
+                )
+        }) && identifier_tokens(argument).all(|token| {
+            wrapper_parameters
+                .iter()
+                .any(|parameter| parameter == token)
+                || token.chars().all(|character| character.is_ascii_digit())
+        })
+    };
+    (arguments.len() == owner_parameters.len()
+        && arguments.iter().all(|argument| closed_integer(argument))
+        && wrapper_parameters.iter().all(|parameter| {
+            arguments
+                .iter()
+                .any(|argument| identifier_tokens(argument).any(|token| token == parameter))
+        }))
+    .then_some((wrapper, arguments))
+}
+
+/// The identifier-or-number tokens of `text`.
+fn identifier_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+}
+
+/// `text` split at its top-level commas, each part trimmed, or `None` for an
+/// unbalanced or empty part.
+fn split_top_level_commas(text: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for character in text.chars() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut current).trim().to_string());
+                continue;
+            }
+            _ => {}
+        }
+        current.push(character);
+    }
+    if depth != 0 {
         return None;
     }
-    let forwarded = format!("{}({})", owner.name, wrapper_parameters.join(", "));
-    let tail = whole_body_text(&wrapper.body)?;
-    (tail.split_whitespace().collect::<String>()
-        == forwarded.split_whitespace().collect::<String>())
-    .then_some(wrapper)
+    parts.push(current.trim().to_string());
+    (!parts.iter().any(String::is_empty)).then_some(parts)
+}
+
+/// When the wrapper passes anything other than its own parameters in order,
+/// a substitution that replaces each owner parameter by `(argument)` in a
+/// piece of the owner's text. `None` when the arguments are the parameters
+/// passed straight through. The substitution answers `None` for text it
+/// cannot rewrite safely: a `let`, closure, `match`, nested `fn`, path or
+/// macro, or a wrapper parameter name the owner's body uses for something
+/// other than an owner parameter (it would be captured).
+fn inlined_owner<'a>(
+    owner: &'a FunctionSummary,
+    wrapper: &'a FunctionSummary,
+    arguments: &'a [String],
+) -> Option<impl Fn(&str) -> Option<String> + 'a> {
+    let wrapper_parameters = plain_parameter_names(&wrapper.body)?;
+    let owner_parameters = plain_parameter_names(&owner.body)?;
+    if *arguments == wrapper_parameters[..] {
+        return None;
+    }
+    Some(move |text: &str| {
+        let masked = mask_comments_and_strings(text);
+        if masked != text
+            || masked.contains("::")
+            || masked.contains('|')
+            || masked.contains('!')
+            || identifier_tokens(&masked).any(|token| {
+                matches!(
+                    token,
+                    "let" | "match" | "fn" | "move" | "loop" | "while" | "for"
+                ) || (wrapper_parameters
+                    .iter()
+                    .any(|parameter| parameter == token)
+                    && !owner_parameters.iter().any(|parameter| parameter == token))
+            })
+        {
+            return None;
+        }
+        let mut rewritten = String::with_capacity(text.len());
+        let mut token = String::new();
+        let mut previous: Option<char> = None;
+        let flush = |token: &mut String, rewritten: &mut String, after_dot: bool| {
+            match owner_parameters
+                .iter()
+                .position(|parameter| parameter == token)
+            {
+                Some(index) if !after_dot => {
+                    rewritten.push('(');
+                    rewritten.push_str(&arguments[index]);
+                    rewritten.push(')');
+                }
+                _ => rewritten.push_str(token),
+            }
+            token.clear();
+        };
+        let mut token_after_dot = false;
+        for character in text.chars() {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                if token.is_empty() {
+                    token_after_dot = previous == Some('.');
+                }
+                token.push(character);
+            } else {
+                if !token.is_empty() {
+                    flush(&mut token, &mut rewritten, token_after_dot);
+                }
+                rewritten.push(character);
+            }
+            previous = Some(character);
+        }
+        if !token.is_empty() {
+            flush(&mut token, &mut rewritten, token_after_dot);
+        }
+        Some(rewritten)
+    })
 }
 
 /// Whether every source line naming the owner or the wrapper sits inside the
@@ -3641,9 +3804,9 @@ mod tests {
     /// names the wrapper.
     #[test]
     fn the_forwarding_wrapper_reading_reads_only_wrapper_only_tests() -> Result<(), String> {
-        let read = |extra: &str, test_body: &str| -> Result<bool, String> {
+        let read_with = |argument: &str, extra: &str, test_body: &str| -> Result<bool, String> {
             let source = format!(
-                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel(cents)\n}}\n{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
+                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel({argument})\n}}\n{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
@@ -3676,7 +3839,26 @@ mod tests {
             )
             .is_some_and(|evidence| evidence.state == StageState::Weak))
         };
+        let read = |extra: &str, test_body: &str| read_with("cents", extra, test_body);
         assert!(read("", "    assert_eq!(cash_total(105), 105);")?);
+        // A computed argument is inlined: `cents + 1` at 105 hands the owner
+        // 106, where both versions give 105; at 103 it hands 104, where they
+        // give 100 and 105.
+        assert!(read_with(
+            "cents + 1",
+            "",
+            "    assert_eq!(cash_total(105), 105);"
+        )?);
+        assert!(!read_with(
+            "cents + 1",
+            "",
+            "    assert_eq!(cash_total(103), 105);"
+        )?);
+        assert!(read_with(
+            "cents * 3",
+            "",
+            "    assert_eq!(cash_total(0), 0);"
+        )?);
         // The changed values differ at 103, so the reading declines.
         assert!(!read("", "    assert_eq!(cash_total(103), 105);")?);
         // A test that also names the owner, or never calls the wrapper.
@@ -3737,14 +3919,26 @@ mod tests {
                 functions,
                 ..Default::default()
             });
-            super::sole_forwarding_wrapper(&index, &owner, &[]).map(|found| found.name.clone())
+            super::sole_forwarding_wrapper(&index, &owner, &[]).map(|(found, _)| found.name.clone())
         };
         assert_eq!(
             read(vec![owner.clone(), wrapper(pure)]),
             Some("total".to_string())
         );
+        // A closed integer expression over the wrapper's parameters is a
+        // computed argument the reading inlines.
+        assert_eq!(
+            read(vec![
+                owner.clone(),
+                wrapper("pub fn total(cents: u32) -> u32 {\n    round(cents * 10 + 1)\n}")
+            ]),
+            Some("total".to_string())
+        );
         for body in [
-            "pub fn total(cents: u32) -> u32 {\n    round(cents + 1)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents.min(3))\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(LIMIT)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents as u32)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents + LIMIT)\n}",
             "pub fn total(a: u32, b: u32) -> u32 {\n    round(b)\n}",
             "pub fn total(cents: u32) -> u32 {\n    return round(cents);\n}",
             "pub fn total<T: Into<u32>>(cents: T) -> u32 {\n    round(cents.into())\n}",
