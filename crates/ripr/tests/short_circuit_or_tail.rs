@@ -330,6 +330,30 @@ fn a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin() -> Result<(), Stri
 }
 
 #[test]
+fn the_substituted_rendered_call_withholds_exactly_like_the_direct_pin() -> Result<(), String> {
+    // The shape the Reviewer named: the owner drops `n != 0` from
+    // `n != 0 && n % 2 == 0`, and the pin reaches it through a borrowed
+    // helper whose assertion names only its parameters
+    // (`assert_eq!(actual, expected)`), so the assertion text holds no call.
+    for (name, test) in [
+        ("helper", helper_test("is_even(4)", "true")),
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(is_even(4));"]),
+        ),
+    ] {
+        let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &test)
+            .map_err(|error| format!("{name}: {error}"))?;
+        assert_ne!(
+            class,
+            ExposureClass::Exposed,
+            "{name} pin must withhold the credit, not expose: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_added_guard_follows_the_same_agreement_rule() -> Result<(), String> {
     let agreeing = direct_test(
         "short_circuit_or_tail",
