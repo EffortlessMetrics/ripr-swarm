@@ -150,3 +150,25 @@ fn a_suffix_change_keeps_its_finding() -> Result<(), String> {
         Err(format!("`1` to `1i8` keeps a finding, got {findings:?}"))
     }
 }
+
+/// Review controls: an equal value whose statement or evaluation changed
+/// keeps its finding. `65;` becoming `return 0x41;` adds an early return,
+/// and `-(-128i8)` overflows `i8` where `128i8` wraps.
+#[test]
+fn an_equal_value_with_changed_behavior_keeps_its_finding() -> Result<(), String> {
+    for (ty, old, new, expected) in [
+        ("i32", "65;", "return 0x41;", "65"),
+        ("i8", "-(-128i8)", "128i8", "-128"),
+    ] {
+        let findings = TempRepo::create(ty, old, new, expected)?.findings()?;
+        if !findings
+            .iter()
+            .any(|finding| finding.probe.location.line == 2)
+        {
+            return Err(format!(
+                "`{old}` to `{new}` keeps a finding, got {findings:?}"
+            ));
+        }
+    }
+    Ok(())
+}

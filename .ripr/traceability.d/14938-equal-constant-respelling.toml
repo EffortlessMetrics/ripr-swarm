@@ -8,4 +8,5 @@ tests = [
   "crates/ripr/tests/equal_constant_respelling.rs::an_equal_value_respelling_seeds_no_finding",
   "crates/ripr/tests/equal_constant_respelling.rs::a_changed_value_keeps_its_exposed_finding",
   "crates/ripr/tests/equal_constant_respelling.rs::a_suffix_change_keeps_its_finding",
+  "crates/ripr/tests/equal_constant_respelling.rs::an_equal_value_with_changed_behavior_keeps_its_finding",
 ]

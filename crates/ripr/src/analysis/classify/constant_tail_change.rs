@@ -440,6 +440,21 @@ pub(in crate::analysis) fn is_equal_constant_respelling(old: &str, new: &str) ->
         let parse = crate::analysis::syntax::parse_clean_source_file(&format!(
             "fn ripr_suffixes() {{ {text} }}"
         ))?;
+        // The folder negates in `i128`, so `-(-128i8)` folds to 128 although
+        // it overflows `i8`. Equality reads a minus sign only directly on a
+        // literal, where both spellings negate the same typed literal.
+        let negates_non_literal = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::PrefixExpr::cast)
+            .any(|prefix| {
+                prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                    && !matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+            });
+        if negates_non_literal {
+            return None;
+        }
         let suffixes = parse
             .tree()
             .syntax()
@@ -1166,13 +1181,19 @@ mod tests {
             ("f(65)", "f(0x41)"),
             // An attribute can remove what the syntax shows.
             ("[1, 2]", "[1, #[cfg(any())] 2]"),
+            // A minus sign on anything but a literal can overflow the
+            // literal's type: `-(-128i8)` panics where `128i8` wraps.
+            ("128i8", "-(-128i8)"),
+            ("-(-128i8)", "128i8"),
+            ("1", "--1"),
+            ("-1", "-(1)"),
         ] {
             assert!(!is_equal_constant_respelling(old, new), "{old} -> {new}");
         }
     }
 
     #[test]
-    fn a_float_tail_is_still_not_an_admitted_constant_change() {
+    fn a_float_tail_is_still_not_an_admitted_constant_change() -> Result<(), String> {
         // #14938 folds floats for equality only; #14852 keeps refusing them.
         let old = Const::Float {
             f64_bits: 1.0f64.to_bits(),
@@ -1185,5 +1206,13 @@ mod tests {
         assert!(old.holds_float());
         assert!(list.holds_float());
         assert!(!Const::Int(1).holds_float());
+        // The admission itself refuses distinct float tails, including a
+        // float list whose length changed, which `distinct` alone would admit.
+        for (old_tail, new_tail) in [("1.0", "2.0"), ("[1.0]", "[1.0, 2.0]")] {
+            let old = format!("pub fn ratio() -> f64 {{\n    {old_tail}\n}}\n");
+            let new = format!("pub fn ratio() -> f64 {{\n    {new_tail}\n}}\n");
+            assert_eq!(read(&old, &new, "ratio", new_tail)?, None, "{new_tail}");
+        }
+        Ok(())
     }
 }

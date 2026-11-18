@@ -596,8 +596,19 @@ pub(crate) fn probes_for_file_with_relations(
                                 .trim()
                                 .to_string()
                         };
+                        // The statement envelope must match too: `65;`
+                        // becoming `return 0x41;` adds an early return.
+                        let envelope = |line: &str| {
+                            let line = line.trim();
+                            (
+                                line.starts_with("return "),
+                                line.ends_with(';'),
+                                line.ends_with(','),
+                            )
+                        };
                         let value = bare(&shape_text);
                         bare(text) == value
+                            && envelope(text) == envelope(removed)
                             && crate::analysis::classify::is_equal_constant_respelling(
                                 &bare(removed),
                                 &value,
