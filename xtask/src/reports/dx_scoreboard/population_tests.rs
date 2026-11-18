@@ -1401,10 +1401,12 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         assert_eq!(provenance["approved"], "EffortlessMetrics/ripr-swarm#7325");
         // Only value, status, source and samples moved, except that #12766 moved
         // the total abstention bar (and its title) when the avoidable rate took
-        // the 0.2 bar; scoreboards.toml is the source of both.
+        // the 0.2 bar, and again when `[abstain]`-marked spec examples grew the
+        // spec-required share to 0.0452 (0.2 + 0.0452, rounded down);
+        // scoreboards.toml is the source of both.
         let config_moved = id == "trust.verdict_corpus_abstention";
         if config_moved {
-            assert_eq!(metric["target"].as_f64(), Some(0.21), "{id} target");
+            assert_eq!(metric["target"].as_f64(), Some(0.24), "{id} target");
             assert_eq!(
                 metric["title"],
                 "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
