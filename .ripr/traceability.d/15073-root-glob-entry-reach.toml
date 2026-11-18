@@ -1,0 +1,12 @@
+# A lone root glob delivers a crate-root entry (#15073) under RIPR-SPEC-0159.
+[[extend]]
+id = "RIPR-SPEC-0159"
+tests = [
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_named_import_of_the_root_entry_is_the_linked_baseline",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_lone_root_glob_links_a_root_entry",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_lone_root_glob_links_an_entry_the_root_re_exports",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_second_glob_may_bring_another_cash_total_and_does_not_link",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_glob_of_a_library_module_does_not_link",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_root_glob_does_not_deliver_an_entry_the_root_does_not_re_export",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_test_file_definition_of_the_entry_name_shadows_the_glob",
+]

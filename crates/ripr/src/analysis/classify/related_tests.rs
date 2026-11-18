@@ -3401,11 +3401,37 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;
     }
+    // #15073: a lone `use <lib>::*;` glob delivers a crate-root entry the way
+    // `use <lib>::<entry>;` does: the entry is defined in `src/lib.rs`, or the
+    // root re-exports it exactly once, and no other glob in the test file or
+    // body could also bring a same-named item in.
+    let globs = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .into_iter()
+            .filter(|import| import.path.ends_with('*'))
+            .collect::<Vec<_>>()
+    };
+    let all_globs = [globs(&facts.source), globs(&test.body)].concat();
+    let root_glob_delivers_entry = matches!(all_globs.as_slice(), [only] if {
+        let segments: Vec<String> = only
+            .path
+            .trim_start_matches("::")
+            .split("::")
+            .map(unraw)
+            .collect();
+        only.alias.is_none()
+            && !in_src_unit_test
+            && segments.len() == 2
+            && segments[0] == crate_name
+            && segments[1] == "*"
+    }) && entry_module
+        .as_deref()
+        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)));
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                import.path.ends_with('*')
+                (import.path.ends_with('*') && !root_glob_delivers_entry)
                     || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
