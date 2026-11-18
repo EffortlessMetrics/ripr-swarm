@@ -821,7 +821,17 @@ fn predicate_as_owner_tail(
     let ast::Expr::BinExpr(binary) = &comparison else {
         return None;
     };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    // #15027: an `||` chain carries the predicate's value to the return only
+    // when the edit appends one equality arm on the same parameter
+    // (`n == 1` to `n == 1 || n == 2`). Any input equal to the new literal
+    // then flips the whole chain, so the chain's change is the returned
+    // change. Every other connective tail keeps no sink: a changed operand
+    // of `x > 1 || y` may be masked by `y`.
+    let appended_arm = matches!(
+        binary.op_kind(),
+        Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or))
+    ) && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();

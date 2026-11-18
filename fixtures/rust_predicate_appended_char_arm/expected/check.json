@@ -1,0 +1,257 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_predicate_appended_char_arm/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:191bd3b41955f9a8d7d002929619dcee5e76e0d7775176f07b09c6397f7a8cea","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:7a595285",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_separator",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "c==lit2c_c==lit3b"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:7a595285",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "c == ',' || c == ';'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates"},
+        "infect": {"state":"yes","confidence":"medium","summary":"A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: c ==     || c =="},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses strong relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"c ==     || c ==","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change", "Changed behavior appears to influence returned value: c ==     || c ==", "Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "9": "fn semicolon_separates() { assert!(is_separator(';')); }",
+        "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ';'",
+            "context": "function_argument"
+          },
+          {
+            "line": 9,
+            "value": "c == ';'",
+            "context": "function_argument",
+            "provenance": "fn semicolon_separates() { assert!(is_separator(';')); } | exact input c = ';'; literal operand ';' = ';'"
+          },
+          {
+            "line": 11,
+            "value": "c = '.'",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ';'",
+          "context": "function_argument"
+        },
+        {
+          "line": 9,
+          "value": "c == ';'",
+          "context": "function_argument",
+          "provenance": "fn semicolon_separates() { assert!(is_separator(';')); } | exact input c = ';'; literal operand ';' = ';'"
+        },
+        {
+          "line": 11,
+          "value": "c = '.'",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "dot_does_not_separate",
+          "file": "src/lib.rs",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_separator('.'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "semicolon_separates",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(is_separator(';'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:6fca459e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_separator",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "c==lit2c_c==lit3b"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:6fca459e",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "c == ',' || c == ';'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses strong relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "9": "fn semicolon_separates() { assert!(is_separator(';')); }",
+        "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ';'",
+            "context": "function_argument"
+          },
+          {
+            "line": 9,
+            "value": "c == ';'",
+            "context": "function_argument",
+            "provenance": "fn semicolon_separates() { assert!(is_separator(';')); } | exact input c = ';'; literal operand ';' = ';'"
+          },
+          {
+            "line": 11,
+            "value": "c = '.'",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ';'",
+          "context": "function_argument"
+        },
+        {
+          "line": 9,
+          "value": "c == ';'",
+          "context": "function_argument",
+          "provenance": "fn semicolon_separates() { assert!(is_separator(';')); } | exact input c = ';'; literal operand ';' = ';'"
+        },
+        {
+          "line": 11,
+          "value": "c = '.'",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "dot_does_not_separate",
+          "file": "src/lib.rs",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_separator('.'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "semicolon_separates",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(is_separator(';'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
