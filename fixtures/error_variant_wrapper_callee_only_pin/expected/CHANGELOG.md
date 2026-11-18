@@ -587,3 +587,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (45)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`
