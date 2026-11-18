@@ -1,0 +1,1 @@
+xtask/tests/docs_history_fetch.rs|Command::new|1|ci/docs-history-fixture|#14500: test-only launcher drives local Git history fixtures and fixed Bash scripts extracted from the checked-in workflow; temporary fixture repositories only, no network or credentials, children are waited on.
