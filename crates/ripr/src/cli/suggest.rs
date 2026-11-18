@@ -119,6 +119,45 @@ fn unknown_format_message(value: &str, accepted: &[&str]) -> String {
     }
 }
 
+/// How a flag typed where a command belongs (`ripr --base main`) relates to
+/// the flags `command` documents. The top-level error uses this so its
+/// placement example never names a spelling `command` would then reject.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FlagPlacement {
+    /// `command` documents the flag as typed.
+    Documented,
+    /// `command` documents a near spelling; the payload is that flag.
+    Near(String),
+    /// `command` documents nothing close to it.
+    Unknown,
+}
+
+/// Flags a command documents only as a modifier of `--help`. The parser
+/// rejects them on their own (`ripr check --all`), so a placement example
+/// must not name one.
+const HELP_ONLY_FLAGS: &[&str] = &["--all"];
+
+pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
+    let Some(help_text) = help::help_text_for(command) else {
+        return FlagPlacement::Unknown;
+    };
+    let runnable: Vec<&str> = known_flags(command, help_text)
+        .into_iter()
+        .filter(|flag| !HELP_ONLY_FLAGS.contains(flag))
+        .collect();
+    if runnable.contains(&arg) {
+        return FlagPlacement::Documented;
+    }
+    // Only flag-shaped input gets a flag suggestion (see `closest_flag`).
+    if !arg.starts_with('-') {
+        return FlagPlacement::Unknown;
+    }
+    match closest(arg, runnable.into_iter()) {
+        Some(flag) => FlagPlacement::Near(flag.to_string()),
+        None => FlagPlacement::Unknown,
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be

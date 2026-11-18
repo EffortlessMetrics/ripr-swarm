@@ -312,14 +312,28 @@ fn unknown_command_message(command: &str) -> String {
                 "unknown command {command:?}. Did you mean `{flag}`? Run `ripr --help`."
             );
         }
-        let example = if command == "--root" {
-            "--root .".to_string()
-        } else {
-            format!("{command} ...")
+        // The example names `ripr check`, so only a spelling `check` accepts
+        // may appear in it: `ripr -q check` used to be told to run
+        // `ripr check -q ...`, which `check` then rejects.
+        use crate::cli::suggest::FlagPlacement;
+        return match crate::cli::suggest::flag_placement("check", command) {
+            FlagPlacement::Documented => {
+                let example = if command == "--root" {
+                    "--root .".to_string()
+                } else {
+                    format!("{command} ...")
+                };
+                format!(
+                    "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
+                )
+            }
+            FlagPlacement::Near(flag) => format!(
+                "unknown command {command:?}; options go after the command. Did you mean `ripr check {flag}`? Run `ripr --help`."
+            ),
+            FlagPlacement::Unknown => format!(
+                "unknown command {command:?}; options go after the command, and `ripr check` has no `{command}` option. Run `ripr --help`."
+            ),
         };
-        return format!(
-            "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
-        );
     }
     // Version is a flag here, not a subcommand; say so instead of a bare refusal.
     if command == "version" {
@@ -690,23 +704,32 @@ mod tests {
                 "unknown command \"--hepl\". Did you mean `--help`? Run `ripr --help`.".to_string()
             )
         );
-        // Valid command-local options keep the placement guidance.
-        for option in ["--head", "--reason"] {
+        // An option `check` does not take is never offered as a `ripr check`
+        // example: the suggested command would fail on the same token.
+        for option in ["--reason", "--bogus", "-x"] {
             assert_eq!(
                 CliCommand::from_parts(Some(option), Vec::new()),
                 Err(format!(
-                    "unknown command {option:?}; options go after the command, e.g. `ripr check {option} ...`"
+                    "unknown command {option:?}; options go after the command, and `ripr check` has no `{option}` option. Run `ripr --help`."
                 ))
             );
         }
-        // A flag nowhere near a top-level flag gets no invented suggestion.
-        assert_eq!(
-            CliCommand::from_parts(Some("--bogus"), Vec::new()),
-            Err(
-                "unknown command \"--bogus\"; options go after the command, e.g. `ripr check --bogus ...`"
-                    .to_string()
-            )
-        );
+    }
+
+    #[test]
+    fn leading_flag_near_a_check_flag_names_the_spelling_check_accepts() {
+        for (typed, accepted) in [
+            ("-q", "--quiet"),
+            ("--quite", "--quiet"),
+            ("--bsae", "--base"),
+        ] {
+            assert_eq!(
+                CliCommand::from_parts(Some(typed), Vec::new()),
+                Err(format!(
+                    "unknown command {typed:?}; options go after the command. Did you mean `ripr check {accepted}`? Run `ripr --help`."
+                ))
+            );
+        }
     }
 
     #[test]
@@ -899,7 +922,7 @@ mod tests {
         // Outside `help`, the same token is not a help option.
         assert_eq!(
             unknown_command_error("--al"),
-            "unknown command \"--al\"; options go after the command, e.g. `ripr check --al ...`"
+            "unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`."
         );
     }
 
