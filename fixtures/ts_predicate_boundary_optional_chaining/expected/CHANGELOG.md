@@ -501,3 +501,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_predicate_boundary_optional_chaining (37)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_predicate_boundary_optional_chaining --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

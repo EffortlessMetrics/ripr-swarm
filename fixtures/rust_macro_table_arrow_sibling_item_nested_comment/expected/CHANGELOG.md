@@ -164,3 +164,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (14)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

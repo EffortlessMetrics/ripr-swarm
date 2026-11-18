@@ -129,3 +129,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_dunder_truthiness_header_effect (11)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_header_effect --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

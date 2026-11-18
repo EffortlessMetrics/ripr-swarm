@@ -667,3 +667,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_tape_equal_oracle (38)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

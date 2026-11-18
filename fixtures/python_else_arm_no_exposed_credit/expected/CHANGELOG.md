@@ -245,3 +245,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_else_arm_no_exposed_credit (20)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_else_arm_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

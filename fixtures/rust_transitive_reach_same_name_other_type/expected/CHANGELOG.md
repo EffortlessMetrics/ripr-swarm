@@ -361,3 +361,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (28)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

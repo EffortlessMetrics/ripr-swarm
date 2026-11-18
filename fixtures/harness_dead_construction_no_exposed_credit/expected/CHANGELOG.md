@@ -582,3 +582,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — harness_dead_construction_no_exposed_credit (43)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless harness_dead_construction_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

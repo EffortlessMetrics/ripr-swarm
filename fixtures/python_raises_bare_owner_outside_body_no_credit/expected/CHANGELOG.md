@@ -45,3 +45,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_raises_bare_owner_outside_body_no_credit (5)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_raises_bare_owner_outside_body_no_credit --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

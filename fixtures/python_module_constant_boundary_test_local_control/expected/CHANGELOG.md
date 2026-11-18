@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_module_constant_boundary_test_local_control (3)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_module_constant_boundary_test_local_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -74,3 +74,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_snapshot_block_comment (7)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_block_comment --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

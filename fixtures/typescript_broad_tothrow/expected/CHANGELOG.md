@@ -960,3 +960,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_broad_tothrow (44)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_broad_tothrow --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

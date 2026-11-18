@@ -204,3 +204,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_guarded_write_entered (17)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_guarded_write_entered --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

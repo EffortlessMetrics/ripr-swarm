@@ -741,3 +741,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_adversarial_attribute_sink_same_value_other_receiver (43)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_attribute_sink_same_value_other_receiver --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

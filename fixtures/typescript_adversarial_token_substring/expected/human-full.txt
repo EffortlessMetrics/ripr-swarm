@@ -86,7 +86,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_token_substring/input --diff <cwd>/fixtures/typescript_adversarial_token_substring/diff.patch --mode fast probe:src_stream.ts:typescript_preview:5430a07e
   ripr context --root <cwd>/fixtures/typescript_adversarial_token_substring/input --diff <cwd>/fixtures/typescript_adversarial_token_substring/diff.patch --mode fast --at probe:src_stream.ts:typescript_preview:5430a07e
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or

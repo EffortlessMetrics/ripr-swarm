@@ -296,3 +296,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_cross_test_import_alias (24)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_cross_test_import_alias --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -140,3 +140,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_caplog_aliased_fixture_import (12)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_caplog_aliased_fixture_import --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

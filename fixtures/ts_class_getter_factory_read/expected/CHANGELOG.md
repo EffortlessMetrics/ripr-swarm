@@ -185,3 +185,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_class_getter_factory_read (15)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_class_getter_factory_read --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

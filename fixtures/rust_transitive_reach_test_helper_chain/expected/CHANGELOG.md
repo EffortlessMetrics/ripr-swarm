@@ -735,3 +735,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_transitive_reach_test_helper_chain (56)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_test_helper_chain --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -564,13 +564,17 @@ pub(crate) fn render_full_with_config_and_navigation(
             navigation.list_command()
         ));
     }
-    render_all_no_path_disclosure(&mut out, output);
+    // #14318: each finding block ends with a blank line, so the trailing
+    // notes join through the same paragraph rule as the bounded report.
+    let mut tail = String::new();
+    render_all_no_path_disclosure(&mut tail, output);
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
-    render_working_tree_disclosure(&mut out, output);
-    render_preview_language_advisories(&mut out, output);
-    render_language_runs(&mut out, output);
+    render_working_tree_disclosure(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output);
+    render_language_runs(&mut tail, output);
+    push_after_paragraph(&mut out, &tail);
     out
 }
 
@@ -5307,6 +5311,54 @@ mod tests {
 
             assert!(
                 rendered.contains("  Machine data: rerun with --format json\n\nNote: "),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("\n\n\n"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn human_full_puts_one_blank_line_between_the_last_finding_and_a_trailing_note() {
+        let output = CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                no_static_path: 1,
+                ..Summary::default()
+            },
+            findings: vec![unknown_finding()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            file_fact_cache: None,
+
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let drill_in =
+            crate::app::FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+
+        for rendered in [
+            render_full_with_config(&output, &config),
+            super::render_full_with_config_and_navigation(&output, &config, Some(&drill_in)),
+        ] {
+            assert!(
+                rendered.contains("\n\nNote: ripr found no static"),
                 "{rendered}"
             );
             assert!(!rendered.contains("\n\n\n"), "{rendered}");
