@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:5
   Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
@@ -36,7 +36,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 6 more detail line(s) in --format human-full
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

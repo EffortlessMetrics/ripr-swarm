@@ -125,10 +125,18 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         index += 1;
     }
 
-    let input =
-        input.ok_or_else(|| format!("reports kani requires --input PATH; see `{pointer}`"))?;
-    let binding =
-        binding.ok_or_else(|| format!("reports kani requires --binding PATH; see `{pointer}`"))?;
+    let input = input.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required(
+            "--input",
+            &format!("reports kani requires --input PATH; see `{pointer}`"),
+        )
+    })?;
+    let binding = binding.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required(
+            "--binding",
+            &format!("reports kani requires --binding PATH; see `{pointer}`"),
+        )
+    })?;
     let root = root.unwrap_or_else(|| PathBuf::from("."));
     let uses_default_output = out.is_none() || out_md.is_none();
     let out = out.unwrap_or_else(|| root.join(DEFAULT_JSON));

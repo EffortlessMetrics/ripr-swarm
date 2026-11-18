@@ -5,7 +5,7 @@ mod check_fast_strict;
 #[path = "command/front_door.rs"]
 mod front_door;
 #[path = "precommit_v2.rs"]
-mod precommit_v2;
+pub(crate) mod precommit_v2;
 
 fn print_help_route(args: &[String]) -> Result<(), String> {
     match args {
@@ -33,7 +33,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Commands => super::commands_report(),
         XtaskCommand::PrSummary => super::reports::pr_summary(),
         XtaskCommand::Proof(args) => super::reports::proof(&args),
-        XtaskCommand::PrReady => super::pr_ready(),
+        XtaskCommand::PrReady(args) => super::pr_ready(&args),
         XtaskCommand::Cockpit => super::cockpit(),
         XtaskCommand::PrTriageReport => super::reports::pr_triage_report(),
         XtaskCommand::BranchInventory(args) => super::branch_inventory::run(&args),
@@ -69,6 +69,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
         XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
         XtaskCommand::RepairStartPage(args) => super::outcome_page::run(&args),
+        XtaskCommand::DxTrend(args) => super::dx_trend::run(&args),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -126,6 +127,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::TokenCost => super::reports::token_cost(),
+        XtaskCommand::AgentEval(args) => super::reports::agent_eval(&args),
         XtaskCommand::FvScoreboard => super::reports::fv_scoreboard(),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::CurrentState(args) => super::current_state::current_state_command(&args),

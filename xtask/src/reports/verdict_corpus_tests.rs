@@ -835,6 +835,7 @@ fn checkout_module_path_oracle_is_described_as_same_file() -> Result<(), String>
         SubjectOrigin::Authored,
         &json!({"findings": []}),
         None,
+        &BTreeSet::new(),
     )?;
     let rendered: Value =
         serde_json::from_str(&render_row_json(&row)?).map_err(|err| err.to_string())?;
@@ -898,7 +899,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     let discriminated = corpus
         .cases
         .iter()
@@ -912,7 +913,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
         report.ideal_rate.numerator,
         corpus.cases.len() - discriminated
     );
-    let missing = build_report(&corpus, &checks[1..], &BTreeMap::new())
+    let missing = build_report(&corpus, &checks[1..], &BTreeMap::new(), &BTreeSet::new())
         .err()
         .unwrap_or_default();
     assert!(missing.contains("no ripr result for case"), "{missing}");
@@ -1049,7 +1050,7 @@ fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     let authored = report
         .by_origin
         .get("authored")
@@ -1120,7 +1121,7 @@ fn contradiction_counts_use_one_per_finding_unit() -> Result<(), String> {
             (case.case_id.clone(), json!({"findings": findings}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     // Two contradicted findings in one case: the rate and the per-code count
     // agree, while the row lists the code once.
     assert_eq!(report.contradiction_rate.numerator, 2);
@@ -1432,7 +1433,7 @@ fn scored_report(corpus: &Corpus) -> Result<Report, String> {
         .iter()
         .map(|case| (case.case_id.clone(), json!({"findings": []})))
         .collect();
-    build_report(corpus, &checks, &BTreeMap::new())
+    build_report(corpus, &checks, &BTreeMap::new(), &BTreeSet::new())
 }
 
 #[test]
@@ -1537,6 +1538,76 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
 }
 
 #[test]
+fn expected_report_rejects_rows_that_change_scoring_definition() -> Result<(), String> {
+    let dir = per_record_corpus("verdict-definition-integrity", &["a-case"])?;
+    let corpus = load_corpus(&dir)?;
+    let case = corpus.cases.first().ok_or("fixture has no case")?;
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    let mut gap = finding(
+        "weakly_exposed",
+        case.anchor.line as u64,
+        "candidate_current",
+    );
+    gap["probe"]["file"] = json!(case.anchor.file);
+    let report = build_report(
+        &corpus,
+        &[(case.case_id.clone(), json!({"findings": [gap]}))],
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+    )?;
+    bless(&dir.join("expected"), &report)?;
+    let valid = expected_report(&dir)?;
+    assert_eq!(valid.false_actionable_rate.numerator, 1);
+    assert_eq!(valid.false_actionable_rate.denominator, 1);
+    assert_eq!(valid.rows[0].origin, SubjectOrigin::Authored);
+    let path = dir.join("expected/rows/a-case.json");
+    let original = parse_json(&path)?;
+    let mut accepted = Vec::new();
+    for (field, value) in [
+        ("outcome", json!("ideal")),
+        ("truth", json!("not_discriminated")),
+        ("origin", json!("upstream")),
+        ("subject_id", json!("unrelated-subject")),
+        ("anchor", json!("other.rs:99")),
+        ("ideal_verdict", json!("gap")),
+        ("packet_provenance", json!("producer")),
+    ] {
+        let mut changed = original.clone();
+        changed[field] = value;
+        crate::tests::write(&path, &format!("{changed:#}"));
+        match expected_report(&dir) {
+            Ok(_) => accepted.push(field),
+            Err(err) => assert!(
+                err.contains("a-case") && err.contains("scoring definition"),
+                "{field}: {err}"
+            ),
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted inconsistent fields: {accepted:?}"
+    );
+    crate::tests::write(&path, &format!("{original:#}"));
+    assert_eq!(
+        render_report_json(&expected_report(&dir)?)?,
+        render_report_json(&valid)?
+    );
+    // Definitions, not the row's copied subject id, establish origin.
+    let case_path = dir.join("cases/a-case.json");
+    let mut missing_subject = parse_json(&case_path)?;
+    missing_subject["subject_id"] = json!("missing-subject");
+    crate::tests::write(&case_path, &format!("{missing_subject:#}"));
+    let err = expected_report(&dir)
+        .err()
+        .ok_or("accepted a missing subject")?;
+    assert!(
+        err.contains("a-case") && err.contains("missing-subject"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), String> {
     let dir = per_record_corpus("verdict-derived-summary", &["a-case", "b-case"])?;
     let corpus = load_corpus(&dir)?;
@@ -1562,7 +1633,7 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
             (case.case_id.clone(), check)
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         report.contradiction_rate.denominator > 0 && !report.contradictions_by_code.is_empty(),
         "fixture must exercise the contradiction counts: {:?}",
@@ -2029,6 +2100,205 @@ fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), Str
 }
 
 #[test]
+fn check_affected_parser_accepts_one_source_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["check-affected", "--paths", "a.rs,b.py"]),
+        args(&["check-affected", "--paths-file", "paths.txt"]),
+        args(&["check-affected", "--paths-file", "-"]),
+        args(&["--paths", "a.rs", "check-affected"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check-affected", "{given:?}");
+    }
+    for (given, refusal) in [
+        (args(&["check-affected"]), "exactly one"),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths", "b.rs"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths-file", "x", "--paths-file", "y"]),
+            "twice",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--paths-file", "x"]),
+            "exactly one",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--language", "rust"]),
+            "--language",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--out", "x"]),
+            "--out",
+        ),
+        (
+            args(&["check-affected", "--paths", "a.rs", "--cases", "c1"]),
+            "--cases",
+        ),
+        (args(&["check", "--paths", "a.rs"]), "check-affected"),
+        (args(&["check-affected", "--paths"]), "--paths needs"),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn check_affected_normalization_refuses_no_changed_paths() {
+    for raw in [Vec::new(), args(&["", "  ", "./"]), args(&[","])] {
+        let err = normalize_affected_paths(&raw).err().unwrap_or_default();
+        assert!(err.contains("no changed paths"), "{raw:?}: {err}");
+    }
+    assert_eq!(
+        normalize_affected_paths(&args(&[
+            "./crates\\ripr\\src\\lib.rs",
+            "crates/ripr/src/lib.rs"
+        ])),
+        Ok(vec!["crates/ripr/src/lib.rs".to_string()])
+    );
+}
+
+#[test]
+fn check_affected_classification_matrix() {
+    use AffectedPath::{All, Ignored, Language};
+    let lang = |name: &str| Language(name.to_string());
+    for (path, expected) in [
+        ("fixtures/rust-verdict-corpus/cases/a.json", lang("rust")),
+        (
+            "fixtures/typescript-verdict-corpus/cases/a.json",
+            lang("typescript"),
+        ),
+        (
+            "fixtures/python-verdict-corpus/cases/a.json",
+            lang("python"),
+        ),
+        // Perl packets are JSON but route to Perl by corpus, never by a
+        // global *.json rule.
+        ("fixtures/perl-verdict-corpus/packets/a.json", lang("perl")),
+        ("fixtures/go-verdict-corpus/cases/a.json", All),
+        (
+            "crates/ripr/src/analysis/language/rust/mod.rs",
+            lang("rust"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/typescript/mod.rs",
+            lang("typescript"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/python/mod.rs",
+            lang("python"),
+        ),
+        (
+            "crates/ripr/src/analysis/language/perl/mod.rs",
+            lang("perl"),
+        ),
+        ("crates/ripr/src/analysis/language/mod.rs", All),
+        ("crates/ripr/src/analysis/language/router.rs", All),
+        ("crates/ripr/src/analysis/language/adapter.rs", All),
+        ("crates/ripr/src/analysis/language/id.rs", All),
+        ("crates/ripr/src/analysis/language/other/mod.rs", All),
+        ("src/lib.rs", lang("rust")),
+        ("tools/tool.py", lang("python")),
+        ("web/app.tsx", lang("typescript")),
+        ("web/app.mjs", lang("typescript")),
+        ("web/app.cts", lang("typescript")),
+        ("lib/Mod.pm", lang("perl")),
+        ("t/test.t", lang("perl")),
+        ("app.psgi", lang("perl")),
+        ("script.pl", lang("perl")),
+        // Extensions are case-sensitive per production route().
+        ("src/LIB.RS", All),
+        ("data.json", All),
+        ("main.go", All),
+        ("no_extension", All),
+        ("crates/ripr/src/domain/model.rs", All),
+        ("crates/ripr-contract/src/analysis/source_kind.rs", All),
+        ("crates/ripr/src/analysis/classifier.rs", All),
+        ("crates/ripr/src/output/human.rs", All),
+        ("crates/ripr/src/app/check.rs", All),
+        ("crates/ripr/src/cli/mod.rs", All),
+        ("crates/ripr/src/config/mod.rs", All),
+        ("Cargo.toml", All),
+        ("crates/ripr/Cargo.lock", All),
+        ("crates/ripr/build.rs", All),
+        ("rust-toolchain.toml", All),
+        (".cargo/config.toml", All),
+        ("xtask/src/reports/verdict_corpus.rs", All),
+        ("xtask/src/reports/verdict_corpus_tests.rs", All),
+        ("xtask/src/reports/fixtures.rs", All),
+        ("xtask/src/command.rs", All),
+        ("xtask/src/dispatch.rs", All),
+        ("docs/specs/RIPR-SPEC-0001.md", All),
+        (".github/workflows/rust-gates.yml", All),
+        ("schemas/report.json", All),
+        ("docs/guide.md", Ignored),
+        ("editors/vscode/src/main.ts", Ignored),
+        ("plugins/ripr/tool.rs", Ignored),
+        ("README.md", Ignored),
+        ("CHANGELOG.md", Ignored),
+        ("badges/coverage.svg", Ignored),
+        ("metrics/report.json", Ignored),
+        ("examples/demo.rs", Ignored),
+        // The ignored allowlist is root-anchored: a nested segment in a
+        // source tree still selects its language.
+        ("xtask/src/metrics/foo.rs", lang("rust")),
+        ("crates/x/examples/y.rs", lang("rust")),
+        ("tools/metrics/x.py", lang("python")),
+        // Crate-root and cross-language helpers feed every corpus.
+        ("crates/ripr/src/bounded_input.rs", All),
+        ("crates/ripr/src/lsp/backend.rs", All),
+        ("crates/ripr/src/lib.rs", All),
+        ("fixtures/some-fixture/input.rs", Ignored),
+    ] {
+        assert_eq!(classify_affected_path(path), expected, "{path}");
+    }
+}
+
+#[test]
+fn check_affected_selection_and_output_lines() {
+    let selected = select_affected(&args(&["src/a.rs", "docs/guide.md", "tools/b.py"]));
+    assert_eq!(
+        selected,
+        AffectedSelection::Languages(BTreeSet::from(["python".to_string(), "rust".to_string()]))
+    );
+    let discovered = args(&["perl", "python", "rust", "typescript"]);
+    assert_eq!(
+        affected_lines(&selected, &discovered, 2),
+        vec![
+            "verdict-corpus: check-affected selected: python, rust".to_string(),
+            "verdict-corpus: checked 2 corpora".to_string(),
+            "verdict-corpus: perl, typescript not run (not a pass)".to_string(),
+        ]
+    );
+    let widened = select_affected(&args(&["src/a.rs", "crates/ripr/src/domain/model.rs"]));
+    assert_eq!(
+        affected_lines(&widened, &discovered, 4)
+            .first()
+            .map(String::as_str),
+        Some(
+            "verdict-corpus: check-affected selected: all (widened: crates/ripr/src/domain/model.rs)"
+        )
+    );
+    let none = select_affected(&args(&["docs/guide.md"]));
+    assert_eq!(
+        affected_lines(&none, &discovered, 0),
+        vec![
+            "verdict-corpus: check-affected selected: none".to_string(),
+            "verdict-corpus: checked 0 corpora".to_string(),
+            "verdict-corpus: perl, python, rust, typescript not run (not a pass)".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String> {
     let corpus = load_corpus(&typescript_corpus_dir())?;
     let checks: Vec<(String, Value)> = corpus
@@ -2036,7 +2306,7 @@ fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String
         .iter()
         .map(|case| (case.case_id.clone(), json!({"findings": []})))
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         render_report_markdown(&report, "typescript")
             .starts_with("# TypeScript verdict corpus report\n"),
@@ -2400,7 +2670,12 @@ fn packet_findings_count_while_their_subject_is_unresolved_and_others_do_not() {
 fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), String> {
     let dir = perl_corpus_dir();
     let corpus = load_corpus(&dir)?;
-    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let report = build_report(
+        &corpus,
+        &gap_checks(&corpus),
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+    )?;
     let producer = report
         .by_packet_provenance
         .get("producer")
@@ -2436,7 +2711,12 @@ fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), St
     assert_eq!(render_report_json(&rebuilt)?, render_report_json(&report)?);
     // A corpus without packets carries no provenance table or row field.
     let rust = load_corpus(&repo_corpus_dir())?;
-    let rust_report = build_report(&rust, &gap_checks(&rust), &BTreeMap::new())?;
+    let rust_report = build_report(
+        &rust,
+        &gap_checks(&rust),
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+    )?;
     assert!(rust_report.by_packet_provenance.is_empty());
     assert!(!render_report_json(&rust_report)?.contains("packet_provenance"));
     Ok(())
@@ -2919,7 +3199,7 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         report.by_origin.len() > 1,
         "the committed corpus has both origins"
@@ -2962,4 +3242,155 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     assert!(count(&authored.abstention_by_cause) > 0, "{markdown}");
     assert!(markdown.contains(&row), "{row}\n{markdown}");
     Ok(())
+}
+
+#[test]
+fn abstention_is_expected_only_for_caught_changes_whose_citations_all_require_it()
+-> Result<(), String> {
+    let corpus = load_corpus(&repo_corpus_dir())?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.case_id == "spec-b-0163-computed-argument")
+        .ok_or("case spec-b-0163-computed-argument is missing")?;
+    // Premise: tests catch the change, one Reject citation, `limited` acceptable.
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    assert_eq!(case.spec_examples, vec!["RIPR-SPEC-0163#3".to_string()]);
+    assert!(
+        case.expected
+            .acceptable_verdicts
+            .contains(&Verdict::Limited)
+    );
+    let rejects: BTreeSet<String> = ["RIPR-SPEC-0163#3".to_string()].into_iter().collect();
+    assert!(abstention_expected(case, &rejects));
+    // Not a Reject example: the abstention is avoidable.
+    assert!(!abstention_expected(case, &BTreeSet::new()));
+    // One cited Accept example alongside the Reject one: avoidable.
+    let mut mixed = case.clone();
+    mixed.spec_examples.push("RIPR-SPEC-0163#1".to_string());
+    assert!(!abstention_expected(&mixed, &rejects));
+    // `limited` not acceptable: avoidable.
+    let mut strict = case.clone();
+    strict
+        .expected
+        .acceptable_verdicts
+        .retain(|v| *v != Verdict::Limited);
+    assert!(!abstention_expected(&strict, &rejects));
+    // The tests miss the change: a gap obeys the Reject example, so the
+    // abstention stays avoidable even with every other condition met.
+    let mut missed = case.clone();
+    missed.truth.state = TruthState::NotDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
+    missed.truth.state = TruthState::PartiallyDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
+    // No citation at all: avoidable.
+    let mut bare = case.clone();
+    bare.spec_examples.clear();
+    assert!(!abstention_expected(&bare, &rejects));
+    Ok(())
+}
+
+/// Observe the environment at the real process boundary, including concurrent
+/// case-local caches; comparing a list of intended environment pairs is weaker.
+#[test]
+fn corpus_child_has_one_worker_and_its_own_cache_without_mutating_parent() -> Result<(), String> {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    let parent_workers = std::env::var_os("RAYON_NUM_THREADS");
+    let parent_cache = std::env::var_os(CACHE_ENV);
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec![
+            "/D".to_string(),
+            "/C".to_string(),
+            "echo %RAYON_NUM_THREADS%:%RIPR_CACHE_DIR%".to_string(),
+        ],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = (
+        "sh",
+        vec![
+            "-c".to_string(),
+            "printf '%s:%s' \"$RAYON_NUM_THREADS\" \"$RIPR_CACHE_DIR\"".to_string(),
+        ],
+    );
+    let caches = ["corpus cache/case-a", "corpus cache/case-b"];
+    let outputs: Vec<Result<String, String>> = caches
+        .par_iter()
+        .map(|cache| run_case_output(program, &args, cache))
+        .collect();
+    for (cache, output) in caches.iter().zip(outputs) {
+        assert_eq!(output?.trim(), format!("1:{cache}"));
+    }
+    assert_eq!(std::env::var_os("RAYON_NUM_THREADS"), parent_workers);
+    assert_eq!(std::env::var_os(CACHE_ENV), parent_cache);
+    Ok(())
+}
+
+#[test]
+fn avoidable_abstention_rate_leaves_out_only_abstained_rows_a_spec_asks_for() -> Result<(), String>
+{
+    let dir = repo_corpus_dir();
+    let read = |id: &str| -> Result<CaseRow, String> {
+        let path = dir.join(format!("expected/rows/{id}.json"));
+        let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    };
+    let expected = read("spec-b-0163-computed-argument")?;
+    let ideal = read("accounts-balance-add")?;
+    assert_eq!(expected.outcome, Outcome::Abstained);
+    assert!(
+        expected.abstention_expected,
+        "premise: committed row carries the flag"
+    );
+    assert_eq!(ideal.outcome, Outcome::Ideal);
+    let mut avoidable = expected.clone();
+    avoidable.case_id = "avoidable-twin".to_string();
+    avoidable.abstention_expected = false;
+    // A flagged row that does not abstain adds nothing to either numerator.
+    let mut flagged_ideal = ideal.clone();
+    flagged_ideal.case_id = "flagged-ideal".to_string();
+    flagged_ideal.abstention_expected = true;
+    let report = summarize(
+        String::new(),
+        Vec::new(),
+        vec![expected, avoidable, ideal, flagged_ideal],
+    );
+    assert_eq!(
+        (
+            report.abstention_rate.numerator,
+            report.abstention_rate.denominator
+        ),
+        (2, 4)
+    );
+    assert_eq!(
+        (
+            report.avoidable_abstention_rate.numerator,
+            report.avoidable_abstention_rate.denominator
+        ),
+        (1, 4)
+    );
+    let authored = report
+        .by_origin
+        .get("authored")
+        .ok_or("authored origin rates missing")?;
+    assert_eq!(authored.avoidable_abstention_rate.numerator, 1);
+    // The flag is omitted when false, so unflagged committed rows keep their bytes.
+    let unflagged = serde_json::to_string(&report.rows[1]).map_err(|err| err.to_string())?;
+    assert!(!unflagged.contains("abstention_expected"), "{unflagged}");
+    Ok(())
+}
+
+#[test]
+fn corpus_child_failure_is_not_promoted_to_a_report() {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec!["/D".to_string(), "/C".to_string(), "exit /b 37".to_string()],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = ("sh", vec!["-c".to_string(), "exit 37".to_string()]);
+    let result = run_case_output(program, &args, "failure-case-cache");
+    assert!(matches!(result, Err(ref message) if message.contains("37")));
 }
