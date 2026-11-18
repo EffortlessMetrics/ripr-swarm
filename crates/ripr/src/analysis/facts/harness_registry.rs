@@ -438,24 +438,6 @@ fn apply_libtest_mimic_target(
         let masked_body = mask_dormant_template_spans(&body, &template_spans);
         let mut calls = extract_call_facts(&masked_body, start_line);
         let mut literals = extract_literal_facts(&masked_body, start_line);
-        // #15020: a local the trial binds only to `todo!()` pins nothing, as
-        // on the ordinary `#[test]` paths (#14810, #14882).
-        let placeholder_vars = placeholder_bound_variables(&masked_body);
-        let mut assertions = parser_oracles_for_node_tokens(
-            source,
-            &tokens,
-            matched.name_token_index,
-            close_index,
-            &line_index,
-            &placeholder_vars,
-        );
-        // #3603: a bare-identifier callback (`Trial::test("name",
-        // helper_fn)`) resolves to exactly one top-level function in this
-        // file, and that function's body is what the trial exercises —
-        // its parsed evidence joins the subject one level deep with real
-        // line attribution. Closures already scan through the claimed
-        // span; shadowed names, imports, paths, and unresolved or
-        // ambiguous names contribute nothing.
         // The enclosing scope for the shadow scan: resolved from the
         // invocation token's Fn ancestor when the trial is written as
         // plain code, and from the innermost line-span function fact
@@ -480,6 +462,47 @@ fn apply_libtest_mimic_target(
                     .map(|function| (function.body.clone(), function.start_line)),
             };
         let enclosing_body = enclosing_scope.as_ref().map(|(body, _)| body.as_str());
+        // #15020: a local the trial binds only to `todo!()` pins nothing, as
+        // on the ordinary `#[test]` paths (#14810, #14882). The callback can
+        // capture a binding of the enclosing function, outside the claimed
+        // span, so a name any such capturable binding holds keeps today's
+        // credit (#15063 review).
+        let mut placeholder_vars = placeholder_bound_variables(&masked_body);
+        if !placeholder_vars.is_empty() {
+            let captured = match tokens[position].parent_ancestors().find_map(ast::Fn::cast) {
+                Some(fn_node) => capturable_binding_names(
+                    &fn_node,
+                    ra_ap_syntax::TextRange::new(start, TextSize::new(end_offset)),
+                ),
+                // Inside another macro's token tree there is no syntax to
+                // scope by, so every binding in the enclosing text counts.
+                None => {
+                    let scope = enclosing_body.unwrap_or(source);
+                    let lowered = placeholder_bound_variables(scope);
+                    placeholder_vars
+                        .iter()
+                        .filter(|name| !lowered.contains(*name))
+                        .cloned()
+                        .collect()
+                }
+            };
+            placeholder_vars.retain(|name| !captured.contains(name));
+        }
+        let mut assertions = parser_oracles_for_node_tokens(
+            source,
+            &tokens,
+            matched.name_token_index,
+            close_index,
+            &line_index,
+            &placeholder_vars,
+        );
+        // #3603: a bare-identifier callback (`Trial::test("name",
+        // helper_fn)`) resolves to exactly one top-level function in this
+        // file, and that function's body is what the trial exercises —
+        // its parsed evidence joins the subject one level deep with real
+        // line attribution. Closures already scan through the claimed
+        // span; shadowed names, imports, paths, and unresolved or
+        // ambiguous names contribute nothing.
         if let Some(helper) =
             bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
                 .and_then(|ident_index| {
@@ -2123,6 +2146,66 @@ const BACKSLASH: char = '\\';
 /// (#3636): run-entry anchoring, argument resolution, and the
 /// reachable/unknown/unreachable verdicts.
 mod reachability;
+
+/// Names a callback at `invocation` can capture from `fn_node`: the function's
+/// parameters and every name a `let` binds outside the invocation, unless the
+/// `let` sits in a closure that does not also hold the invocation (a sibling
+/// trial's callback, whose locals the callback cannot see). Over-collecting
+/// only keeps credit (#15063 review).
+fn capturable_binding_names(
+    fn_node: &ast::Fn,
+    invocation: ra_ap_syntax::TextRange,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let add_pattern = |pattern: Option<ast::Pat>, names: &mut BTreeSet<String>| {
+        if let Some(pattern) = pattern {
+            names.extend(
+                pattern
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .map(|name| name.text().to_string()),
+            );
+        }
+    };
+    if let Some(params) = fn_node.param_list() {
+        for param in params.params() {
+            add_pattern(param.pat(), &mut names);
+        }
+    }
+    for node in fn_node.syntax().descendants() {
+        let range = node.text_range();
+        if range.start() >= invocation.start() && range.end() <= invocation.end() {
+            continue;
+        }
+        let pattern = if let Some(let_stmt) = ast::LetStmt::cast(node.clone()) {
+            let_stmt.pat()
+        } else if let Some(closure) = ast::ClosureExpr::cast(node.clone()) {
+            // Parameters of a closure that holds the invocation are in scope.
+            if closure.syntax().text_range().contains_range(invocation)
+                && let Some(params) = closure.param_list()
+            {
+                for param in params.params() {
+                    add_pattern(param.pat(), &mut names);
+                }
+            }
+            continue;
+        } else {
+            continue;
+        };
+        let in_foreign_closure = node
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| ancestor != fn_node.syntax())
+            .filter_map(ast::ClosureExpr::cast)
+            .any(|closure| !closure.syntax().text_range().contains_range(invocation));
+        if !in_foreign_closure {
+            add_pattern(pattern, &mut names);
+        }
+    }
+    names
+}
 
 #[cfg(test)]
 mod tests;

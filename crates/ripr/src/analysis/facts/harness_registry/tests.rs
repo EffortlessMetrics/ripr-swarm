@@ -5205,3 +5205,57 @@ fn sibling_trials_scope_the_unfilled_expected_value_per_trial()
     }
     Ok(())
 }
+
+/// #15063 review: the callback captures a filled `expected` from the
+/// enclosing function, and an unused nested closure binds its own
+/// `expected` to `todo!()`. The assertion reads the captured value, so it
+/// keeps its reading. The control binds the placeholder in the callback
+/// itself with nothing to capture, and stays lowered.
+#[test]
+fn a_captured_filled_expected_value_is_not_lowered_by_a_nested_placeholder()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (outer, inner, lowered) in [
+        (
+            "let expected: i32 = 2;\n",
+            "let _unused = || { let expected: i32 = todo!(\"x\"); expected };\n",
+            false,
+        ),
+        ("", "let expected: i32 = todo!(\"x\");\n", true),
+    ] {
+        let source = with_harness_main(
+            &format!(
+                "fn score() -> i32 {{ 2 }}\n\
+                 fn trials() -> Vec<libtest_mimic::Trial> {{\n\
+                 {outer}\
+                 vec![\n\
+                 libtest_mimic::Trial::test(\"captured\", move || {{\n\
+                 {inner}\
+                 assert!(score() == expected);\n\
+                 Ok(())\n\
+                 }}),\n\
+                 ]\n}}\n"
+            ),
+            "trials()",
+        );
+        let root = temp_dir(&format!("unfilled-expected-captured-{lowered}"))?;
+        write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+        declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+        let files = [PathBuf::from("tests/matcher.rs")];
+        let registrations = [custom_target_registration("tests/matcher.rs")];
+        let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+        let subject = index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "captured")
+            .ok_or_else(|| format!("missing subject: {:?}", index.harness_subjects))?;
+        let [oracle] = subject.assertions.as_slice() else {
+            return Err(format!("expected one oracle: {:?}", subject.assertions).into());
+        };
+        let unknown =
+            oracle.kind == OracleKind::Unknown && oracle.strength == OracleStrength::Unknown;
+        if unknown != lowered {
+            return Err(format!("{outer:?}{inner:?}: lowered={lowered}, got {oracle:?}").into());
+        }
+    }
+    Ok(())
+}
