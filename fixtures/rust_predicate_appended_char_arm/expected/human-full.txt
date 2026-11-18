@@ -1,0 +1,81 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_predicate_appended_char_arm/input
+
+Summary: 2 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 1 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates
+  E2 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E3 [findings 1, 2]: related test src/lib.rs:11 dot_does_not_separate uses strong relational check oracle: assert!(!is_separator('.'));
+  E4 [findings 1, 2]: related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));
+  E5 [findings 1, 2]: source function argument value c = ';' at line 9
+  E6 [findings 1, 2]: source function argument value c == ';' at line 9
+  E7 [findings 1, 2]: source function argument value c = '.' at line 11
+
+Finding 1: INFO ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:7a595285
+Changed
+  before: c == ','
+  after:  c == ',' || c == ';'
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::is_separator
+  gap id (for scripts): gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b
+Static exposure
+  exposed (info, confidence 1.00)
+Evidence
+  shared evidence: E1
+  - infection yes: A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change
+  - propagation yes: Changed behavior appears to influence returned value: c ==     || c ==
+  shared evidence: E2
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: c ==     || c == (line 2)
+  shared evidence: E3, E4, E5, E6, E7
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_predicate_appended_char_arm/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm/diff.patch --mode fast probe:src_lib.rs:predicate:7a595285
+  ripr context --root <cwd>/fixtures/rust_predicate_appended_char_arm/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm/diff.patch --mode fast --at probe:src_lib.rs:predicate:7a595285
+
+Finding 2: NOTE ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:6fca459e
+Changed
+  before: c == ','
+  after:  c == ',' || c == ';'
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::is_separator
+  gap id (for scripts): gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b
+Static exposure
+  propagation_unknown (note, confidence 0.66)
+Evidence
+  shared evidence: E1
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation unknown: Propagation is not statically obvious from syntax-first analysis
+  shared evidence: E2
+  - discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  shared evidence: E3, E4, E5, E6, E7
+Weakness
+  - ripr could not follow the changed value to something a test can check (a return value or side effect)
+Stop reasons:
+  - ripr could not tell whether the changed value flows to something a test observes (propagation_evidence_unknown)
+    Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
+Next step
+  - Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_predicate_appended_char_arm/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm/diff.patch --mode fast probe:src_lib.rs:return_value:6fca459e
+  ripr context --root <cwd>/fixtures/rust_predicate_appended_char_arm/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm/diff.patch --mode fast --at probe:src_lib.rs:return_value:6fca459e

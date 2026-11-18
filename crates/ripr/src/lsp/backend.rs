@@ -9,8 +9,9 @@
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
-    ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
-    root_from_initialize_params, workspace_folder_set_from_initialize_params,
+    ConfigurationMode, PullDiagnosticAdvertisement, WorkspaceRootResolution,
+    initialize_result_for_client, root_from_initialize_params,
+    workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
@@ -193,6 +194,10 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
+    /// Recovery id of the pre-snapshot pull marker last served to the pull
+    /// client (#14447 review): an attempt transition that leaves the served
+    /// route unchanged sends no `workspace/diagnostic/refresh`.
+    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -369,6 +374,7 @@ impl Backend {
             config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
+            pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -457,7 +463,14 @@ impl Backend {
         // snapshot commits (and no failure is latched) real payloads own
         // the client state and this is a no-op decision-wise.
         if self.configuration_failure().is_some() || self.latest_pull_snapshot().is_none() {
-            self.publish_analysis_pending_push_markers().await;
+            // #14447: when nothing blocks this refresh, analysis is about to
+            // start, so the marker must not tell the user to start it.
+            let authority = self.workspace_root_authority();
+            let analysis_starting = self.configuration_failure().is_none()
+                && authority.effective_root.is_some()
+                && authority.allows_analysis();
+            self.publish_analysis_pending_push_markers(analysis_starting)
+                .await;
         }
         if self.configuration_failure().is_some() {
             return;
@@ -550,6 +563,11 @@ impl Backend {
                 if let Some(request) = self.refresh_scheduler.pending_request(generation) {
                     self.mark_pending_attempt(&request);
                     self.publish_analysis_status().await;
+                    // #14526: no inline pull-marker re-serve here. It would
+                    // await `workspace/diagnostic/refresh` (bounded only by
+                    // the 30s client-request timeout) and hold this handler
+                    // despite the answer-once-queued contract below; the
+                    // active attempt's loop re-serves on its next transition.
                 }
                 self.log_refresh_queued(generation).await;
                 // #8733: answer once the scheduler has accepted (and
@@ -571,10 +589,24 @@ impl Backend {
             &self.refresh_idle,
             request.clone(),
         );
-
+        // #14447: re-serve the marker only once the cancellation guard is
+        // armed, so a handler dropped while the pull client answers the
+        // refresh request still finishes the scheduler's active request. The
+        // re-serve runs alongside the attempt and is dropped once the attempt
+        // ends, so a pull client slow to answer `workspace/diagnostic/refresh`
+        // delays neither analysis nor the attempt's outcome handling.
         loop {
             let attempt_started = Instant::now();
-            let outcome = self.run_refresh_request(&request).await;
+            let outcome = {
+                let attempt = self.run_refresh_request(&request);
+                let marker = self.refresh_pending_marker_surfaces();
+                tokio::pin!(attempt, marker);
+                tokio::select! {
+                    biased;
+                    outcome = &mut attempt => outcome,
+                    () = &mut marker => attempt.await,
+                }
+            };
             let attempt_duration = attempt_started.elapsed();
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
@@ -590,6 +622,11 @@ impl Backend {
             else {
                 cancellation_guard.disarm();
                 self.refresh_idle.notify_waiters();
+                // #14447: an attempt that ended without a snapshot, with no
+                // follow-up request, leaves the marker naming the route that
+                // starts analysis again. A follow-up keeps "in progress", so
+                // the start route never flashes between handed-off attempts.
+                self.refresh_pending_marker_surfaces().await;
                 return;
             };
             request = next;
@@ -1564,6 +1601,11 @@ impl Backend {
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
         }
+        // #14447 review: the client's cached report was the snapshot, not a
+        // pending marker, so the next pre-snapshot transition re-pulls.
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
+        }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
         if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
             uris.extend(documents.documents.keys().cloned());
@@ -1596,7 +1638,7 @@ impl Backend {
     /// the caller sampled the state owns the client surface, and a late
     /// marker must not overwrite completed diagnostics or resurrect
     /// cleared ones (#8732 review).
-    async fn publish_analysis_pending_push_markers(&self) {
+    async fn publish_analysis_pending_push_markers(&self, analysis_starting: bool) {
         if self.pull_diagnostics_enabled() {
             return;
         }
@@ -1606,7 +1648,12 @@ impl Backend {
         if failure.is_none() && has_snapshot {
             return;
         }
-        let recovery = self.analysis_pending_recovery();
+        let recovery = match self.analysis_pending_recovery() {
+            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        };
         let withdrawn = has_snapshot;
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
@@ -1642,6 +1689,57 @@ impl Backend {
             self.client
                 .publish_diagnostics(uri, items.clone(), version)
                 .await;
+        }
+    }
+
+    /// Re-serve the pre-snapshot marker after an attempt-state transition
+    /// (#14447): push clients get a republish when the route changed, and a
+    /// pull client that cached the previous pending result id is asked to
+    /// pull again, only when the served recovery route changed. A committed
+    /// snapshot owns both surfaces, so nothing is sent once one exists
+    /// without a latched failure.
+    async fn refresh_pending_marker_surfaces(&self) {
+        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+            return;
+        }
+        self.publish_analysis_pending_push_markers(false).await;
+        if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
+            return;
+        }
+        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let route_unchanged = self
+            .pending_pull_marker_served_recovery
+            .lock()
+            .is_ok_and(|served| *served == Some(recovery_id));
+        if route_unchanged {
+            return;
+        }
+        if let Err(error) = self
+            .bounded_client_request(self.client.workspace_diagnostic_refresh())
+            .await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("pull diagnostic refresh request failed: {error}"),
+                )
+                .await;
+        }
+    }
+
+    /// Record the pre-snapshot pull marker route just served (#14447 review).
+    fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = Some(recovery.recovery_id());
+        }
+    }
+
+    /// Forget the served pending route once committed payloads are served
+    /// (#14447 review): the client no longer holds a pending marker, so the
+    /// next pending transition must ask it to re-pull.
+    fn forget_pending_pull_marker_served(&self) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
         }
     }
 
@@ -3303,10 +3401,26 @@ impl Backend {
     /// mirrors the `refresh_diagnostics` preconditions so a blocked state
     /// never advertises a route that returns before analysis.
     fn analysis_pending_recovery(&self) -> AnalysisPendingRecovery {
-        analysis_pending_recovery_for(
+        match analysis_pending_recovery_for(
             self.configuration_failure().as_ref(),
             &self.workspace_root_authority(),
-        )
+        ) {
+            // #14447: an attempt already queued or running needs no start.
+            AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
+    /// Whether an analysis attempt is queued or running right now.
+    fn analysis_attempt_active(&self) -> bool {
+        self.analysis_health.lock().is_ok_and(|health| {
+            matches!(
+                health.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        })
     }
 
     /// Whether the most recent bounded disclosure window after an
@@ -3372,7 +3486,7 @@ impl Backend {
                 // client otherwise keeps the last published diagnostics
                 // indefinitely (the refresh guard below returns before any
                 // re-analysis can replace them).
-                self.publish_analysis_pending_push_markers().await;
+                self.publish_analysis_pending_push_markers(false).await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
                         .await;
@@ -3715,6 +3829,14 @@ impl Backend {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
             diagnostic_uris: snapshot.diagnostics_by_uri.keys().collect(),
+            related_test_files: super::watched_source_drift::related_test_files(
+                &snapshot.root,
+                snapshot
+                    .findings
+                    .iter()
+                    .flat_map(|finding| finding.related_tests.iter())
+                    .map(|test| test.file.as_path()),
+            ),
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
@@ -6780,7 +6902,10 @@ impl LanguageServer for Backend {
             .await;
         }
         Ok(initialize_result_for_client(
-            supports_pull_diagnostics,
+            PullDiagnosticAdvertisement::for_client(
+                supports_pull_diagnostics,
+                profile.ripr_editor.is_some(),
+            ),
             position_encoding,
         ))
     }
@@ -7585,6 +7710,7 @@ impl Backend {
             // marker under a stable state identity instead, promising only
             // the recovery route the current blocking state honors.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(
                 analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
@@ -7600,12 +7726,14 @@ impl Backend {
         // holding the stale payload.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_document_report_withdrawn(
                 params.previous_result_id,
                 recovery,
             )
             .into());
         }
+        self.forget_pending_pull_marker_served();
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -7703,6 +7831,7 @@ impl Backend {
             // workspace report item needs a document URI, and the document
             // pull path discloses the state for every open file.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
         // A configuration failure latched after this snapshot committed
@@ -7711,8 +7840,10 @@ impl Backend {
         // URI under the FixConfiguration recovery route.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }
+        self.forget_pending_pull_marker_served();
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()
@@ -8420,6 +8551,8 @@ impl Backend {
                         "actionable_gap_artifacts": actionable_gap_artifacts,
                         "gap_artifact_rejections": gap_artifact_rejections,
                         "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
                     },
                     "diagnostic_budget": diagnostic_budget_json.clone(),
                     "diagnostic_budget_state": diagnostic_budget_state.clone(),
@@ -8456,6 +8589,8 @@ impl Backend {
                 "actionable_gap_artifacts": actionable_gap_artifacts,
                 "gap_artifact_rejections": gap_artifact_rejections,
                 "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
             },
             "diagnostic_budget": diagnostic_budget_json,
             "diagnostic_budget_state": diagnostic_budget_state,
@@ -9257,6 +9392,24 @@ fn workspace_status_report_paths() -> serde_json::Value {
     })
 }
 
+/// Reason token for the owner opt-out disclosure on workspace status (#14136):
+/// the shared `owner_mutants_skip` token when findings were withheld, otherwise
+/// `null`, so a status reader never sees a reason without a count. The token is
+/// fixed because the LSP check input supplies no suppression policy, so the
+/// withheld set is exactly the owner opt-outs; a policy file in the editor
+/// would need its own reason (#14610).
+fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
+    if withheld == 0 {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(
+            crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip
+                .as_str()
+                .to_string(),
+        )
+    }
+}
+
 /// Bounded harness-registry disclosure for `collect_workspace_status`.
 /// Preserves the three documented states: Null when the repository has no
 /// registrations, `available: false` for a limited run that did not
@@ -9652,7 +9805,7 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         return serde_json::Value::Null;
     };
     let canonical_gap_id = artifact
-        .identities
+        .identities()
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
@@ -9665,16 +9818,15 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
             })
             .unwrap_or_default()
     };
-    let verify_command = bind(artifact.verify_commands.first());
-    let receipt_command = bind(artifact.receipt_commands.first());
+    let verify_command = bind(artifact.verify_commands().first());
+    let receipt_command = bind(artifact.receipt_commands().first());
     let file = artifact
-        .related_paths
+        .related_paths()
         .first()
         .map(String::as_str)
         .unwrap_or("");
     let repair_kind = artifact
-        .gap_state
-        .as_deref()
+        .gap_state()
         .unwrap_or(crate::domain::EvidenceState::Actionable.as_str());
     serde_json::json!({
         "canonical_gap_id": canonical_gap_id,
@@ -10221,6 +10373,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -10733,28 +10886,30 @@ mod gap_record_context_tests {
 
     fn top_gap_named(canonical_gap_id: &str) -> super::super::gap_artifacts::ValidatedGapArtifact {
         use super::super::gap_artifacts::{
-            GapArtifactIdentity, GapArtifactKind, ValidatedGapArtifact,
+            GapArtifactCorpusCurrentness, GapArtifactIdentity, ValidatedActionableGapsArtifact,
+            ValidatedGapArtifact, ValidatedGapArtifactCommon,
         };
-        ValidatedGapArtifact {
-            kind: GapArtifactKind::ActionableGaps,
-            corpus_currentness: None,
-            root: None,
+        ValidatedGapArtifact::ActionableGaps(ValidatedActionableGapsArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: None,
+                language: None,
+                language_status: None,
+                gap_state: None,
+                related_paths: Vec::new(),
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            corpus_currentness: GapArtifactCorpusCurrentness::CurrentRustWorkspace,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some(canonical_gap_id.to_string()),
                 seam_id: None,
                 finding_id: None,
             }],
-            language: None,
-            language_status: None,
-            gap_state: None,
-            related_paths: Vec::new(),
             verify_commands: Vec::new(),
             receipt_commands: Vec::new(),
             verify_command_specs: Vec::new(),
             receipt_command_specs: Vec::new(),
-            static_limit_kinds: Vec::new(),
-            has_text_static_limit: false,
-        }
+        })
     }
 
     #[test]
@@ -12170,6 +12325,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -12552,6 +12708,35 @@ mod delivery_selection_parity_tests {
             if unserved != stored {
                 return Err(format!(
                     "{transport} unserved identities diverge from stored omissions: unserved={unserved:?} stored={stored:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_status_discloses_withheld_owner_opt_out_findings() -> Result<(), String> {
+        // #14136: the committed snapshot's withheld count reaches the
+        // `ripr/workspaceStatus` payload with the shared reason token, and a
+        // snapshot with nothing withheld reports a null reason.
+        for (withheld, reason) in [
+            (2usize, serde_json::json!("owner_mutants_skip")),
+            (0usize, serde_json::Value::Null),
+        ] {
+            let harness = parity_backend()?;
+            let backend = harness.service.inner();
+            let mut diagnostics = parity_workspace_diagnostics(Vec::new());
+            diagnostics.snapshot.owner_opt_out_findings = withheld;
+            commit(backend, diagnostics)?;
+            let status = backend
+                .collect_workspace_status()
+                .ok_or_else(|| "expected workspace status".to_string())?;
+            let section = &status["diagnostics"];
+            if section["owner_opt_out_findings"] != serde_json::json!(withheld)
+                || section["owner_opt_out_reason"] != reason
+            {
+                return Err(format!(
+                    "workspace status diverged from the committed snapshot for {withheld} withheld: {section}"
                 ));
             }
         }
@@ -13342,6 +13527,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -13359,6 +13545,62 @@ mod list_actionable_items_tests {
             .lock()
             .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
             Some(Arc::new(snapshot));
+        Ok(())
+    }
+
+    /// #14099: the related-test set that routes a watched-file event comes
+    /// from the committed snapshot's findings. Without that wiring a rewrite
+    /// of a test the snapshot never captured schedules nothing, however
+    /// correct the classifier is on its own.
+    #[test]
+    fn watched_event_for_an_uncaptured_related_test_refreshes_from_the_committed_snapshot()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-related-test-drift-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        for name in ["tests/listed.rs", "tests/unlisted.rs"] {
+            std::fs::write(root.join(name), "fn t() {}\n").map_err(|err| err.to_string())?;
+        }
+        let harness = handler_harness()?;
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.related_tests = vec![crate::domain::RelatedTest {
+            name: "discount_applies".to_string(),
+            file: PathBuf::from("tests/listed.rs"),
+            line: 1,
+            oracle: None,
+            oracle_kind: crate::domain::OracleKind::Unknown,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }];
+        let mut snapshot = snapshot_with_selection(None);
+        snapshot.root = root.clone();
+        snapshot.findings = vec![finding];
+        install_snapshot(&harness, snapshot)?;
+
+        let changed = |name: &str| -> Result<Vec<FileEvent>, String> {
+            Ok(vec![FileEvent {
+                uri: crate::lsp::uri::file_uri_for_path(&root.join(name))?,
+                typ: tower_lsp_server::ls_types::FileChangeType::CHANGED,
+            }])
+        };
+        let backend = harness.service.inner();
+        let refreshed = |name: &str| -> Result<bool, String> {
+            Ok(backend
+                .watched_file_change_kinds(&changed(name)?)
+                .diagnostics_input_changed)
+        };
+        let listed = refreshed("tests/listed.rs");
+        let unlisted = refreshed("tests/unlisted.rs");
+        let _removed = std::fs::remove_dir_all(&root);
+        assert!(listed?, "a related test the snapshot lists must refresh");
+        assert!(!unlisted?, "a test no committed finding lists must not");
         Ok(())
     }
 
@@ -14555,6 +14797,7 @@ mod pull_disclosure_dedup_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -14685,6 +14928,7 @@ fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
 /// is never cached: a lagging server clock can stamp a just-written file as
 /// older than the window and a same-length rewrite in the same server tick
 /// would then match the cached key.
+#[cfg(any(target_os = "linux", test))]
 const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
     "nfs",
     "nfs3",
@@ -14706,6 +14950,7 @@ const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
 ];
 
 /// Decodes the `\040`-style octal escapes `/proc/self/mountinfo` uses.
+#[cfg(any(target_os = "linux", test))]
 fn unescape_mountinfo_field(field: &str) -> String {
     let bytes = field.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -14732,6 +14977,7 @@ fn unescape_mountinfo_field(field: &str) -> String {
 
 /// The filesystem type of the longest mount point containing `path`, read from
 /// `mountinfo` text. `None` when no mount line matches.
+#[cfg(any(target_os = "linux", test))]
 fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
     for line in mountinfo.lines() {
@@ -14759,6 +15005,7 @@ fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
     best.map(|(_, fstype)| fstype)
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn fstype_is_remote(fstype: &str) -> bool {
     // Any FUSE subtype other than the block-device `fuseblk` (ntfs-3g, exfat)
     // may be network-backed (ftpfs, gvfsd-fuse, ...), so it is treated as

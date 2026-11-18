@@ -119,9 +119,28 @@ pub(super) struct PythonAdmissionContext {
     /// the repository root (empty `module_dir`), where the resolved source
     /// module carries no directory prefix to recognise as test support.
     root_relative_aliases: BTreeSet<String>,
+    /// Module defs that run one callable inside a `try` whose handlers
+    /// provably swallow its `AssertionError` (#13723).
+    swallowers: BTreeSet<String>,
+    /// Module defs whose whole body is plain `assert` statements over their
+    /// parameters, so a swallowing wrapper discards every failure they raise.
+    assert_only: BTreeSet<String>,
 }
 
 impl PythonAdmissionContext {
+    /// Adds the module's swallowing wrappers and assert-only helpers, which
+    /// need the source text that `of_module` does not take.
+    pub(super) fn with_swallowing_wrappers(
+        mut self,
+        source: &str,
+        statements: &[Stmt],
+        imports: &[PythonImport],
+    ) -> Self {
+        (self.swallowers, self.assert_only) =
+            super::helper_assertions::swallowing_wrappers(source, statements, imports);
+        self
+    }
+
     pub(super) fn of_module(
         statements: &[Stmt],
         imports: &[PythonImport],
@@ -1630,6 +1649,16 @@ impl BodyScan<'_> {
         }
         match expr {
             Expr::Call(call) => {
+                // `quiet(lambda: must_equal(got, want))` where `quiet`
+                // swallows the helper's `AssertionError`: only the helper's
+                // arguments can still assert.
+                if let Some(inner) = self.swallowed_call(call) {
+                    self.exprs(&inner.args);
+                    for keyword in &inner.keywords {
+                        self.expr(&keyword.value);
+                    }
+                    return;
+                }
                 if self.call_is_assertion_like(call) {
                     self.assertion_like = true;
                     return;
@@ -1751,6 +1780,38 @@ impl BodyScan<'_> {
     /// A call is assertion-like unless its callee resolves to something known
     /// not to assert. Calling the result of a call (`make_checker()(x)`) or a
     /// subscript (`checks[kind](x)`) is dynamic and so assertion-like.
+    /// The helper call inside `wrapper(lambda: helper(...))` when `wrapper`
+    /// is a swallowing wrapper and `helper` an assert-only def, both module
+    /// defs the scope does not shadow or import.
+    fn swallowed_call<'c>(&self, call: &'c ast::ExprCall) -> Option<&'c ast::ExprCall> {
+        let module_def = |expr: &Expr, defs: &BTreeSet<String>| {
+            matches!(expr, Expr::Name(name)
+                if defs.contains(name.id.as_str())
+                    && !self.scope.locals.contains(name.id.as_str())
+                    && !self.scope.argnames.contains(name.id.as_str())
+                    && self.imported_name(name.id.as_str()).is_none())
+        };
+        if !module_def(&call.func, &self.context.swallowers) || !call.keywords.is_empty() {
+            return None;
+        }
+        let [Expr::Lambda(lambda)] = call.args.as_slice() else {
+            return None;
+        };
+        let args = lambda.args.as_ref();
+        if !args.posonlyargs.is_empty()
+            || !args.args.is_empty()
+            || !args.kwonlyargs.is_empty()
+            || args.vararg.is_some()
+            || args.kwarg.is_some()
+        {
+            return None;
+        }
+        let Expr::Call(inner) = lambda.body.as_ref() else {
+            return None;
+        };
+        module_def(&inner.func, &self.context.assert_only).then_some(inner)
+    }
+
     fn call_is_assertion_like(&self, call: &ast::ExprCall) -> bool {
         // `pytest.param(..., marks=pytest.mark.xfail(strict=True))` applies a
         // mark to one case: only `id=` is inert.

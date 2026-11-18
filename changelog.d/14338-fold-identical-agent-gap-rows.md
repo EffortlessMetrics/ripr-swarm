@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check --format agent` prints one row when several gap findings would print identical records (same line, class, expression, `missing=`, test and stages; for example an `error_path` and a `return_value` probe on one `return Err(..)` line). `gaps=` now counts the tests to write, and a new `folded_gaps=` header token counts the extra findings; verification still counts every finding (#14338).

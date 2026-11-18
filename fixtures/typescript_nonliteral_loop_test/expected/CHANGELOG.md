@@ -179,3 +179,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_nonliteral_loop_test (16)
+
+Reason:
+RIPR-SPEC-0147: human limitation lines carry the producer's bounded detail (#14398)
+
+Command:
+`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

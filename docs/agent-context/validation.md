@@ -105,6 +105,13 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
+On a host with less than 24 GiB of memory and more than one CPU, local
+`precommit` runs its Clippy and `covered_by` Cargo children with
+`CARGO_BUILD_JOBS=1` and says so; set `CARGO_BUILD_JOBS` yourself to override.
+In a 4-core, 15 GB container, whole-workspace Clippy was stopped by the memory
+limit at the default job count and once at two jobs (#13705).
+`CARGO_INCREMENTAL=0` keeps `target/` from filling a small disk.
+
 ### Local mirror of the required hosted gate
 
 Hosted CI is requested late (merge-ready), so the coding session carries the
@@ -116,13 +123,13 @@ PR-native continuation record's `Validation:` line (see
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
-| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). Hosted `ci-policy` and `cargo xtask check-file-policy` always list. |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). When it does build, a library unit-test selector (`cargo test -p <package> --lib <module path>`) is checked against source instead of building the library test target, and its row says `not_listed`. Hosted `ci-policy` and `cargo xtask check-file-policy` always build and list. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
 | Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
-| Golden, fixture, verdict contracts | `cargo xtask goldens check`, `cargo xtask fixtures`, `cargo xtask verdict-corpus check-all` | Run when output, fixtures or analysis change. |
+| Golden, fixture, verdict contracts | `cargo xtask goldens check-with-fixtures`, `cargo xtask verdict-corpus check-all` | The combined command runs both golden and fixture obligations from one evaluation and retains both reports. Run when output, fixtures or analysis change. |
 | User-text plain-language gate | `cargo xtask check-user-text` | Runs inside `precommit` and the hosted gate (`--tree`). Run it with `main` fetched: a red `new path, 0 at the merge-base` on a new fixture golden is a dependency, not a fixture bug — see [PR automation](../PR_AUTOMATION.md#user-text-ordering-rule-for-new-fixture-goldens). |
 
 Do not report a row as passed unless it ran to a zero native exit status on the
@@ -281,7 +288,7 @@ cargo xtask check-droid-review-config
 
 Run this with `check-workflows` for changes to:
 
-- `.github/workflows/droid.yml` or `droid-security-scan.yml`;
+- `.github/workflows/droid-security-scan.yml` or the retired development-review event boundary;
 - `docs/agent-context/review-invariants.md` or `droid-smoke-tests.md`;
 - `.factory/skills/review-guidelines/SKILL.md` or `.factory/rules/droid-review.md`.
 

@@ -1944,20 +1944,30 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
-    // #11976: JSON gains only the additive `finding_routes` projection, and
-    // its repair command is the identity-bound line the screen printed.
+    // #11976: JSON gains only the additive `finding_routes` projection.
+    // #13636: the weakened predicate is still uncommitted, so the start
+    // would refuse; JSON reports the same seam as blocked on that file with
+    // no runnable command, and the screen names the commit step first.
     let json_text = stdout_text(&json);
     let routes = finding_routes(&json_text)?;
     let repair = routes
         .iter()
         .find_map(|route| route.get("repair"))
         .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
-    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["status"], "blocked_uncommitted", "{json_text}");
     assert_eq!(repair["seam_id"], identity);
-    let command = repair["command"].as_str().unwrap_or_default();
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "{json_text}"
+    );
     assert!(
-        stdout.lines().any(|line| line.trim() == command),
-        "JSON command must be a printed line: {command}\n{stdout}"
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json_text}"
+    );
+    assert!(
+        stdout.contains("Commit your production change first"),
+        "the screen must name the commit step before the repair start:\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
@@ -2940,7 +2950,9 @@ fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
 
 /// #8166 residual (F3): a static-limited top finding (no static test path)
 /// keeps its limitation guidance and prints no runnable `ripr repair` line,
-/// while its explain/context drill-down stays.
+/// while its explain/context drill-down stays. #14919: the base names
+/// `discounted_total` in a comment, so the owner is not an unreferenced one
+/// (that shape reads as a test gap) and stays an ordinary no-path limit.
 #[test]
 fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), String> {
     let fixture = Fixture::dir("facade-check-drilldown-static-limited")?;
@@ -2948,7 +2960,11 @@ fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), St
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
-    std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// The host crate wires up discounted_total.\n"),
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::write(
         root.join("tests/pricing.rs"),
         "#[test]\nfn unrelated() {\n    assert_eq!(1 + 1, 2);\n}\n",
@@ -3205,8 +3221,12 @@ fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), Str
         choice_lines[0], choice_lines[1],
         "choices must read differently"
     );
+    // The unscoped note's `--base` rerun (#13701) is prose, not a start line.
     assert_eq!(
-        stderr.matches("ripr repair ").count(),
+        stderr
+            .lines()
+            .filter(|line| line.trim_start().starts_with("ripr repair "))
+            .count(),
         2,
         "exactly the two start commands:\n{stderr}"
     );
@@ -3843,7 +3863,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     std::fs::remove_file(root.join("tests/pricing.rs")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("src/lib.rs"),
-        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n}}\n"),
+        format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
     git_commit(root, "inline test target")?;
@@ -3916,6 +3936,55 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("ripr continue --attempt"),
         "must name the explicit-selection retry:\n{stderr}"
     );
+    // #14980: under `--json` the same selection is one `cli_refusal`
+    // document whose choices are the per-attempt continue commands.
+    let continued_json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &continued_json,
+        3,
+        "continue --json with two current attempts",
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&continued_json.stdout).map_err(|error| {
+            format!(
+                "one JSON document: {error}\n{}",
+                stdout_text(&continued_json)
+            )
+        })?;
+    assert_eq!(
+        document["error"]["code"], "ambiguous_attempts",
+        "{document:#}"
+    );
+    let items = document["error"]["choices"]["items"]
+        .as_array()
+        .ok_or_else(|| format!("ambiguity lacks choices: {document:#}"))?;
+    assert_eq!(document["error"]["choices"]["total"], 2, "{document:#}");
+    assert_eq!(items.len(), 2, "{document:#}");
+    assert_eq!(
+        document["error"]["disposition"], "needs_selection",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"].get("next"),
+        Some(&serde_json::Value::Null),
+        "{document:#}"
+    );
+    // The root each choice binds is the one the stderr retry line prints.
+    const RETRY: &str = "ripr continue --attempt <attempt-id> --root ";
+    let json_stderr = stderr_text(&continued_json);
+    let root_token = json_stderr
+        .lines()
+        .find_map(|line| line.split_once(RETRY).map(|(_, root)| root.trim_end()))
+        .ok_or_else(|| format!("stderr must print the retry line:\n{json_stderr}"))?;
+    for id in &ids {
+        let expected = format!("ripr continue --attempt {id} --root {root_token}");
+        assert!(
+            items
+                .iter()
+                .any(|item| item["command"] == expected.as_str()),
+            "a choice must be exactly `{expected}`: {document:#}"
+        );
+    }
     for id in &ids {
         assert_eq!(
             read_manifest(root, id)?["state"],
@@ -6389,7 +6458,21 @@ fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() ->
     let brief_json = json_stdout("agent brief --files", &brief)?;
     assert_eq!(brief_json["root"], outer.to_string_lossy().as_ref());
     assert_eq!(brief_json["scope"], "working_set");
-    assert_eq!(brief_json["warnings"], serde_json::json!([]));
+    // The only warning is the disclosure that the tail `if`/`else` branch values
+    // (`pkg/src/lib.rs:3` and `:5`, strongly gripped `return_value` seams,
+    // #14385) are configured off; binding adds none.
+    let warnings = brief_json["warnings"].as_array().ok_or("no warnings")?;
+    assert!(
+        warnings.len() == 1
+            && warnings
+                .iter()
+                .all(|warning| warning.as_str().is_some_and(|text| {
+                    text.contains(" at pkg/src/lib.rs:3, ")
+                        && text.contains(" at pkg/src/lib.rs:5 ")
+                        && text.contains("configured off for strongly_gripped seams")
+                })),
+        "unexpected brief warnings: {warnings:?}"
+    );
     let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;
     assert!(
         !seams.is_empty() && seams.iter().all(|seam| seam["file"] == "pkg/src/lib.rs"),
@@ -7149,9 +7232,23 @@ fn repair_json_prints_the_packet_with_the_attempt_id() -> Result<(), String> {
         ],
     )?;
     assert_exit(&status, 0, "status --json of the resumed attempt");
+    // #13701: the resumed start carries the same `repair_start_scope` block
+    // the first start did (this one-commit fixture has no readable change);
+    // apart from it, the document is the attempt's status document.
+    let mut repeated_doc: serde_json::Value = serde_json::from_slice(&repeated.stdout)
+        .map_err(|error| format!("repeated stdout must be one JSON document: {error}"))?;
     assert_eq!(
-        stdout_text(&repeated),
-        stdout_text(&status),
+        repeated_doc.get("repair_start_scope"),
+        document.get("repair_start_scope"),
+        "the resumed start must carry the first start's scope block:\n{repeated_doc:#}"
+    );
+    if let Some(object) = repeated_doc.as_object_mut() {
+        object.remove("repair_start_scope");
+    }
+    let status_doc: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("status stdout must be one JSON document: {error}"))?;
+    assert_eq!(
+        repeated_doc, status_doc,
         "a resumed --json start must print the attempt's status document"
     );
     assert_eq!(attempt_ids(root), ids, "no second attempt may be created");
@@ -7235,7 +7332,8 @@ fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
 }
 
 /// #11584: `--json` does not change refusal behavior: a facade refusal keeps
-/// its exit code, empty stdout and stderr prose. An unknown flag under the
+/// its exit code and stderr prose; since #14931 its stdout is the
+/// `cli_refusal` document with the reason code. An unknown flag under the
 /// explicit `--json` request writes the standalone `cli_refusal` document to
 /// stdout (#6834 decision); its exit code 2 and stderr prose are unchanged.
 #[test]
@@ -7307,10 +7405,150 @@ fn repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal() -
         "not_started",
         "no_eligible_seam",
     );
-    assert!(stdout_text(&refused).is_empty());
+    // #14931: the typed refusal is also the `cli_refusal` document.
+    let refused_doc: serde_json::Value = serde_json::from_slice(&refused.stdout)
+        .map_err(|error| format!("repair --json refusal stdout: {error}"))?;
+    assert_eq!(refused_doc["error"]["code"], "no_eligible_seam");
     let none = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
     assert_exit(&none, 3, "continue --json with no attempt");
-    assert!(stdout_text(&none).is_empty());
+    let none_doc: serde_json::Value = serde_json::from_slice(&none.stdout)
+        .map_err(|error| format!("continue --json refusal stdout: {error}"))?;
+    assert_eq!(none_doc["error"]["code"], "no_current_attempt");
     assert!(stderr_text(&none).contains("no current attempt"));
+    Ok(())
+}
+
+/// #14931: under `--json`, a typed façade refusal that stops before any check
+/// writes the `cli_refusal` document with its reason code and disposition;
+/// stderr keeps the prose and the `refusal code=` line, and without `--json`
+/// stdout stays empty.
+/// Unix-only for the marker-free unanchored directory, like the other
+/// discovery-gate controls.
+#[cfg(unix)]
+#[test]
+fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-typed-refusal-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let unanchored = Fixture {
+        root: marker_free_dir("facade-typed-refusal-unanchored")?,
+    };
+    let two = Fixture::two_seam("facade-typed-refusal-two-seam")?;
+    let two_arg = two.root.to_string_lossy().into_owned();
+    let cases: [(&Path, Vec<&str>, &str, &str); 5] = [
+        (
+            &two.root,
+            vec!["repair", "--root", &two_arg],
+            "several_eligible_seams",
+            "needs_selection",
+        ),
+        (
+            root,
+            vec!["continue", "--root", &root_arg],
+            "no_current_attempt",
+            "not_started",
+        ),
+        (
+            root,
+            vec!["repair", "no-such-item", "--root", &root_arg],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        // A caller-supplied item shaped like a command never becomes a
+        // runnable `next` (the loop asserts `next` is null for every case).
+        (
+            root,
+            vec![
+                "repair",
+                "ripr repair --root . && echo injected | sh",
+                "--root",
+                &root_arg,
+            ],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        (
+            &unanchored.root,
+            vec!["status"],
+            "unanchored_root",
+            "not_started",
+        ),
+    ];
+    for (cwd, args, code, disposition) in cases {
+        let mut json_args = args.clone();
+        json_args.push("--json");
+        let json = run_ripr(cwd, &json_args)?;
+        assert_exit(&json, 3, &format!("{json_args:?}"));
+        let document: serde_json::Value =
+            serde_json::from_slice(&json.stdout).map_err(|error| {
+                format!(
+                    "{json_args:?}: stdout must be one JSON document: {error}\n{}",
+                    stdout_text(&json)
+                )
+            })?;
+        assert_eq!(document["status"], "refused", "{document:#}");
+        assert_eq!(document["error"]["code"], code, "{document:#}");
+        assert_eq!(
+            document["error"]["disposition"], disposition,
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"].get("next"),
+            Some(&serde_json::Value::Null),
+            "next must be present and null: {document:#}"
+        );
+        let message = document["error"]["message"]
+            .as_str()
+            .filter(|message| !message.trim().is_empty())
+            .ok_or_else(|| format!("message must be a nonempty string: {document:#}"))?;
+        assert!(!message.contains("refusal code="), "{message}");
+        let stderr = stderr_text(&json);
+        assert!(
+            stderr.contains(message),
+            "the document message is the stderr prose:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "ripr: refusal code={code} disposition={disposition}"
+            )),
+            "{stderr}"
+        );
+        // #14980: only a selection refusal carries its choices, and each
+        // listed command is the one stderr prints, composed from a seam id.
+        let choices = document["error"].get("choices");
+        if code == "several_eligible_seams" {
+            let choices =
+                choices.ok_or_else(|| format!("selection lacks choices: {document:#}"))?;
+            let items = choices["items"]
+                .as_array()
+                .ok_or_else(|| format!("choices.items must be an array: {document:#}"))?;
+            assert!(items.len() >= 2, "{document:#}");
+            assert_eq!(
+                choices["total"].as_u64(),
+                Some(items.len() as u64),
+                "{document:#}"
+            );
+            for item in items {
+                let command = item["command"].as_str().unwrap_or_default();
+                assert!(command.starts_with("ripr repair "), "{item:#}");
+                assert!(command.contains(" --root "), "{item:#}");
+                assert!(
+                    stderr.contains(command),
+                    "stderr must print {command}:\n{stderr}"
+                );
+                let label = item["label"].as_str().unwrap_or_default();
+                assert!(!label.trim().is_empty(), "{item:#}");
+            }
+        } else {
+            assert_eq!(choices, None, "{code} carries no choices: {document:#}");
+        }
+        let plain = run_ripr(cwd, &args)?;
+        assert_exit(&plain, 3, &format!("{args:?}"));
+        assert!(
+            stdout_text(&plain).is_empty(),
+            "{args:?}: without --json stdout stays empty:\n{}",
+            stdout_text(&plain)
+        );
+    }
     Ok(())
 }

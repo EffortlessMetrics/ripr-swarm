@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr review-comments` accepts `--suppression-policy PATH` (same file and matcher as `ripr check`): matching seams move to the `suppressed` array and no longer block `ripr gate evaluate`. `--check-output` also honors findings its check run marked suppressed (each by its own finding id). `.ripr/suppressions.toml` entries can select by owner with `path` + `function`, so a suppression survives edits to the expression; `ripr gate check --suppression-policy PATH` forwards the file to its review-comments step (#13895).

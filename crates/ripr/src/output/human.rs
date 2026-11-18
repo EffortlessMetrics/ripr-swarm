@@ -130,9 +130,10 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
-/// The selected subject and only the eligible rows inside the displayed
-/// Hidden window. The app resolves these before rendering, without inventing
-/// a second selection/currentness policy.
+/// The selected subject and the eligible rows from the first 20 omitted
+/// findings in report order, which is the stub-route cutoff rather than the
+/// displayed Hidden window. The app resolves these before rendering, without
+/// inventing a second selection/currentness policy.
 pub(crate) fn stub_route_subjects<'a>(
     output: &'a CheckOutput,
     config: &RiprConfig,
@@ -274,6 +275,26 @@ pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     match outcome.kind {
         NoScope => true,
         NoChangedLines | NoBehavioralCandidates => {
+            // #13894: a configured pattern (`generated_file_patterns`,
+            // `excluded_file_patterns`) leaves out files that are still
+            // counted in `changed_file_count`, so when those notes cover every
+            // changed file the requested scope was examined in full. Notes
+            // from CLI `--path`/`--exclude` (DiffLoad stage) are removed
+            // before `changed_files` is built, are NOT part of that count, and
+            // must never suppress the warning for a file still in scope.
+            let configured_left_out: u64 = outcome
+                .limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.kind.is_requested_scope_note()
+                        && limitation.producer_stage
+                            == crate::analysis_outcome::AnalysisStage::LanguageAdapter
+                })
+                .map(|limitation| limitation.affected_items.unwrap_or(0))
+                .sum();
+            if configured_left_out > 0 && configured_left_out >= outcome.counts.changed_file_count {
+                return false;
+            }
             outcome.counts.changed_file_count > 0
                 && output.summary.changed_rust_files == 0
                 && output
@@ -385,6 +406,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str(no_findings_line(output));
         out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
+            // The headline (and its base hint, when one prints) is its own
+            // paragraph: `Start here:` opens after a blank line here, as it
+            // does after the analysis-outcome block on a run with findings.
+            out.push('\n');
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
@@ -840,6 +865,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             }
             continue;
         }
+        if limitation.kind.is_requested_scope_note() {
+            // #13894: the operator's own scope request, not a limitation.
+            out.push_str(&format!(
+                "  Scope note: {}.\n",
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or_else(|| limitation.kind.plain_label())
+                    .trim_end_matches('.')
+            ));
+            continue;
+        }
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
@@ -861,6 +898,17 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
+        // The producer's bounded cause (for example, the parser reported
+        // syntax errors) is what makes the recovery actionable; JSON, SARIF
+        // and the editor sentence already carry it (#14398).
+        if let Some(detail) = &limitation.bounded_detail {
+            let detail = if plain {
+                plain_limitation_detail(detail, limitation.path.as_deref())
+            } else {
+                detail.trim_end_matches('.')
+            };
+            out.push_str(&format!("; {detail}"));
+        }
         let recovery = limitation.recovery.kind;
         let recovery_label = if plain || recovery.plain_label() == recovery.as_str() {
             recovery.plain_label().to_string()
@@ -875,6 +923,33 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         ));
     }
     out.push('\n');
+}
+
+/// The bounded surface keeps no schema tokens (#8165, RIPR-SPEC-0122): a
+/// producer detail that leads with its snake_case code (optionally after
+/// `static limit `) loses that prefix, and a trailing `: <path>` that repeats
+/// the line's `file:` part is dropped (#14398).
+fn plain_limitation_detail<'a>(detail: &'a str, path: Option<&str>) -> &'a str {
+    let mut text = detail.trim_end_matches('.');
+    let unprefixed = text.strip_prefix("static limit ").unwrap_or(text);
+    if let Some((code, rest)) = unprefixed.split_once(": ")
+        && code.contains('_')
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !rest.is_empty()
+    {
+        text = rest;
+    }
+    if let Some(path) = path
+        && let Some(head) = text
+            .strip_suffix(path)
+            .and_then(|head| head.strip_suffix(": "))
+        && !head.is_empty()
+    {
+        text = head;
+    }
+    text
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
@@ -913,7 +988,7 @@ fn owner_opt_out_summary_note(output: &CheckOutput, plain: bool) -> String {
     };
     if plain {
         return format!(
-            ", {} skipped because the changed function carries #[mutants::skip]",
+            ", {} skipped because the changed function or an enclosing scope carries #[mutants::skip]",
             output.owner_opt_outs.len()
         );
     }
@@ -935,7 +1010,7 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Withheld by owner opt-out ({}): {} finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
+        "Withheld by owner opt-out ({}): {} finding(s); the changed owner or a scope enclosing it carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
         first.reason.as_str(),
         output.owner_opt_outs.len()
     ));
@@ -946,16 +1021,58 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
             .find(|finding| finding.id == opt_out.finding_id)
         {
             out.push_str(&format!(
-                "  - {}:{} {} (owner: {}, reason: {})\n",
+                "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
+                owner_opt_out_scope_phrase(opt_out),
                 opt_out.reason.as_str()
             ));
         }
     }
     out.push('\n');
+}
+
+/// The `ripr explain` statement for a finding the check run withheld by an
+/// owner opt-out (#13910), followed by a blank line. The caller passes the
+/// run's own [`CheckOutput::owner_opt_outs`] entry, so explain states the
+/// same decision `check` made rather than deriving its own.
+pub(crate) fn render_owner_opt_out_explain_line(
+    opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+) -> String {
+    terminal_safe(format!("{}\n\n", owner_opt_out_explain_text(opt_out)))
+}
+
+/// `fn`, `fn outer`, `impl Cart`, `module a`, `file`: an opt-out's scope as
+/// one phrase.
+fn owner_opt_out_scope_phrase(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    if opt_out.scope_label.is_empty() {
+        opt_out.scope.as_str().to_string()
+    } else {
+        format!("{} {}", opt_out.scope.as_str(), opt_out.scope_label)
+    }
+}
+
+/// The one-line statement `ripr explain` prints for a withheld finding.
+fn owner_opt_out_explain_text(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    use crate::analysis::owner_opt_out::OwnerOptOutScope;
+    let marked = "marked #[mutants::skip]";
+    let reason = opt_out.reason.as_str();
+    let owner = &opt_out.owner;
+    match opt_out.scope {
+        OwnerOptOutScope::Fn if opt_out.scope_label.is_empty() => {
+            format!("Withheld: owner `{owner}` is {marked} ({reason})")
+        }
+        OwnerOptOutScope::File => {
+            format!("Withheld: owner `{owner}` is in a file {marked} ({reason})")
+        }
+        scope => format!(
+            "Withheld: owner `{owner}` is inside {} `{}` {marked} ({reason})",
+            scope.as_str(),
+            opt_out.scope_label
+        ),
+    }
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -1664,6 +1781,15 @@ mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
+
+/// The agent-format refusal record for a refused check run (#14452).
+/// `retry` is a timed run's bounded replay command, when one exists.
+pub(crate) fn render_agent_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    agent::render_refusal(notice, retry)
+}
 
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
@@ -3323,6 +3449,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3384,6 +3511,7 @@ mod tests {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3413,6 +3541,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: Some("src/lib.rs".to_string()),
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -4232,7 +4361,7 @@ mod tests {
     }
 
     /// #4320: the `Hidden:` list is itself a bounded window — beyond the
-    /// `HIDDEN_FINDINGS_LISTED` cap it discloses the remainder instead of
+    /// `HIDDEN_FINDINGS_LISTED` row cap it discloses the remainder instead of
     /// printing every identity, keeping the default surface bounded.
     #[test]
     fn hidden_block_list_discloses_remainder_beyond_its_window() {
@@ -4261,7 +4390,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and 5 more omitted finding(s): 5 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -4269,6 +4398,351 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    /// On a diff with more omitted findings than the `Hidden:` window, the
+    /// window names the gap-class findings rather than the first files in
+    /// path order, keeps file and line order among the rows it names, and the
+    /// remainder line says which classes fell outside it.
+    #[test]
+    fn hidden_block_window_names_gap_findings_before_already_noticed_ones() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 24 already-noticed findings in the alphabetically first files.
+        for index in 0..24 {
+            let mut finding = sample_finding();
+            finding.id = format!("exposed-{index}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        // Three gaps in files that sort after every one of them.
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("late-gap-{index}");
+            finding.probe.location = SourceLocation::new(format!("src/z{index}.rs"), 7, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "the window stays bounded:\n{rendered}");
+        for index in 0..3 {
+            assert!(
+                rows.iter()
+                    .any(|row| row.starts_with(&format!("    - src/z{index}.rs:7 (weak)"))),
+                "gap in src/z{index}.rs is named:\n{rendered}"
+            );
+        }
+        // The first 17 already-noticed rows fill the rest of the window, and
+        // the named rows keep the report's file order (gaps last here).
+        assert!(rows[0].starts_with("    - src/b00.rs:1 "), "{rendered}");
+        assert!(rows[16].starts_with("    - src/b16.rs:1 "), "{rendered}");
+        assert!(rows[17].starts_with("    - src/z0.rs:7 "), "{rendered}");
+        assert!(!rendered.contains("    - src/b17.rs:"), "{rendered}");
+        let exposed_label = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rendered.contains(&format!(
+                "    - … and 7 more omitted finding(s): 7 {exposed_label}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// #14299: omitted findings that share file, owner, class, currentness and
+    /// reason print as one row naming the line span, count and kinds. A
+    /// different owner or class keeps its own row.
+    #[test]
+    fn hidden_block_groups_same_owner_class_and_reason_into_one_row() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for line in 10..16 {
+            let mut finding = sample_finding();
+            finding.id = format!("parse-{line}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+            finding.probe.family = if line % 2 == 0 {
+                ProbeFamily::Predicate
+            } else {
+                ProbeFamily::ReturnValue
+            };
+            finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+            findings.push(finding);
+        }
+        let mut other_owner = sample_finding();
+        other_owner.id = "other".to_string();
+        other_owner.class = ExposureClass::Exposed;
+        other_owner.probe.owner = Some(SymbolId("src/lib.rs::other".to_string()));
+        other_owner.probe.location = SourceLocation::new("src/lib.rs", 12, 1);
+        findings.push(other_owner);
+        let mut other_class = sample_finding();
+        other_class.id = "unknown".to_string();
+        other_class.class = ExposureClass::StaticUnknown;
+        other_class.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+        other_class.probe.location = SourceLocation::new("src/lib.rs", 13, 1);
+        findings.push(other_class);
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 3, "{rendered}");
+        let exposed = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rows[0].starts_with(&format!(
+                "    - src/lib.rs:10-15 ({exposed}); 6 changed behaviors in `parse`; kinds: predicate, return_value; reason: "
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rows[1].starts_with(&format!("    - src/lib.rs:12 ({exposed}); kind: ")),
+            "{rendered}"
+        );
+        assert!(rows[2].starts_with("    - src/lib.rs:13 ("), "{rendered}");
+        assert!(
+            rendered.contains("  8 lower-priority finding(s) omitted"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("more omitted finding(s)"), "{rendered}");
+    }
+
+    /// #14299: findings with no resolved owner never group, and a legacy
+    /// repeat row before a grouped row keeps its count and position.
+    #[test]
+    fn hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // Report (file, line) order: two owner-less at 3, owned 5 and 6,
+        // owner-less 8.
+        for (line, owned) in [(3, false), (3, false), (5, true), (6, true), (8, false)] {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{line}-{owned}");
+            finding.class = ExposureClass::Exposed;
+            if owned {
+                finding.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+            }
+            finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 3, "{rendered}");
+        assert!(rows[0].starts_with("    - src/lib.rs:3 ("), "{rendered}");
+        assert!(rows[0].ends_with(" (x2)"), "{rendered}");
+        assert!(
+            rows[1].starts_with("    - src/lib.rs:5-6 (")
+                && rows[1].contains("; 2 changed behaviors in `parse`; kind: predicate; "),
+            "{rendered}"
+        );
+        assert!(rows[2].starts_with("    - src/lib.rs:8 ("), "{rendered}");
+        assert!(!rows[2].contains(" (x"), "{rendered}");
+    }
+
+    /// #14299: the window bounds rows, and a grouped row is chosen by its best
+    /// member's priority; the remainder counts the findings in unlisted rows.
+    #[test]
+    fn hidden_block_window_counts_grouped_rows_and_remainder_findings() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for index in 0..25 {
+            let mut finding = sample_finding();
+            finding.id = format!("exposed-{index}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        // 30 gaps in one late Python owner: no stub route, so they group.
+        for line in 1..31 {
+            let mut finding = sample_finding();
+            finding.id = format!("py-gap-{line}");
+            finding.probe.owner = Some(SymbolId("python:src/z.py::shorten".to_string()));
+            finding.probe.location = SourceLocation::new("src/z.py", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "{rendered}");
+        assert!(
+            rows[19].starts_with(
+                "    - src/z.py:1-30 (weak); 30 changed behaviors in `shorten`; kind: predicate; reason: "
+            ),
+            "{rendered}"
+        );
+        assert!(rows[18].starts_with("    - src/b18.rs:1 "), "{rendered}");
+        let exposed = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rendered.contains(&format!(
+                "    - … and 6 more omitted finding(s): 6 {exposed}; "
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// #14299: at the window boundary a grouped row competes with its best
+    /// member, not its first. Within one group only the repair-route tie break
+    /// differs, so the group's first member (no next step) ranks below a
+    /// rival singleton while its later member (with one) ranks above it.
+    #[test]
+    fn hidden_block_window_ranks_a_group_by_its_best_member() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.py", 1, 1);
+        findings.push(selected);
+        let routed = Some("Add a discriminating assertion.".to_string());
+        for index in 0..19 {
+            let mut finding = sample_finding();
+            finding.id = format!("routed-{index}");
+            finding.probe.owner = Some(SymbolId(format!("python:src/b{index:02}.py::f")));
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.py"), 1, 1);
+            finding.recommended_next_step = routed.clone();
+            findings.push(finding);
+        }
+        // The rival: one unrouted singleton that sorts before the group.
+        let mut rival = sample_finding();
+        rival.id = "rival".to_string();
+        rival.probe.owner = Some(SymbolId("python:src/c_rival.py::g".to_string()));
+        rival.probe.location = SourceLocation::new("src/c_rival.py", 1, 1);
+        rival.recommended_next_step = None;
+        findings.push(rival);
+        for (line, step) in [(1, None), (2, routed.clone())] {
+            let mut finding = sample_finding();
+            finding.id = format!("group-{line}");
+            finding.probe.owner = Some(SymbolId("python:src/z.py::shorten".to_string()));
+            finding.probe.location = SourceLocation::new("src/z.py", line, 1);
+            finding.recommended_next_step = step;
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "{rendered}");
+        assert!(
+            rows[19].starts_with("    - src/z.py:1-2 (weak); 2 changed behaviors in `shorten`; "),
+            "the group's routed later member must win it the last row: {rendered}"
+        );
+        assert!(
+            !rendered.contains("src/c_rival.py"),
+            "the unrouted rival must fall to the remainder: {rendered}"
+        );
+        assert!(
+            rendered.contains("    - … and 1 more omitted finding(s): 1 "),
+            "{rendered}"
+        );
+    }
+
+    /// #14299: a finding that offers its own test stub keeps its own row even
+    /// when another finding shares its owner, class and reason.
+    #[test]
+    fn hidden_block_keeps_stub_route_findings_one_row_each() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for line in [7, 9] {
+            let mut finding = sample_finding();
+            finding.id = format!("stub-{line}");
+            finding.probe.owner = Some(SymbolId("src/sample.rs::sample".to_string()));
+            finding.probe.location = SourceLocation::new("src/sample.rs", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("    - src/sample.rs:7 (weak); kind: "),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/sample.rs:9 (weak); kind: "),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("changed behaviors in"), "{rendered}");
+    }
+
+    /// The remainder line counts every finding outside the window by class,
+    /// including findings that share an id with a listed row.
+    #[test]
+    fn hidden_block_remainder_names_each_unlisted_class_by_position() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 20 gaps fill the window; every other finding reuses one of their ids.
+        for index in 0..20 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.probe.location = SourceLocation::new(format!("src/g{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..2 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::StaticUnknown;
+            finding.probe.location = SourceLocation::new(format!("src/u{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..4 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/x{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let remainder = rendered
+            .lines()
+            .find(|line| line.contains("more omitted finding(s)"))
+            .unwrap_or_default();
+        let exposed = format!("4 {}", ExposureClass::Exposed.plain_label_with_stage());
+        let unknown = format!(
+            "2 {}",
+            ExposureClass::StaticUnknown.plain_label_with_stage()
+        );
+        assert!(
+            remainder.contains("… and 6 more omitted finding(s): "),
+            "{rendered}"
+        );
+        assert!(remainder.contains(&exposed), "{rendered}");
+        assert!(remainder.contains(&unknown), "{rendered}");
+        assert!(!rendered.contains("    - src/u0.rs:"), "{rendered}");
+        assert!(!rendered.contains("    - src/x0.rs:"), "{rendered}");
     }
 
     #[test]
@@ -4761,6 +5235,23 @@ mod tests {
         assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("Nothing to check:"));
         assert!(!rendered.contains("No findings:"));
+        // `Start here:` is its own paragraph, not glued to the headline: the
+        // line before it is blank, and exactly one blank line separates them.
+        let lines: Vec<&str> = rendered.lines().collect();
+        let start = lines.iter().position(|line| *line == "Start here:");
+        let before = start.and_then(|index| index.checked_sub(1));
+        assert_eq!(
+            before.and_then(|index| lines.get(index).copied()),
+            Some(""),
+            "{rendered}"
+        );
+        let headline = before
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| lines.get(index).copied());
+        assert!(
+            headline.is_some_and(|line| line.starts_with("Nothing to check:")),
+            "{rendered}"
+        );
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -5284,6 +5775,46 @@ mod tests {
     // prose renders under the Analyzer limit label — while a real
     // missing discriminator keeps its own label.
     #[test]
+    fn digest_window_skips_a_stage_detail_that_repeats_the_missing_line() -> Result<(), String> {
+        // #14308: the infection detail restates the Missing check value word
+        // for word; the window shows the fact once and the next detail instead.
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::InfectionUnknown;
+        let repeated =
+            "Changed boundary input is unresolved, so ripr cannot establish the boundary inputs";
+        finding.ripr.infect = stage(StageState::Unknown, Confidence::Low, repeated);
+        finding.missing = vec![format!("{repeated}.")];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if digest.matches(repeated).count() != 1 {
+            return Err(format!("the repeated sentence must render once:\n{digest}"));
+        }
+        if digest.contains("    - infection unknown:") {
+            return Err(format!(
+                "the restating detail must leave the window:\n{digest}"
+            ));
+        }
+        if !digest.contains("    - reach ") {
+            return Err(format!("the window keeps the other details:\n{digest}"));
+        }
+        // Control: a detail that differs keeps its slot.
+        finding.missing = vec!["Some other missing evidence".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains("    - infection unknown:") && !digest.contains("more detail line") {
+            return Err(format!("a distinct detail must stay reachable:\n{digest}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn propagation_unknown_wording_is_honest() -> Result<(), String> {
         let mut finding = sample_finding();
         finding.class = ExposureClass::PropagationUnknown;
@@ -5301,11 +5832,14 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains(
-            "Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)",
-        ) {
-            return Err(format!("honest why-hint missing:
-{digest}"));
+        // The Why hint and the Analyzer limit line carry the same plain
+        // sentence here, so the digest states it once, under the limit label.
+        let honest = "ripr could not follow the changed value to something a test can check (a return value or side effect)";
+        if digest.matches(honest).count() != 1 || digest.contains("Why unknown:") {
+            return Err(format!(
+                "the honest limit must render exactly once, without a Why restatement:
+{digest}"
+            ));
         }
         if digest.contains("the change propagates but") {
             return Err(format!(
@@ -6993,6 +7527,37 @@ mod tests {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn over_limit_stop_names_only_enabled_language_files_as_selected() -> Result<(), String> {
+        // #13641 review: a fitting file whose adapter is disabled is never
+        // selected, so the over-limit stop must not claim every fitting file
+        // was selected — only every fitting file in an enabled language.
+        use crate::analysis::PartialDiffStopReason;
+        let mut output =
+            partial_scope_output(PartialDiffStopReason::FileExceedsAnalysisLimit, 2, 2510);
+        let scope = output
+            .partial_scope
+            .as_mut()
+            .ok_or("fixture carries a partial scope")?;
+        scope.over_limit_files = vec![crate::analysis::OverLimitFile {
+            path: "src/b.rs".to_string(),
+            changed_lines: 2500,
+            limit: 2000,
+            limit_env: "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        }];
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+        let needle = "every enabled-language file that fits was selected and 1 file(s) \
+                      that each exceed their language's limit on their own were left out";
+        if !rendered.contains(needle) {
+            return Err(format!("missing `{needle}` in:\n{rendered}"));
+        }
+        if rendered.contains("every file that fits was selected") {
+            return Err(format!("unqualified selection claim in:\n{rendered}"));
         }
         Ok(())
     }
@@ -11201,5 +11766,43 @@ mod tests {
             "{digest}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod limitation_detail_tests {
+    use super::plain_limitation_detail;
+
+    /// #14398: the bounded surface keeps the cause but not its schema code or
+    /// a repeated path; prose details pass through.
+    #[test]
+    fn plain_limitation_detail_drops_codes_and_repeated_paths() {
+        assert_eq!(
+            plain_limitation_detail(
+                "rust_lexical_test_index_partial: unchanged lexical-fallback test file lost evidence: tests/opaque.rs",
+                Some("tests/opaque.rs"),
+            ),
+            "unchanged lexical-fallback test file lost evidence"
+        );
+        assert_eq!(
+            plain_limitation_detail(
+                "static limit expression_nesting_budget: depth 2101 exceeds the 2000-level budget.",
+                None,
+            ),
+            "depth 2101 exceeds the 2000-level budget"
+        );
+        assert_eq!(
+            plain_limitation_detail("1 parser error(s): Unexpected token", Some("src/broken.ts")),
+            "1 parser error(s): Unexpected token"
+        );
+        assert_eq!(
+            plain_limitation_detail(
+                "src/lib.rs: the Rust parser reported syntax errors.",
+                Some("src/lib.rs"),
+            ),
+            "src/lib.rs: the Rust parser reported syntax errors"
+        );
+        // A code with nothing after it is kept rather than emptied.
+        assert_eq!(plain_limitation_detail("some_code: ", None), "some_code: ");
     }
 }

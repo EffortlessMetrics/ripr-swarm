@@ -1,0 +1,19 @@
+# A Python gap credited only by an old raised-type assertion is not reported
+# closed by the repair loop; the exposure class is unchanged (#13622).
+[[extend]]
+id = "RIPR-SPEC-0310"
+tests = [
+  "crates/ripr/tests/python_stale_raised_type_closure.rs::stale_old_type_test_is_not_reported_closed_and_names_both_types",
+  "crates/ripr/tests/python_stale_raised_type_closure.rs::new_type_forms_close_the_gap",
+  "crates/ripr/tests/python_stale_raised_type_closure.rs::old_type_assertion_closes_when_the_new_type_subclasses_it",
+  "crates/ripr/src/agent/artifact.rs::tests::stale_raised_type_pin_refuses_python_closure_and_names_both_types",
+  "crates/ripr/src/analysis/stale_raised_type_pin.rs::tests::evidence_line_round_trips_and_rejects_other_shapes",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::stale_builtin_raised_type_is_advisory_evidence_and_keeps_the_class",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::new_type_or_subclass_assertions_record_no_stale_pin",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::user_class_subclass_records_no_stale_pin",
+]
+code = [
+  "crates/ripr/src/analysis/stale_raised_type_pin.rs",
+  "crates/ripr/src/analysis/language/python/exception_variant.rs",
+  "crates/ripr/src/agent/artifact.rs",
+]

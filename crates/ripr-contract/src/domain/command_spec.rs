@@ -13,15 +13,27 @@ const MAX_TIMEOUT_MS: u64 = 3_600_000;
 /// The Python producer's pytest display, shared with its rooted projection.
 /// `node` is the qualified test name with `::` separators, not a shell token.
 pub fn python_pytest_verify_display(path: &str, node: &str, windows: bool) -> Option<String> {
+    python_pytest_verify_display_for("python", path, node, windows)
+}
+
+/// [`python_pytest_verify_display`] spelled with one of
+/// [`crate::domain::PYTEST_VERIFY_INTERPRETERS`] (#13801). Any other
+/// interpreter yields no display.
+pub fn python_pytest_verify_display_for(
+    interpreter: &str,
+    path: &str,
+    node: &str,
+    windows: bool,
+) -> Option<String> {
+    if !crate::domain::PYTEST_VERIFY_INTERPRETERS.contains(&interpreter) {
+        return None;
+    }
     let selector = if windows {
         shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
     } else {
         format!("{}::{node}", shell_quote_file_arg_for_host(path, false)?)
     };
-    Some(format!(
-        "{} {selector}",
-        crate::domain::PYTEST_VERIFY_PROGRAM
-    ))
+    Some(format!("{interpreter} -m pytest {selector}"))
 }
 
 pub fn python_unittest_verify_display(

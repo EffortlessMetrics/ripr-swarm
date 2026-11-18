@@ -56,6 +56,17 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
             "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `{pointer}`."
         );
     }
+    // `git diff --staged`/`--cached` muscle memory: `ripr check` has no
+    // index-only mode and no near flag, so the bare refusal named nothing.
+    // Name what check already reads and the exact staged-only spelling.
+    if command == "check" && matches!(arg, "--staged" | "--cached") {
+        return format!(
+            "unknown {command} argument {arg:?}. `ripr check` already reads staged and \
+             unstaged changes together; to limit findings to the staged lines run \
+             `git diff --cached | ripr check --diff -` (source is still read from the \
+             working tree). Run `{pointer}`."
+        );
+    }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
@@ -156,7 +167,7 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
 /// out of each other's candidate sets: the parser rejects a sibling's flag,
 /// so proposing it would be a wrong suggestion. The Options mining below
 /// keeps its existing section scoping for the same reason.
-fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<&'a str> {
+pub(in crate::cli) fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<&'a str> {
     let section = option_section(command);
     let mut in_section = section.is_none();
     let mut in_usage_block = false;
@@ -260,7 +271,7 @@ fn collect_usage_flags<'a>(line: &'a str, command: &str, flags: &mut Vec<&'a str
 /// Whole-body mining passes an empty command (a test aid that deliberately
 /// sweeps every Options line); with no owner to scope to, no usage line
 /// qualifies.
-fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
+pub(in crate::cli) fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
     if command.is_empty() {
         return false;
     }
@@ -286,7 +297,7 @@ fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
 /// The shared body is still useful for rendering `--help`, but mining the
 /// whole body would let one sibling suggest another sibling's flag. Commands
 /// with a single options section keep the existing full-body scan.
-fn option_section(command: &str) -> Option<&'static str> {
+pub(in crate::cli) fn option_section(command: &str) -> Option<&'static str> {
     match command {
         "assistant-loop proof" => Some("Proof options:"),
         "assistant-loop health" => Some("Health options:"),

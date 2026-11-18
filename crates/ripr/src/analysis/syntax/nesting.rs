@@ -46,6 +46,12 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     (error_count == 0).then_some(parse)
 }
 
+/// [`CLEAN_PARSE_CALLS`] on this thread so far.
+#[cfg(test)]
+pub(crate) fn nesting_parse_calls() -> usize {
+    CLEAN_PARSE_CALLS.with(std::cell::Cell::get)
+}
+
 #[cfg(test)]
 thread_local! {
     /// Parses that reached the parser on this thread, so a test can prove a
