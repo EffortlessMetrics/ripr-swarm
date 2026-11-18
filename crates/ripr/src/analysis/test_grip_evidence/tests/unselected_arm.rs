@@ -21,9 +21,17 @@ fn arm_evidence_in(
     arm: &str,
 ) -> Result<(TestGripEvidence, TestGripEvidence, [SeamGripClass; 2]), String> {
     let tests = format!("use prices::*;\n\n#[test]\nfn prices() {{\n{test_body}\n}}\n");
+    arm_evidence_with_tests(source, &tests, arm)
+}
+
+fn arm_evidence_with_tests(
+    source: &str,
+    tests: &str,
+    arm: &str,
+) -> Result<(TestGripEvidence, TestGripEvidence, [SeamGripClass; 2]), String> {
     let files: Vec<(PathBuf, &str)> = vec![
         (PathBuf::from("src/lib.rs"), source),
-        (PathBuf::from("tests/prices.rs"), tests.as_str()),
+        (PathBuf::from("tests/prices.rs"), tests),
     ];
     let index = index_from_files(&files)?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
@@ -380,6 +388,135 @@ fn an_impl_inside_an_uncalled_function_keeps_the_arm_unnamed() -> Result<(), Str
     for evidence in [&full, &compact] {
         assert_eq!(evidence.activate.state, StageState::Yes);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
+    }
+    Ok(())
+}
+
+/// #15006 review: a test file that imports the owner's name from a foreign
+/// path may call that item, so its inputs say nothing about the owner's arms
+/// (the check-side callee-identity defeat). A foreign import of another name
+/// is the control: the arm stays named.
+#[test]
+fn a_foreign_import_of_the_owner_name_keeps_the_arm_unnamed() -> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    assert_eq!(price_cents(Size::Small), 300);\n    \
+assert_eq!(price_cents(Size::Large), 500);\n}\n";
+    for (import, named) in [
+        ("use other_prices::price_cents;\n", false),
+        (
+            "use other_prices::{discount, price_cents as price_cents};\n",
+            false,
+        ),
+        ("use other_prices::discount;\n", true),
+    ] {
+        let tests = format!("use prices::*;\n{import}\n{body}");
+        let (full, compact, class) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        let expected = if named {
+            vec!["Size::Medium"]
+        } else {
+            Vec::new()
+        };
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            assert_eq!(missing_values(evidence), expected, "{import}");
+            assert_eq!(
+                class == SeamGripClass::WeaklyGripped,
+                named,
+                "{import}: {evidence:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #15006 review: the compact path reads every related test for the arm,
+/// not the rank-limited slice. Thirteen tests rank `t00`..`t12`, so `t12`
+/// falls past the compact cutoff; its input alone decides the arm.
+#[test]
+fn a_test_past_the_compact_cutoff_still_decides_the_arm() -> Result<(), String> {
+    for (last_input, named) in [("Size::Medium", false), ("Size::Large", true)] {
+        let mut tests = String::from("use prices::*;\n");
+        for idx in 0..12 {
+            tests.push_str(&format!(
+                "\n#[test]\nfn t{idx:02}() {{\n    assert_eq!(price_cents(Size::Small), 300);\n}}\n"
+            ));
+        }
+        tests.push_str(&format!(
+            "\n#[test]\nfn t12() {{\n    assert!(price_cents({last_input}) > 0);\n}}\n"
+        ));
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), PRICES),
+            (PathBuf::from("tests/prices.rs"), tests.as_str()),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::MatchArm && seam.expression().starts_with("Size::Medium")
+            })
+            .ok_or_else(|| format!("expected the `Size::Medium` match-arm seam: {seams:?}"))?;
+        let context = CompactGripContext::new(&index);
+        // Fixture premise: thirteen related tests, and `t12` is outside the
+        // compact slice.
+        let limited = find_related_tests_compact(seam, &context);
+        assert_eq!(limited.len(), COMPACT_RELATED_TEST_LIMIT);
+        assert!(limited.iter().all(|related| related.test.name != "t12"));
+        assert_eq!(find_related_tests_ranked(seam, &context).len(), 13);
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        let expected = if named {
+            vec!["Size::Medium"]
+        } else {
+            Vec::new()
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(missing_values(evidence), expected, "{last_input}");
+        }
+        for evidence in [&full, &compact] {
+            let class = classify_seam(seam, evidence);
+            assert_eq!(
+                class == SeamGripClass::WeaklyGripped,
+                named,
+                "{last_input}: {evidence:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #15006 review reproduction: `use foreign::score;` makes `score(0)` a call
+/// to a dependency, so production `score`'s `1 =>` arm keeps its stage. An
+/// import of the same name from the owning crate (`scorer`) is the owner, so
+/// the same test names `1` and weakens it.
+#[test]
+fn a_scalar_foreign_callee_keeps_the_arm_and_an_owning_crate_import_names_it() -> Result<(), String>
+{
+    const SCORE: &str = "pub fn score(x: u32) -> u32 {\n    match x {\n        0 => 10,\n        1 => 20,\n        _ => 30,\n    }\n}\n";
+    for (import, named) in [("use foreign::score;", false), ("use scorer::score;", true)] {
+        let tests =
+            format!("{import}\n\n#[test]\nfn scores() {{\n    assert_eq!(score(0), 10);\n}}\n");
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), SCORE),
+            (PathBuf::from("tests/foreign.rs"), tests.as_str()),
+        ];
+        let mut index = index_from_files(&files)?;
+        index.package_names = ["scorer".to_string()].into_iter().collect();
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.expression().starts_with("1 =>"))
+            .ok_or_else(|| format!("expected the `1 =>` match-arm seam: {seams:?}"))?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        let expected = if named { vec!["1"] } else { Vec::new() };
+        for evidence in [&full, &compact] {
+            assert_eq!(missing_values(evidence), expected, "{import}: {evidence:?}");
+            let weak = classify_seam(seam, evidence) == SeamGripClass::WeaklyGripped;
+            assert_eq!(weak, named, "{import}: {evidence:?}");
+            if !named {
+                assert_eq!(evidence.activate.state, StageState::Yes, "{import}");
+            }
+        }
     }
     Ok(())
 }

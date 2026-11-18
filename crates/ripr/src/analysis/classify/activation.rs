@@ -4628,7 +4628,21 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
     // The selector read is cheap and refuses most arms (a computed or
     // guarded arm, a non-parameter scrutinee) before the workspace lookups.
     super::arm_selection::ArmSelector::establish(&probe, owner)?;
-    missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)
+    let fact =
+        missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)?;
+    // The check-side callee-identity defeat (`classifier::evidence`): a test
+    // file that imports the owner's name from a foreign path may call that
+    // item instead, so its bare call's input says nothing about which arm
+    // the owner runs (#15006 review). A same-named function in the test's
+    // package is already refused by the unique-name read above.
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
+    let imports_foreign = related_tests.iter().any(|test| {
+        index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        })
+    });
+    (!imports_foreign).then_some(fact)
 }
 
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing

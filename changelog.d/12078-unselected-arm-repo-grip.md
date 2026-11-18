@@ -12,3 +12,6 @@
   production function that nothing calls mentions the owner; a mention
   anywhere else still leaves the guard unnamed. Unselected-arm naming now
   applies the same mention rule (#12078).
+- The repo seam view does not name an unselected arm when a related test
+  file imports the owner's name from another crate, since its calls may run
+  that item instead; `ripr check` already refused this case (#12078).
