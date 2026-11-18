@@ -1642,7 +1642,13 @@ fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<
         }
         segments.truncate(at);
     }
-    path.extend(segments.into_iter().map(str::to_string));
+    // Scopes record plain names (`r#b` and `b` are one module), so the
+    // definition's path drops the raw prefix the parser id keeps.
+    path.extend(
+        segments
+            .into_iter()
+            .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string()),
+    );
     Some(path)
 }
 
@@ -6943,10 +6949,65 @@ mod raw_rename {
         assert_eq!(render(2), 4);
     }
 }
+
+pub mod r#c {
+    pub fn render(x: i32) -> i32 {
+        x * 3
+    }
+
+    #[cfg(test)]
+    mod inside_raw_module {
+        use super::*;
+
+        #[test]
+        fn glob_of_the_raw_declared_parent() {
+            assert_eq!(render(2), 6);
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_declared_module {
+    use crate::r#c::render;
+
+    #[test]
+    fn raw_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+
+#[cfg(test)]
+mod plain_path_to_raw_module {
+    use crate::c::render;
+
+    #[test]
+    fn plain_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
 ";
         let index = index(&[("src/lib.rs", source)]);
         let a = "lib.rs::a::render";
         let b = "lib.rs::b::render";
+        // A module declared `mod r#c` is the module `c`: an import path
+        // spelled either way, and a glob of it from inside, reach its
+        // `render` and no other.
+        for test in [
+            "raw_path_to_a_raw_declared_module",
+            "plain_path_to_a_raw_declared_module",
+            "glob_of_the_raw_declared_parent",
+        ] {
+            assert_eq!(
+                settle(&index, "::r#c::render", test),
+                Some(CallTarget::Owner),
+                "{test} against c"
+            );
+            assert_eq!(
+                settle(&index, a, test),
+                Some(CallTarget::Other),
+                "{test} against a"
+            );
+        }
         for (test, on_a, on_b) in [
             (
                 "raw_leaf_of_b_beside_a_glob_of_a",

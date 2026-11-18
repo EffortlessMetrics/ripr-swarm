@@ -223,7 +223,7 @@ pub(super) fn name_scopes_in_tree(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules
@@ -447,7 +447,7 @@ fn name_scopes_at_line(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules

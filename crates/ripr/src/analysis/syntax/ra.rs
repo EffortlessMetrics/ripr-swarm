@@ -1926,7 +1926,14 @@ fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
     scope
         .descendants()
         .filter_map(ast::IdentPat::cast)
-        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+        .any(|pattern| {
+            // `name` is a plain path segment; a raw-spelled binding
+            // (`r#name`) is the same name.
+            pattern.name().is_some_and(|bound| {
+                let bound = bound.text();
+                bound.strip_prefix("r#").unwrap_or(bound) == name
+            })
+        })
 }
 
 /// The item scopes around `node`, innermost first: enclosing statement lists
