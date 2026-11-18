@@ -344,13 +344,15 @@ mod tests {
     #[should_panic(expected = "faster retry: growth exceeded")]
     fn faster_retry_small_sample_remains_the_baseline() {
         assert_measured_growth("faster retry", 1, 2, 3, |size, repetitions| {
-            Duration::from_millis(match (size, repetitions) {
-                (1, 1) => 20,
-                (2, 1) => 80,
-                (1, 2) => 30,
-                (2, 2) => 100,
-                _ => unreachable!(),
-            })
+            assert!(matches!(size, 1 | 2) && matches!(repetitions, 1 | 2));
+            let millis = if repetitions == 1 {
+                if size == 1 { 20 } else { 80 }
+            } else if size == 1 {
+                30
+            } else {
+                100
+            };
+            Duration::from_millis(millis)
         });
     }
 
@@ -358,13 +360,13 @@ mod tests {
     #[should_panic(expected = "measurement unresolved")]
     fn retry_small_sample_below_floor_cannot_pass() {
         assert_measured_growth("retry floor", 1, 2, 3, |size, repetitions| {
-            Duration::from_millis(match (size, repetitions) {
-                (1, 1) => 20,
-                (2, 1) => 80,
-                (1, 2) => 1,
-                (2, 2) => 2,
-                _ => unreachable!(),
-            })
+            assert!(matches!(size, 1 | 2) && matches!(repetitions, 1 | 2));
+            let millis = if repetitions == 1 {
+                if size == 1 { 20 } else { 80 }
+            } else {
+                size as u64
+            };
+            Duration::from_millis(millis)
         });
     }
 
