@@ -2712,9 +2712,9 @@ pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
     )
 }
 
-/// Appended to a shared-check detail that names the CLI's `--base` flag
-/// (#15105), so an agent reading the detail alone maps it to this server.
-const CLI_BASE_FLAG_NOTE: &str = "(In this session the CLI's `--base <ref>` is ripr_refresh's `base` argument and `--worktree` is `source: \"worktree\"`; any `ripr` command named above runs outside MCP.)";
+/// Leads a shared-check detail that names the CLI's `--base` flag (#15105),
+/// so an agent reading the detail alone maps it to this server.
+const CLI_BASE_FLAG_NOTE: &str = "CLI wording: `--base <ref>` is ripr_refresh's `base` argument, `--worktree` is `source: \"worktree\"`, commands run outside MCP";
 
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
@@ -2727,14 +2727,16 @@ fn check_failure(
     base: Option<&str>,
     source: RefreshSource,
 ) -> AttemptFailure {
-    let detail = format!("shared check authority failed: {error}");
     // #15105: the shared authority words its repair for the CLI. A session
     // cannot pass a flag, so a detail that names one says once which tool
-    // argument carries it; the shared wording itself keeps one owner.
-    let detail = if detail.contains("--base") {
-        format!("{detail} {CLI_BASE_FLAG_NOTE}")
+    // argument carries it; the shared wording itself keeps one owner. The
+    // note leads, because the detail is cut at a fixed length and the
+    // shared text varies with the repository's branch names.
+    let shared = error.to_string();
+    let detail = if shared.contains("--base") {
+        format!("shared check authority failed ({CLI_BASE_FLAG_NOTE}): {shared}")
     } else {
-        detail
+        format!("shared check authority failed: {shared}")
     };
     // #13096: every retry names the source it was refused under. A
     // base-only retry would re-run the default input selection, which reads
@@ -4174,8 +4176,8 @@ mod tests {
 
     /// #15105: the shared authority's base repairs are worded for the CLI
     /// (`--base trunk`, `--base HEAD --worktree`). The MCP detail keeps that
-    /// wording and says once which tool argument carries the flag; a detail
-    /// that names no flag is left alone.
+    /// wording and says once, ahead of it, which tool argument carries the
+    /// flag; a detail that names no flag is left alone.
     #[test]
     fn check_failure_detail_maps_a_cli_base_flag_to_the_tool_argument() {
         use crate::core_error::CoreError;
@@ -4187,18 +4189,21 @@ mod tests {
         ] {
             let failure = check_failure(&error, &root, None, RefreshSource::Committed);
             assert!(
-                failure.detail.contains("`--base trunk`"),
+                failure.detail.ends_with("for example `--base trunk`."),
                 "{}",
                 failure.detail
             );
             assert!(
-                failure.detail.ends_with(CLI_BASE_FLAG_NOTE),
+                failure.detail.starts_with(&format!(
+                    "shared check authority failed ({CLI_BASE_FLAG_NOTE}): "
+                )),
                 "{}",
                 failure.detail
             );
             assert_eq!(failure.detail.matches(CLI_BASE_FLAG_NOTE).count(), 1);
         }
         assert!(CLI_BASE_FLAG_NOTE.contains("ripr_refresh's `base` argument"));
+        assert!(CLI_BASE_FLAG_NOTE.contains(r#"`--worktree` is `source: "worktree"`"#));
         let plain = check_failure(
             &CoreError::base_unresolvable("the base does not resolve"),
             &root,
@@ -4208,6 +4213,49 @@ mod tests {
         assert_eq!(
             plain.detail,
             "shared check authority failed: the base does not resolve"
+        );
+    }
+
+    /// #15105 review: the detail is cut at `MAX_FAILURE_DETAIL_CHARS`, and the
+    /// default-base text lists up to five branch names. With the producer's
+    /// own wording and long branch names the cut lands inside the shared
+    /// text, never inside the mapping.
+    #[test]
+    fn a_truncated_check_failure_detail_keeps_the_whole_flag_mapping() {
+        use crate::core_error::CoreError;
+        let branches = [
+            "develop/platform-runtime",
+            "release/2026-q1-platform",
+            "release/2026-q2-platform",
+            "release/2026-q3-platform",
+            "release/2026-q4-platform",
+        ]
+        .map(|name| format!("`{name}`"))
+        .join(", ");
+        let shared = format!(
+            "could not resolve a default base (no origin/main, origin/master, or local main/master found). Other branches here: {branches}; for example `--base develop/platform-runtime`. Pass `--base <ref>` to diff against a specific ref, or run `ripr pilot --root .` for whole-repository exploration."
+        );
+        let root = std::env::temp_dir().join("long flag note root");
+        let failure = check_failure(
+            &CoreError::base_unresolvable(shared.as_str()),
+            &root,
+            None,
+            RefreshSource::Committed,
+        );
+        assert!(
+            shared.chars().count() + CLI_BASE_FLAG_NOTE.chars().count() > MAX_FAILURE_DETAIL_CHARS,
+            "the fixture must exceed the bound to exercise the cut"
+        );
+        assert!(failure.detail.ends_with('…'), "{}", failure.detail);
+        assert!(
+            failure.detail.contains(CLI_BASE_FLAG_NOTE),
+            "{}",
+            failure.detail
+        );
+        assert!(
+            failure.detail.contains("`release/2026-q4-platform`"),
+            "the candidate list must survive the cut: {}",
+            failure.detail
         );
     }
 
