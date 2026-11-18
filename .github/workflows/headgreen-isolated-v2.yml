@@ -1,7 +1,5 @@
 name: RIPR Protected Workflow Pilot
-on:
-  merge_group:
-    types: [checks_requested]
+'on': [merge_group]
 permissions:
   contents: read
 jobs:
