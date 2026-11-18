@@ -32,13 +32,11 @@ pub(super) fn run() -> Result<i32> {
         SAMPLE_INTERVAL,
         PERIODIC_SAMPLES,
         |event| {
-            let memory = super::memory::observe(Path::new("/proc/meminfo"));
-            let snapshot = snapshot(&roots, Limits::default());
-            if let Err(error) = emit_snapshot(
+            if let Err(error) = observe_event(
                 &mut io::stdout().lock(),
                 &event,
-                &snapshot,
-                &memory,
+                &roots,
+                Path::new("/proc/meminfo"),
                 sequence,
                 started.elapsed().as_millis(),
             ) {
@@ -51,6 +49,19 @@ pub(super) fn run() -> Result<i32> {
             sequence += 1;
         },
     )
+}
+
+fn observe_event(
+    writer: &mut impl Write,
+    event: &Value,
+    roots: &[Root],
+    memory_path: &Path,
+    sequence: u64,
+    elapsed_ms: u128,
+) -> io::Result<()> {
+    let memory = super::memory::observe(memory_path);
+    let snapshot = snapshot(roots, Limits::default());
+    emit_snapshot(writer, event, &snapshot, &memory, sequence, elapsed_ms)
 }
 
 #[derive(Clone, Copy)]

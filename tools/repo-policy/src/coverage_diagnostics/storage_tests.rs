@@ -371,3 +371,46 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
     assert!(records.iter().all(|record| record["sequence"] == 7));
     Ok(())
 }
+
+#[test]
+fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let source = fixture.0.join("meminfo");
+    fs::write(
+        &source,
+        "MemTotal: 100 kB\nMemAvailable: 30 kB\nSwapTotal: 20 kB\nSwapFree: 5 kB\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", "sleep 0.15; exit 37"]);
+    let mut output = Vec::new();
+    let mut sequence = 0;
+    let status = run_observed(command, Duration::from_millis(10), 1, |event| {
+        let path = if event["phase"] == "final" {
+            fixture.0.join("missing")
+        } else {
+            source.clone()
+        };
+        observe_event(&mut output, &event, &[], &path, sequence, 0).expect("receipt");
+        sequence += 1;
+    })?;
+    assert_eq!(status, 37);
+    let records: Vec<Value> = std::str::from_utf8(&output)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .filter_map(|line| line.strip_prefix("ripr-coverage-storage "))
+        .map(serde_json::from_str)
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    let summaries: Vec<_> = records.iter().filter(|v| v["kind"] == "summary").collect();
+    assert_eq!(summaries.len(), 3);
+    assert_eq!(summaries[0]["event"]["phase"], "before");
+    assert_eq!(summaries[1]["event"]["phase"], "during");
+    assert_eq!(summaries[1]["host_memory"]["mem_available"], 30);
+    assert_eq!(summaries[1]["host_memory"]["swap_free"], 5);
+    assert_eq!(summaries[2]["event"]["phase"], "final");
+    assert_eq!(summaries[2]["event"]["shell_status"], 37);
+    assert_eq!(summaries[2]["event"]["periodic_samples"], 1);
+    assert_eq!(summaries[2]["host_memory"]["status"], "unavailable");
+    Ok(())
+}
