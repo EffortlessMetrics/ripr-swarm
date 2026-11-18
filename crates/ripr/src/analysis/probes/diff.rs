@@ -141,6 +141,14 @@ pub(crate) fn probes_for_file_with_relations(
     for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
         *flag |= removed_verification.contains(&line.line);
     }
+    // Where each side's actual trailing line comments start, read from the
+    // whole file so a `//` inside a string or block comment is never one.
+    let added_comments = find_file_facts(index, &changed.path)
+        .map(|facts| super::unchanged_code_line::line_comment_columns(&facts.source))
+        .unwrap_or_default();
+    let removed_comments = old_source
+        .map(super::unchanged_code_line::line_comment_columns)
+        .unwrap_or_default();
     let added_at = changed
         .added_lines
         .iter()
@@ -173,7 +181,24 @@ pub(crate) fn probes_for_file_with_relations(
                 && !removed_position.contains(&removed.line)
                 && !added_string_continuations.contains(&new_side_line)
                 && !removed_string_continuations.contains(&removed.line);
-        if respelling || whitespace_only {
+        // #14175: the same code with a trailing line comment added, removed
+        // or reworded is the same program. Without the old file there is no
+        // lexical reading of the removed side, so the edit stays probed.
+        let comment_only = old_source.is_some()
+            && super::unchanged_code_line::is_trailing_line_comment_only_change(
+                added_text,
+                added_comments.get(&new_side_line).copied(),
+                removed_text,
+                removed_comments.get(&removed.line).copied(),
+            );
+        // #14175: a positional pair whose parsed text is the same changed
+        // only in bytes the diff reader drops: its line ending (a CRLF/LF
+        // rewrite, a final newline added or removed) or a line-1 byte-order
+        // mark. Rust reads CRLF as LF everywhere, string literals included,
+        // so the pair is the same program text.
+        let line_ending_only =
+            added_text.trim_end_matches('\r') == removed_text.trim_end_matches('\r');
+        if respelling || whitespace_only || comment_only || line_ending_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
@@ -4871,6 +4896,164 @@ mod tests {
             !string_interior.is_empty(),
             "multiline literal interior whitespace keeps its probe: {string_interior:?}"
         );
+    }
+
+    /// #14175: a trailing line comment added, removed or reworded beside
+    /// unchanged code seeds no probe; a changed token beside it, and a `//`
+    /// that is string or block-comment content, keep theirs.
+    #[test]
+    fn trailing_line_comment_only_edits_seed_no_probe() {
+        let source = |line: &str| format!("fn f(total: u32) -> u32 {{\n{line}\n    total\n}}\n");
+        let probes = |added: &str, removed: &str| {
+            block_probes(&source(added), &[(2, added)], &[(2, 2, removed)])
+        };
+        for (added, removed) in [
+            // Added, removed, reworded.
+            ("    if total > 100 { // big orders", "    if total > 100 {"),
+            ("    if total > 100 {", "    if total > 100 { // big orders"),
+            (
+                "    if total > 100 { // large",
+                "    if total > 100 { // big",
+            ),
+            // Spacing before the comment and a string beside it.
+            ("    log(\"a // b\");   // note", "    log(\"a // b\");"),
+            ("    let c = '/'; // slash", "    let c = '/'; // divide"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(seeded.is_empty(), "{added} vs {removed}: {seeded:?}");
+        }
+        for (added, removed) in [
+            // The code changed too.
+            (
+                "    if total >= 100 { // big orders",
+                "    if total > 100 {",
+            ),
+            ("    if total > 100 { // big", "    if total > 10 { // big"),
+            // The `//` is string content on one or both sides.
+            ("    log(\"a // c\");", "    log(\"a // b\");"),
+            ("    log(\"a\"); // b", "    log(\"a // b\");"),
+            // The `//` sits in a block comment that then closes onto code.
+            ("    /* x // y */ g(total);", "    /* x // y */ h(total);"),
+            // Indentation is code layout the whitespace rule owns.
+            ("        g(total); // note", "    g(total);"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(!seeded.is_empty(), "{added} vs {removed} lost its probe");
+        }
+        // The closing line of a multi-line string: the first `//` is string
+        // content, so rewording it changes the value.
+        let multiline =
+            "fn f() -> &'static str {\n    let s = \"open\n  see // here\"; // note\n    s\n}\n";
+        let string_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // there\"; // note")],
+        );
+        assert!(
+            !string_tail.is_empty(),
+            "a `//` inside a multi-line string keeps its probe"
+        );
+        let comment_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // here\"; // remark")],
+        );
+        assert!(comment_tail.is_empty(), "{comment_tail:?}");
+
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(5),
+                "a(); // x",
+                Some(5)
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a();", None, "a(); ", None
+            )
+        );
+        // A column that does not land on `//` in the changed text.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(4),
+                "a();",
+                None
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(40),
+                "a();",
+                None
+            )
+        );
+        // A line that is only a comment is not this rule's subject.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "    // x",
+                Some(4),
+                "    // y",
+                Some(4)
+            )
+        );
+        assert_eq!(
+            super::super::unchanged_code_line::line_comment_columns(
+                "a(); // x\nlet u = \"http://h\";\n  b(); // y\n"
+            ),
+            std::collections::BTreeMap::from([(1, 5), (3, 7)])
+        );
+    }
+
+    /// #14175: a positional pair with the same text (a line-ending rewrite,
+    /// a final newline added or removed) seeds no probe, also beside a real
+    /// edit in the same block and for punctuation-only lines; the edited line
+    /// keeps its probe.
+    #[test]
+    fn line_ending_only_pairs_seed_no_probe() {
+        let source = "pub fn discount(total: u32) -> u32 {\r\n    if total > 100 {\r\n        total - 10\r\n    } else {\r\n        total\r\n    }\r\n}\r\n";
+        let lines = [
+            "pub fn discount(total: u32) -> u32 {",
+            "    if total > 100 {",
+            "        total - 10",
+            "    } else {",
+            "        total",
+            "    }",
+            "}",
+        ];
+        let added = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, *text))
+            .collect::<Vec<_>>();
+        let removed = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, 1, *text))
+            .collect::<Vec<_>>();
+        let churn = block_probes(source, &added, &removed);
+        assert!(churn.is_empty(), "{churn:?}");
+
+        // The same rewrite with one real edit: only that line is probed.
+        let mut edited = removed.clone();
+        edited[1] = (2, 1, "    if total >= 100 {");
+        let mixed = block_probes(source, &added, &edited);
+        assert!(!mixed.is_empty(), "the edited line lost its probe");
+        assert!(
+            mixed.iter().all(|probe| probe.location.line == 2),
+            "{mixed:?}"
+        );
+
+        // A diff file with CRLF line endings leaves the carriage return on
+        // one side only.
+        let one_sided = block_probes(
+            "fn f(total: u32) -> u32 {\n    total - 10\n}\n",
+            &[(2, "    total - 10")],
+            &[(2, 2, "    total - 10\r")],
+        );
+        assert!(one_sided.is_empty(), "{one_sided:?}");
     }
 
     #[test]

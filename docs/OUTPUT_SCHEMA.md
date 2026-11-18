@@ -1659,6 +1659,9 @@ positions, so the churn is line-ending-only and probes treat the text as
 unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
+For Rust, such a pair seeds no probe (#14175): a line-ending rewrite or a final
+newline added or removed reports no finding for the paired lines, also beside a
+real edit in the same block, which keeps its own finding.
 
 `verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
 disclosure that may ride on a complete outcome. Changed lines that are
