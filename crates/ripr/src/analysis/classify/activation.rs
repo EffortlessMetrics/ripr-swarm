@@ -4750,10 +4750,11 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 /// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
 /// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
-/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
-/// use of the owner, one computed input, a partial index, a same-named
-/// function, or a related test that may reach the owner through a helper
-/// or macro leaves the guard unnamed.
+/// refusals as [`missing_match_arm_discriminator`] apply: a trait-method or
+/// unestablished-container owner (#15010), one unreadable use of the owner,
+/// one computed input, a partial index, a same-named function, or a related
+/// test that may reach the owner through a helper or macro leaves the guard
+/// unnamed.
 fn missing_guard_entry_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
