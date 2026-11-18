@@ -445,9 +445,14 @@ fn live_observer_wires_memory_and_preserves_failure() -> Result<()> {
     assert_eq!(summaries.len(), 3);
     assert_eq!(summaries[0]["event"]["phase"], "before");
     assert_eq!(summaries[1]["event"]["phase"], "during");
-    assert_eq!(summaries[0]["host_memory"]["mem_available"], 30);
-    assert_eq!(summaries[1]["host_memory"]["mem_available"], 20);
-    assert_eq!(summaries[1]["host_memory"]["swap_free"], 4);
+    assert_eq!(
+        summaries[0]["host_memory"],
+        json!({"status": "available", "unit": "KiB", "mem_total": 100, "mem_available": 30, "swap_total": 20, "swap_free": 5})
+    );
+    assert_eq!(
+        summaries[1]["host_memory"],
+        json!({"status": "available", "unit": "KiB", "mem_total": 100, "mem_available": 20, "swap_total": 20, "swap_free": 4})
+    );
     assert_eq!(summaries[2]["event"]["phase"], "final");
     assert_eq!(summaries[2]["event"]["shell_status"], 37);
     assert_eq!(summaries[2]["event"]["periodic_samples"], 1);
