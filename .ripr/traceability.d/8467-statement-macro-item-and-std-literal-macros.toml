@@ -11,3 +11,11 @@ tests = [
   "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_statement_position_external_macro_spelling_the_item_may_define_it",
   "crates/ripr/src/analysis/classify/macro_item_names.rs::tests::a_std_literal_macro_defines_nothing_and_include_stays_unread",
 ]
+
+# The finding 3 false promotion graduates into the honesty corpus with its control.
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/rust_statement_macro_spelling_owner_item",
+  "fixtures/rust_statement_macro_spelling_other_item",
+]
