@@ -313,11 +313,24 @@ enum CrateRootTestRun {
     /// `cargo test` still builds such an example as a plain executable, so
     /// its `#[test]` functions compile but never run.
     Skipped,
+    /// A [`Skipped`](Self::Skipped) target of kind `example` (#14972
+    /// review). Its skip is the same, but a running target can mount an
+    /// example root (`mod m { include!("../examples/demo.rs"); }`) where no
+    /// indexed edge shows it, so the skip pass puts the root under the
+    /// workspace mount scan.
+    SkippedExample,
     /// Any other owner: a skipped `test` target, whose skip the existing
     /// `cargo_test_collection_skipped` query and the #8016 file drop own
     /// (#7265, #7266), and every `bench` or `custom-build` target, whose
     /// unit-test story is not modeled here. It never establishes a skip.
     Unmodeled,
+}
+
+impl CrateRootTestRun {
+    /// Both skipped forms: `cargo test` runs no unit test from the root.
+    fn is_skipped(self) -> bool {
+        matches!(self, Self::Skipped | Self::SkippedExample)
+    }
 }
 
 /// The parsed `cargo metadata` view: the `kind = ["test"]` owner map the
@@ -504,7 +517,7 @@ impl ManifestInventory {
             .1
         {
             InventoryLookup::Present(runs) => {
-                !runs.is_empty() && runs.iter().all(|run| *run == CrateRootTestRun::Skipped)
+                !runs.is_empty() && runs.iter().all(|run| run.is_skipped())
             }
             InventoryLookup::Unavailable | InventoryLookup::Missing => false,
         }
@@ -520,11 +533,30 @@ impl ManifestInventory {
             .lookup_in(workspace_root, path, |inventory| &inventory.crate_roots)
             .1
         {
-            InventoryLookup::Present(runs) => {
-                runs.iter().any(|run| *run != CrateRootTestRun::Skipped)
-            }
+            InventoryLookup::Present(runs) => runs.iter().any(|run| !run.is_skipped()),
             InventoryLookup::Unavailable => true,
             InventoryLookup::Missing => false,
+        }
+    }
+
+    /// True when cargo metadata lists `crate_root` as the `src_path` of a
+    /// skipped `example` target (#14972 review). The skip pass then asks the
+    /// workspace mount scan about the root, as it does for an undiscovered
+    /// one: an example is no target another crate builds, so a running
+    /// target that names the file may compile its tests.
+    pub(crate) fn crate_root_skipped_example(
+        &mut self,
+        workspace_root: &Path,
+        crate_root: &Path,
+    ) -> bool {
+        match self
+            .lookup_in(workspace_root, crate_root, |inventory| {
+                &inventory.crate_roots
+            })
+            .1
+        {
+            InventoryLookup::Present(runs) => runs.contains(&CrateRootTestRun::SkippedExample),
+            InventoryLookup::Unavailable | InventoryLookup::Missing => false,
         }
     }
 
@@ -969,7 +1001,11 @@ fn crate_root_test_run(kinds: &[&str], test_enabled: bool) -> CrateRootTestRun {
     } else if test_enabled {
         CrateRootTestRun::Runs
     } else if kinds.iter().all(unit) {
-        CrateRootTestRun::Skipped
+        if kinds.contains(&"example") {
+            CrateRootTestRun::SkippedExample
+        } else {
+            CrateRootTestRun::Skipped
+        }
     } else {
         CrateRootTestRun::Unmodeled
     }
@@ -1890,6 +1926,13 @@ mod harness_verdict {
             skipped("pkg/examples/demo.rs"),
             "#14972: an example's default test = false skips its unit tests"
         );
+        let skipped_example = |relative: &str| {
+            ManifestInventory::default().crate_root_skipped_example(&dir, Path::new(relative))
+        };
+        assert!(
+            skipped_example("pkg/examples/demo.rs"),
+            "#14972 review: a skipped example root goes under the mount scan"
+        );
         assert!(
             !skipped("pkg/src/missing.rs"),
             "an unlisted path is no skip"
@@ -1905,6 +1948,10 @@ mod harness_verdict {
         write_file(&dir, "pkg/tests/gate.rs", "")?;
         assert!(skipped("pkg/src/lib.rs"), "`[lib] test = false` skips");
         assert!(skipped("pkg/src/main.rs"), "`[[bin]] test = false` skips");
+        assert!(
+            !skipped_example("pkg/src/lib.rs") && !skipped_example("pkg/src/main.rs"),
+            "a skipped lib or bin root is no skipped example"
+        );
         assert!(
             !skipped("pkg/tests/gate.rs"),
             "a skipped `[[test]]` stays with cargo_test_collection_skipped"

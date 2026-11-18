@@ -435,6 +435,20 @@ fn assert_withheld_in_every_mode(fixture: &TempCrate) -> Result<(), String> {
     Ok(())
 }
 
+/// The exact withheld class (#14972): a skipped target's tests leave the
+/// changed behavior with no static path to a running discriminator.
+fn assert_no_static_path_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "{label} in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Member `a` skips its unit tests and member `b` mounts `a/src/shared.rs`
 /// through `extra`, so `cargo test -p b --lib` runs `t` (#14962 review).
 fn mounted_from_b(extra: &[(&str, &str)]) -> Result<TempCrate, String> {
@@ -837,7 +851,7 @@ fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Res
         "src/main.rs",
         1,
     )?;
-    assert_withheld_in_every_mode(&skipped)?;
+    assert_no_static_path_in_every_mode(&skipped, "an undiscovered bin")?;
     // Controls: auto-discovery on, and `autobins = false` with the bin
     // declared explicitly, both run `t` under `cargo test`.
     let discovered = TempCrate::create_in(
@@ -871,7 +885,7 @@ fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Resul
         "src/lib.rs",
         1,
     )?;
-    assert_withheld_in_every_mode(&skipped)?;
+    assert_no_static_path_in_every_mode(&skipped, "an undiscovered lib")?;
     let discovered = TempCrate::create_in(
         &package_manifest("", ""),
         &[("src/lib.rs", &lib), main],
@@ -902,7 +916,7 @@ fn example_unit_tests_are_not_a_discriminator_unless_the_example_is_tested() -> 
         ("examples/demo.rs", EXAMPLE_TESTS),
     ];
     let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
-    assert_withheld_in_every_mode(&skipped)?;
+    assert_no_static_path_in_every_mode(&skipped, "a default example")?;
     // Control: `test = true` makes `cargo test` run the example's tests.
     // `--mode instant` does not index `examples/` at all, so it finds no
     // static path there with or without this change; every other mode
@@ -951,4 +965,113 @@ fn a_member_path_mount_of_an_undiscovered_root_keeps_credit_in_every_mode() -> R
         1,
     )?;
     assert_exposed_in_every_mode(&fixture, "a `#[path]` mount of an undiscovered root")
+}
+
+#[test]
+fn skipped_example_shapes_are_withheld_in_every_mode() -> Result<(), String> {
+    // #14972 review: putting example roots under the mount scan must not
+    // restore credit where nothing mounts the example. A multi-file example
+    // directory, a `test = true` example whose required feature is off, and
+    // an example whose required feature is on by default but which leaves
+    // `test` at its `false` default all run no `t` under `cargo test`.
+    let lib = lib_source("");
+    let multi = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("examples/demo/main.rs", "mod h;\nfn main() {}\n"),
+            (
+                "examples/demo/h.rs",
+                "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(auto_targets::f(5), 7);\n    }\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(&multi, "a multi-file example directory")?;
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("examples/demo.rs", EXAMPLE_TESTS),
+    ];
+    let unmet = TempCrate::create_in(
+        &package_manifest(
+            "",
+            "\n[features]\nx = []\n\n[[example]]\nname = \"demo\"\ntest = true\nrequired-features = [\"x\"]\n",
+        ),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(&unmet, "a `test = true` example with an unmet feature")?;
+    let untested = TempCrate::create_in(
+        &package_manifest(
+            "",
+            "\n[features]\ndefault = [\"x\"]\nx = []\n\n[[example]]\nname = \"demo\"\nrequired-features = [\"x\"]\n",
+        ),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(
+        &untested,
+        "a default-feature example without `test = true`",
+    )
+}
+
+/// Every mode that indexes `examples/` credits the running example test;
+/// `--mode instant` does not index `examples/`, so it reads no static path
+/// on `main` and here alike.
+fn assert_credited_beyond_instant(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep, Mode::Ready] {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert!(
+            credits_a_discriminator(&finding.class),
+            "{label} in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_example_included_into_the_library_test_tree_keeps_credit() -> Result<(), String> {
+    // #14972 review x5: `src/lib.rs` compiles `examples/demo.rs` through
+    // `include!` inside `mod ex`, so `cargo test` runs `ex::tests::t`. The
+    // index records no edge for an `include!` in a module body, so only the
+    // mount scan sees the running target that mounts the example root.
+    let lib = lib_source("\n#[cfg(test)]\nmod ex {\n    include!(\"../examples/demo.rs\");\n}\n");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            (
+                "examples/demo.rs",
+                "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(crate::f(5), 7);\n    }\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "an example included by the library")
+}
+
+#[test]
+fn an_example_included_into_an_integration_test_keeps_credit() -> Result<(), String> {
+    // #14972 review x2: `tests/it.rs` compiles `examples/demo.rs` through
+    // `include!` inside `mod demo`, so `cargo test` runs `demo::tests::t`
+    // in the integration binary.
+    let lib = lib_source("");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("examples/demo.rs", EXAMPLE_TESTS),
+            (
+                "tests/it.rs",
+                "mod demo {\n    include!(\"../examples/demo.rs\");\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "an example included by an integration test")
 }

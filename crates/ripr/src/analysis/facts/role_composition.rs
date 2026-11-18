@@ -225,8 +225,11 @@ fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<
 /// outside the file's own skipped ancestry may spell its file name or
 /// declare a `mod` of its stem, no source may build a `mod`/`include!`
 /// operand dynamically, and cargo metadata may list the file as no live or
-/// unmodeled target (#14962 review). The verdict then does not depend on how
-/// much of the workspace the run indexed. A holder whose own package
+/// unmodeled target (#14962 review). The scan asks about every ancestry
+/// member except a lib or bin root metadata lists as skipped: an
+/// undiscovered root and a skipped example root are asked too (#14972
+/// review). The verdict then does not depend on how much of the workspace
+/// the run indexed. A holder whose own package
 /// manifest switches nothing off is never asked, even when `#[path]` places
 /// it under another package's skipped root (it keeps its credit).
 ///
@@ -277,10 +280,13 @@ fn files_in_skipped_unit_test_targets(
         };
     let mut inventory = crate::analysis::workspace::ManifestInventory::default();
     let mut verdicts: BTreeMap<PathBuf, bool> = BTreeMap::new();
-    // Roots skipped only because cargo did not discover them (#14972):
-    // metadata pins no target to such a file, so the mount scan asks about
-    // it like any other ancestry member.
-    let mut undiscovered: BTreeSet<PathBuf> = BTreeSet::new();
+    // Skipped roots the mount scan still asks about like any other ancestry
+    // member (#14972): a root cargo did not discover (metadata pins no
+    // target to it) and a skipped example root, since a running target can
+    // mount an example through `include!` inside a module body, an edge the
+    // index does not record (#14972 review). Lib and bin `test = false`
+    // roots stay exempt (#14962).
+    let mut scanned_roots: BTreeSet<PathBuf> = BTreeSet::new();
     let mut mounts: Option<Option<WorkspaceMountScan>> = None;
     for file in holders {
         // The cheap manifest premise first: a holder whose own package
@@ -306,12 +312,15 @@ fn files_in_skipped_unit_test_targets(
                         return false;
                     }
                     if inventory.crate_root_unit_tests_skipped(workspace_root, root) {
+                        if inventory.crate_root_skipped_example(workspace_root, root) {
+                            scanned_roots.insert(root.clone());
+                        }
                         return true;
                     }
                     let unlisted = premise.undiscovered_roots
                         && inventory.crate_root_undiscovered(workspace_root, root, &package_dir);
                     if unlisted {
-                        undiscovered.insert(root.clone());
+                        scanned_roots.insert(root.clone());
                     }
                     unlisted
                 });
@@ -343,12 +352,13 @@ fn files_in_skipped_unit_test_targets(
         // module that is itself a running target root (`[[test]] path =
         // "src/container.rs"`) or that another source mounts compiles the
         // holder into a target `cargo test` runs (#14962 review, Devin). A
-        // root cargo did not discover is no listed target (#14972), so a
-        // source outside the chain that names it may mount it into a running
+        // root cargo did not discover is no listed target, and a skipped
+        // example is no target another crate builds (#14972), so a source
+        // outside the chain that names either may mount it into a running
         // target where the indexed edges do not show it.
         let ancestry_may_run = chain.iter().any(|member| {
             inventory.crate_root_may_run(workspace_root, member)
-                || ((undiscovered.contains(*member)
+                || ((scanned_roots.contains(*member)
                     || !context.roots.iter().any(|root| root == member))
                     && scan.may_mount(member, &chain))
         });

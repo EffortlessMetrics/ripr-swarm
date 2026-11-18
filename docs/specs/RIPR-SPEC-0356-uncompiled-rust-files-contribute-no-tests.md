@@ -182,12 +182,17 @@ establish a skip.
 Rule 3's probe premise widens accordingly: a false `auto*` key, an
 `[[example]]` table, or a holder or root under the package's `examples/`
 directory also spends the probe. Rule 5's mount scan and ancestry check
-apply to both shapes, so a file a running target mounts keeps its tests. An
-undiscovered root is no listed target, so unlike a metadata-listed skipped
-root it is not exempt from rule 5's name-or-stem test: a source outside the
-ancestry that spells its file name or declares a `mod` of its stem (a
-`#[path = "../../a/src/main.rs"]` in another member) keeps its tests even
-when the run's index does not hold that source.
+cover both shapes in full: unlike a metadata-listed skipped `lib` or `bin`
+root, neither an undiscovered root nor a skipped example root is exempt from
+rule 5's name-or-stem test. An undiscovered root is no listed target, and a
+skipped example is no target another crate builds, so a source outside the
+ancestry that spells its file name or declares a `mod` of its stem keeps its
+tests even when the run's index does not hold that source or records no edge
+for it. Examples: a `#[path = "../../a/src/main.rs"]` in another member, and
+`mod ex { include!("../examples/demo.rs"); }` in `src/lib.rs` or
+`tests/it.rs` (the index records no edge for an `include!` inside a module
+body). The exemption for skipped `lib` and `bin` roots is unchanged from
+#14962.
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
@@ -231,7 +236,15 @@ running test; no named stop reason is added on this issue.
   mode. `[[example]] test = true` reads `exposed` in every mode except
   `instant`, which does not index `examples/` and reads `no_static_path` on
   base too. An `autobins = false` `src/main.rs` that another member mounts
-  through `#[path]` reads `exposed` in every mode.
+  through `#[path]` reads `exposed` in every mode. The withheld shapes read
+  exactly `no_static_path` in every mode: the undiscovered bin and lib, a
+  default example, a multi-file `examples/demo/` directory, an `[[example]]
+  test = true` whose `required-features` are unmet, and an example whose
+  `required-features` are on by default but which leaves `test` at `false`.
+  An example root that `src/lib.rs` (`#[cfg(test)] mod ex { include!(..) }`)
+  or `tests/it.rs` (`mod demo { include!(..) }`) compiles credits a
+  discriminator in every mode except `instant`, as on base (#14972
+  review).
 
 ## Known Limits
 
@@ -276,10 +289,17 @@ running test; no named stop reason is added on this issue.
   compiled only through `#[path]` by a skipped target is still judged by its
   own package's premise (the #14962 limit). Within one package, a `src/`
   module mounted only by an untested example through `#[path]` also keeps
-  its credit, because the holder's package sets no skip premise. A bench
+  its credit when the package manifest has no `[[example]]` table and no
+  false `auto*` key, because the holder's package then sets no skip premise;
+  with either, the probe runs and the module's tests are withheld. A bench
   root is not modelled.
   `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
+- Undiscovered and example targets, over-credit (#14972 review): cargo
+  metadata does not report `harness`, so an `[[example]] test = true
+  harness = false` or a `[[bin]] harness = false` reads as a running target,
+  and its `#[test]` functions keep their credit on base and here alike,
+  although the harness-less binary runs none of them.
 
 ## Non-Goals
 
