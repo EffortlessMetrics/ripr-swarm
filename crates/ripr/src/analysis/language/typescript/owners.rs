@@ -943,11 +943,15 @@ fn member_chain_is_assigned(rest: &str) -> bool {
             )
         })
         .map_or(tail.len(), |(at, _)| at);
+    // `<=` and `>=` compare; `<<=`, `>>=` and `>>>=` assign.
+    if matches!(&tail[..operator_len], "<" | ">") {
+        return false;
+    }
     let after = &tail[operator_len..];
+    if after.starts_with("==") || after.starts_with("=>") {
+        return false;
+    }
     after.starts_with('=')
-        && !after.starts_with("==")
-        && !after.starts_with("=>")
-        && !(operator_len > 0 && matches!(&tail[..operator_len], "<" | ">"))
 }
 
 /// The module-object checks of [`commonjs_default_gate`] on text where only
