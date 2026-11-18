@@ -6,8 +6,10 @@ import * as vscode from 'vscode';
 import { RiprConfig } from '../../src/config';
 import { currentRiprPlatform } from '../../src/platform';
 import {
+  expandConfiguredServerPath,
   missingServerRemedy,
   probeServerVersion,
+  relativeConfiguredPathFailure,
   resolveServer,
   serverLaunchCommand,
   ServerResolverRuntime,
@@ -188,6 +190,87 @@ suite('Server resolver compatibility fallback', () => {
         assert.strictEqual(result.source, 'configured');
         assert.ok(result.binaryVersion, 'the real server produced no version line');
       }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a leading ~ in ripr.server.path means the home directory, and nothing else is rewritten (#15075)', () => {
+    assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr', '/home/dev', 'linux'), '/home/dev/.cargo/bin/ripr');
+    assert.strictEqual(expandConfiguredServerPath('  ~/.cargo/bin/ripr  ', '/home/dev', 'linux'), '/home/dev/.cargo/bin/ripr');
+    assert.strictEqual(expandConfiguredServerPath('~', '/home/dev', 'linux'), '/home/dev');
+    assert.strictEqual(
+      expandConfiguredServerPath('~\\.cargo\\bin\\ripr.exe', 'C:\\Users\\dev', 'win32'),
+      'C:\\Users\\dev\\.cargo\\bin\\ripr.exe'
+    );
+    assert.strictEqual(
+      expandConfiguredServerPath('~/.cargo/bin/ripr.exe', 'C:\\Users\\dev', 'win32'),
+      'C:\\Users\\dev\\.cargo\\bin\\ripr.exe'
+    );
+    // Not a home reference: another user's home, a mid-path ~, a bare name,
+    // an already absolute path, and a backslash on a non-Windows host.
+    for (const unchanged of ['~other/bin/ripr', '/opt/~/ripr', 'ripr', '/usr/local/bin/ripr', '~\\ripr', '']) {
+      assert.strictEqual(expandConfiguredServerPath(unchanged, '/home/dev', 'linux'), unchanged, unchanged);
+    }
+    // No known home directory: leave the setting as written rather than guess.
+    assert.strictEqual(expandConfiguredServerPath('~/.cargo/bin/ripr', '', 'linux'), '~/.cargo/bin/ripr');
+  });
+
+  test('a relative ripr.server.path with a directory part is refused by name; a bare command is not (#15075)', () => {
+    for (const relative of ['./target/debug/ripr', 'target/debug/ripr', '../ripr']) {
+      const failure = relativeConfiguredPathFailure(relative, 'linux');
+      assert.ok(failure, relative);
+      assert.ok(failure.message.includes('is not an absolute path'), failure.message);
+      assert.ok(failure.detail.includes(JSON.stringify(relative)), failure.detail);
+      assert.ok(failure.remedy?.includes('full path'), failure.remedy);
+    }
+    assert.ok(relativeConfiguredPathFailure('bin\\ripr.exe', 'win32'));
+    for (const allowed of ['ripr', 'ripr-nightly', '/usr/local/bin/ripr']) {
+      assert.strictEqual(relativeConfiguredPathFailure(allowed, 'linux'), undefined, allowed);
+    }
+    assert.strictEqual(relativeConfiguredPathFailure('C:\\tools\\ripr.exe', 'win32'), undefined);
+    assert.strictEqual(relativeConfiguredPathFailure('ripr.exe', 'win32'), undefined);
+  });
+
+  test('resolveServer probes the expanded home path and never probes a relative one (#15075)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-home-path-'));
+    const probed: string[] = [];
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (command, source, detail, _useShell, installationState = 'unmanaged') => {
+        probed.push(command);
+        return { command, source, detail, installationState, compatibilityResult: compatibleLspEvidence };
+      }
+    };
+    const output = { appendLine: () => undefined } as unknown as vscode.OutputChannel;
+    try {
+      const expected = path.join(os.homedir(), '.cargo', 'bin', 'ripr');
+      const resolved = await resolveServer(
+        stubContext(root),
+        { ...config(), serverPath: '~/.cargo/bin/ripr' },
+        output,
+        runtime
+      );
+      assert.ok('command' in resolved, JSON.stringify(resolved));
+      if ('command' in resolved) {
+        assert.strictEqual(resolved.command, expected);
+        assert.strictEqual(resolved.source, 'configured');
+      }
+      assert.deepStrictEqual(probed, [expected]);
+
+      probed.length = 0;
+      const refused = await resolveServer(
+        stubContext(root),
+        { ...config(), serverPath: './target/debug/ripr' },
+        output,
+        runtime
+      );
+      assert.ok('message' in refused, JSON.stringify(refused));
+      if ('message' in refused) {
+        assert.ok(refused.message.includes('is not an absolute path'), refused.message);
+        assert.ok(refused.remedy?.includes('full path'), refused.remedy);
+      }
+      // No fall-through to bundled, cached, download or PATH either.
+      assert.deepStrictEqual(probed, []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

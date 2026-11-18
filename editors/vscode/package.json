@@ -134,7 +134,7 @@
         "ripr.server.path": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a ripr executable. Overrides bundled, downloaded, and PATH server resolution.",
+          "description": "Absolute path to a ripr executable; a leading ~ means your home directory. Overrides bundled, downloaded, and PATH server resolution.",
           "scope": "resource"
         },
         "ripr.server.args": {

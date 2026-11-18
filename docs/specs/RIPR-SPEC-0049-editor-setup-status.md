@@ -175,6 +175,15 @@ Server download unreachable:
 - This spec owns only how the unavailable state is explained; the download
   itself stays outside it (see Non-Goals).
 
+Configured server path:
+
+- Given `ripr.server.path` starts with `~` followed by a path separator (or is
+  `~` alone), the server is looked up under the user's home directory. `~user`
+  and a `~` elsewhere in the path are left as written.
+- Given `ripr.server.path` is a relative path with a directory part, no server
+  is probed and the unavailable-server message names the setting and asks for
+  the full path. A bare command name is still looked up on `PATH`.
+
 Preview disabled:
 
 - Given a Python file and preview languages disabled by config, no Python
