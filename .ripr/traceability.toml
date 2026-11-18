@@ -13193,6 +13193,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::retarget_skips_predicate_lines_that_are_changed",
   "crates/ripr/tests/two_changed_bindings_one_predicate.rs::two_changed_operands_report_each_predicate_once",
   "crates/ripr/tests/two_changed_bindings_one_predicate.rs::one_changed_operand_reports_the_same_predicates",
+  "crates/ripr/tests/two_changed_bindings_one_predicate.rs::changed_bindings_in_separate_comparisons_keep_their_own_findings",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_retargets_changed_binding_to_predicate_use",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_retargets_len_utf8_binding_to_predicate_use",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_retargets_unbounded_initializer_naming_earliest_call",

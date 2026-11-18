@@ -111,10 +111,11 @@ generic syntax reason.
   flips repair readiness.
 - A predicate line the diff itself changes keeps its own direct probe;
   the retarget never duplicates it.
-- Several changed bindings that are operands of the same predicate
-  retarget to it once (#14132): the predicate keeps the probe the first
-  changed binding seeded, and later bindings add no second probe with
-  the same family, line and expression.
+- Several changed bindings that are operands of the same comparison
+  (named in one `&&`/`||` term of the predicate line) retarget to it
+  once (#14132): the comparison keeps the probe the first changed
+  binding seeded. Changed bindings in different terms of one line
+  (`a < lo && c < hi`) keep their own probes.
 - Removed-only changed bindings do not retarget (base-side evidence per
   RIPR-SPEC-0151).
 

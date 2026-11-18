@@ -176,3 +176,60 @@ index 1111111..2222222 100644
     }
     Ok(())
 }
+
+/// Two changed bindings in different comparisons of one line are two changed
+/// behaviors: each keeps its own predicate finding, as before the guard.
+#[test]
+fn changed_bindings_in_separate_comparisons_keep_their_own_findings() -> Result<(), String> {
+    let lib = "pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {
+    let a = x & 7;
+    let c = y & 7;
+    if a < lo && c < hi {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boths() {
+        assert!(both(1, 1, 2, 2));
+    }
+}
+";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {
+-    let a = x & 3;
+-    let c = y & 3;
++    let a = x & 7;
++    let c = y & 7;
+     if a < lo && c < hi {
+";
+    let findings = TempRepo::create(lib, diff)?.findings()?;
+    let predicates = predicates(&findings);
+    let line = (4, "if a < lo && c < hi {".to_string());
+    if predicates != [line.clone(), line] {
+        return Err(format!(
+            "each comparison keeps its finding, got {predicates:?}"
+        ));
+    }
+    for binding in ["a", "c"] {
+        let evidence = format!("binding_predicate_relation: changed binding `{binding}`");
+        if !findings.iter().any(|finding| {
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with(&evidence))
+        }) {
+            return Err(format!("no finding names changed binding `{binding}`"));
+        }
+    }
+    Ok(())
+}

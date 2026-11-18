@@ -782,16 +782,27 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            // #14132: two changed bindings that are operands of one predicate
+            // #14132: two changed bindings that are operands of one comparison
             // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
-            // it. The predicate is one changed behavior, so it keeps the one
-            // probe the first changed binding seeded.
+            // it. The comparison is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded. Bindings in different
+            // terms of one line (`a < b && c < d`) keep their own probes.
             for seeded in retargeted {
                 let already_retargeted = probes.iter().any(|kept| {
-                    kept.binding_relation.is_some()
-                        && kept.probe.family == seeded.probe.family
+                    kept.probe.family == seeded.probe.family
                         && kept.probe.location.line == seeded.probe.location.line
                         && kept.probe.expression == seeded.probe.expression
+                        && kept
+                            .binding_relation
+                            .as_ref()
+                            .zip(seeded.binding_relation.as_ref())
+                            .is_some_and(|(kept, seeded)| {
+                                bindings_share_a_comparison(
+                                    &seeded.predicate_expression,
+                                    &kept.binding,
+                                    &seeded.binding,
+                                )
+                            })
                 });
                 if !already_retargeted {
                     probes.push(seeded);
@@ -2680,6 +2691,19 @@ fn added_run_start(
     starts: &std::collections::BTreeMap<usize, usize>,
 ) -> usize {
     ChangedFile::added_run_start_from(starts, added_new_side_line)
+}
+
+/// Whether two bindings are named in the same `&&`/`||` term of a predicate
+/// line, so they are operands of one comparison (#14132).
+fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) -> bool {
+    let names = |term: &str, name: &str| {
+        term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name)
+    };
+    predicate_line
+        .split("&&")
+        .flat_map(|term| term.split("||"))
+        .any(|term| names(term, first) && names(term, second))
 }
 
 fn has_matching_added_line(
