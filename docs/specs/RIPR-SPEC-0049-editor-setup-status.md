@@ -157,6 +157,15 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Named commands:
+
+- Given a status message, setup report or setting description tells the user
+  to run a ripr command, it names the command by the title the Command Palette
+  shows (for the refresh command, the contributed title of
+  `ripr.refreshDiagnostics`), and the command lists in
+  `docs/EDITOR_EXTENSION.md` and `docs/CONFIGURATION.md` match the contributed
+  commands.
+
 Server missing:
 
 - Given no usable server binary is resolved, status explains that the server is
