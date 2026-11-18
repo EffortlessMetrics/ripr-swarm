@@ -14,6 +14,7 @@ mod exit_kani;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
+mod help_leaf;
 pub(crate) mod interrupt;
 mod parse;
 pub(crate) mod progress;
@@ -23,9 +24,9 @@ mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
-#[doc(hidden)]
-pub use parse::extract_global_verbose;
 pub(crate) use parse::reconcile_root;
+#[doc(hidden)]
+pub use parse::{extract_global_verbose, split_long_flag_values};
 pub(crate) use suggest::unknown_argument;
 
 #[doc(hidden)]
@@ -125,6 +126,9 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // a standalone `cli_refusal` document to stdout; exit code and stderr
     // prose are unchanged. The argv copy is only read for that request check.
     usage_refusal::reset();
+    // #14292: `--name=value` means `--name value` on every command family;
+    // the rewrite runs once here, before every reader of argv below.
+    let args = parse::split_long_flag_values(args);
     let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
     if let Err(error) = &outcome {
@@ -139,6 +143,31 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     outcome
 }
 
+/// `ripr help --json`: the strict one-flag machine-discovery route (#4825).
+fn machine_discovery_route(args: &[String]) -> bool {
+    // `args` still carries argv[0]; the command body starts at index 1.
+    args.get(1).is_some_and(|arg| arg == "help") && args.get(2).is_some_and(|arg| arg == "--json")
+}
+
+/// Routes where the `RIPR_VERBOSE` environment twin may apply: never a
+/// version query in any position (`ripr lsp --version` included) and never
+/// the machine-discovery route.
+fn env_verbose_applies(args: &[String]) -> bool {
+    !machine_discovery_route(args)
+        && !args
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
+}
+
+/// Whether `RIPR_VERBOSE` asks for the global verbose diagnostics. Shared by
+/// the CLI dispatch and the binary's MCP route so both read one switch.
+#[doc(hidden)]
+pub fn verbose_requested_by_env() -> bool {
+    let value = std::env::var(progress::VERBOSE_ENV).ok();
+    progress::verbose_env_value(value.as_deref())
+}
+
 fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: the global --verbose/-v spelling is extracted before command
@@ -149,7 +178,8 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // `ripr -v -v mcp` routed. Version is a side-effect-free identity
     // query, so it must not emit the verbose diagnostic even when callers
     // append or prepend the flag.
-    if !version_requested && parse::extract_global_verbose(&mut args) {
+    let verbose_flag = !version_requested && parse::extract_global_verbose(&mut args);
+    if verbose_flag {
         crate::set_verbose(true);
         // #4825: the machine-discovery route has a strict one-flag grammar and
         // a silent-stderr contract. Combining it with the global verbosity
@@ -164,6 +194,12 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
             ));
         }
         eprintln!("ripr: verbose mode enabled");
+    } else if env_verbose_applies(&args) && verbose_requested_by_env() {
+        // `RIPR_VERBOSE` turns on only the stderr diagnostics. It prints no
+        // notice of its own and never changes stdout, so an exported variable
+        // leaves completions, machine-discovery and parsed-stdout routes as
+        // they are.
+        crate::set_stderr_diagnostics(true);
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
     // first side-effecting step (workflow execution and attempt publication),
@@ -214,7 +250,17 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
 ) -> Result<(String, String), CommandError> {
     drive_before_phase_inner(options).map_err(|error| match error {
         // A deliberate typed refusal: the façade exits with the decision code.
-        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Refused(message) => {
+            // The start refusal already carries its code line; note the
+            // same typed document `typed_decision` would, so `--json` on the
+            // façade sees it too (#14931).
+            if let Some((code, prose)) =
+                crate::app::task_first::RepairRefusalCode::split_stderr_line(&message)
+            {
+                crate::cli::usage_refusal::note_typed_refusal(code, prose);
+            }
+            CommandError::Decision(message)
+        }
         BeforePhaseError::Other(error) => error,
     })
 }
@@ -769,6 +815,7 @@ fn persist_before_repair_attempt(
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
         typescript_test_cache_guidance,
+        focused_test_command: focused_test_command(root, &packet_text),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -857,6 +904,17 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
+}
+
+/// The exact native command for the packet's suggested Rust test (#14320),
+/// read from the first packet's `recommended_test`. `None` when the packet
+/// names no file or test name, or no exact command can be established.
+fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let test = value.pointer("/packets/0/recommended_test")?;
+    let file = test.get("file")?.as_str()?;
+    let name = test.get("name")?.as_str()?;
+    crate::app::test_stub::focused_test_run_command(root, file, name)
 }
 
 #[cfg(test)]
@@ -1259,6 +1317,30 @@ mod tests {
             run(args(&["ripr", "-v", "-v", "check", "--format", "xml"])),
             Err(CommandError::Failure(
                 "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn run_reads_flag_equals_value_like_the_spaced_spelling() {
+        // #14292: the rewrite runs on the `run` path, so `--format=xml`
+        // reaches check's own format validation like `--format xml`.
+        let format_error = Err(CommandError::Failure(
+            "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                .to_string(),
+        ));
+        assert_eq!(run(args(&["ripr", "check", "--format=xml"])), format_error);
+        assert_eq!(
+            run(args(&["ripr", "check", "--format", "xml"])),
+            format_error
+        );
+        // A switch given a boolean literal stays one token and is refused
+        // as typed, never read as the switch plus a stray value.
+        assert_eq!(
+            run(args(&["ripr", "check", "--quiet=false"])),
+            Err(CommandError::Failure(
+                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
                     .to_string()
             ))
         );

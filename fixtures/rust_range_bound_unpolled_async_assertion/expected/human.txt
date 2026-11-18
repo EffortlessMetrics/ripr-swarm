@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_range_bound_unpolled_async_assertion/input
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:2
+  Static exposure: unknown (severity: warning, confidence 0.66)
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
+  Gap ID (for scripts): gap:rust:src/lib.rs:sum_to:return_value:return_value:0..=n_.sum
+  Changed behavior: (0..=n).sum()
+  Missing check: The change moves a range bound, which alters the result only at inputs where the
+    old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`);
+    ripr could not show that any related test's asserted input separates them, so infection is not
+    credited
+  Related test: src/lib.rs:10 empty_sum_is_zero
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see what the changed expression produces for each, then name an input for which
+    the original and changed code would produce different results. ripr.toml does not support
+    fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and
+    new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The
+    static class may remain unknown
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach sum_to: empty_sum_is_zero
+    - propagation yes: Complete propagation witness reaches returned value: (0..=n).sum()
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_range_bound_unpolled_async_assertion/input --diff <cwd>/fixtures/rust_range_bound_unpolled_async_assertion/diff.patch --mode fast probe:src_lib.rs:return_value:afaa03c1
+  ripr context --root <cwd>/fixtures/rust_range_bound_unpolled_async_assertion/input --diff <cwd>/fixtures/rust_range_bound_unpolled_async_assertion/diff.patch --mode fast --at probe:src_lib.rs:return_value:afaa03c1
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_range_bound_unpolled_async_assertion/input --at src/lib.rs:2 --kind return_value
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

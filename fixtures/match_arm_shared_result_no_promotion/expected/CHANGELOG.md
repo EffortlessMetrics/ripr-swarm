@@ -515,3 +515,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_shared_result_no_promotion (39)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless match_arm_shared_result_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_shared_result_no_promotion (40)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless match_arm_shared_result_no_promotion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_shared_result_no_promotion (41)
+
+Reason:
+RIPR-SPEC-0229 (#12078): the repo seam reads check's arm selection, so an arm no test input selects is weakly gripped there too and the check-versus-repair conflict advisory becomes the missing-input refusal
+
+Command:
+`cargo xtask goldens bless match_arm_shared_result_no_promotion --reason "..."`
+
+Updated:
+- `expected/human.txt`

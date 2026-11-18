@@ -24,9 +24,7 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
             "--language" => {
                 let value = match arguments.next().map(String::as_str) {
                     Some("--help" | "-h" | "--json" | "--language") | None => {
-                        return Err(
-                            "missing value for --language; pass a value right after it".to_string()
-                        );
+                        return Err(crate::cli::parse::missing_value("--language"));
                     }
                     Some(value) => value,
                 };
@@ -52,10 +50,10 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
     }
     if markdown_output {
         if json_output || language.is_some() {
-            return Err(
-                "capabilities --markdown prints the whole-table docs block; it cannot be combined with --json or --language. Run `ripr capabilities --help`."
-                    .to_string(),
-            );
+            return Err(crate::cli::usage_refusal::conflicting_flags(
+                "--markdown",
+                "capabilities --markdown prints the whole-table docs block; it cannot be combined with --json or --language. Run `ripr capabilities --help`.",
+            ));
         }
         print!("{}", output::language_capabilities::render_markdown());
     } else if json_output {

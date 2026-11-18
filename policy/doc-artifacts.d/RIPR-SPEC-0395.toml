@@ -2,6 +2,6 @@
 id = "RIPR-SPEC-0395"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0395-apple-shared-project-swift-objective-c-evidence-contracts.md"
-status = "proposed"
+status = "accepted"
 owner = "language-adapter"
 standalone_reason = "Epic #5590 leaf #5682 defines the normative Apple-family contract before Swift/Clang adapters land; no runtime producer exists yet."

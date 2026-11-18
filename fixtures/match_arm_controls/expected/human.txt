@@ -8,8 +8,8 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  State: no test gap found
+  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run
   File: ./src/lib.rs:14
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit62657461
@@ -39,8 +39,8 @@ Next: drill into the top finding:
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:30 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:46 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:62 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:46 (exposed); kind: predicate; reason: same as above
+    - ./src/lib.rs:62 (exposed); kind: predicate; reason: same as above
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
