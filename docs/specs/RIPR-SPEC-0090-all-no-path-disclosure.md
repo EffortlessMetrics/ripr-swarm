@@ -119,6 +119,21 @@ packed row count for a single finding and "at least" the larger of the packed
 row count and T across several findings, so the note never presents a row
 count as a test count.
 
+When every retained related test carries the typed miss
+`RelatedTestMiss::NoCallPath` (a name or location match, which the finding's
+own `Related test` line already describes as having no established call path)
+and no row was packed away, the scope does not call those tests statically
+linked (#15051). It reads:
+
+```
+Scope analyzed: M changed Rust file(s), N changed expression(s), and T related test(s) with no established call path to the changed code.
+```
+
+This variant is fail-closed. One retained row without that typed miss, or one
+packed-away row whose miss cannot be read, keeps the "statically linked"
+wording above, and zero related tests keeps `0 statically linked related
+test(s)`. T is the same unique count by file, name, and line.
+
 The per-finding digest line uses the same unit: `Related test (1 of N matched
 rows)` (#6807). `N` is `related_tests_total()` (matched rows before packing).
 That count is the post-dedup related-test row total already stored as
@@ -195,6 +210,10 @@ This human-only value is not a stored baseline identity (#9791).
   Tests are counted uniquely by file, name, and line across all findings. This
   is a count of tests statically linked to the findings, not a full test
   inventory.
+
+- `CheckOutput.findings[].related_tests[].miss` and
+  `Finding::related_tests_total()` to choose the no-call-path scope wording
+  (#15051).
 
 ## Inputs
 

@@ -242,3 +242,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (19)
+
+Reason:
+RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
