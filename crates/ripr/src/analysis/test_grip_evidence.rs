@@ -5422,7 +5422,8 @@ fn discriminate_evidence(
             // `best`, so the stage answered `Yes` while the record published
             // `Weak` — the disagreement this PR exists to remove.
             let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
-            let owner_value_masked = owner_value_is_masked(seam, oracle, test, owner_fn, index);
+            let owner_value_masked =
+                owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some());
             let graded = if (branch_withheld || owner_value_masked)
                 && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             {
@@ -5439,7 +5440,10 @@ fn discriminate_evidence(
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+            if !owner_value_masked
+                && oracle_discriminates_seam_in_test(
+                    seam, oracle, test, owner_fn, index, pin_syntax,
+                )
                 && strength.rank() > best_matching.rank()
             {
                 best_matching = strength;
@@ -5689,9 +5693,7 @@ fn oracle_discriminates_seam_in_test(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
-    if owner_value_is_masked(seam, oracle, test, owner, index)
-        || !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
-    {
+    if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
         return false;
     }
     // #8121: a snapshot admitted by kind for a return-value seam must also
@@ -5871,24 +5873,19 @@ pub(crate) fn pins_other_arm(kind: &OracleKind, strength: &OracleStrength) -> bo
     matches!(kind, OracleKind::ExactErrorVariant) && matches!(strength, OracleStrength::None)
 }
 
-/// #15071: predicates and their boolean-tail return twins use the diff
-/// classifier's owner-value reader. The existing boolean pin selects return
-/// scope; other returns retain their own admission (including polled futures).
-/// This adapter parses no expressions and establishes no call identity.
-/// `Absent` preserves indirect evidence; another observing assertion keeps credit.
+/// #15071: the existing boolean-tail pin selects both repo seams. Branch
+/// predicates in other return shapes retain their own oracle admission.
 fn owner_value_is_masked(
-    seam: &RepoSeam,
     oracle: &OracleFact,
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
-    index: &RustIndex,
+    boolean_tail: bool,
 ) -> bool {
-    (seam.kind() == SeamKind::PredicateBoundary
-        || BooleanBoundaryPin::establish(seam, owner, index).is_some())
-        && owner.is_some_and(|owner| {
-            crate::analysis::classify::owner_field_value_flow(test, &oracle.text, &owner.name, None)
-                == crate::analysis::classify::OwnerValueFlow::Masked
-        })
+    let Some(owner) = owner.filter(|_| boolean_tail) else {
+        return false;
+    };
+    crate::analysis::classify::owner_field_value_flow(test, &oracle.text, &owner.name, None)
+        == crate::analysis::classify::OwnerValueFlow::Masked
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -6780,7 +6777,7 @@ fn best_oracle(
         // agree when the call misses this branch or masks the owner value.
         let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && (branch_gate_withholds(seam, oracle, test, owner_fn)
-                || owner_value_is_masked(seam, oracle, test, owner_fn, index))
+                || owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some()))
         {
             OracleStrength::Weak
         } else {

@@ -26,8 +26,8 @@ mod tests {
     use super::*;
 
     /// The test writes the `Err(Fault::Wrapped)` itself and hands it to `or`
-    /// through a wrapper function, so this passes whatever `parse_wrapped`
-    /// returns (#12474).
+    /// through a wrapper function, so the assertion cannot distinguish Err
+    /// payloads. An Ok result still causes `unwrap_err` to panic (#12474).
     #[test]
     fn wrapped_masked() {
         assert_eq!(
@@ -36,8 +36,8 @@ mod tests {
         );
     }
 
-    /// `mem::replace` overwrites the owner's result with the test's own
-    /// `Err`, so the comparison cannot fail (#12474).
+    /// `mem::replace` returns the old value, so this observes the owner's
+    /// own result. The error-seam pin conservatively refuses this wrapper.
     #[test]
     fn replaced_masked() {
         assert_eq!(

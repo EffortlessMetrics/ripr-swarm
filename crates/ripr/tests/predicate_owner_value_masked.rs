@@ -212,6 +212,14 @@ fn assert_repo_grips(body: &str, expected: &str) -> Result<(), String> {
         assert_eq!(related.len(), 1, "{body}: {seam}");
         assert_eq!(related[0]["oracle_strength"], strength, "{body}: {seam}");
         let discriminate = &seam["evidence_record"]["evidence_path"]["discriminate"];
+        if body.contains("&& false") || body.contains("false &&") {
+            assert!(
+                discriminate["summary"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("masks")),
+                "{body}: {seam}"
+            );
+        }
         assert_eq!(
             discriminate["state"],
             if strength == "strong" { "yes" } else { "weak" },
@@ -234,9 +242,21 @@ fn repo_masked_owner_values_cannot_strongly_grip_either_tail_seam() -> Result<()
 }
 
 #[test]
+fn repo_false_conjunction_masks_both_tail_seams() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10) && false, false);",
+        "assert_eq!(false && over(10), false);",
+    ] {
+        assert_repo_grips(body, "weakly_gripped")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn repo_observed_owner_values_keep_both_tail_seams_strong() -> Result<(), String> {
     for body in [
         "assert_eq!(over(10), true);",
+        "assert_eq!(over(10) && true, true);",
         "assert_eq!(Some(over(10)), Some(true));",
         "let got = Some(over(10)); assert_eq!(got, Some(true));",
         "assert_eq!((over(10), 1).0, true);",

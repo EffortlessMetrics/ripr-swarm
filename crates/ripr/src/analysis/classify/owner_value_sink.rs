@@ -141,6 +141,16 @@ enum Sink {
     Payload,
 }
 
+fn is_literal_false(mut expr: ast::Expr) -> bool {
+    while let ast::Expr::ParenExpr(paren) = &expr {
+        let Some(inner) = paren.expr() else {
+            return false;
+        };
+        expr = inner;
+    }
+    matches!(expr, ast::Expr::Literal(literal) if matches!(literal.kind(), ast::LiteralKind::Bool(false)))
+}
+
 impl Sink {
     fn reaches(self) -> bool {
         matches!(self, Self::Value | Self::Record | Self::Payload)
@@ -771,6 +781,20 @@ impl Reader<'_> {
             Some(BinaryOp::LogicOp(ast::LogicOp::Or))
             | Some(BinaryOp::Assignment { .. })
             | None => self.unfollowed(expr.syntax()),
+            Some(BinaryOp::LogicOp(ast::LogicOp::And))
+                if [binary.lhs(), binary.rhs()]
+                    .into_iter()
+                    .flatten()
+                    .any(is_literal_false) =>
+            {
+                match (
+                    self.inner(binary.lhs(), depth),
+                    self.inner(binary.rhs(), depth),
+                ) {
+                    (Sink::Absent, Sink::Absent) => self.unfollowed(expr.syntax()),
+                    _ => Sink::Masked,
+                }
+            }
             Some(_) => self.any_value([
                 self.inner(binary.lhs(), depth),
                 self.inner(binary.rhs(), depth),

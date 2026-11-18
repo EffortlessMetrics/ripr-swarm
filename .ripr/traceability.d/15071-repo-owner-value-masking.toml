@@ -3,6 +3,7 @@
 id = "RIPR-SPEC-0094"
 tests = [
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_masked_owner_values_cannot_strongly_grip_either_tail_seam",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_false_conjunction_masks_both_tail_seams",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observed_owner_values_keep_both_tail_seams_strong",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observing_assertion_keeps_credit_beside_a_masked_assertion",
 ]
