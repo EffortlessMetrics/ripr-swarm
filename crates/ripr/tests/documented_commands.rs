@@ -530,3 +530,74 @@ fn usage_line_flags_are_in_the_catalog_inventory() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Offsets (in whitespace-normalized text) where prose says the plain
+/// before-phase summary prints a `--phase after` command. Since #7879 that
+/// summary ends with `Next, after the test edit: ripr continue ... --attempt
+/// <id>`; only the `--json` `repair_attempt.next_command` keeps the
+/// `--phase after` spelling, so a sentence that names the JSON field is not a
+/// claim about the plain summary.
+fn printed_phase_after_claims(markdown: &str) -> Vec<String> {
+    const SUBJECT: &str = "--phase after` command";
+    let text = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut claims = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find(SUBJECT) {
+        let at = from + found;
+        let mut start = at.saturating_sub(160);
+        while !text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = (at + SUBJECT.len() + 60).min(text.len());
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+        let window = &text[start..end];
+        let about_json = window.contains("repair_attempt")
+            || window.contains("next_command")
+            || window.contains("--json");
+        if window.contains("print") && !about_json {
+            claims.push(window.to_string());
+        }
+        from = at + SUBJECT.len();
+    }
+    claims
+}
+
+#[test]
+fn docs_name_the_command_the_before_phase_prints() -> Result<(), String> {
+    let stale = "Run the before phase, edit the test, then run the\n`--attempt ... --phase after` command it prints.";
+    assert_eq!(
+        printed_phase_after_claims(stale).len(),
+        1,
+        "negative control"
+    );
+    let json = "With `--json` the `repair_attempt` block prints the exact\n`--attempt ... --phase after` command.";
+    assert_eq!(printed_phase_after_claims(json), Vec::<String>::new());
+
+    let mut problems = Vec::new();
+    let mut files = 0usize;
+    for (name, path) in documented_files()? {
+        let markdown = std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {name}: {error}"))?;
+        files += 1;
+        for claim in printed_phase_after_claims(&markdown) {
+            problems.push(format!("{name}: ...{claim}..."));
+        }
+    }
+    assert!(files >= 50, "scanned only {files} documents");
+    assert_eq!(
+        problems,
+        Vec::<String>::new(),
+        "the plain before-phase summary prints `ripr continue ... --attempt <id>`, not a `--phase after` command"
+    );
+
+    let repair_attempt =
+        std::fs::read_to_string(Path::new(REPO_ROOT).join("docs/REPAIR_ATTEMPT.md"))
+            .map_err(|error| format!("cannot read docs/REPAIR_ATTEMPT.md: {error}"))?;
+    assert!(
+        repair_attempt.contains("`ripr continue --root <root> --attempt <repair-attempt-id>`"),
+        "docs/REPAIR_ATTEMPT.md names the printed follow-up command"
+    );
+    Ok(())
+}
