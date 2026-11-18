@@ -557,3 +557,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_transitive_reach_negative (33)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_transitive_reach_negative (34)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/human.txt`

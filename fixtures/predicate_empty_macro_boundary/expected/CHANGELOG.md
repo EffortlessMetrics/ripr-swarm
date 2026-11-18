@@ -325,3 +325,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_empty_macro_boundary (25)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless predicate_empty_macro_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

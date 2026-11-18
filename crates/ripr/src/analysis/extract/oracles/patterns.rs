@@ -1695,7 +1695,9 @@ fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
     let mut path_start = type_name_start;
     while path_start > 0 {
         let before = path_start.saturating_sub(2);
-        if before + 2 <= masked.len() && &masked[before..path_start] == "::" {
+        // #14089: compare bytes; `path_start - 2` can fall inside a
+        // three- or four-byte char directly before the type name.
+        if bytes.get(before..path_start) == Some(b"::".as_slice()) {
             let seg_end = before;
             let seg_start = bytes[..seg_end]
                 .iter()
@@ -2884,6 +2886,38 @@ mod expect_err_open_tests {
                 start: 0,
                 open: 11,
                 form: ExpectErrForm::Method,
+            })
+        );
+    }
+
+    /// #14089: a three-byte identifier char right before `Result` put the
+    /// two-byte `::` probe inside that char.
+    #[test]
+    fn ufcs_result_after_a_wide_identifier_char_does_not_slice_inside_it() {
+        // The UFCS anchor starts at `Result`; the wide char is not `::`.
+        assert_eq!(
+            next_expect_err_open("日本Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 6,
+                open: 24,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        assert_eq!(
+            next_expect_err_open("値Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 3,
+                open: 21,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        // ASCII control: a full path still anchors at its first segment.
+        assert_eq!(
+            next_expect_err_open("x(std::result::Result::expect_err(r, \"m\"))", 0),
+            Some(ExpectErrOpen {
+                start: 2,
+                open: 33,
+                form: ExpectErrForm::ResultUfcs,
             })
         );
     }
