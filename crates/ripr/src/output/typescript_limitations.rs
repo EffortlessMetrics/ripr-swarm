@@ -229,7 +229,7 @@ pub(crate) fn render_typescript_limitation_leaderboard_markdown(
                 md_code(&entry.kind),
                 entry.count,
                 md_inline(&sources),
-                md_inline(&sample)
+                md_code(&sample)
             ));
         }
         out.push('\n');
@@ -489,9 +489,10 @@ mod tests {
                 check_output_path: "check.json".to_string(),
                 check_output_json: Ok(sample_check_output()),
             });
-        // A Next.js parallel route, a generic in the id and a pipe: the
-        // shapes that used to notify an account, vanish as HTML or split.
-        let file = "app/@modal/Array<T>/a|b.tsx";
+        // A Next.js parallel route, a `__tests__` directory, a generic and a
+        // pipe: the shapes that used to notify an account, turn bold, vanish
+        // as HTML or split the cell.
+        let file = "app/@modal/__tests__/Array<T>/a|b.tsx";
         let kind = "limit`kind";
         let entry = report
             .limitations
@@ -513,10 +514,13 @@ mod tests {
         assert_eq!(row.len(), 4, "limitation row keeps four cells: {row:?}");
         assert_eq!(row[2], "src|one, <two>");
         assert_eq!(
-            row[3], "app/@\u{2060}modal/Array<T>/a|b.tsx:7 (probe:x)",
-            "the path shows whole, with the mention broken by a word joiner"
+            row[3], "app/@modal/__tests__/Array<T>/a|b.tsx:7 (probe:x)",
+            "the sample is one code span: no mention, emphasis or HTML in it"
         );
-        assert!(!markdown.contains("@modal"), "live mention:\n{markdown}");
+        assert!(
+            markdown.contains("| `app/@modal/__tests__/Array<T>/a\\|b.tsx:7 (probe:x)` |"),
+            "sample cell is not a code span:\n{markdown}"
+        );
         Ok(())
     }
 
