@@ -1,0 +1,122 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_range_bound_two_ranges_one_line/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:6c52fefe1f9cffd089d26bc4fa9aa47d2609f7e20ce31c69d0c65887313b1428","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:2ba6bf6b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:both:return_value:return_value:0..=a_.sum<u32>+0..=b_.sum<u32>",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:both:return_value:return_value:0..=a_.sum<u32>+0..=b_.sum<u32>",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "both",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "0..=a_.sum<u32>+0..=b_.sum<u32>"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:2ba6bf6b",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "(0..=a).sum::<u32>() + (0..=b).sum::<u32>()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach both: empty_sums_are_zero"},
+        "infect": {"state":"unknown","confidence":"low","summary":"The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (0..=a).sum::<u32>() + (0..=b).sum::<u32>()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach both: empty_sums_are_zero", "infection unknown: The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited", "propagation yes: Complete propagation witness reaches returned value: (0..=a).sum::<u32>() + (0..=b).sum::<u32>()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: (0..=a).sum::<u32>() + (0..=b).sum::<u32>() (line 2)", "related test src/lib.rs:10 empty_sums_are_zero uses strong exact value oracle: assert_eq!(both(0, 0), 0);", "source assertion argument value 0 at line 11", "source function argument value a = 0 at line 11", "source function argument value b = 0 at line 11"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"(0..=a).sum::<u32>() + (0..=b).sum::<u32>()","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: (0..=a).sum::<u32>() + (0..=b).sum::<u32>()", "Related tests appear to reach both: empty_sums_are_zero", "Strong oracle found: exact value or pattern assertion", "The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited"],
+      "missing": ["The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited"],
+      "assertion_texts": {
+        "11": "assert_eq!(both(0, 0), 0);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 11,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 11,
+            "value": "a = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "b = 0",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 11,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 11,
+          "value": "a = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "b = 0",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "empty_sums_are_zero",
+          "file": "src/lib.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(both(0, 0), 0);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

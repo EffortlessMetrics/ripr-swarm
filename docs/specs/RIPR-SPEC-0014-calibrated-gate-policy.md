@@ -203,7 +203,14 @@ A policy-eligible candidate must satisfy all of these conditions:
 5. The candidate includes concrete focused-test guidance such as a missing
    discriminator, assertion shape, candidate value, related test, or
    recommended test target.
-6. No nearby focused test changed in the same PR.
+6. The PR did not change a test that reaches the candidate's owner. Only
+   per-candidate evidence counts: the PR guidance card's
+   `changed_reaching_tests` names a test function the diff touched that is a
+   related test tied to the owner by a reach-establishing relation (direct
+   owner call, helper owner call, or a verified re-export chain). File or
+   module proximity, name similarity, a test edit whose function could not be
+   attributed, and the PR-wide `summary.unchanged_tests` flag never keep a
+   candidate advisory, and a card without the field gets no waiver (#13893).
 
 Unknown-stage and opaque classes may remain visible as advisory decisions, but
 they must not block in the initial policy.

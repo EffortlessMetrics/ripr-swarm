@@ -1,0 +1,12 @@
+# Unary-tail fallback calls that may not run or are not calls (#14968).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/unary_tail_return_pin.rs::a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrevealed",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_constant_diverging_statements_end_the_block",
+]

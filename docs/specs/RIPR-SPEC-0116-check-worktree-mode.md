@@ -123,6 +123,25 @@ This supersedes the original non-goal "Changing default `ripr check`
 semantics" and the compatibility rule that `--base <rev>` without
 `--worktree` always reads committed history.
 
+## Amendment (shipped Git hook entries, #14337/#14348)
+
+The repository-root `.pre-commit-hooks.yaml` ships two advisory hook entries
+built on these input modes. Their contract is:
+
+- **`ripr` (stages `pre-commit`, `pre-merge-commit`, `manual`).** Runs
+  `ripr check --worktree --base HEAD --quiet` from the repository root, so it
+  analyzes the tracked change being committed against `HEAD`.
+- **`ripr-push` (stage `pre-push`).** Runs `ripr check --committed --quiet`,
+  so it analyzes the branch's committed history against the default base and
+  leaves staged and unstaged edits out. It is the branch against its base, not
+  the exact pushed ref range.
+- **Both** set `pass_filenames: false` (the entry chooses its own diff
+  source), exit 0 on findings (advisory), and keep `ripr progress` lines out
+  of the hook log through `--quiet`.
+
+The manifest test runs each entry through the built binary on a fixture
+branch that has one committed and one further staged boundary edit.
+
 ## Problem
 
 RIPR is a draft-time evidence tool, but the obvious first-run path still has an
@@ -433,6 +452,10 @@ that untracked source was analyzed.
 - `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_not_untracked_files`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::manifest_lists_the_commit_and_push_hooks_on_separate_stages_without_filenames`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines`
 
 ## Implementation Mapping
 

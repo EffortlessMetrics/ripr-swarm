@@ -1,0 +1,4 @@
+[package]
+name = "rust_range_bound_two_ranges_one_line"
+version = "0.1.0"
+edition = "2024"

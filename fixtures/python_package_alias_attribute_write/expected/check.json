@@ -1,0 +1,106 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_package_alias_attribute_write/input",
+  "config_path": "<cwd>/fixtures/python_package_alias_attribute_write/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:e3dc2a1f31bbca15f998153f4fa3fbf4c668542c59e21126dbb118c50337e952","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_tomli__parser.py:python_preview:91502293",
+      "canonical_gap_id": "gap:python:src/tomli/_parser.py:loads:predicate_boundary:predicate:text==x",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/tomli/_parser.py:loads:predicate_boundary:predicate:text==x",
+        "language": "python",
+        "file": "src/tomli/_parser.py",
+        "owner": "loads",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "text==x"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_tomli__parser.py:python_preview:91502293",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/tomli/_parser.py",
+        "line": 2,
+        "expression": "    if text == \"x\":",
+        "owner": "python:src/tomli/_parser.py::loads"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"low","summary":"0 related Python test(s) found for owner `loads`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if text == \"x\":`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low"}
+      ],
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `loads`", "infection yes: Changed Python predicate can alter branch selection: `if text == \"x\":`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if text == \"x\": (line 2)"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if text == \"x\":","line":2}
+      ],
+      "evidence": ["owner: loads", "owner_kind: function"],
+      "missing": ["No Python test references `loads(`; add a pytest or unittest test that calls the changed owner."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Python preview: no statically linked test calls `loads(`; add a test that calls the changed owner with a focused boundary assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "Python preview: no statically linked test calls `loads(`; add a test that calls the changed owner with a focused boundary assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "text",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/tomli/_parser.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/tomli/_parser.py","digest":"sha256:afdb1d2212d8409556c7ddd58d706efed1432d63d864ddff63f71874ee4c6cfc"}]}
+}

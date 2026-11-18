@@ -104,8 +104,10 @@ Without a JSON request stdout stays empty.
   token `--bogus-flag`, `next` the `ripr check --help --all` route), exit 2,
   cause on stderr (#11584). The same holds for any JSON `--format`, such as
   `json-terse`. Without a JSON request stdout stays empty.
-- `ripr check --json --base` (a flag missing its value) keeps empty stdout
-  even under the JSON request, exit 2, cause on stderr.
+- `ripr check --json --base` (a flag missing its value) emits no analysis
+  envelope: stdout carries only the minimal `cli_refusal` document
+  (`missing_value`, token `--base`, `next` the `ripr check --help --all`
+  route), exit 2, cause on stderr (#11979).
 - A malformed `ripr.toml` emits `config_invalid` with the redacted summary;
   a directory with no config entry at all falls back to `analysis_failed`.
 
@@ -426,3 +428,136 @@ message-shaped literal yields a grounded remedy or an explicit `none`, and a
 stated command is never dropped), `output::limited_check` envelope tests
 (positive and negative), and `tests/refusal_next_step.rs`
 (`json_refusals_carry_a_grounded_structured_remedy`, the built binary).
+
+## Amendment (#14452): the agent-format refusal record
+
+`ripr check --format agent` joins the machine formats with a refusal document.
+A refused run prints, on stdout, a three- or four-line record from the same
+`RefusalNotice` instead of zero bytes:
+
+```text
+#ripr agent static-advisory refused run_status=<identity> repair_route=<route>
+stop=<the redacted diagnostic on one line>
+next=<command>
+verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>
+```
+
+`next=` appears only when the remedy is one command that runs as-is, by the
+same rule as the JSON refusal's `next` (`output::refusal::runnable_command`).
+An `analysis_timeout` refusal consumes the stashed timeout projection
+(#10796): its bounded retry is the `next=` command, and stderr keeps the
+requested-input echo and retry the human format prints. A stdin diff has no
+replayable retry, so `next=` is absent. Config file content stays on stderr.
+
+## Test Mapping (Amendment #14452)
+
+- `crates/ripr/src/output/human/agent_tests.rs::refusal_record_names_the_identity_and_only_a_runnable_next_command`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::machine_formats_pin_refusal_identity_and_human_formats_stay_prose`
+- `crates/ripr/tests/cli_smoke.rs::check_agent_refusal_emits_the_refused_record`
+- `crates/ripr/tests/cli_smoke.rs::check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery`
+
+## Implementation Mapping (Amendment #14452)
+
+- `crates/ripr/src/output/human/agent.rs::render_refusal`
+- `crates/ripr/src/output/refusal.rs::runnable_command`
+- `crates/ripr/src/cli/commands/check.rs::refuse_agent`
+- `crates/ripr/src/app/timeout_refusal.rs::TimeoutRefusalProjection::replayable_recovery_command`
+
+## Amendment (#14499): every machine check format
+
+The #7332 amendment left `json-terse`, `check-findings-json`, the Shields and
+`badge-plus-*` / `repo-badge-*` badges, `repo-sarif` / `repo-sarif-compact`,
+`repo-seams-json` and `repo-exposure-summary-json` writing zero bytes on a
+refused run. Each now renders its own refusal document from the same
+`RefusalNotice`; the shapes are listed in
+[OUTPUT_SCHEMA](../OUTPUT_SCHEMA.md). The prose formats (`human`,
+`human-full`, `repo-seams-md`, `repo-exposure-md`) keep stdout empty.
+
+- `json-terse` and `check-findings-json` share the `json` envelope, scope
+  guards first, so a `diff_scope_oversized` / `repo_scope_oversized` refusal
+  keeps its identity in every JSON-family format. `check-findings-json` carries
+  no `artifact` identity, and the verify artifact validator rejects it.
+- Every badge family renders the degraded `refused: <identity>` badge
+  (`warn`, `lightgrey`, zeroed counts) under its own kind and scope; the Shields
+  projections keep exactly four fields.
+- `repo-sarif` renders the refusal SARIF run with scope `repo_seam`.
+- `repo-seams-json` and `repo-exposure-summary-json` add `run_status:
+  "refused"` and one typed `limitations[]` entry to their own envelopes, with
+  empty `seams` / an all-zero summary of the normal shape.
+
+## Test Mapping (Amendment #14499)
+
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::every_machine_format_carries_a_refusal_document`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::json_family_refusals_keep_the_scope_guard_identity`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::check_findings_json_refusal_is_rejected_as_a_verify_artifact`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::refused_exposure_summary_keeps_the_normal_summary_shape`
+- `crates/ripr/src/output/repo_seams.rs::refusal_tests::refusal_json_escapes_the_message`
+- `crates/ripr/tests/cli_smoke.rs::check_refusal_sweep_every_machine_format_prints_a_document`
+
+## Implementation Mapping (Amendment #14499)
+
+- `crates/ripr/src/cli/commands/check.rs::machine_refusal_document`
+- `crates/ripr/src/cli/commands/check.rs::check_json_refusal`
+- `crates/ripr/src/output/badge/summaries.rs::refusal_badge_summary_for`
+- `crates/ripr/src/output/sarif.rs::render_repo_refusal_sarif`
+- `crates/ripr/src/output/repo_seams.rs::render_refusal_json`
+- `crates/ripr/src/output/repo_exposure.rs::render_summary_refusal_json`
+
+## Amendment (#14931): typed repair/continue refusals
+
+Under an explicit JSON request, a `ripr repair`, `ripr continue` or
+`ripr status` refusal that stops before any check runs and prints the stderr
+`ripr: refusal code=<code> disposition=<disposition>` line (exit `3`) also
+writes the minimal `cli_refusal` document on stdout. Its `error.code` is that
+`RepairRefusalCode`, the added `error.disposition` is that code's
+disposition (`retryable`, `terminal`, `needs_selection`, `not_started`), and
+`error.message` is the prose without the code line. `error.next` is always
+`null`: these steps can quote a user-supplied item or selector, so the
+document never lifts one into a runnable field. The context that
+`repair_needs_item` (its next-action block) and `attempt_baseline_blocked`
+(the attempt status) print above their prose stays on stderr only; the
+selection codes carry theirs as `choices` (amendment #14980). The façade's before-phase
+start refusal (for example `build_output_not_ignored`) writes the same
+document, recovered from its exact code line. Refusals inside the
+after-phase check keep their own documents. Exit code and stderr are
+unchanged, and the plain spelling keeps stdout empty.
+
+## Test Mapping (Amendment #14931)
+
+- `crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition`
+- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::agent_repair_before_requires_effective_cargo_build_directory_ignore`
+- `crates/ripr/src/app/task_first.rs::tests::cli_refusal_schema_names_every_refusal_code_and_disposition`
+- `crates/ripr/src/app/task_first.rs::tests::split_stderr_line_inverts_message_with_stderr_line_for_every_code`
+
+## Implementation Mapping (Amendment #14931)
+
+- `crates/ripr/src/cli/usage_refusal.rs::note_typed_refusal`
+- `crates/ripr/src/cli/commands/task_first.rs::typed_decision`
+- `crates/ripr/src/cli/mod.rs::drive_before_phase_deferring_stdout`
+- `crates/ripr/src/app/task_first.rs::RepairRefusalCode::split_stderr_line`
+
+## Amendment (#14980): selection refusals carry their choices
+
+A `several_eligible_seams` or `ambiguous_attempts` document adds
+`error.choices = { total, items: [{ label, command, powershell_command? }] }`.
+Each `command` is composed by the selection owner from a typed seam id or
+attempt id and the bound root: a seam choice is exactly the command stderr
+prints, and an attempt choice is the stderr retry line with that listed id
+filled in. None is lifted from prose, and `next` stays null. `powershell_command` appears
+only when PowerShell needs a different line and an honest translation
+exists. `total` is the full count; a bounded listing has fewer `items`.
+Every other refusal omits `choices`.
+
+## Test Mapping (Amendment #14980)
+
+- `crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition`
+- `crates/ripr/tests/task_first_facade.rs::continue_two_attempts_requires_explicit_selection`
+- `crates/ripr/src/output/refusal.rs::tests::choices_render_total_items_and_only_a_differing_powershell_line`
+
+## Implementation Mapping (Amendment #14980)
+
+- `crates/ripr/src/output/refusal.rs::RefusalChoices`
+- `crates/ripr/src/app/task_first.rs::repair_choice_items`
+- `crates/ripr/src/cli/usage_refusal.rs::note_typed_refusal_with_choices`
+- `crates/ripr/src/cli/commands/task_first.rs::typed_choice_decision`

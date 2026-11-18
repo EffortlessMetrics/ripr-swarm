@@ -83,6 +83,63 @@ pub(crate) struct GapDecisionLedgerReport {
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
+    /// Why the supplied source could not be read as this source kind (not
+    /// JSON, or not a gap-ledger input shape). Not rendered: the CLI writes
+    /// the `blocked` ledger, then refuses the run with it (#14311).
+    source_parse_error: Option<String>,
+    /// Why a source that parsed is a producer refusal (`downstream_consumable:
+    /// false`): nothing was analyzed. Not rendered: the CLI writes the
+    /// `blocked` ledger, then refuses the run with it (#14434).
+    source_refusal: Option<String>,
+    /// The `repair_route` the refusing source records, when it records one
+    /// (`analysis_scope` or a non-consumable `run_limitations[]` entry). A
+    /// saved `blocked` ledger keeps `run_limitations[]` (and any route in
+    /// it), but a refusal disclosed only in `analysis_scope` is saved with a
+    /// marker-only entry, so this is `None` when that ledger is fed back
+    /// (#14434).
+    source_refusal_repair_route: Option<String>,
+}
+
+impl GapDecisionLedgerReport {
+    /// The parse failure of the supplied source, when it was readable but
+    /// was not a valid input of the selected source kind.
+    pub(crate) fn source_parse_error(&self) -> Option<&str> {
+        self.source_parse_error.as_deref()
+    }
+
+    /// The producer refusal the supplied source discloses, when it parsed
+    /// but nothing was analyzed (#14434).
+    pub(crate) fn source_refusal(&self) -> Option<&str> {
+        self.source_refusal.as_deref()
+    }
+
+    /// The repair route the refusing source records, if any (#14434).
+    pub(crate) fn source_refusal_repair_route(&self) -> Option<&str> {
+        self.source_refusal_repair_route.as_deref()
+    }
+}
+
+/// The `repair_route` a refusing source records: `analysis_scope` first,
+/// then the first non-consumable `run_limitations[]` entry that carries one.
+fn recorded_refusal_repair_route(value: &Value) -> Option<String> {
+    let route = |entry: &Value| {
+        entry
+            .get("repair_route")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|route| !route.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    value.get("analysis_scope").and_then(route).or_else(|| {
+        value
+            .get("run_limitations")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter(|entry| {
+                entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+            })
+            .find_map(route)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -672,6 +729,9 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut parsed_cleanly = false;
     let mut source_value_snapshot = None;
     let mut source_content_committed = false;
+    let mut source_parse_error = None;
+    let mut source_refusal = None;
+    let mut source_refusal_repair_route = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -713,6 +773,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 }
                 Err(err) => {
                     warnings.push(format!("parse {} failed: {err}", input.records_path));
+                    source_parse_error = Some(err);
                     Vec::new()
                 }
             };
@@ -752,8 +813,12 @@ pub(crate) fn build_gap_decision_ledger_report(
             .as_ref()
             .is_some_and(crate::output::gate::discloses_non_consumable_record)
     {
+        source_refusal_repair_route = source_value_snapshot
+            .as_ref()
+            .and_then(recorded_refusal_repair_route);
         match refusal_status {
             Some(status) => {
+                source_refusal = Some(format!("a producer refusal (run_status: {status})"));
                 warnings.push(format!(
                     "gap decision ledger input {} is a producer refusal (run_status: {status}, \
                      downstream_consumable: false): nothing was analyzed, so no gap records can \
@@ -763,6 +828,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 ));
             }
             None => {
+                source_refusal = Some("a non-consumable producer record".to_string());
                 warnings.push(format!(
                     "gap decision ledger input {} discloses a non-consumable producer record \
                      (downstream_consumable: false) with no known typed run status: nothing \
@@ -913,6 +979,9 @@ pub(crate) fn build_gap_decision_ledger_report(
         analysis_coverage,
         records,
         warnings,
+        source_parse_error,
+        source_refusal,
+        source_refusal_repair_route,
         limits: vec![
             "Advisory static gap decisions only.".to_string(),
             "Gate-decision artifacts remain the only configured pass/fail authority.".to_string(),
@@ -1801,6 +1870,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         "actionable",
         string_at(finding, &["oracle_alignment"]),
         string_at(finding, &["alignment_reason"]),
+        python_card_unread_owner_result_field(finding, card),
     );
     insert_projection(
         &mut projection_eligibility,
@@ -1864,6 +1934,29 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     })
 }
 
+/// Whether the finding carries the analyzer's unread-owner-result-field fact
+/// for the card's own selected test and `self.<field>` discriminator.
+fn python_card_unread_owner_result_field(finding: &Value, card: &Value) -> bool {
+    let (Some(test_name), Some(missing_discriminator)) = (
+        string_at(card, &["suggested_location", "test_name"]),
+        string_at(card, &["missing_discriminator"]),
+    ) else {
+        return false;
+    };
+    crate::domain::python_unread_owner_result_field(
+        string_array_at(finding, &["evidence"])
+            .iter()
+            .map(String::as_str),
+        test_name,
+        missing_discriminator,
+    )
+    .is_some()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each input is an independent fail-closed eligibility condition"
+)]
 fn python_agent_packet_eligibility(
     repairability: &str,
     has_repair_route: bool,
@@ -1872,6 +1965,7 @@ fn python_agent_packet_eligibility(
     gap_state: &str,
     oracle_alignment: Option<&str>,
     alignment_reason: Option<&str>,
+    unread_owner_result_field: bool,
 ) -> (bool, &'static str) {
     let ordinary_requirements = repairability == "repairable"
         && has_repair_route
@@ -1900,6 +1994,18 @@ fn python_agent_packet_eligibility(
         }
         (Some("unknown"), Some("no_strong_oracle")) => {
             (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        // The strong oracle observes another attribute of the instance the
+        // owner returned, and the analyzer established that the one related
+        // test binds that instance once and never reads the changed field.
+        // Every other orthogonal finding stays denied.
+        (Some("orthogonal"), Some("strong_oracle_observes_different_sink"))
+            if unread_owner_result_field =>
+        {
+            (
+                true,
+                "python_unread_owner_result_field_with_bounded_repair_route",
+            )
         }
         _ => (false, "python_oracle_alignment_pair_not_delegatable"),
     }
@@ -5427,17 +5533,44 @@ mod tests {
                 "actionable",
                 Some(alignment),
                 Some(reason),
+                false,
             )
             .0
             {
                 return Err(format!("expected accepted pair {alignment}/{reason}"));
             }
         }
+        // The orthogonal pair is delegated only with the analyzer's
+        // unread-owner-result-field fact, under its own reason.
+        let orthogonal = (
+            Some("orthogonal"),
+            Some("strong_oracle_observes_different_sink"),
+        );
+        if python_agent_packet_eligibility(
+            "repairable",
+            true,
+            true,
+            true,
+            "actionable",
+            orthogonal.0,
+            orthogonal.1,
+            true,
+        ) != (
+            true,
+            "python_unread_owner_result_field_with_bounded_repair_route",
+        ) {
+            return Err("orthogonal pair with the unread fact must be accepted".to_string());
+        }
         let denied = [
+            orthogonal,
+            (Some("orthogonal"), Some("no_strong_oracle")),
+            (Some("orthogonal"), Some("no_family_relevant_assertion")),
             (
                 Some("orthogonal"),
-                Some("strong_oracle_observes_different_sink"),
+                Some("other_behavior_assertion_passed_over"),
             ),
+            (Some("orthogonal"), None),
+            (None, Some("strong_oracle_observes_different_sink")),
             (Some("unknown"), Some("strong_oracle_observes_owner_name")),
             (Some("direct"), Some("no_strong_oracle")),
             (Some("mystery"), Some("no_strong_oracle")),
@@ -5447,18 +5580,25 @@ mod tests {
             (None, None),
         ];
         for (alignment, reason) in denied {
-            if python_agent_packet_eligibility(
-                "repairable",
-                true,
-                true,
-                true,
-                "actionable",
-                alignment,
-                reason,
-            )
-            .0
-            {
-                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            // The fact never opens a pair other than the orthogonal one.
+            let with_fact = (alignment, reason) != orthogonal;
+            for unread in [false, with_fact] {
+                if python_agent_packet_eligibility(
+                    "repairable",
+                    true,
+                    true,
+                    true,
+                    "actionable",
+                    alignment,
+                    reason,
+                    unread,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "unexpected accepted pair {alignment:?}/{reason:?} (unread fact {unread})"
+                    ));
+                }
             }
         }
         for requirements in [
@@ -5468,20 +5608,26 @@ mod tests {
             ("repairable", true, true, false, "actionable"),
             ("repairable", true, true, true, "report_only"),
         ] {
-            if python_agent_packet_eligibility(
-                requirements.0,
-                requirements.1,
-                requirements.2,
-                requirements.3,
-                requirements.4,
-                Some("unknown"),
-                Some("no_strong_oracle"),
-            )
-            .0
-            {
-                return Err(format!(
-                    "ordinary requirements failed closed: {requirements:?}"
-                ));
+            for (alignment, reason, unread) in [
+                ("unknown", "no_strong_oracle", false),
+                ("orthogonal", "strong_oracle_observes_different_sink", true),
+            ] {
+                if python_agent_packet_eligibility(
+                    requirements.0,
+                    requirements.1,
+                    requirements.2,
+                    requirements.3,
+                    requirements.4,
+                    Some(alignment),
+                    Some(reason),
+                    unread,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "ordinary requirements failed closed: {requirements:?} {alignment}/{reason}"
+                    ));
+                }
             }
         }
         Ok(())
@@ -5571,6 +5717,12 @@ mod tests {
                         }
                     }
                     (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
+                        orthogonal += 1;
+                        if eligible {
+                            return Err(format!("orthogonal fixture eligible: {name}"));
+                        }
+                    }
+                    (Some("orthogonal"), Some("other_behavior_assertion_passed_over")) => {
                         orthogonal += 1;
                         if eligible {
                             return Err(format!("orthogonal fixture eligible: {name}"));
@@ -5712,7 +5864,21 @@ mod tests {
         // #12126: `python_coarse_{sign, residue, text_length}` keep a coarse
         // projection of the changed owner result weakly exposed; each weak
         // finding carries one orthogonal card, three more in total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 34, 1) {
+        // #13869: `python_error_path_shape` pins a builtin `TypeError` ->
+        // `ValueError` swap with `pytest.raises(ValueError)`, which now reads as
+        // an exact error variant; its `no_strong_oracle` card is gone.
+        // #14267: `python_raises_bare_owner_outside_body_no_credit` keeps its
+        // assertion on the sibling's exception, not the changed owner's, so
+        // its weak finding carries one orthogonal card.
+        // #13869: `python_route_response_{sibling, json_patch,
+        // equivalent_number, float_floor_division, list_subscript,
+        // adjacent_list_tokens, duplicate_old_key, shadowed_dict,
+        // parenthesized_alias, compact_loop, replaced_content, docs_route,
+        // tuple_dict, unpacked_options}` keep a route response read of a key
+        // the diff did not change (or could not establish) weakly exposed;
+        // each weak finding carries one orthogonal card, fourteen more in
+        // total.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
