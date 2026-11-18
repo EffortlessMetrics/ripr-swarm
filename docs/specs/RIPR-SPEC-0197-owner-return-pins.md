@@ -3880,6 +3880,29 @@ fold that fails, overflows the declared width or meets a float, an unsupported
 method or a `let` is not evaluable and changes nothing. It asks nothing of
 the oracle's strength and is not a runtime claim.
 
+#### Through one forwarding wrapper (#15034)
+
+Condition 2 declines whenever another function holds the owner, because that
+caller may feed the owner inputs the tests never write. One caller feeds
+exactly the tests' inputs: a pure forwarding wrapper. When the owner's only
+holder is a free production function `w` whose whole body is
+`owner(p1, .., pn)` over `w`'s own plain parameters in declaration order, the
+owner takes the same number of parameters, and nothing else holds `w` (no
+function, test helper or `macro_rules!` body), a test's `w(args)` is
+`owner(args)`. The same reading then applies with each related test's calls of
+`w` read as owner calls. Every related test must call `w`, and none may name
+the owner. The summary names the wrapper ("Every related test calls
+`cash_total`, which passes its arguments straight to the owner, ...").
+
+`fn round_to_nickel(cents: u32) -> u32 { cents / 5 * 5 }` changed to
+`(cents + 2) / 5 * 5`, reached through
+`pub fn cash_total(cents: u32) -> u32 { round_to_nickel(cents) }`, reads
+`weak` under `assert_eq!(cash_total(105), 105)`, since 105 gives 105 on both
+versions. It stays `yes` under `assert_eq!(cash_total(103), 105)`. A wrapper
+that changes its argument (`round_to_nickel(cents + 1)`), drops one
+(`fn w(a, b) { owner(b) }`), or is itself called by another function keeps
+today's reading. Like the rest of this section, this only downgrades.
+
 ### A partly changed struct literal confirms only through its changed fields (#10916)
 
 A probe on a returned struct literal (`Request { url: self.url, timeout_ms:

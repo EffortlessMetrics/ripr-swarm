@@ -647,6 +647,30 @@ impl ClassifiedProbeEvidence {
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        // #15034: the #8659 invisibility reading declines when another
+        // function holds the owner, since that caller may feed other inputs.
+        // A pure forwarding wrapper (`pub fn w(a) -> T { owner(a) }`, the
+        // owner's only holder and itself held by nothing) feeds exactly its
+        // own arguments, so a test's `w(args)` is `owner(args)` and the same
+        // fold applies. Withholding only: any other shape keeps the reading.
+        let infect = match (context.owner_fn, context.probe.before.as_deref()) {
+            (Some(owner), Some(before))
+                if owner_has_other_callers
+                    && !assertion_macros_rebound
+                    && matches!(context.probe.family, ProbeFamily::ReturnValue)
+                    && matches!(infect.state, StageState::Yes) =>
+            {
+                forwarding_wrapper_invisibility(
+                    context.index,
+                    owner,
+                    before,
+                    &context.probe.expression,
+                    &test_summaries,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
         // #10980: when the whole-test contradiction withheld EVERY credited
         // activation path that establishes reach (#7007), the stage
         // discloses the withholding instead of reading the withheld tests'
@@ -3146,6 +3170,171 @@ fn other_function_holds_owner(
     })
 }
 
+/// #15034: the weak infection reading for an owner reached only through one
+/// pure forwarding wrapper, when every related test pins the wrapper at
+/// literal inputs where the owner's change and its baseline fold to the same
+/// value. `None` keeps the caller's reading.
+fn forwarding_wrapper_invisibility(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    before: &str,
+    after: &str,
+    test_summaries: &[&TestSummary],
+) -> Option<StageEvidence> {
+    let wrapper = sole_forwarding_wrapper(index, owner, test_summaries)?;
+    // Every related test must call the wrapper, and none may name the owner:
+    // the fold reads only the wrapper's calls, so an owner call or a test
+    // reaching through some other path would go unread.
+    if test_summaries.iter().any(|test| {
+        mentions_identifier(&test.body, &owner.name)
+            || !mentions_identifier(&test.body, &wrapper.name)
+    }) {
+        return None;
+    }
+    let stand_in = FunctionSummary {
+        name: wrapper.name.clone(),
+        ..owner.clone()
+    };
+    match crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
+        &stand_in,
+        before,
+        after,
+        test_summaries,
+    )? {
+        crate::analysis::test_grip_evidence::InvisibilityReason::SameValueAtEveryAssertedInput => {
+            Some(StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                format!(
+                    "Every related test calls `{}`, which passes its arguments straight to the owner, with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
+                    wrapper.name
+                ),
+            ))
+        }
+        crate::analysis::test_grip_evidence::InvisibilityReason::RelationalTruthUnchanged => {
+            Some(StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                format!(
+                    "Every related test's assertions on `{}`, which passes its arguments straight to the owner, hold with the same truth value on the baseline and the change, so no assertion tells the versions apart",
+                    wrapper.name
+                ),
+            ))
+        }
+    }
+}
+
+/// The one production function other than the related tests that holds
+/// `owner`, when it is a free function whose whole body is `owner(p1, .., pn)`
+/// over its own plain parameters in declaration order, with the owner taking
+/// the same number of parameters, and nothing else (no function, test-file
+/// helper or macro body) holds the wrapper itself.
+fn sole_forwarding_wrapper<'a>(
+    index: &'a RustIndex,
+    owner: &FunctionSummary,
+    test_summaries: &[&TestSummary],
+) -> Option<&'a FunctionSummary> {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    let is_related_test = |function: &FunctionSummary| {
+        test_summaries
+            .iter()
+            .any(|test| test.file == function.file && test.name == function.name)
+    };
+    let holders = |name: &str, except: &FunctionSummary| {
+        index
+            .functions()
+            .iter()
+            .filter(|function| {
+                function.id != except.id
+                    && !is_related_test(function)
+                    && (function.calls.iter().any(|call| call.name == name)
+                        || mentions_identifier(function.body.as_str(), name))
+            })
+            .collect::<Vec<_>>()
+    };
+    let owner_holders = holders(&owner.name, owner);
+    let [wrapper] = owner_holders.as_slice() else {
+        return None;
+    };
+    let wrapper = *wrapper;
+    if wrapper.item.container != FunctionContainer::Free
+        || wrapper.source_role != FunctionSourceRole::Production
+        || wrapper.name == owner.name
+        || index
+            .functions()
+            .iter()
+            .filter(|function| function.name == wrapper.name || function.name == owner.name)
+            .count()
+            != 2
+        || !holders(&wrapper.name, wrapper).is_empty()
+        || index.files().values().any(|file| {
+            macro_rules_bodies(&file.source).iter().any(|body| {
+                mentions_identifier(body, &wrapper.name) || mentions_identifier(body, &owner.name)
+            })
+        })
+    {
+        return None;
+    }
+    let wrapper_parameters = plain_parameter_names(&wrapper.body)?;
+    let owner_parameters = plain_parameter_names(&owner.body)?;
+    if wrapper_parameters.len() != owner_parameters.len() {
+        return None;
+    }
+    let forwarded = format!("{}({})", owner.name, wrapper_parameters.join(", "));
+    let tail = whole_body_text(&wrapper.body)?;
+    (tail.split_whitespace().collect::<String>()
+        == forwarded.split_whitespace().collect::<String>())
+    .then_some(wrapper)
+}
+
+/// The plain identifier parameter names of the function text `function`
+/// (`fn name(a: T, b: U)`), or `None` for a receiver, a pattern, a generic
+/// signature or an unreadable list.
+fn plain_parameter_names(function: &str) -> Option<Vec<String>> {
+    let masked = mask_comments_and_strings(function);
+    let name_end = masked.find("fn ")? + 3;
+    let open = name_end + masked[name_end..].find('(')?;
+    if masked[name_end..open].contains('<') {
+        return None;
+    }
+    let close = open + masked[open..].find(')')?;
+    let inside = &masked[open + 1..close];
+    if inside.contains(['(', '<', '[', '{']) {
+        return None;
+    }
+    inside
+        .split(',')
+        .map(str::trim)
+        .filter(|parameter| !parameter.is_empty())
+        .map(|parameter| {
+            let (pattern, _) = parameter.split_once(':')?;
+            let pattern = pattern.trim();
+            (!pattern.is_empty()
+                && pattern != "self"
+                && pattern != "_"
+                && pattern
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                && !pattern.starts_with(|ch: char| ch.is_ascii_digit()))
+            .then(|| pattern.to_string())
+        })
+        .collect()
+}
+
+/// The text between the outermost braces of the function text `function`,
+/// trimmed, when it holds no statement (no `;`, no nested block) and no
+/// comment.
+fn whole_body_text(function: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(function);
+    if masked.len() != function.len() || masked.contains("//") || masked.contains("/*") {
+        return None;
+    }
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    let inner = function.get(open + 1..close)?.trim();
+    (!inner.is_empty() && !inner.contains([';', '{', '}', '"', '\''])).then(|| inner.to_string())
+}
+
 /// True when `name` occurs as a whole identifier in the code of `text`,
 /// ignoring comments and string contents.
 fn mentions_identifier(text: &str, name: &str) -> bool {
@@ -3392,6 +3581,41 @@ mod tests {
         RelationReason, SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
+
+    /// #15034: the forwarding-wrapper reader takes only plain identifier
+    /// parameters and a body that is one expression.
+    #[test]
+    fn a_pure_forwarding_wrapper_is_read_by_its_parameters_and_body() {
+        assert_eq!(
+            super::plain_parameter_names("pub fn cash_total(cents: u32, mode: Mode) -> u32 {"),
+            Some(vec!["cents".to_string(), "mode".to_string()])
+        );
+        for refused in [
+            "pub fn f(&self, a: u32) -> u32 {",
+            "pub fn f<T>(a: T) -> u32 {",
+            "pub fn f((a, b): (u32, u32)) -> u32 {",
+            "pub fn f(_: u32) -> u32 {",
+            "pub fn f(mut a: u32) -> u32 {",
+            "pub fn f(a: [u8; 2]) -> u32 {",
+        ] {
+            assert_eq!(super::plain_parameter_names(refused), None, "{refused}");
+        }
+        assert_eq!(
+            super::whole_body_text(
+                "pub fn cash_total(cents: u32) -> u32 {\n    round_to_nickel(cents)\n}"
+            ),
+            Some("round_to_nickel(cents)".to_string())
+        );
+        for refused in [
+            "pub fn w(c: u32) -> u32 {\n    let d = c;\n    owner(d)\n}",
+            "pub fn w(c: u32) -> u32 {\n    { owner(c) }\n}",
+            "pub fn w(c: u32) -> u32 {\n    owner(c) // note\n}",
+            "pub fn w(c: u32) -> u32 {\n    owner(c);\n}",
+            "pub fn w(c: u32) -> u32 {\n}",
+        ] {
+            assert_eq!(super::whole_body_text(refused), None, "{refused}");
+        }
+    }
 
     // --- #3731 review (G1): the cross-package same-name defeat ---
 

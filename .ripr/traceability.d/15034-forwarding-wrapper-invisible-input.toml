@@ -1,0 +1,7 @@
+# Registers the forwarding-wrapper invisibility reading (#15034) under
+# RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::a_pure_forwarding_wrapper_is_read_by_its_parameters_and_body",
+]
