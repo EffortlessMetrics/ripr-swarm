@@ -1,0 +1,8 @@
+[package]
+name = "repo_exposure_test_local_rival_glob_use_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "repo_exposure_test_local_rival_glob_use_subject"
+path = "src/lib.rs"

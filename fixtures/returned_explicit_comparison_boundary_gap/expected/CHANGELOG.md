@@ -228,3 +228,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (19)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

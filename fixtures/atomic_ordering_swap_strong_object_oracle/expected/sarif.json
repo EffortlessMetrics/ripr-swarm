@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "static_unknown static exposure for static_unknown probe: self.inner.store(id, Ordering::Release). Next step: Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            "text": "static_unknown static exposure for static_unknown probe: self.inner.store(id, Ordering::Release). Next step: Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_lib.rs:static_unknown:4e618039|probe:src_lib.rs:static_unknown:4e618039|fixtures/atomic_ordering_swap_strong_object_oracle/input/src/lib.rs"
@@ -143,7 +143,7 @@
             "stop_reasons": [
               "static_probe_unknown"
             ],
-            "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+            "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
             "tool": "ripr"
           },
           "ruleId": "ripr.finding.static_unknown"

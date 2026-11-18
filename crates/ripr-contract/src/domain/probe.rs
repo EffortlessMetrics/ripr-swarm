@@ -572,6 +572,11 @@ pub fn exact_assertion_fact<'a>(
 /// constant here would publish the exact wording as library API.
 pub const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
 
+/// Reach-summary suffix for an owner no source, test or doc in the workspace
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording, and
+/// [`Finding::is_unreferenced_no_static_path`] reads it back (#14820).
+pub const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FindingCanonicalGap {
     pub id: String,
@@ -616,7 +621,8 @@ pub struct RelatedTest {
     /// findings from producers that do not record it. Explanation only: no
     /// decision helper reads this field except the refused-assertion exception
     /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
-    /// #9644); row eligibility is [`Self::role`] (#5563).
+    /// #9644); row eligibility is [`Self::role`] (#5563). Display pickers read
+    /// it through [`Self::observation_tier`] to choose which row to name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained
@@ -706,6 +712,46 @@ impl RelatedTest {
     pub fn is_examined_only(&self) -> bool {
         !self.is_contributing()
     }
+
+    /// How well this row can observe the changed behavior, for every picker
+    /// that names one related test to open or edit (#14454, #14483). It reads
+    /// only the producer's recorded miss, the one owner of whether a row
+    /// reaches the change (a proximity relation can still reach the owner
+    /// through a helper and credit exposure). Higher is better:
+    /// - `0`: [`RelatedTestMiss::NoCallPath`], no established path to the
+    ///   change;
+    /// - `1`: [`RelatedTestMiss::AssertionNotObserving`], the test runs the
+    ///   change but its assertion pins something the change cannot move;
+    /// - `2`: every other row. That includes `no_assertion`, whose contract
+    ///   (RIPR-SPEC-0224) requires an established path, so the row is where
+    ///   the missing assertion goes; its `none` strength already ranks it
+    ///   last where strength decides. A producer that sets it on a row with
+    ///   no established path (#14808) lets that row lead first-row pickers.
+    ///   Also in `2` are the strength
+    ///   misses (`weak_assertion`, `missing_input`, `missing_exact_assertion`)
+    ///   and the unknown-edge misses (`observation_unconfirmed`,
+    ///   `assertion_not_credited`, `assertion_inert`,
+    ///   `assertion_admission_unproven`), which record an observation ripr
+    ///   could not establish, not one that is absent (#5508).
+    ///
+    /// Display row selection only: no class, gate or credit reads it.
+    pub fn observation_tier(&self) -> u8 {
+        match self.miss {
+            Some(RelatedTestMiss::NoCallPath) => 0,
+            Some(RelatedTestMiss::AssertionNotObserving) => 1,
+            _ => 2,
+        }
+    }
+}
+
+/// The first row of the best [`RelatedTest::observation_tier`], keeping the
+/// listed order within that tier. The one observing-first rule for pickers
+/// that otherwise take the first listed row (#14483).
+pub fn first_observing_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
+    // `min_by_key` keeps the first of equal keys.
+    tests
+        .iter()
+        .min_by_key(|test| std::cmp::Reverse(test.observation_tier()))
 }
 
 /// Why one examined test would not notice the changed behavior being wrong.
@@ -1083,6 +1129,23 @@ impl Finding {
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
         self.source_currentness.permits_candidate_action()
+    }
+
+    /// Whether the producer established that nothing in the workspace calls
+    /// the changed owner (#14820): a candidate-current `no_static_path`
+    /// finding with no static limit, reach ruled out, and the RIPR-SPEC-0219
+    /// [`UNREFERENCED_IN_WORKSPACE`] marker, which the producer sets only
+    /// when the owner's name occurs nowhere outside its own definition in a
+    /// fully indexed workspace and the owner is not an entry point. That is
+    /// a test-side gap (write a test that calls it), not an analysis limit.
+    /// Any other `no_static_path` finding, including an owner some non-test
+    /// code calls on a path ripr cannot trace, stays fail-closed.
+    pub fn is_unreferenced_no_static_path(&self) -> bool {
+        self.is_candidate_actionable()
+            && self.class == ExposureClass::NoStaticPath
+            && self.static_limit_kind.is_none()
+            && self.ripr.reach.state == crate::domain::StageState::No
+            && self.ripr.reach.summary.ends_with(UNREFERENCED_IN_WORKSPACE)
     }
 
     /// Whether the only thing between this finding and a test path is a proof
