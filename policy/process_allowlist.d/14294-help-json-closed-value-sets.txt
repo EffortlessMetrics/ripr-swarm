@@ -1,0 +1,1 @@
+crates/ripr/tests/cli_help_json_values.rs|Command::new|1|cli-tests|#14294: runs the built ripr binary with fixed argv (`help --json`, then each catalog flag that lists a closed value set with one value outside it) and reads the refusal. Stdin is null. No shell, network, or repository mutation.
