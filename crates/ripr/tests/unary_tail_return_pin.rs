@@ -1136,8 +1136,11 @@ fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
 
 /// #14952 inc_cfg: `src/real.rs` reaches the crate only through a `cfg`'d
 /// `include!` (here through a renamed macro, so no `include` name is
-/// visible). No `mod real;` declares it, so its gates are unknown. Before
-/// the identity required a declaration this read `exposed`.
+/// visible). No `mod real;` declares it, so its gates are unknown and the
+/// shared identity reports a gate. The unary reading's own refusals also
+/// keep this case `propagation_unknown` without that rule, so it guards the
+/// reading as a whole; `base_owner_cfg_gates.rs` and the identity's unit
+/// tests discriminate the rule itself.
 #[test]
 fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), String> {
     let lib = lib_with(&format!(

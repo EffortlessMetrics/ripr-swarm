@@ -182,8 +182,10 @@ pub(in crate::analysis) fn unary_tail_change(
 /// [`crate::analysis::diff::verified_base_owner`] establishes the base-side
 /// item (same qualified path and attributes, unique under it, no changed
 /// header, no changed `mod` or `#[path]` declaration on its module chain); a
-/// gated item (a `cfg` on the function, an enclosing item, the file or a
-/// `mod` declaration on its chain, or any `#[path]` declaration) refuses,
+/// gated item (a `cfg` on the function, an inner attribute of its body, an
+/// enclosing item, the file or a `mod` declaration on its chain, any
+/// `#[path]` declaration, or a gate outside `mod` declarations: see
+/// [`crate::analysis::diff::ModuleDeclarations`], #15003, #14952) refuses,
 /// since a test may run a twin compiled in its place. The verified base item
 /// must then be exactly the current item with the one replaced tail line
 /// restored.

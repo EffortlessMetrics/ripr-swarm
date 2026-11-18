@@ -11,8 +11,12 @@ tests = [
   "crates/ripr/tests/unary_tail_return_pin.rs::a_cfg_gate_on_the_owner_reexport_is_not_exposed",
   "crates/ripr/tests/unary_tail_return_pin.rs::an_owner_file_reached_only_through_include_is_not_exposed",
   "crates/ripr/tests/unary_tail_return_pin.rs::ungated_or_unrelated_reexports_keep_their_credit",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::gated_shapes_outside_mod_declarations_read_propagation_unknown",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::ungated_controls_keep_their_credit_on_both_tail_paths",
 ]
 code = [
   "crates/ripr/src/analysis/diff/base_owner.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs",
+  "crates/ripr/src/analysis/classify/unary_tail.rs",
 ]
