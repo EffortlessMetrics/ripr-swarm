@@ -235,11 +235,11 @@ pub(super) fn render_record_markdown(record: &GapRecord, out: &mut String) {
 ///
 /// `inline_prose` keeps what looks like a code span verbatim, but a parser
 /// gives a backtick inside a link destination to the link, which would leave
-/// a later tag outside any span (#15127). Text carrying both a backtick and
-/// `<` therefore also has its link brackets escaped, so the backticks can
-/// only pair as the code span the helper assumed.
+/// a later tag or mention outside any span (#15127). Text carrying a backtick
+/// together with `<` or `[` therefore also has its link brackets escaped, so
+/// the backticks can only pair as the code span the helper assumed.
 fn md_inline(value: &str) -> String {
-    if value.contains('`') && value.contains('<') {
+    if value.contains('`') && value.contains(['<', '[']) {
         inline_prose_literal(value)
     } else {
         inline_prose(value)
@@ -409,6 +409,33 @@ mod tests {
             spans.iter().any(|span| span.contains("<b>bold</b>")),
             "the tag is not inside a code span: {spans:?}\n{markdown}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn warning_with_backtick_in_link_destination_notifies_nobody() -> Result<(), String> {
+        let warning = |message: &str| {
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::Records,
+                records_path: "records.json".to_string(),
+                records_json: Err(message.to_string()),
+            });
+            rendered(&render_gap_decision_ledger_markdown(&report))
+        };
+        // No `<` here: the link alone used to take the first backtick and
+        // leave the mention as live text.
+        let (spans, text) = warning("gap [x](a`b) @reviewer then `end` is invalid")?;
+        assert!(!text.contains("@reviewer"), "live mention: {text:?}");
+        assert!(
+            spans.iter().any(|span| span.contains("@reviewer")),
+            "{spans:?}"
+        );
+        // Control: a real code span next to a link-free mention is untouched.
+        let (spans, text) = warning("gap `id` is invalid for @reviewer")?;
+        assert!(spans.iter().any(|span| span == "id"), "{spans:?}");
+        assert!(!text.contains("@reviewer"), "live mention: {text:?}");
         Ok(())
     }
 }
