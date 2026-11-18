@@ -101,6 +101,22 @@ const TOKENS: &[&[u8]] = &[
     b"= ",
     b"1e999",
     b"-9223372036854775809",
+    // Repeat units: a run of one of these (edit kind 5) builds a long
+    // chain or a deep nest on one line, the shape behind #14096.
+    b" + 1",
+    b" && a > 1",
+    b".min(3)",
+    b" as u64",
+    b" else if a == 1 { 1 }",
+    b"match a { 0 => 0, _ => ",
+    b"if a > 1 { ",
+    b" and a > 1",
+    b"not ",
+    b"lambda: ",
+    b" for _ in [1]",
+    b"?.b",
+    b"${a}",
+    b"() => ",
 ];
 
 /// One edit: `(kind, position, token, repeat)`, all reduced modulo the input.
@@ -222,7 +238,19 @@ impl Workspace {
     /// deadline the worker is left detached; it cannot keep the test binary
     /// alive, and the failing input bytes are already in the message.
     fn check_within_deadline(&self) -> Result<(), String> {
-        let args = self.args();
+        self.check_within(CASE_DEADLINE, &[]).map(|_answer| ())
+    }
+
+    /// As [`Self::check_within_deadline`] with a chosen deadline and extra
+    /// arguments, keeping the check's own answer: `Ok(Err(_))` is a clean
+    /// refusal.
+    fn check_within(
+        &self,
+        deadline: Duration,
+        extra_args: &[String],
+    ) -> Result<Result<(), String>, String> {
+        let mut args = self.args();
+        args.extend(extra_args.iter().cloned());
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new()
             .stack_size(WORKER_STACK_BYTES)
@@ -230,14 +258,14 @@ impl Workspace {
                 let _ = sender.send(ripr::cli::run(args).map_err(|error| error.to_string()));
             })
             .map_err(|error| format!("spawn worker failed: {error}"))?;
-        match receiver.recv_timeout(CASE_DEADLINE) {
-            Ok(_) => {
+        match receiver.recv_timeout(deadline) {
+            Ok(answer) => {
                 let _ = worker.join();
-                Ok(())
+                Ok(answer)
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
                 "check exceeded {}s (hang or runaway pass)",
-                CASE_DEADLINE.as_secs()
+                deadline.as_secs()
             )),
             // The sender dropped without a result: the worker panicked.
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
@@ -445,6 +473,86 @@ fn unmutated_seeds_reach_analysis_and_config_is_consumed() -> Result<(), String>
     ])?;
     if ripr::cli::run(workspace.args()).is_ok() {
         return Err("a malformed ripr.toml was accepted".to_string());
+    }
+    Ok(())
+}
+
+/// Inputs the fuzz lane found, kept as fixed cases: `(name, repeat unit,
+/// repeat count, closing unit)`. Each is a function whose body is a `let`
+/// followed by one very long line; the diff changes the `let` alone.
+///
+/// - `nested-match-one-line` (#14096): the changed-binding predicate scan
+///   re-read the line once per `>`; 20,000 links (500 KB) took 18 seconds
+///   in a release build and minutes in a debug build.
+const LONG_LINE_REGRESSIONS: &[(&str, &str, usize, &str)] = &[(
+    "nested-match-one-line",
+    "match a { 0 => 0, _ => ",
+    20_000,
+    " }",
+)];
+
+/// A regression case must finish well inside the general case deadline:
+/// each one ran in seconds once fixed and in minutes before.
+const REGRESSION_DEADLINE: Duration = Duration::from_mins(1);
+
+const REGRESSION_OLD_LET: &str = "    let a = amount;";
+const REGRESSION_NEW_INITIALIZER: &str = "amount + u64::from(years)";
+
+/// Each case must finish in time with the answer the slow pass exists to
+/// give: the changed `let` on line 2 is reported as a predicate finding on
+/// the long line 3, which the diff does not touch. A refusal, or a run that
+/// skipped the changed-binding relation, would finish in time without that
+/// finding.
+#[test]
+fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
+    for (name, unit, count, close) in LONG_LINE_REGRESSIONS {
+        let source = format!(
+            "pub fn price(amount: u64, years: u32) -> u64 {{\n    let a = {REGRESSION_NEW_INITIALIZER};\n    {}a{}\n}}\n",
+            unit.repeat(*count),
+            close.repeat(*count)
+        );
+        if source.lines().count() != 4 || source.len() < unit.len() * count {
+            return Err(format!("{name}: fixture is not one long body line"));
+        }
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-{REGRESSION_OLD_LET}\n+    let a = {REGRESSION_NEW_INITIALIZER};\n"
+        );
+        let workspace = Workspace::create(&[
+            ("Cargo.toml", CARGO_TOML.as_bytes()),
+            ("src/lib.rs", source.as_bytes()),
+            ("ripr.toml", languages_toml().as_bytes()),
+            ("fuzz.diff", diff.as_bytes()),
+        ])?;
+        let artifact = workspace.root.join("artifact.json");
+        workspace
+            .check_within(
+                REGRESSION_DEADLINE,
+                &[
+                    "--write-artifact".to_string(),
+                    artifact.display().to_string(),
+                ],
+            )
+            .map_err(|error| format!("{name} ({} bytes): {error}", source.len()))?
+            .map_err(|error| format!("{name}: the check refused the input: {error}"))?;
+        let text = std::fs::read_to_string(&artifact)
+            .map_err(|error| format!("{name}: read check artifact failed: {error}"))?;
+        let report: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("{name}: check artifact is not JSON: {error}"))?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or_else(|| format!("{name}: check artifact has no findings array"))?;
+        let related = findings.iter().any(|finding| {
+            let probe = &finding["probe"];
+            probe["family"].as_str() == Some("predicate")
+                && probe["location"]["line"].as_u64() == Some(3)
+                && probe["after"].as_str() == Some(REGRESSION_NEW_INITIALIZER)
+        });
+        if !related {
+            return Err(format!(
+                "{name}: the changed `let` was not related to the long line ({} findings)",
+                findings.len()
+            ));
+        }
     }
     Ok(())
 }
