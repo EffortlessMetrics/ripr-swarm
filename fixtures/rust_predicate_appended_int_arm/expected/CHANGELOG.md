@@ -13,13 +13,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending - rust_predicate_appended_int_arm (2)
+## Pending — rust_predicate_appended_int_arm (2)
 
 Reason:
 RIPR-SPEC-0197: #14194 guard-operand agreement makes a test whose pinned call leaves the appended arm at its identity value a weak oracle, not strong
 
 Command:
-`cargo xtask goldens bless rust_predicate_appended_int_arm --reason "..."` 
+`cargo xtask goldens bless rust_predicate_appended_int_arm --reason "..."`
 
 Updated:
 - `expected/check.json`
