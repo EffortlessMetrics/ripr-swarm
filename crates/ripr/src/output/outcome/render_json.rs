@@ -1,14 +1,15 @@
 use super::{
     AGENT_VERIFY_SCHEMA_VERSION, AgentVerifyArtifactBinding, AgentVerifyBoundGap,
     TARGETED_TEST_OUTCOME_SCHEMA_VERSION, TargetedTestOutcomeMovement, TargetedTestOutcomeReport,
-    TargetedTestOutcomeSeam, review, stage_delta_json, targeted_test_outcome_gap_summary_json,
+    TargetedTestOutcomeSeam, outcome_owner_opt_outs_json, review, stage_delta_json,
+    targeted_test_outcome_gap_summary_json,
 };
 use serde_json::Value;
 
 pub(crate) fn render_targeted_test_outcome_json(
     report: &TargetedTestOutcomeReport,
 ) -> Result<String, String> {
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "schema_version": TARGETED_TEST_OUTCOME_SCHEMA_VERSION,
         "tool": "ripr",
         "status": "advisory",
@@ -41,6 +42,11 @@ pub(crate) fn render_targeted_test_outcome_json(
         "removed": report.removed.iter().map(targeted_test_outcome_seam_json).collect::<Vec<_>>(),
         "review_receipt": targeted_test_outcome_review_receipt_json(report)
     });
+    if let (Some(disclosure), Some(object)) =
+        (outcome_owner_opt_outs_json(report), value.as_object_mut())
+    {
+        object.insert("owner_opt_outs".to_string(), disclosure);
+    }
     super::super::json::render_pretty_with_newline(&value, "targeted-test outcome")
 }
 
@@ -119,6 +125,11 @@ pub(crate) fn render_agent_verify_json_with_bound_gap(
                 serde_json::Value::Bool(true),
             );
         }
+    }
+    if let (Some(disclosure), Some(object)) =
+        (outcome_owner_opt_outs_json(report), value.as_object_mut())
+    {
+        object.insert("owner_opt_outs".to_string(), disclosure);
     }
     if let (Some(gap), Some(object)) = (bound_gap, value.as_object_mut()) {
         object.insert(
