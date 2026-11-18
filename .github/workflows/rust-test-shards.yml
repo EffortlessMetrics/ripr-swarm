@@ -14,8 +14,8 @@ name: Rust Test Shards
 # than assumed: every shard must have exited zero with a fresh JUnit report naming
 # a test, and the two partition lists must be pairwise disjoint and equal the
 # full workspace list. A missing or cancelled shard is a failure, never a pass.
-# Two workers each retain a private build and source tree. This removes two
-# complete workspace builds without introducing an archive producer dependency;
+# One worker reuses one prepared workspace across the two partitions. This removes
+# the duplicate workspace build without introducing an archive producer dependency;
 # whole-route elapsed time and runner occupancy remain separately measured (#8194).
 on:
   workflow_call:
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   rust-test-shard:
-    name: Rust tests shard ${{ matrix.shard }} of 2
+    name: Rust tests packed workspace
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Job-level so every Cargo call in the shard (the prepare build, nextest, the
@@ -40,10 +40,6 @@ jobs:
     # debug info. Only backtrace frames lose their file:line here (#11566).
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
     steps:
       # Full history, like the unsharded step: base-resolving tests refuse on a
       # shallow clone (#10344).
@@ -64,12 +60,12 @@ jobs:
 
       # Separate dependency cache from the gates job; the action defaults exclude
       # workspace test binaries. Existing default-branch entries are best-effort
-      # reads; a miss still builds all tests. Only shard 1 of an already-selected
+      # reads; a miss still builds all tests. Only the packed worker of an already-selected
       # manual main qualification may save; no ordinary push or extra warmer.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Prepare locked owner-return fixture dependencies
         run: |
@@ -117,7 +113,7 @@ jobs:
           time_tool=/usr/bin/time
           mkdir -p "$metrics" || echo "::warning::build metrics directory unavailable"
           checkout_sha="$(git rev-parse HEAD)" || checkout_sha=unavailable
-          printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\nshard=%s/2\nsample_period_seconds=5\nsample_units=MiB\nsample_columns=utc used_mb available_mb swap_used_mb\nrss_scope=largest_command_or_waited_descendant_process_not_aggregate\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${{ matrix.shard }}" > "$metrics/context.txt" || echo "::warning::build metrics identity unavailable"
+          printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\npacking=same-runner-v1\nsample_period_seconds=5\nsample_units=MiB\nsample_columns=utc used_mb available_mb swap_used_mb\nrss_scope=largest_command_or_waited_descendant_process_not_aggregate\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$metrics/context.txt" || echo "::warning::build metrics identity unavailable"
           ( while true; do free -m | awk -v timestamp="$(date -u +%FT%TZ)" '/^Mem:/{used=$3; available=$7} /^Swap:/{if (used ~ /^[0-9]+$/ && available ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/) print timestamp, used, available, $3}'; sleep 5; done ) > "$metrics/system-memory.tsv" &
           sampler=$!
           finish() {
@@ -162,11 +158,10 @@ jobs:
         timeout-minutes: 20
         run: target/debug/xtask check-covered-by
 
-      # Shard 1 hands the prepared normal binary to the verifier. It needs no
+      # The packed producer hands the prepared normal binary to the verifier. It needs no
       # additional compilation there; the attempt suffix isolates reruns.
       - name: Retain the xtask binary for the verify job
         id: xtask-artifact
-        if: matrix.shard == 1
         run: |
           staging="$(mktemp -d "$RUNNER_TEMP/ripr-xtask-upload.XXXXXX")"
           stripped="$staging/xtask-stripped"
@@ -179,7 +174,6 @@ jobs:
           printf 'path=%s\n' "$staging/payload" >> "$GITHUB_OUTPUT"
 
       - name: Upload the xtask binary
-        if: matrix.shard == 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
@@ -187,64 +181,133 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Required Rust tests (shard ${{ matrix.shard }} of 2)
-        id: rust-test-shard
-        timeout-minutes: 40
+      - name: Execute two native partitions on the prepared workspace
+        id: packed-partitions
+        timeout-minutes: 45
         run: |
-          mkdir -p target/nextest/ci
-          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt
-          checkout_sha="$(git rev-parse HEAD)"
-          {
-            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\nshard=%s/2\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
-            cargo nextest --version
-            rustc --version
-            cargo --version
-            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
+          set -euo pipefail
+          evidence="$(mktemp -d "$RUNNER_TEMP/ripr-packed-shards.XXXXXX")"
+          printf 'path=%s\n' "$evidence" >> "$GITHUB_OUTPUT"
+          workspace_identity() {
+            git rev-parse HEAD
+            git status --porcelain=v1 --untracked-files=all
+            git for-each-ref --format='%(refname):%(objectname)'
+            git config --local --list
             git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
-          } > target/nextest/ci/run-context.txt
-          # The partition lists let `verify` prove the shards are a disjoint cover.
-          # Listing reuses the build step's binaries; shard 1 also lists the whole
-          # workspace. The lists are taken before the run, from the same binaries
-          # the run executes: taken after it, shard 4 spent 4.3 to 6.1 minutes here
-          # on every run (4 to 16 seconds on the other shards), with the cause
-          # hidden by the discarded stderr (#12915).
-          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
-          if [ "${{ matrix.shard }}" = 1 ]; then
-            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
-          fi
-          set +e
-          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2
-          test_exit=$?
-          set -e
-          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
-          printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
-          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
-            echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"
+          }
+          checkout_status="$(git status --porcelain=v1 --untracked-files=all)"
+          if [ -n "$checkout_status" ]; then
+            echo "::error::Packed partitions require an initially clean checkout"
             exit 1
           fi
-          exit "$test_exit"
-
-      # A failed or aborted shard keeps its context and status but must not inherit
-      # a stale XML; `verify` treats a missing status file as a failed shard.
-      - name: Upload shard results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact-name }}-nextest-shard-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: |
-            target/nextest/ci/junit.xml
-            target/nextest/ci/run-context.txt
-            target/nextest/ci/build-metrics/
-            target/nextest/ci/shard-${{ matrix.shard }}.status
-            target/nextest/ci/list-*.txt
-            target/ripr/reports/discarded-matcher-cli-5713/
-            target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
+          workspace_identity > "$evidence/baseline"
+          reports=(
+            target/ripr/reports/discarded-matcher-cli-5713
+            "target/nextest/ci/python-symlink-source-admission-cli-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
             target/ripr/reports/repair-card-usability.json
             target/ripr/reports/repair-card-usability.md
             target/ripr/reports/blind-journey-execute.json
             target/ripr/reports/blind-journey-execute.md
-          if-no-files-found: warn
+          )
+          finish=0
+          for partition in 1 2; do
+            workspace_identity | cmp -s "$evidence/baseline" - || {
+              echo "::error::Workspace identity changed before partition $partition"
+              exit 1
+            }
+            stage="$evidence/shard-$partition"
+            mkdir -p "$stage/nextest/ci" target/nextest/ci
+            rm -f target/nextest/ci/{junit.xml,run-context.txt,shard-*.status,list-*.txt}
+            partition_temp="$(mktemp -d "$RUNNER_TEMP/ripr-partition-$partition.XXXXXX")"
+            partition_config="target/nextest/ci/packed-partition-$partition.toml"
+            python3 - "$partition_temp" > "$partition_config" <<'PYCONF'
+          import json
+          import sys
+          print("[env]")
+          for key in ("TMPDIR", "TMP", "TEMP"):
+              print(f"{key} = {{value = {json.dumps(sys.argv[1])}, relative = false, force = true}}")
+          PYCONF
+            for report in "${reports[@]}"; do
+              if [ -e "$report" ] || [ -L "$report" ]; then
+                echo "::error::Stale shard report before partition $partition: $report"
+                exit 1
+              fi
+            done
+            (
+              set -euo pipefail
+              checkout_sha="$(git rev-parse HEAD)"
+              {
+                printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+                printf 'profile=ci\nshard=%s/2\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2 --config target/nextest/ci/packed-partition-%s.toml\n' "${partition}" "${partition}" "${partition}"
+                cargo nextest --version
+                rustc --version
+                cargo --version
+                printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
+                git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
+              } > target/nextest/ci/run-context.txt
+              # The partition lists let `verify` prove the shards are a disjoint cover.
+              # Listing reuses the build step's binaries; shard 1 also lists the whole
+              # workspace. The lists are taken before the run, from the same binaries
+              # the run executes: taken after it, shard 4 spent 4.3 to 6.1 minutes here
+              # on every run (4 to 16 seconds on the other shards), with the cause
+              # hidden by the discarded stderr (#12915).
+              cargo nextest list --workspace --profile ci --partition hash:${partition}/2 --color never --config "$partition_config" --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${partition}.txt
+              if [ "$partition" = 1 ]; then
+                cargo nextest list --workspace --profile ci --color never --config "$partition_config" --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+              fi
+              set +e
+              cargo nextest run --workspace --profile ci --partition hash:${partition}/2 --config "$partition_config"
+              test_exit=$?
+              set -e
+              printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+              printf '%s\n' "$test_exit" > target/nextest/ci/shard-${partition}.status
+              if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+                echo "::error::nextest shard ${partition} succeeded without a fresh JUnit report naming at least one test"
+                exit 1
+              fi
+              exit "$test_exit"
+            ) &
+            pid=$!
+            if wait "$pid"; then
+              :
+            else
+              finish=1
+            fi
+            for file in target/nextest/ci/{junit.xml,run-context.txt,shard-*.status,list-*.txt}; do
+              if [ -f "$file" ]; then cp -- "$file" "$stage/nextest/ci/"; fi
+            done
+            if [ -d target/nextest/ci/build-metrics ]; then
+              cp -R -- target/nextest/ci/build-metrics "$stage/nextest/ci/"
+            fi
+            for report in "${reports[@]}"; do
+              if [ -e "$report" ]; then
+                mkdir -p -- "$stage/$(dirname "${report#target/}")"
+                mv -- "$report" "$stage/${report#target/}"
+              fi
+            done
+            workspace_identity | cmp -s "$evidence/baseline" - || {
+              echo "::error::Workspace identity changed during partition $partition"
+              exit 1
+            }
+          done
+          exit "$finish"
+
+      - name: Upload partition 1 results
+        if: ${{ !cancelled() && steps.packed-partitions.outputs.path != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}-nextest-shard-1-${{ github.run_attempt }}
+          path: ${{ steps.packed-partitions.outputs.path }}/shard-1/
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Upload partition 2 results
+        if: ${{ !cancelled() && steps.packed-partitions.outputs.path != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}-nextest-shard-2-${{ github.run_attempt }}
+          path: ${{ steps.packed-partitions.outputs.path }}/shard-2/
+          if-no-files-found: error
           retention-days: 5
 
   rust-test-shards-verify:
@@ -263,14 +326,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # No toolchain or cache here: the verifier is the xtask binary shard 1 built
+      # No toolchain or cache here: the verifier is the xtask binary the packed job built
       # from this same checkout, so this job never compiles anything.
-      # A partial "re-run failed jobs" uploads fresh artifacts only for the
-      # re-run shards (#10605), so the download cannot be limited to the
-      # current attempt: every attempt's shard artifacts come down, and
-      # `verify-test-shards` reads each shard's latest attempt at or below the
-      # verifying one (its run-context check binds the choice to this run,
-      # checkout, and partition).
+      # Both packed artifacts must match this attempt. Re-run the whole packed
+      # producer and verifier together after a failure; a verifier-only rerun
+      # cannot adopt older partition output.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: ${{ inputs.artifact-name }}-nextest-shard-*
@@ -279,18 +339,17 @@ jobs:
       # Executable download is by a selected same-run artifact ID, in fresh
       # runner-temp storage. Validate canonical attempt, archive/member digests
       # and producer checkout identity before executing. No recursive scan of G.
-      # Earlier-attempt reuse is not proof of no later uploadless producer;
-      # authoritative job supersession remains the #14500 lifecycle obligation.
+      # Old partition receipts are not eligible in packed mode. The separately
+      # selected verifier binary is still bound to the exact checkout and run.
       # `verify-test-shards` accepts the shards only as conservation of the one
       # unpartitioned run: each shard's status, run context (repository, checkout,
       # run, attempt, profile, partition, exit) and JUnit report (complete, no
       # failures, testcases equal to its partition list) must be green for the
-      # shard's latest attempt at or below the verifying attempt, and the
+      # shard's current attempt, and the
       # partition lists must be a disjoint cover of the workspace list. It
       # writes the combined junit.xml and run-context.txt the unpartitioned step
       # retains, so consumers of `<artifact>-nextest-<attempt>` read the same
-      # files; a partial re-run is disclosed as `verified_attempts` in the
-      # combined context.
+      # files.
       - name: Check the shards are a complete, disjoint, green cover
         env:
           GH_TOKEN: ${{ github.token }}
@@ -308,7 +367,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --sha "$(git rev-parse HEAD)" \
             --run-id "$GITHUB_RUN_ID" \
-            --shards 2 \
+            --shards 2 --packed \
             --out target/nextest/ci
           cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
 

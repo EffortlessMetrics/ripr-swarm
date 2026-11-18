@@ -597,7 +597,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
         "windows-advisory-acl-evidence --log <path> --status <path> --expect <test-path> [--expect <test-path>...]",
         "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
-        "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features]",
+        "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features | --packed]",
         "windows-advisory-isolated-summary --dir <path>",
         "suggested-fixes",
         "precommit",
@@ -1011,7 +1011,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Admits the nightly Windows advisory lane's retained file-policy report only when the matching native policy facade ran successfully on the checkout head (#5044): the facade log must show exactly one ok row for policy_checker_facade_runs_current_repo_checks, the captured cargo status must be zero, the report must be present and Status: pass, the subject sidecar must match --head and the current host, and the shared packet-coverage oracle must accept the report rows. Missing, empty, malformed, stale, mismatched, or failed-producer controls exit non-zero while unrelated advisory test failures stay advisory. Reads only the supplied files and writes none.",
         ),
         command_entry(
-            "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features]",
+            "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features | --packed]",
             "report_only",
             "the --out directory",
             false,

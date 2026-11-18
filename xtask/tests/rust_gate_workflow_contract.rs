@@ -17,10 +17,9 @@ mod matcher_replay;
 /// The only condition the required test step may carry: the hosted caller passes
 /// `test-shards: 2` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
-const SHARDED_TEST_COMMAND: &str =
-    "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2";
-const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
-const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/2\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
+const SHARDED_TEST_COMMAND: &str = "cargo nextest run --workspace --profile ci --partition hash:${partition}/2 --config \"$partition_config\"";
+const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${partition}/2 --color never --config \"$partition_config\" --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${partition}.txt";
+const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/2\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2 --config target/nextest/ci/packed-partition-%s.toml\\n' \"${partition}\" \"${partition}\" \"${partition}\"";
 const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
@@ -978,8 +977,9 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     if count(shards, "continue-on-error") != 0 {
         findings.push("shards: no step may continue on error".to_owned());
     }
-    if !shards.contains("        shard: [1, 2]\n") {
-        findings.push("shards: the matrix must stay shards 1 to 2".to_owned());
+    if !shards.contains("          for partition in 1 2; do\n") {
+        findings
+            .push("shards: the packed producer must execute native partitions 1 and 2".to_owned());
     }
     // `verify` is what makes two partitions equal the one command: a missing,
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
@@ -990,12 +990,12 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         "            --provenance target/nextest/ci/verifier-artifact.json \\\n",
         "            -- verify-test-shards \\\n",
         "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: ${{ steps.xtask-artifact.outputs.path }}\n",
-        "        id: xtask-artifact\n        if: matrix.shard == 1\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
+        "        id: xtask-artifact\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
         "          strip --strip-debug -o \"$stripped\" target/debug/xtask\n",
         "          python3 tools/ci/shard-verifier-artifact.py retain \\\n            --binary \"$stripped\" --destination \"$staging/payload\" \\\n",
         "          printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"\n",
         "if-no-files-found: error\n          retention-days: 1\n",
-        "            --shards 2 \\\n",
+        "            --shards 2 --packed \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
         "name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}\n          path: |\n            target/nextest/ci/junit.xml\n            target/nextest/ci/run-context.txt\n",
@@ -1147,8 +1147,11 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             SHARDED_TEST_COMMAND,
             "cargo nextest run --workspace --profile ci",
         ),
-        ("fail-fast: false", "continue-on-error: true"),
-        ("shard: [1, 2]", "shard: [1]"),
+        (
+            "id: packed-partitions",
+            "id: packed-partitions\n        continue-on-error: true",
+        ),
+        ("for partition in 1 2; do", "for partition in 1; do"),
         ("-- verify-test-shards", "-- other-command"),
         (
             "python3 tools/ci/shard-verifier-artifact.py launch",
@@ -1183,7 +1186,10 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "-xtask-${{ github.run_attempt }}\n          path:",
             "-xtask-0\n          path:",
         ),
-        ("            --shards 2 \\\n", "            --shards 3 \\\n"),
+        (
+            "            --shards 2 --packed \\\n",
+            "            --shards 3 --packed \\\n",
+        ),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (
             "    if: ${{ !cancelled() }}\n    runs-on",
@@ -1268,7 +1274,7 @@ fn checks_with_prepared_xtask(workflow: &str) -> bool {
         "          build_phase workspace cargo test --no-run --locked --workspace",
         "        run: target/debug/xtask check-covered-by",
         "          strip --strip-debug -o \"$stripped\" target/debug/xtask",
-        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 2)",
+        "      - name: Execute two native partitions on the prepared workspace",
     ];
     let mut previous = None;
     for command in commands {
@@ -1364,7 +1370,7 @@ fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result
         "GNU time's exit field is not native status"
     );
     assert!(!script.contains("$RUNNER_TEMP"));
-    assert!(SHARDS.contains("            target/nextest/ci/build-metrics/\n"));
+    assert!(SHARDS.contains("cp -R -- target/nextest/ci/build-metrics \"$stage/nextest/ci/\""));
     assert!(SHARDS.contains("            target/nextest/ci/junit.xml\n"));
     assert!(SHARDS.contains("            target/nextest/ci/run-context.txt\n"));
     Ok(())
@@ -1436,9 +1442,7 @@ exit "$status"
         assert_eq!(script.matches("time_tool=/usr/bin/time").count(), 1);
         // Only the instrument's path and Actions' shard expression are supplied
         // by the fixture; the production Bash, Cargo argv and reporters are real.
-        let script = script
-            .replace("time_tool=/usr/bin/time", "time_tool=\"$TEST_TIMER\"")
-            .replace("${{ matrix.shard }}", "2");
+        let script = script.replace("time_tool=/usr/bin/time", "time_tool=\"$TEST_TIMER\"");
         for (name, first, second, mode, reporter_fails) in [
             ("success", 0, 0, "valid", false),
             ("first-fails", 17, 0, "valid", false),
@@ -1521,7 +1525,7 @@ exit "$status"
                 "checkout_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "run_id=123",
                 "run_attempt=4",
-                "shard=2/2",
+                "packing=same-runner-v1",
                 "sample_period_seconds=5",
             ] {
                 assert!(context.contains(field), "{name}: missing {field}");

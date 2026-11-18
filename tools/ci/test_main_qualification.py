@@ -79,6 +79,29 @@ def fixture(docs=False, extension=False):
             JOBS: dict(total_count=len(jobs), jobs=jobs), CHECKS: dict(total_count=1, check_runs=[check])}
 
 
+def packed_fixture():
+    facts = fixture()
+    inventory = facts[JOBS]
+    rows = inventory["jobs"]
+    first = next(row for row in rows if row["name"] == f"{PREFIX} / Rust tests shard 1 of 2")
+    second = next(row for row in rows if row["name"] == f"{PREFIX} / Rust tests shard 2 of 2")
+    rows.remove(second)
+    inventory["total_count"] -= 1
+    first["name"] = f"{PREFIX} / Rust tests packed workspace"
+    first["steps"] = [dict(name=name, status="completed", conclusion="success") for name in (
+        "Build the test binaries one memory-heavy crate at a time",
+        "Check covered-by with the prepared workspace binary",
+        "Upload the xtask binary",
+        "Execute two native partitions on the prepared workspace",
+        "Upload partition 1 results",
+        "Upload partition 2 results",
+    )]
+    verifier = next(row for row in rows if row["name"] == f"{PREFIX} / Rust test shards verify")
+    verifier["steps"] = [dict(name="Check the shards are a complete, disjoint, green cover",
+                              status="completed", conclusion="success")]
+    return facts
+
+
 class NativeAPI:
     def __init__(self, facts):
         self.facts = copy.deepcopy(facts)
@@ -404,6 +427,38 @@ class MainQualificationTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(0 if expected == "green" else 1, result.returncode, result.stderr)
                 self.assertEqual(f"verdict={expected}\n", output.read_text())
+
+
+
+class PackedObserverTests(unittest.TestCase):
+    def test_exact_transition_accepts_old_and_new(self):
+        for facts in (fixture(), packed_fixture()):
+            self.assertEqual(OBSERVER.observe(REPO, SHA, NativeAPI(facts))["verdict"], "green")
+
+    def test_packed_steps_are_ordered_unique_and_successful(self):
+        for edit in (
+            lambda steps: steps.pop(),
+            lambda steps: steps.append(copy.deepcopy(steps[-1])),
+            lambda steps: steps.reverse(),
+            lambda steps: steps[3].update(conclusion="skipped"),
+            lambda steps: steps[5].update(status="in_progress"),
+        ):
+            facts = packed_fixture()
+            found = job(facts, f"{PREFIX} / Rust tests packed workspace")
+            edit(found["steps"])
+            self.assertEqual(OBSERVER.observe(REPO, SHA, NativeAPI(facts))["verdict"], "unknown")
+
+    def test_packed_without_verifier_or_with_parallel_extra_refuses(self):
+        facts = packed_fixture()
+        job(facts, f"{PREFIX} / Rust test shards verify")["steps"] = []
+        self.assertEqual(OBSERVER.observe(REPO, SHA, NativeAPI(facts))["verdict"], "unknown")
+        facts = packed_fixture()
+        old = job(fixture(), f"{PREFIX} / Rust tests shard 2 of 2")
+        facts[JOBS]["jobs"].append(old)
+        facts[JOBS]["total_count"] += 1
+        result = OBSERVER.observe(REPO, SHA, NativeAPI(facts))
+        self.assertEqual((result["verdict"], result["reason"]),
+                         ("unknown", "mixed_packed_and_parallel_layout"))
 
 
 if __name__ == "__main__":

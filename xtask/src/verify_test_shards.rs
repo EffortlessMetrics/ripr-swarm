@@ -2,7 +2,7 @@
 //! test phase when `rust-test-shards.yml` runs it as `--partition hash:N/N`
 //! jobs.
 //!
-//! Four green shard jobs are not yet the one unpartitioned `cargo nextest run
+//! Green shard jobs are not yet the one unpartitioned `cargo nextest run
 //! --workspace --profile ci`. This command accepts the shards only when
 //! together they are conservation of that run:
 //!
@@ -24,6 +24,7 @@
 //! artifact to this repository, checkout, run, partition and its own attempt,
 //! so a shard accepted from an earlier attempt is still exactly this run's
 //! work on this checkout. The combined receipt discloses the attempts used.
+//! A packed producer instead must provide both artifacts in the current attempt.
 //!
 //! It then writes one combined `junit.xml` and `run-context.txt`, the files the
 //! unpartitioned step retained, so consumers of the `<artifact>-nextest-<attempt>`
@@ -50,6 +51,7 @@ struct Options {
     shards: u32,
     out: PathBuf,
     all_features: bool,
+    packed: bool,
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -90,10 +92,18 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
     let mut all_features = false;
+    let mut packed = false;
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
         if flag == "--all-features" {
             all_features = true;
+            continue;
+        }
+        if flag == "--packed" {
+            if packed {
+                return Err("verify-test-shards: duplicate --packed".to_string());
+            }
+            packed = true;
             continue;
         }
         let name = match flag.as_str() {
@@ -124,6 +134,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     if shards == 0 {
         return Err("verify-test-shards: --shards must be at least 1".to_string());
     }
+    if packed && (all_features || shards != 2) {
+        return Err(
+            "verify-test-shards: packed mode requires two default-feature partitions".to_string(),
+        );
+    }
     let attempt = take("attempt")?;
     if attempt.parse::<u32>().is_err() {
         return Err(format!(
@@ -140,6 +155,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         shards,
         out: PathBuf::from(take("out")?),
         all_features,
+        packed,
     })
 }
 
@@ -186,6 +202,11 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
                 continue;
             }
         };
+        if options.packed && shard_attempt.to_string() != options.attempt {
+            problems.push(format!(
+                "{tag}: packed producer needs current-attempt evidence"
+            ));
+        }
         if shard == 1 {
             first_dir = Some(dir.clone());
         }
@@ -612,6 +633,10 @@ fn check_context(
             "cargo nextest run --workspace --all-features --profile ci --partition hash:{shard}/{}",
             options.shards
         )
+    } else if options.packed {
+        format!(
+            "cargo nextest run --workspace --profile ci --partition hash:{shard}/2 --config target/nextest/ci/packed-partition-{shard}.toml"
+        )
     } else {
         format!(
             "cargo nextest run --workspace --profile ci --partition hash:{shard}/{}",
@@ -876,6 +901,7 @@ mod tests {
             shards,
             out: dir.join("out"),
             all_features: false,
+            packed: false,
         }
     }
 
@@ -1096,6 +1122,57 @@ mod tests {
 
     fn rewrite(root: &Path, shard: u32, name: &str, text: &str) {
         let _ = fs::write(shard_dir(root, shard).join(name), text);
+    }
+
+    #[test]
+    fn packed_requires_both_exact_commands_from_current_attempt() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-packed");
+        lay_out(&root, false)?;
+        let mut packed = options(&root, 2);
+        packed.packed = true;
+        for shard in 1..=2 {
+            rewrite(
+                &root,
+                shard,
+                "run-context.txt",
+                &context(shard, 2).replace(
+                    &format!("hash:{shard}/2"),
+                    &format!(
+                        "hash:{shard}/2 --config target/nextest/ci/packed-partition-{shard}.toml"
+                    ),
+                ),
+            );
+        }
+        let blobs = || Ok(vec![BLOB.to_string(); 4]);
+        let complete = verify(&packed, blobs());
+        let old_mode = verify(&options(&root, 2), blobs());
+        packed.attempt = "2".to_string();
+        let older = verify(&packed, blobs());
+        lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
+        fs::write(
+            root.join("in/art-nextest-shard-1-2/run-context.txt"),
+            context_attempt(1, 2, 2).replace(
+                "hash:1/2",
+                "hash:1/2 --config target/nextest/ci/packed-partition-1.toml",
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        let mixed = verify(&packed, blobs());
+        let _ = fs::remove_dir_all(&root);
+        assert!(complete.problems.is_empty(), "{:?}", complete.problems);
+        assert!(!old_mode.problems.is_empty());
+        assert!(mixed.problems.iter().any(
+            |issue| issue.starts_with("shard 2:") && issue.contains("current-attempt evidence")
+        ));
+        assert_eq!(
+            older
+                .problems
+                .iter()
+                .filter(|issue| issue.contains("current-attempt evidence"))
+                .count(),
+            2
+        );
+        Ok(())
     }
 
     /// Test Analytics (#12916) runs the same partitions with `--all-features`;
