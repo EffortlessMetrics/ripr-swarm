@@ -11,7 +11,9 @@
 //! changed line with control flow, and an owner that is itself patched.
 
 use super::approx_band::parse_expression;
-use super::related_tests::{is_python_identifier_char, owner_module_paths};
+use super::related_tests::{
+    is_python_identifier_char, module_name_identifies_owner_for, owner_module_paths,
+};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
@@ -37,7 +39,7 @@ pub(super) fn literal_patch_calls(
     {
         return None;
     }
-    let targets = literal_patch_targets(test, owner)?;
+    let targets = literal_patch_targets(test, owner, false)?;
     if targets.is_empty() {
         return None;
     }
@@ -64,10 +66,14 @@ pub(super) fn literal_patch_calls(
         // `PythonImport.source_module` is empty for `import time`, so the
         // owner file's module paths are the source-module fact this check can
         // use without new parser fields.
+        // The prefix must also identify the owner's module for this test: a
+        // test-local module of that name (#13706) or a rival project's module
+        // (#4566) is what `patch` would import instead (#14035).
         let prefix = segments[..segments.len() - 2].join(".");
         if !owner_module_paths(&owner.file)
             .iter()
             .any(|module| module.as_str() == prefix)
+            || !module_name_identifies_owner_for(owner, &prefix, &test.file)
         {
             return None;
         }
@@ -217,7 +223,11 @@ pub(super) fn without_calls(line: &str, spellings: &[String]) -> String {
 /// expressions can call only the owner and a few builtins. A test that could
 /// rebind names behind the patch (a `;`, a chained or attribute assignment, a
 /// helper call, a default argument evaluated at definition) is not admitted.
-fn literal_patch_targets(test: &PythonTest, owner: &PythonOwner) -> Option<Vec<String>> {
+pub(super) fn literal_patch_targets(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    allow_monkeypatch: bool,
+) -> Option<Vec<String>> {
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &test.body_text) else {
         return None;
     };
@@ -254,6 +264,11 @@ fn literal_patch_targets(test: &PythonTest, owner: &PythonOwner) -> Option<Vec<S
                     return None;
                 }
             }
+            Stmt::Expr(expr)
+                if allow_monkeypatch && !matches!(expr.value.as_ref(), Expr::Constant(_)) =>
+            {
+                targets.push(monkeypatch_target(&expr.value, function)?);
+            }
             other => {
                 if !plain_statement(other, owner) {
                     return None;
@@ -264,8 +279,73 @@ fn literal_patch_targets(test: &PythonTest, owner: &PythonOwner) -> Option<Vec<S
     Some(targets)
 }
 
+/// `monkeypatch.setattr("a.b.c", lambda ...: <literal>)` -> `a.b.c`, where
+/// `monkeypatch` is the test's own pytest-fixture parameter and the stand-in is
+/// a plain lambda returning a usable literal (the same literals `patch_target`
+/// admits for `return_value=`). Any other `monkeypatch` form returns None.
+fn monkeypatch_target(expr: &Expr, function: &ast::StmtFunctionDef) -> Option<String> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if expr_full_name(call.func.as_ref())?.as_str() != "monkeypatch.setattr"
+        || !function
+            .args
+            .args
+            .iter()
+            .any(|argument| argument.def.arg.as_str() == "monkeypatch")
+        || function.body.iter().any(rebinds_monkeypatch)
+        || !call.keywords.is_empty()
+    {
+        return None;
+    }
+    let [Expr::Constant(target), Expr::Lambda(lambda)] = call.args.as_slice() else {
+        return None;
+    };
+    let ast::Constant::Str(target) = &target.value else {
+        return None;
+    };
+    let parameters = &lambda.args;
+    if parameters
+        .posonlyargs
+        .iter()
+        .chain(&parameters.args)
+        .any(|argument| argument.default.is_some())
+        || !parameters.kwonlyargs.is_empty()
+    {
+        return None;
+    }
+    let Expr::Constant(value) = lambda.body.as_ref() else {
+        return None;
+    };
+    usable_stand_in(&value.value).then(|| target.clone())
+}
+
+/// A statement that rebinds the name `monkeypatch` in the test's own scope.
+fn rebinds_monkeypatch(statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Assign(assign) => assign
+            .targets
+            .iter()
+            .any(|target| matches!(target, Expr::Name(name) if name.id.as_str() == "monkeypatch")),
+        Stmt::With(with) => with.body.iter().any(rebinds_monkeypatch),
+        _ => false,
+    }
+}
+
+/// A zero stand-in makes `x + v` and `x - v` the same value, hiding an
+/// operator flip, and an empty string stand-in hides a reorder of the call
+/// among string parts; a non-empty string raises on `-` or shows in the
+/// asserted value, which the test sees.
+fn usable_stand_in(value: &ast::Constant) -> bool {
+    match value {
+        ast::Constant::Int(number) => number.to_string() != "0",
+        ast::Constant::Str(text) => !text.is_empty(),
+        _ => false,
+    }
+}
+
 /// `assert <expr>`, `name = <expr>`, `pass` or a docstring.
-fn plain_statement(statement: &Stmt, owner: &PythonOwner) -> bool {
+pub(super) fn plain_statement(statement: &Stmt, owner: &PythonOwner) -> bool {
     match statement {
         Stmt::Assert(assert) => {
             plain_expression(&assert.test, owner)
@@ -335,7 +415,7 @@ fn plain_expression(expr: &Expr, owner: &PythonOwner) -> bool {
     }
 }
 
-fn mentions_substitution(text: &str) -> bool {
+pub(super) fn mentions_substitution(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     [
         "patch", "mock", "setattr", "setitem", "delattr", "stub", "fake",
@@ -367,16 +447,7 @@ fn patch_target(expr: &Expr, test: &PythonTest) -> Option<String> {
     let Expr::Constant(value) = &keyword.value else {
         return None;
     };
-    // A zero stand-in makes `x + v` and `x - v` the same value, hiding an
-    // operator flip, and an empty string stand-in hides a reorder of the call
-    // among string parts; a non-empty string raises on `-` or shows in the
-    // asserted value, which the test sees.
-    let usable = match &value.value {
-        ast::Constant::Int(number) => number.to_string() != "0",
-        ast::Constant::Str(text) => !text.is_empty(),
-        _ => false,
-    };
-    usable.then(|| target.clone())
+    usable_stand_in(&value.value).then(|| target.clone())
 }
 
 /// `patch` imported from `unittest.mock`/`mock`, or `mock.patch` through an

@@ -31,7 +31,7 @@ mod read_limit_disclosure;
 mod router;
 mod rust;
 pub(in crate::analysis) use rust::oracles::apply_complete_proximity_macro_limit;
-pub(crate) use rust::producer_gap_names_seam_shape;
+pub(crate) use rust::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 #[cfg(feature = "lang-typescript")]
 mod typescript;
 #[cfg(feature = "lang-typescript")]
@@ -69,14 +69,14 @@ pub(crate) use router::{
 #[cfg(test)]
 pub(crate) use rust::with_forced_diff_limit_env;
 pub(crate) use rust::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
-    diff_changed_rust_line_limit, diff_limit_env, is_diff_scope_oversized,
-    is_generated_rust_file_with_patterns, mask_rust_char_literals, mask_rust_comments_and_strings,
-    positive_limit_from_env,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources,
+    RustAdapter, changed_let_binding, diff_changed_rust_line_limit, diff_limit_env,
+    is_diff_scope_oversized, is_generated_rust_file_with_patterns, mask_rust_char_literals,
+    mask_rust_comments_and_strings, positive_limit_from_env, select_partial_diff_scope,
 };
 pub use rust::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::TypeScriptAdapter;

@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0439](../specs/RIPR-SPEC-0439-manual-security-subject.md) | proposed | Explicit immutable manual subjects for cargo-deny and Dependency Review without new automatic subscriptions (#4987) |

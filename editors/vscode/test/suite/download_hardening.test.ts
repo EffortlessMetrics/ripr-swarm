@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
+import * as net from 'net';
 import { rootCertificates } from 'tls';
 import {
   ARCHIVE_MAX_BYTES,
@@ -15,7 +16,8 @@ import {
   listZipCentralDirectoryEntries,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
-  isAllowedHttpsRedirect
+  isAllowedHttpsRedirect,
+  requestErrorMessage
 } from '../../src/downloader';
 import {
   assertExtractedTreeContained,
@@ -23,12 +25,15 @@ import {
   ManagedServerInstallRequest,
   readManagedServerInstallation
 } from '../../src/managedServerInstall';
+import { classifyDownloadFailureKind } from '../../src/serverResolver';
 
 interface FixtureRoute {
   readonly status: number;
   readonly body?: Buffer;
   readonly location?: string;
   readonly contentLength?: string;
+  /** Send the head and body, then drop the connection instead of ending the response. */
+  readonly dropConnectionAfterBody?: boolean;
 }
 
 class HardeningFixtureServer {
@@ -64,6 +69,10 @@ class HardeningFixtureServer {
           headers['content-length'] = route.contentLength;
         }
         response.writeHead(route.status, headers);
+        if (route.dropConnectionAfterBody) {
+          response.write(route.body ?? Buffer.alloc(0), () => request.socket.destroy());
+          return;
+        }
         response.end(route.body ?? Buffer.alloc(0));
       });
       created.on('error', reject);
@@ -247,6 +256,73 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     }
   });
 
+  test('a refused connection names the URL and classifies as a network failure (#13638)', async () => {
+    // Bind then release a loopback port so nothing is listening on it.
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        probe.close(() => resolve(typeof address === 'object' && address ? address.port : 0));
+      });
+    });
+    assert.notStrictEqual(port, 0);
+    const url = `https://127.0.0.1:${port}/ripr-server-manifest-v2.0.0.json`;
+    const outcome = await fetchManifestBytesOverHttps(url, MANIFEST_MAX_BYTES);
+    assert.strictEqual(outcome.kind, 'transport_failure');
+    if (outcome.kind === 'transport_failure') {
+      assert.ok(outcome.message.startsWith(`Could not fetch ${url}: `), outcome.message);
+      assert.match(outcome.message, /ECONNREFUSED/);
+      assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network');
+    }
+  });
+
+  test('a connection dropped mid-body classifies as a network failure (#13638)', async function () {
+    const server = new HardeningFixtureServer();
+    await server.start(tls.key, tls.cert);
+    try {
+      // The head promises 100 bytes; the server sends 3 and drops the socket.
+      server.route('/dropped.tar.gz', {
+        status: 200,
+        body: Buffer.from('abc'),
+        contentLength: '100',
+        dropConnectionAfterBody: true
+      });
+      const url = `${server.base}/dropped.tar.gz`;
+      const outcome = await fetchManifestBytesOverHttps(url, ARCHIVE_MAX_BYTES);
+      assert.strictEqual(outcome.kind, 'transport_failure');
+      if (outcome.kind === 'transport_failure') {
+        assert.ok(outcome.message.includes(url), outcome.message);
+        assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network', outcome.message);
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('a request error with an empty message keeps its code and still classifies as network (#13638)', () => {
+    const url = 'https://sentinel.invalid/ripr-server-manifest-v2.0.0.json';
+    // Shape of the AggregateError Node raises when every address of a host refuses.
+    const aggregate = Object.assign(new Error(''), { code: 'ECONNREFUSED' });
+    const message = requestErrorMessage(url, aggregate);
+    assert.strictEqual(message, `Could not fetch ${url}: ECONNREFUSED`);
+    assert.strictEqual(classifyDownloadFailureKind(message), 'network');
+    // A code already in the message is not repeated.
+    assert.strictEqual(
+      requestErrorMessage(url, Object.assign(new Error('getaddrinfo ENOTFOUND sentinel.invalid'), { code: 'ENOTFOUND' })),
+      `Could not fetch ${url}: getaddrinfo ENOTFOUND sentinel.invalid`
+    );
+    // An error that already names the URL is left alone.
+    assert.strictEqual(requestErrorMessage(url, new Error(`Timed out while fetching ${url}.`)), `Timed out while fetching ${url}.`);
+    // No message and no code: still a sentence, and not guessed to be a network failure.
+    const bare = requestErrorMessage(url, new Error(''));
+    assert.strictEqual(bare, `Could not fetch ${url}: the request failed without a reported cause`);
+    assert.notStrictEqual(classifyDownloadFailureKind(bare), 'network');
+    // A non-network code is surfaced but stays out of the network kind.
+    const tls = requestErrorMessage(url, Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }));
+    assert.notStrictEqual(classifyDownloadFailureKind(tls), 'network');
+  });
+
   test('fetchManifestBytesOverHttps uses a larger cap for archives', async function () {
     assert.ok(ARCHIVE_MAX_BYTES > MANIFEST_MAX_BYTES);
     const server = new HardeningFixtureServer();
@@ -380,8 +456,68 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     const good = buildZipCentralDirectory([{ name: 'ripr' }]);
     assert.throws(() => listZipCentralDirectoryEntries(good.subarray(0, good.length - 10)), /not a readable zip|malformed/);
     const wrongCount = buildZipCentralDirectory([{ name: 'ripr' }]);
+    wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 8);
     wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 10);
     assert.throws(() => listZipCentralDirectoryEntries(wrongCount), /expected 2/);
+  });
+
+  test('listZipCentralDirectoryEntries refuses ZIP64, split counts and records that do not end the file', () => {
+    const eocdField = (archive: Buffer, offset: number): number => archive.length - 22 + offset;
+    const withU16 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt16LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    const withU32 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt32LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(10, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(16, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0)), /multi-disk/);
+    // A central directory that claims to run into the end record.
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 60)), /past the end-of-central-directory/);
+
+    const good = buildZipCentralDirectory([{ name: 'ripr' }]);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(Buffer.concat([good, Buffer.from([0])])),
+      /does not end the file/
+    );
+    // A genuine trailing comment is accepted when its length reaches EOF.
+    const comment = Buffer.from('release ripr');
+    const commented = Buffer.concat([good, comment]);
+    commented.writeUInt16LE(comment.length, good.length - 22 + 20);
+    assert.deepStrictEqual(listZipCentralDirectoryEntries(commented).map((entry) => entry.name), ['ripr']);
+    // A second directory smuggled inside the comment: the last record found is
+    // the smuggled one, and its own comment length does not reach EOF.
+    const hidden = buildZipCentralDirectory([{ name: 'hidden' }]);
+    const tail = Buffer.concat([hidden, Buffer.from('pad')]);
+    const smuggled = Buffer.concat([good, tail]);
+    smuggled.writeUInt16LE(tail.length, good.length - 22 + 20);
+    assert.throws(() => listZipCentralDirectoryEntries(smuggled), /does not end the file/);
+  });
+
+  test('assertSafeZipListing refuses stream, empty and Windows-special member names', () => {
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'console.txt', externalAttributes: 0 },
+      { name: 'com10', externalAttributes: 0 },
+      { name: 'bin/ripr.exe', externalAttributes: 0 },
+      { name: 'caf\u00e9/', externalAttributes: 0 },
+      { name: './ripr.exe', externalAttributes: 0 },
+      { name: './bin/', externalAttributes: 0 }
+    ]));
+    for (const name of ['', 'ripr.exe:stream', ':stream', 'D:evil.dll']) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe path/, JSON.stringify(name));
+    }
+    for (const name of [
+      '.. /evil', 'ripr.exe.', 'ripr.exe ', '.../x', 'CON', 'dir/aux.txt', 'lpt1', 'NUL.tar.gz',
+      'COM\u00b9', 'lpt\u00b2.log', 'com0', 'LPT0.txt', 'CONIN$', 'CONOUT$', 'con .txt'
+    ]) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe Windows path/, JSON.stringify(name));
+    }
   });
 
   test('inspectZipArchive accepts a safe fabricated zip and refuses a symlink member', async () => {

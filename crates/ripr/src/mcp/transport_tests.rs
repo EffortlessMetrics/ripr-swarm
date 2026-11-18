@@ -174,6 +174,7 @@ async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     let sending = transport.send(ServerJsonRpcMessage::error(
         ErrorData::internal_error("bounded refusal", None),
@@ -219,6 +220,7 @@ async fn oversized_frame_error_carries_explicit_null_id() -> Result<(), String> 
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
         return Err("oversized input must not yield a message".to_string());
@@ -261,6 +263,7 @@ async fn oversized_request_id_is_rejected_with_null_id_and_the_session_continues
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     let message = transport
         .receive()
@@ -318,6 +321,7 @@ async fn oversized_id_on_a_shape_invalid_request_is_not_echoed() -> Result<(), S
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
         return Err("shape-invalid requests must not be delivered".into());
@@ -353,6 +357,7 @@ async fn syntax_error_and_typed_shape_error_are_each_answered_then_next_request_
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     let message = transport
         .receive()
@@ -395,6 +400,7 @@ async fn error_frames_for(input: &[u8]) -> Result<Vec<Value>, String> {
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
         return Err(format!("{input:?} must not yield a message"));
@@ -568,6 +574,7 @@ async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String
             admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            idle_interrupt: None,
         };
         if transport.receive().await.is_some() {
             return Err("an invalid typed shape must not yield a message".into());
@@ -609,6 +616,7 @@ async fn typed_shape_error_with_an_oversized_id_uses_null_and_the_session_contin
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     let message = transport.receive().await.ok_or_else(|| {
         "the request after the oversized-id shape error was not delivered".to_string()
@@ -680,6 +688,7 @@ async fn consumed_protocol_error_survives_receive_cancellation_behind_busy_write
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     };
     {
         let mut receiving = Box::pin(transport.receive());
@@ -876,4 +885,159 @@ async fn oversized_response_fallback_preserves_sdk_unknown_id_omission() -> Resu
         ));
     }
     Ok(())
+}
+
+/// A live session over in-memory pipes whose input stays open, with a signal
+/// source the test drives directly.
+struct InterruptibleSession {
+    held_input: tokio::io::DuplexStream,
+    replies: tokio::io::Lines<tokio::io::BufReader<tokio::io::DuplexStream>>,
+    pending: Arc<std::sync::atomic::AtomicBool>,
+    wake: Arc<Notify>,
+    serving: tokio::task::JoinHandle<Result<(), String>>,
+}
+
+impl InterruptibleSession {
+    fn start(pending_at_start: bool) -> Self {
+        use tokio::io::AsyncBufReadExt;
+        let (held_input, reader) = tokio::io::duplex(4096);
+        let (writer, output) = tokio::io::duplex(64 * 1024);
+        let pending = Arc::new(std::sync::atomic::AtomicBool::new(pending_at_start));
+        let wake = Arc::new(Notify::new());
+        let serving = tokio::spawn(serve_interruptible(
+            reader,
+            writer,
+            WorkspaceStatus::resolve_with_root(None).0,
+            None,
+            Some((pending.clone(), wake.clone())),
+        ));
+        Self {
+            held_input,
+            replies: tokio::io::BufReader::new(output).lines(),
+            pending,
+            wake,
+            serving,
+        }
+    }
+
+    async fn initialize(&mut self) -> Result<(), String> {
+        self.held_input
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"control\",\"version\":\"1\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+            .await
+            .map_err(|error| error.to_string())?;
+        let reply = self.reply().await?;
+        if reply.get("id") != Some(&json!("init")) || reply.get("result").is_none() {
+            return Err(format!("initialize failed: {reply}"));
+        }
+        Ok(())
+    }
+
+    async fn ping(&mut self, id: &str) -> Result<(), String> {
+        let request = json!({"jsonrpc":"2.0","id":id,"method":"ping","params":{}});
+        self.held_input
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        let reply = self.reply().await?;
+        if reply != json!({"jsonrpc":"2.0","id":id,"result":{}}) {
+            return Err(format!("ping {id} was not answered: {reply}"));
+        }
+        Ok(())
+    }
+
+    async fn reply(&mut self) -> Result<Value, String> {
+        let line =
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.replies.next_line())
+                .await
+                .map_err(|_elapsed| "reply timed out".to_string())?
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "output closed before the reply".to_string())?;
+        serde_json::from_str(&line).map_err(|error| error.to_string())
+    }
+
+    /// The session must end cleanly while its input is still open, having
+    /// written nothing beyond the replies the test already consumed.
+    async fn require_clean_end(mut self) -> Result<(), String> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.serving)
+            .await
+            .map_err(|_elapsed| "pending signal did not end the open-input session".to_string())?
+            .map_err(|error| error.to_string())??;
+        // The stop request ends this session only: it is consumed, so a
+        // later session in the same process does not inherit it.
+        if self.pending.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("idle exit left the signal pending for a later session".into());
+        }
+        let trailing = self
+            .replies
+            .next_line()
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(line) = trailing {
+            return Err(format!("signal exit wrote an extra frame: {line}"));
+        }
+        drop(self.held_input);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn pending_signal_ends_an_idle_session_while_input_stays_open() -> Result<(), String> {
+    // #14102: with no request admitted nothing else consumes the signal, so
+    // the transport itself must stop instead of blocking on input forever.
+    let mut session = InterruptibleSession::start(false);
+    session.initialize().await?;
+    session.ping("before-signal").await?;
+    session
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    session.wake.notify_one();
+    session.require_clean_end().await
+}
+
+#[tokio::test]
+async fn signal_pending_before_initialize_ends_the_handshake_cleanly() -> Result<(), String> {
+    InterruptibleSession::start(true).require_clean_end().await
+}
+
+#[tokio::test]
+async fn consumed_signal_wake_keeps_the_session_serving() -> Result<(), String> {
+    // A refresh attempt that consumed the signal cleared the flag; the wake it
+    // left behind must not end the session (the #9895 same-session recovery).
+    let mut session = InterruptibleSession::start(false);
+    session.initialize().await?;
+    session.wake.notify_one();
+    session.ping("after-consumed-signal").await?;
+    session.wake.notify_one();
+    session.ping("after-second-consumed-signal").await?;
+    // Input EOF remains the ordinary clean exit.
+    let InterruptibleSession {
+        held_input,
+        serving,
+        ..
+    } = session;
+    drop(held_input);
+    tokio::time::timeout(std::time::Duration::from_secs(5), serving)
+        .await
+        .map_err(|_elapsed| "EOF did not end the session".to_string())?
+        .map_err(|error| error.to_string())?
+}
+
+#[tokio::test]
+async fn signal_raised_during_a_request_ends_the_session_after_its_reply() -> Result<(), String> {
+    // The flag is raised with no wake while the transport is parked on input,
+    // as when the signal lands just as a non-refresh request arrives: that
+    // request is still answered, and the next idle point observes the
+    // still-pending signal without needing a wake.
+    let mut session = InterruptibleSession::start(false);
+    session.initialize().await?;
+    session.ping("settled").await?;
+    // Let the session park on its next read before the flag changes.
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    session
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    session.ping("in-flight").await?;
+    session.require_clean_end().await
 }

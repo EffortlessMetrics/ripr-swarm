@@ -5,7 +5,8 @@
 //! uncached answer for every shape and never outlive the run.
 
 use super::related_tests::{
-    ALIAS_RESOLUTIONS_COMPUTED, DirectoryModuleCacheScope, normalized_relative_import_module,
+    ALIAS_RESOLUTIONS_COMPUTED, DirectoryModuleCacheScope, IMPORT_MODULES_COMPUTED,
+    normalized_relative_import_module,
 };
 use super::tsconfig::{TsAliasMap, load_alias_map};
 use super::workspace_packages::WorkspacePackages;
@@ -171,5 +172,48 @@ fn two_alias_maps_in_one_run_never_answer_for_each_other() -> Result<(), String>
     assert_eq!(a[2], None);
     assert_eq!(b[2].as_deref(), Some("src/missing"));
     assert_eq!(a, a_again);
+    Ok(())
+}
+
+#[test]
+fn a_run_resolves_each_importer_and_specifier_once() -> Result<(), String> {
+    // #14364: the owners x tests x imports walk asks the same (importer,
+    // specifier) once per owner; inside a run every specifier, relative ones
+    // included, is resolved once per importer.
+    let (root, map) = fixture("import-module-memo")?;
+    let modules = || IMPORT_MODULES_COMPUTED.with(std::cell::Cell::get);
+    let uncached = resolve_all(&root, &map);
+    let before = modules();
+    let other_importer = {
+        let _scope = DirectoryModuleCacheScope::open();
+        for _ in 0..50 {
+            assert_eq!(resolve_all(&root, &map), uncached);
+        }
+        // Another importer is another key: `./relative` resolves against
+        // its own directory, not a cached answer for `tests/x.test.ts`.
+        normalized_relative_import_module(
+            Path::new("src/deep/y.test.ts"),
+            "./relative",
+            Some(&map),
+            Some(&root),
+        )
+    };
+    let in_scope = modules() - before;
+    let before = modules();
+    resolve_all(&root, &map);
+    let outside = modules() - before;
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        in_scope,
+        SPECIFIERS.len() + 1,
+        "once per (importer, specifier)"
+    );
+    assert_eq!(
+        outside,
+        SPECIFIERS.len(),
+        "outside a run every call resolves afresh"
+    );
+    assert_eq!(uncached[7].as_deref(), Some("tests/relative"));
+    assert_eq!(other_importer.as_deref(), Some("src/deep/relative"));
     Ok(())
 }
