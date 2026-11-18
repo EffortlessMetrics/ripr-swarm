@@ -3901,7 +3901,11 @@ the owner. The summary names the wrapper ("Every related test calls
 versions. It stays `yes` under `assert_eq!(cash_total(103), 105)`. A wrapper
 that changes its argument (`round_to_nickel(cents + 1)`), drops one
 (`fn w(a, b) { owner(b) }`), or is itself called by another function keeps
-today's reading. Like the rest of this section, this only downgrades.
+today's reading. So does a wrapper whose name or the owner's name is declared
+by another function anywhere in the index, a body that is not a single
+expression (`return owner(c);`, a block, a statement), a body holding a comment
+or a literal, a generic signature, or a receiver. Like the rest of this
+section, this only downgrades.
 
 ### A partly changed struct literal confirms only through its changed fields (#10916)
 

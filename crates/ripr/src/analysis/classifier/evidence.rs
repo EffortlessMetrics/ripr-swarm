@@ -3326,13 +3326,19 @@ fn plain_parameter_names(function: &str) -> Option<Vec<String>> {
 /// comment.
 fn whole_body_text(function: &str) -> Option<String> {
     let masked = mask_comments_and_strings(function);
-    if masked.len() != function.len() || masked.contains("//") || masked.contains("/*") {
+    if masked.len() != function.len() {
         return None;
     }
     let open = masked.find('{')?;
     let close = masked.rfind('}')?;
-    let inner = function.get(open + 1..close)?.trim();
-    (!inner.is_empty() && !inner.contains([';', '{', '}', '"', '\''])).then(|| inner.to_string())
+    let inner = function.get(open + 1..close)?;
+    // Masking blanks comments and literals in place, so any difference between
+    // the masked and the written body is a comment or a literal: refuse both.
+    if masked.get(open + 1..close)? != inner {
+        return None;
+    }
+    let inner = inner.trim();
+    (!inner.is_empty() && !inner.contains([';', '{', '}'])).then(|| inner.to_string())
 }
 
 /// True when `name` occurs as a whole identifier in the code of `text`,
@@ -3581,6 +3587,85 @@ mod tests {
         RelationReason, SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
+
+    /// #15034: only a sole, uniquely named, unheld free wrapper whose body
+    /// forwards its own parameters in order is read as the owner.
+    #[test]
+    fn only_a_sole_pure_forwarding_wrapper_stands_in_for_the_owner() {
+        let function = |name: &str, file: &str, body: &str| FunctionFact {
+            id: SymbolId(format!("{file}::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            start_line: 1,
+            end_line: body.lines().count(),
+            body: body.into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: crate::analysis::facts::FunctionItemFact {
+                container: crate::analysis::facts::FunctionContainer::Free,
+                has_self_param: false,
+                has_body: true,
+            },
+            impl_context: Default::default(),
+        };
+        let owner = function(
+            "round",
+            "src/lib.rs",
+            "fn round(cents: u32) -> u32 {\n    (cents + 2) / 5 * 5\n}",
+        );
+        let wrapper = |body: &str| function("total", "src/lib.rs", body);
+        let pure = "pub fn total(cents: u32) -> u32 {\n    round(cents)\n}";
+        let read = |functions: Vec<FunctionFact>| {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            super::sole_forwarding_wrapper(&index, &owner, &[]).map(|found| found.name.clone())
+        };
+        assert_eq!(
+            read(vec![owner.clone(), wrapper(pure)]),
+            Some("total".to_string())
+        );
+        for body in [
+            "pub fn total(cents: u32) -> u32 {\n    round(cents + 1)\n}",
+            "pub fn total(a: u32, b: u32) -> u32 {\n    round(b)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    return round(cents);\n}",
+            "pub fn total<T: Into<u32>>(cents: T) -> u32 {\n    round(cents.into())\n}",
+        ] {
+            assert_eq!(read(vec![owner.clone(), wrapper(body)]), None, "{body}");
+        }
+        // A second holder of the owner, a holder of the wrapper, or a second
+        // function named like the wrapper declines.
+        let second_owner_holder = function(
+            "other",
+            "src/lib.rs",
+            "pub fn other(c: u32) -> u32 {\n    round(c * 2)\n}",
+        );
+        let wrapper_holder = function(
+            "helper",
+            "tests/it.rs",
+            "fn helper() -> u32 {\n    total(103)\n}",
+        );
+        let twin = function(
+            "total",
+            "src/other.rs",
+            "pub fn total(cents: u32) -> u32 {\n    cents\n}",
+        );
+        for extra in [second_owner_holder, wrapper_holder, twin] {
+            assert_eq!(
+                read(vec![owner.clone(), wrapper(pure), extra.clone()]),
+                None,
+                "{}",
+                extra.name
+            );
+        }
+    }
 
     /// #15034: the forwarding-wrapper reader takes only plain identifier
     /// parameters and a body that is one expression.
