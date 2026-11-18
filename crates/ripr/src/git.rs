@@ -1064,6 +1064,14 @@ fn collect_output_with_optional_deadline_and_limit(
     max_output_bytes: usize,
     describe: &str,
 ) -> Result<Output, CoreError> {
+    // #15148: a call made after the analysis was cancelled spawns nothing.
+    // The poll loop observes cancellation only while the child runs, so a
+    // child that exits at once (a call the filter-pin probe refused, whose
+    // listing was itself cut short by the cancellation) would return its
+    // usage-error exit, and a cancelled run would report a repository error.
+    if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+        return Err(cancelled.into());
+    }
     if timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(CoreError::git_invocation_timeout(describe, 0, false));
     }
@@ -1692,6 +1700,14 @@ fn collect_output_with_deadline(
     timeout: Option<Duration>,
     describe: &str,
 ) -> Result<Output, CoreError> {
+    // #15148: a call made after the analysis was cancelled spawns nothing.
+    // The poll loop observes cancellation only while the child runs, so a
+    // child that exits at once (a call the filter-pin probe refused, whose
+    // listing was itself cut short by the cancellation) would return its
+    // usage-error exit, and a cancelled run would report a repository error.
+    if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+        return Err(cancelled.into());
+    }
     if let Some(deadline) = timeout
         && deadline.is_zero()
     {
@@ -2951,6 +2967,53 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             return Err(format!(
                 "fastest poll of a fast-exiting child took {best:?}; bound {bound:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #15148: under a cancelled analysis, neither git collector spawns the
+    /// call. Before the pre-spawn check, the filter listing's cancellation
+    /// made the probe refuse, the refused call exited at once with a usage
+    /// error, and that exit could win the race with the poll loop's
+    /// cancellation check, so a cancelled refresh reported a repository error.
+    #[test]
+    fn a_cancelled_analysis_spawns_no_git_call_and_reports_the_cancellation() -> Result<(), String>
+    {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let token = AnalysisCancellationToken::new();
+        if !token.cancel(AnalysisAbortKind::Superseded) {
+            return Err("fresh token should accept cancellation".to_string());
+        }
+        let args = ["rev-parse", "--git-dir"];
+        let spawns_before = test_process_spawns();
+        let results = with_token(&token, || {
+            [
+                run_git_output_with_deadline(&root, &args, Some(Duration::from_secs(30))),
+                run_git_output_with_optional_deadline_and_limit(&root, &args, None, 4096),
+            ]
+        });
+        for result in results {
+            match result {
+                Err(error)
+                    if error.is_analysis_cancelled()
+                        && error.to_string() == "analysis cancelled: Superseded" => {}
+                Err(error) => return Err(format!("expected the cancellation, got: {error}")),
+                Ok(output) => {
+                    return Err(format!(
+                        "a cancelled analysis ran git (exit {:?})",
+                        output.status.code()
+                    ));
+                }
+            }
+        }
+        if test_process_spawns() != spawns_before {
+            return Err("a cancelled analysis must not spawn the git call".to_string());
+        }
+        // Control: the same calls run once the analysis is live again.
+        let output = run_git_output_with_deadline(&root, &args, Some(Duration::from_secs(30)))
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err("a live analysis must run the git call".to_string());
         }
         Ok(())
     }
