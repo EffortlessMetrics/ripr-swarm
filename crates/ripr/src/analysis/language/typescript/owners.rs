@@ -700,6 +700,21 @@ fn mark_commonjs_default_binding(
         }
         return;
     };
+    if let Some(class_name) = target
+        && commonjs_default_class(program, class_name, &code, &division_code)
+    {
+        // `module.exports = Cart;` of one declared class: `require()` hands
+        // back the class itself, so its members carry the default-class
+        // marker together with the CommonJS one that licenses a `require()`
+        // binding (an ES default class is `require(...).default` instead).
+        for owner in owners.iter_mut() {
+            if owner.class_name.as_deref() == Some(class_name) {
+                owner.class_default_export = true;
+                owner.commonjs_default_export = true;
+            }
+        }
+        return;
+    }
     let Some(name) = declared else {
         return;
     };
@@ -726,6 +741,54 @@ fn mark_commonjs_default_binding(
             owner.commonjs_default_export = true;
         }
     }
+}
+
+/// `true` when `name` is one top-level `class name {}` declaration that
+/// `module.exports = name;` hands out as the module's whole export.
+///
+/// Called only after the file-level `module.exports` gate held. Fail-closed
+/// identity checks on top of it: exactly one file-level declaration binds the
+/// name and it is a non-`declare` class; neither mask shows a write to the
+/// name (a class binding is assignable); and the file adds no named export
+/// (`module.exports.Cart = Cart`, `exports.Cart = ...`), because the marker
+/// makes a named `require` of the class stop relating. A class exported both
+/// ways keeps its named reading.
+fn commonjs_default_class(
+    program: &oxc_ast::ast::Program<'_>,
+    name: &str,
+    code: &str,
+    division_code: &str,
+) -> bool {
+    let classes = program
+        .body
+        .iter()
+        .filter(|stmt| {
+            matches!(stmt, Statement::ClassDeclaration(class)
+                if !class.declare && class.id.as_ref().is_some_and(|id| id.name == name))
+        })
+        .count();
+    if classes != 1 {
+        return false;
+    }
+    let mut declared = Vec::new();
+    super::tests_extract::collect_registration_scope_names(&program.body, &mut declared, false);
+    if declared
+        .iter()
+        .filter(|other| other.as_str() == name)
+        .count()
+        != 1
+    {
+        return false;
+    }
+    if identifier_writes(&program.body).contains(name) {
+        return false;
+    }
+    [code, division_code].iter().all(|text| {
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        !compact.contains("exports.")
+            && !compact.contains("exports[")
+            && !super::tests_extract::identifier_written_strictly(text, name)
+    })
 }
 
 /// The module-object checks of [`commonjs_default_gate`] on text where only

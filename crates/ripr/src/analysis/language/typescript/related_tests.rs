@@ -1398,6 +1398,7 @@ impl ReExportIndex {
                 && !import.namespace
                 && (import.imported.as_deref() == owner.class_name.as_deref()
                     || (owner.class_default_export
+                        && !owner.commonjs_default_export
                         && import.imported.as_deref() == Some("default")))
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         })
@@ -2670,10 +2671,20 @@ fn class_name_bound_to_other_import(
         if import.local != class_name {
             return false;
         }
-        let is_owner_import = !import.namespace
-            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-            && ((!owner.class_default_export && import.imported.as_deref() == Some(class_name))
-                || (owner.class_default_export && import.imported.as_deref() == Some("default")));
+        // A CommonJS whole-export class is bound by the `require()` record
+        // alone (a default-named namespace binding); an ES class by a named
+        // or default import.
+        let is_owner_import =
+            import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && if owner.class_default_export && owner.commonjs_default_export {
+                    import.namespace && import.imported.as_deref() == Some("default")
+                } else {
+                    !import.namespace
+                        && ((!owner.class_default_export
+                            && import.imported.as_deref() == Some(class_name))
+                            || (owner.class_default_export
+                                && import.imported.as_deref() == Some("default")))
+                };
         !is_owner_import
     })
 }
@@ -2765,8 +2776,10 @@ pub(crate) fn receiver_owner_call_relation(
         // resolved through the test's own default import of the owner module
         // and only when the owner's class IS that module's default export
         // (`class_default_export`); a locally re-declared alias constructs
-        // the shadow, not the owner.
-        if owner.class_default_export {
+        // the shadow, not the owner. A CommonJS whole-export class is not an
+        // ES default: its `require()` binding is named by
+        // `constructor_names_for_method_owner` above.
+        if owner.class_default_export && !owner.commonjs_default_export {
             for import in &test.imports_in_file {
                 if !import.namespace
                     && import.imported.as_deref() == Some("default")
@@ -3630,14 +3643,35 @@ pub(crate) fn constructor_names_for_method_owner(
             continue;
         }
         if import.namespace {
+            if owner.class_default_export
+                && owner.commonjs_default_export
+                && import.imported.as_deref() == Some("default")
+            {
+                // `const Cart = require('./cart')` of a module whose whole
+                // export is the owner's class (`module.exports = Cart;`):
+                // the binding is the class, under any local name. A binding
+                // the file rewrites may hold something else.
+                if !test.written_locals_in_file.contains(&import.local) {
+                    push_unique_string(&mut names, import.local.clone());
+                    push_unique_string(&mut imported_class_locals, import.local.clone());
+                }
+                continue;
+            }
             // `import * as shop from './cart'` + `new shop.Cart()`. A
             // default-exported class is `shop.default`, never `shop.Cart`.
             if !owner.class_default_export {
                 push_unique_string(&mut names, format!("{}.{class_name}", import.local));
             }
         } else if (!owner.class_default_export && import.imported.as_deref() == Some(class_name))
-            || (owner.class_default_export && import.imported.as_deref() == Some("default"))
+            || (owner.class_default_export
+                && !owner.commonjs_default_export
+                && import.imported.as_deref() == Some("default"))
         {
+            // A CommonJS whole-export class (`module.exports = Cart;`) is
+            // not credited through a default-named binding: `const {
+            // default: Cart } = require(...)` reads a property the class
+            // does not have, and the record cannot be told apart from an ES
+            // `import Cart from` (the function rule 19 refuses both too).
             // A default-exported class is reachable only through the default
             // import: a named import spelled like the class names a
             // different export (`export { Other as Url }`), never this
@@ -5136,6 +5170,7 @@ pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeSc
     import.namespace
         && import.imported.as_deref() == Some("default")
         && owner.commonjs_default_export
+        && owner.class_name.is_none()
 }
 
 fn import_references_owner_call(
