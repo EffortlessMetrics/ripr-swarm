@@ -156,7 +156,17 @@ impl Workspace {
         )?;
         write(
             "a/Cargo.toml",
-            &package("a", "\n[lib]\ntest = false\ndoctest = false\n"),
+            // #14962: with `[lib] test = false` only `b`'s mount of
+            // `shared.rs` runs its tests. `PlainStd` has no `b`, so there
+            // `cargo test` would run 0 tests; it leaves `test` on instead.
+            &package(
+                "a",
+                if placement == Placement::PlainStd {
+                    "\n[lib]\ndoctest = false\n"
+                } else {
+                    "\n[lib]\ntest = false\ndoctest = false\n"
+                },
+            ),
         )?;
         write("a/src/lib.rs", "mod shared;\n")?;
         let before = shared_source(shape, test_statement, "4");

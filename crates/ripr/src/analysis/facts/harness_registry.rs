@@ -137,8 +137,13 @@ pub(super) fn apply_registrations(
             continue;
         };
         // A file no Cargo target compiles never runs its tests, whatever
-        // the registration says (#8999).
-        if facts.role_provenance.outside_module_tree {
+        // the registration says (#8999); nor does one whose every target
+        // `cargo test` skips (#14962).
+        if facts.role_provenance.outside_module_tree
+            || index
+                .cargo_test_skipped_files
+                .contains(&registration.target)
+        {
             continue;
         }
         let source = facts.source.clone();
