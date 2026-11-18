@@ -1459,6 +1459,11 @@ fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'stati
         // #8600: the producer named the typed call-fact budget limit; the
         // substring classifier below must not rename it from its prose.
         StaticLimitKind::RustCallFactBudget.as_str()
+    } else if reason.contains(StaticLimitKind::ActivationBoundaryInputUnresolved.as_str()) {
+        // #14951: the activate-stage producer names the typed boundary-input
+        // limit; its sub-case (iterator / closure / local or computed) stays
+        // in the repair route, not in this category.
+        StaticLimitKind::ActivationBoundaryInputUnresolved.as_str()
     } else if reason.contains("constructor_field_owner_ambiguous") {
         "constructor_field_owner_ambiguous"
     } else if reason.contains("field assignment value is unresolved") {
@@ -1488,13 +1493,6 @@ fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'stati
         "activation_owner_call_absent"
     } else if reason.contains("owner call") {
         "activation_owner_call_unresolved"
-    } else if reason.contains("boundary activation operand")
-        && (reason.contains("local")
-            || reason.contains("iterator")
-            || reason.contains("closure")
-            || reason.contains("computed"))
-    {
-        "activation_boundary_input_unresolved"
     } else if reason.contains("no concrete activation values observed")
         || reason.contains("no literal activation values")
     {
@@ -3593,7 +3591,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3632,7 +3630,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3682,7 +3680,7 @@ mod tests {
         );
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3709,7 +3707,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -4369,7 +4367,7 @@ mod tests {
             (
                 "activate",
                 "unknown",
-                "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+                "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
                 "activation_boundary_input_unresolved",
             ),
             (

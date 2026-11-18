@@ -371,6 +371,24 @@ mod parser_state {
         rest.is_empty() || rest.starts_with(' ')
     }
 
+    /// A line that ends the patch text of one `git format-patch` message: the
+    /// mail signature separator (`-- `, RFC 3676) or the mbox separator git
+    /// writes before the next message (`From <object id> <date>`). Only
+    /// consulted once a hunk's declared counts are complete, where neither
+    /// could be a body line the header still owes.
+    fn is_mail_patch_boundary(raw: &str) -> bool {
+        if raw == "-- " {
+            return true;
+        }
+        raw.strip_prefix("From ")
+            .and_then(|rest| rest.split_once(' '))
+            .is_some_and(|(object_id, date)| {
+                matches!(object_id.len(), 40 | 64)
+                    && object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && !date.is_empty()
+            })
+    }
+
     #[derive(Default)]
     pub(super) struct ParserState {
         /// Ordinary added/removed `ChangedLine` payloads recorded so far
@@ -1086,6 +1104,23 @@ mod parser_state {
             if !self.in_hunk {
                 self.saw_old_path_marker = false;
                 return;
+            }
+            // A hunk whose declared counts are delivered owes no more body
+            // (#14072). An empty line here is padding after the patch, not a
+            // context line with its space stripped, and git's mail separators
+            // end the patch text: `git format-patch` closes each message with
+            // a `-- ` signature and opens the next with an mbox `From ` line.
+            // Charging those as body refused a valid diff as malformed and
+            // recorded mail text as changed source. Any other `+`/`-`/context
+            // line past the counts is still excess and stays malformed.
+            if self.remaining_hunk_lines == Some((0, 0)) {
+                if raw.is_empty() {
+                    return;
+                }
+                if is_mail_patch_boundary(raw) {
+                    self.close_hunk();
+                    return;
+                }
             }
             self.account_hunk_line(raw);
             if raw.starts_with("\\ No newline at end of file") {
