@@ -4713,6 +4713,47 @@ fn loop_boundary_edit_that_also_changes_the_rest_of_the_condition_keeps_prior_cl
 }
 
 #[test]
+fn loop_boundary_condition_with_a_further_conjunct_keeps_prior_class() -> Result<(), String> {
+    // #15082 review: `xs.pop()` runs on different iterations once `>` reads
+    // `>=`, so `largest([5, 5, 6, 0])` returns 5 before the edit and 6 after.
+    // An integer pin distinguishes the two sides; the selector is not closed.
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best and xs.pop():\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([5, 5, 6, 0]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best and xs.pop():",
+        "        if x >= best and xs.pop():",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_unspaced_comparison_is_still_the_closed_selector() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x>=best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x>best:",
+        "        if x>=best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_identity_oracle_remains_unchanged() -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
     let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
@@ -5047,6 +5088,33 @@ fn indirect_loop_boundary_direct_result_alias_is_unknown() -> Result<(), String>
         );
         assert_eq!(finding.ripr.infect.state, StageState::Unknown);
         assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_does_not_borrow_an_earlier_tests_call() -> Result<(), String> {
+    // #15082 review: both tests name their local `result`. The first test's
+    // integer call must not stand in for the second test's call on objects
+    // whose ordering and integer equality differ, which does tell `>` from
+    // `>=`.
+    let source = "class Item:\n    def __init__(self, key, tag):\n        self.key = key\n        self.tag = tag\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n    def __eq__(self, other):\n        return self.tag == other\n\n\ndef largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    let numeric = "def test_numbers():\n    result = largest([1, 5, 3])\n    assert result == 5\n";
+    let objects = "def test_items():\n    result = largest([Item(5, 1), Item(5, 2)])\n    assert result == 1\n";
+    for (first, second) in [(numeric, objects), (objects, numeric)] {
+        let tests = format!("from src.subject import Item, largest\n\n{first}\n{second}");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            16,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
     }
     Ok(())
 }

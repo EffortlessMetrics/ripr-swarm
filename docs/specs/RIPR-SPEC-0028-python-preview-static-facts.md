@@ -2111,6 +2111,10 @@ conjuncts qualifies only when every statement and conjunct is such a direct
 pin. A test with exactly one direct owner-call assignment followed by one
 integer equality assertion on that local also qualifies when test facts show
 no implicit setup, substitution, opaque module or edited-test uncertainty.
-Qualified calls must resolve to the owner through test imports. The finding carries an infection stop
+Qualified calls must resolve to the owner through test imports. The changed
+condition must be the comparison alone: a further `and` or `or` operand can run
+on different iterations after the edit, so the selector is not closed. The
+result-alias form reads the test's own assignment; an earlier test's call
+assigned to a local of the same name does not stand in for it. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their
 existing behavior.

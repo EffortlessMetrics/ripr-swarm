@@ -2369,6 +2369,17 @@ pub(super) fn unresolved_loop_list_boundary(
     if format!("{new_prefix}{old_op}{new_suffix}").trim() != old.trim() {
         return false;
     }
+    // The condition must be the comparison alone. A further conjunct or
+    // disjunct (`if x >= best and xs.pop():`) can run on different iterations
+    // after the edit and change the selected value, so an integer pin can
+    // tell the two sides apart there.
+    let Some(new_op) = new.get(*ns..ns + nl) else {
+        return false;
+    };
+    let unspaced = |text: &str| text.split_whitespace().collect::<String>();
+    if unspaced(&new) != unspaced(&format!("{left}{new_op}{right}")) {
+        return false;
+    }
     // Only the complete accumulator-selection owner is understood here. An
     // arbitrary loop can visibly return or mutate on the equality branch.
     let Some(source) = source else { return false };
@@ -2628,7 +2639,7 @@ fn is_indirect_integer_sequence_assertion(
     candidate: &PythonRelatedCandidate<'_>,
     assertion: &super::PythonAssertion,
 ) -> bool {
-    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
     let rebinding = &candidate.test.constant_rebinding;
     if row.line >= assertion.line
         || candidate.test.assertions.len() != 1
@@ -2686,6 +2697,15 @@ fn is_indirect_integer_sequence_assertion(
         return false;
     };
     if row_target.trim() != target.id.as_str() {
+        return false;
+    }
+    // The row must be this test's own assignment. Rows come from every
+    // related test of the file, and an earlier test's `result = owner([1, 5])`
+    // must not stand in for this test's call on other arguments.
+    let own_call = candidate.test.body_text.get(
+        assignment.value.range().start().to_usize()..assignment.value.range().end().to_usize(),
+    );
+    if own_call.is_none_or(|own| own.trim() != call.trim()) {
         return false;
     }
     let mut direct = row.clone();
