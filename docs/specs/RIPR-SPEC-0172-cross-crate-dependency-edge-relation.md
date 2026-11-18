@@ -178,6 +178,15 @@ share one rule in `analysis/classify/call_identity.rs`:
   other globs. A `use`, item or glob inside a nested block of the test
   binds only in that block, so every call of that name in the test stays
   unsettled;
+- a `const`, a `static` or a tuple `struct` of the name in one of those
+  scopes is what a bare call runs, so the call settles away from every
+  definition (#14087). This holds for an owner with no same-named rival
+  too: a test whose every call of a free owner's name is such a bare call is
+  not related to the owner through that call. A qualified call beside it, the
+  owner passed as a value, or a formatting or method entry of a helper chain
+  keeps the test's relation. The initializer is not read, so a `const` that
+  aliases the owner itself is withheld as well; an item inside a nested
+  block stays unsettled as above;
 - a test whose every call of the name settles on another definition is not
   related to the owner through any signal (direct call, file, module or
   name affinity), so it supplies neither reach nor confirming tokens;

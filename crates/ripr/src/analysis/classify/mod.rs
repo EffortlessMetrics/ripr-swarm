@@ -104,7 +104,8 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
     bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
-    test_calls_only_through_local_rival_module, text_calls_owner,
+    test_calls_only_a_local_value_item, test_calls_only_through_local_rival_module,
+    text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
