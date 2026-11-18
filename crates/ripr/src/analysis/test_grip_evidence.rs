@@ -5885,12 +5885,13 @@ fn owner_value_is_masked(
     let Some(owner) = owner.filter(|_| boolean_tail) else {
         return false;
     };
-    let files = index.files();
-    let source = files
-        .get(&test.file)
-        .map(|facts| facts.data().source.as_ref());
-    crate::analysis::classify::owner_field_value_flow(test, &oracle.text, &owner.name, None, source)
-        == crate::analysis::classify::OwnerValueFlow::Masked
+    crate::analysis::classify::owner_field_value_flow(
+        test,
+        &oracle.text,
+        &owner.name,
+        None,
+        Some(index),
+    ) == crate::analysis::classify::OwnerValueFlow::Masked
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {

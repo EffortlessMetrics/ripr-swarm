@@ -367,7 +367,53 @@ mod tests {
     assert_relative_and_absolute_replace_grades(&scratch.0)
 }
 
+#[test]
+fn repo_mem_replace_checks_legacy_root_for_out_of_line_tests() -> Result<(), String> {
+    let scratch = subject("")?;
+    for (path, source) in [
+        (
+            "Cargo.toml",
+            r#"[package]
+name="replace_legacy"
+version="0.0.0"
+edition="2015"
+[workspace]
+"#,
+        ),
+        (
+            "src/lib.rs",
+            r#"#![no_std]
+pub fn over(qty: u32) -> bool { qty >= 10 }
+mod std {
+    pub mod mem {
+        pub fn replace(_: &mut bool, _: bool) -> bool { true }
+    }
+}
+#[cfg(test)]
+mod checks;
+"#,
+        ),
+        (
+            "src/checks.rs",
+            r#"use super::over;
+#[test]
+fn absolute() {
+    assert_eq!(::std::mem::replace(&mut over(10), false), true);
+    assert_eq!(::std::mem::replace(&mut over(0), false), true);
+}
+"#,
+        ),
+    ] {
+        std::fs::write(scratch.0.join(path), source).map_err(|error| error.to_string())?;
+    }
+    assert_replace_grades(&scratch.0, &[("absolute", "weak")])
+}
+
 fn assert_relative_and_absolute_replace_grades(root: &std::path::Path) -> Result<(), String> {
+    assert_replace_grades(root, &[("relative", "weak"), ("absolute", "strong")])
+}
+
+fn assert_replace_grades(root: &std::path::Path, grades: &[(&str, &str)]) -> Result<(), String> {
     let output = ripr::app::repo_seam_inventory_input(CheckInput {
         root: root.to_path_buf(),
         mode: Mode::Fast,
@@ -384,7 +430,7 @@ fn assert_relative_and_absolute_replace_grades(root: &std::path::Path) -> Result
         let related = seam["related_tests"]
             .as_array()
             .ok_or("missing related tests")?;
-        for (name, strength) in [("relative", "weak"), ("absolute", "strong")] {
+        for &(name, strength) in grades {
             let test = related
                 .iter()
                 .find(|t| t["name"] == name)

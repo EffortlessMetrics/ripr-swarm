@@ -24,7 +24,7 @@
 //! `Reaches` reading says the syntax carries the value, not that the test
 //! would fail.
 
-use super::super::rust_index::TestSummary;
+use super::super::rust_index::{RustIndex, TestSummary};
 use super::reveal::contains_as_whole_word;
 use crate::analysis::extract::{assertion_oracle_text, mask_comments_and_strings};
 use crate::analysis::syntax::parse_clean_source_file_memoized;
@@ -176,7 +176,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
     assertion_text: &str,
     owner: &str,
     kept_field: Option<&str>,
-    test_source: Option<&str>,
+    test_index: Option<&RustIndex>,
 ) -> OwnerValueFlow {
     if owner.is_empty() {
         return OwnerValueFlow::Absent;
@@ -201,7 +201,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         kept_field,
         credit: false,
         strict: false,
-        test_source,
+        test_index,
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -250,7 +250,7 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
         kept_field: Some(kept_field),
         credit: false,
         strict: true,
-        test_source: None,
+        test_index: None,
     };
     // A sub-expression the operand's own reading never visits (a closure
     // argument, an `if` branch, a method argument of the owner's value:
@@ -342,7 +342,7 @@ pub(in crate::analysis) fn bool_field_assertion(
         kept_field: Some(field),
         credit: true,
         strict: false,
-        test_source: None,
+        test_index: None,
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -710,10 +710,32 @@ struct Reader<'a> {
     /// (`(boundary.retries, opts("-v").verbose)`), and a local this module
     /// cannot follow to one `let` is not read as unrelated.
     strict: bool,
-    test_source: Option<&'a str>,
+    test_index: Option<&'a RustIndex>,
 }
 
 impl Reader<'_> {
+    /// Edition 2015 can resolve an absolute path through the crate root.
+    /// Require all approved roots to be clear, and inspect every ancestor
+    /// for a relative path because its lookup can inherit bindings.
+    fn replace_path_is_unshadowed(&self, absolute: bool) -> bool {
+        let Some(index) = self.test_index else {
+            return false;
+        };
+        let Some(context) = index.execution_context(&self.test.file) else {
+            return false;
+        };
+        let files = index.files();
+        let clear = |path: &std::path::Path| {
+            files
+                .get(path)
+                .is_some_and(|facts| std_path_is_unshadowed(facts.data().source.as_ref(), absolute))
+        };
+        !context.roots.is_empty()
+            && context.roots.iter().all(|path| clear(path))
+            && (absolute
+                || (clear(&self.test.file) && context.edges.iter().all(|edge| clear(&edge.parent))))
+    }
+
     /// Whether `text` holds a call of the owner outside strings and
     /// comments: the name as a whole word, then `(` or a turbofish. A bare
     /// mention (a variable or field of the same name, the function passed
@@ -955,9 +977,7 @@ impl Reader<'_> {
             && let [ast::Expr::RefExpr(destination), _] = arguments.as_slice()
             && destination.mut_token().is_some()
             && destination.expr().is_some_and(is_replace_temporary)
-            && self
-                .test_source
-                .is_some_and(|source| std_path_is_unshadowed(source, absolute))
+            && self.replace_path_is_unshadowed(absolute)
             && let [old, replacement] = parts.as_slice()
         {
             return match (*old, *replacement) {
