@@ -3915,10 +3915,11 @@ another function keeps today's reading. So does a wrapper whose name or the
 owner's name is declared by another function anywhere in the index, a body
 that is not a single expression (`return owner(c);`, a block, a statement), a
 body holding a comment or a string or char literal, a generic signature, or a
-receiver. So does any source line that names the owner or `w` outside the
-owner, `w`, a related test or a plain unaliased `use` line: a
-`static TOTAL: fn(u32) -> u32 = w;` or a `const` could feed `w` an input the
-reading never sees. Like the rest of this section, this only downgrades.
+receiver. So does any occurrence of the owner's or `w`'s name outside the
+text of the owner, `w` and the related tests, other than on a single-line
+plain unaliased `use`: a `static TOTAL: fn(u32) -> u32 = w;` or a `const`
+could feed `w` an input the reading never sees, even on `w`'s own closing
+line. Like the rest of this section, this only downgrades.
 
 ### A partly changed struct literal confirms only through its changed fields (#10916)
 

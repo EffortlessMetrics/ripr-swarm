@@ -3456,11 +3456,13 @@ fn inlined_owner<'a>(
     })
 }
 
-/// Whether every source line naming the owner or the wrapper sits inside the
-/// owner, the wrapper or a related test, or is a plain unaliased `use` line.
-/// Any other mention (a `static TOTAL: fn(u32) -> u32 = cash_total;`, a
-/// `const`, a trait impl or an aliased import) can feed the wrapper or owner
-/// an input the fold never reads, so the wrapper reading declines.
+/// Whether every occurrence of the owner's or the wrapper's name in the index
+/// sits in the text of the owner, the wrapper or a related test, or on a plain
+/// unaliased `use` line outside them. Occurrences are counted, not lines, so a
+/// `static TOTAL: fn(u32) -> u32 = cash_total;` on the wrapper's own closing
+/// line still counts as outside it. Any other mention (a `static`, a `const`,
+/// a trait impl or an aliased import) can feed the wrapper or owner an input
+/// the fold never reads, so the wrapper reading declines.
 fn names_stay_in_their_readers(
     index: &RustIndex,
     readers: &[&FunctionSummary],
@@ -3468,6 +3470,12 @@ fn names_stay_in_their_readers(
     owner: &FunctionSummary,
     wrapper: &FunctionSummary,
 ) -> bool {
+    let occurrences = |text: &str| {
+        mask_comments_and_strings(text)
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .filter(|token| *token == owner.name || *token == wrapper.name)
+            .count()
+    };
     let inside_reader = |path: &Path, line: usize| {
         readers.iter().any(|function| {
             function.file == path && (function.start_line..=function.end_line).contains(&line)
@@ -3480,24 +3488,34 @@ fn names_stay_in_their_readers(
         if !source.contains(owner.name.as_str()) && !source.contains(wrapper.name.as_str()) {
             return true;
         }
-        mask_comments_and_strings(source)
+        let in_readers: usize = readers
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| occurrences(function.body.as_str()))
+            .chain(
+                test_summaries
+                    .iter()
+                    .filter(|test| test.file == *path)
+                    .map(|test| occurrences(test.body.as_str())),
+            )
+            .sum();
+        let on_plain_use_lines: usize = mask_comments_and_strings(source)
             .lines()
             .enumerate()
-            .all(|(at, line)| {
-                let names = |name: &str| {
-                    line.split(|character: char| {
-                        !character.is_ascii_alphanumeric() && character != '_'
-                    })
-                    .any(|token| token == name)
-                };
-                if !names(&owner.name) && !names(&wrapper.name) {
-                    return true;
-                }
+            .filter(|(at, line)| {
                 let trimmed = line.trim_start();
-                let plain_use = (trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
-                    && !names("as");
-                plain_use || inside_reader(path, at + 1)
+                (trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
+                    && !trimmed
+                        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                        .any(|t| t == "as")
+                    && !trimmed.contains('{')
+                    && !trimmed.contains('}')
+                    && trimmed.trim_end().ends_with(';')
+                    && !inside_reader(path, at + 1)
             })
+            .map(|(_, line)| occurrences(line))
+            .sum();
+        occurrences(source) == in_readers + on_plain_use_lines
     })
 }
 
@@ -3809,7 +3827,7 @@ mod tests {
     fn the_forwarding_wrapper_reading_reads_only_wrapper_only_tests() -> Result<(), String> {
         let read_with = |argument: &str, extra: &str, test_body: &str| -> Result<bool, String> {
             let source = format!(
-                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel({argument})\n}}\n{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
+                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel({argument})\n}}{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
@@ -3873,12 +3891,18 @@ mod tests {
         // A function pointer outside any function body feeds the wrapper an
         // input the fold never reads (Devin review on #15070).
         assert!(!read(
-            "static TOTAL: fn(u32) -> u32 = cash_total;\n",
+            "\nstatic TOTAL: fn(u32) -> u32 = cash_total;\n",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
+        // The same pointer on the wrapper's closing line is still outside the
+        // wrapper (exact-head review on #15070).
+        assert!(!read(
+            " static TOTAL: fn(u32) -> u32 = cash_total;",
             "    assert_eq!(cash_total(105), TOTAL(103));"
         )?);
         // A macro body that names the wrapper may feed it other inputs.
         assert!(!read(
-            "macro_rules! total {\n    ($c:expr) => { cash_total($c + 1) };\n}\n",
+            "\nmacro_rules! total {\n    ($c:expr) => { cash_total($c + 1) };\n}\n",
             "    assert_eq!(cash_total(105), 105);"
         )?);
         Ok(())
