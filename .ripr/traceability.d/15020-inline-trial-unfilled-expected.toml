@@ -3,4 +3,5 @@
 id = "RIPR-SPEC-0231"
 tests = [
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_trials_lower_an_unfilled_expected_value",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::sibling_trials_scope_the_unfilled_expected_value_per_trial",
 ]

@@ -5158,3 +5158,50 @@ fn registered_trials_lower_an_unfilled_expected_value() -> Result<(), Box<dyn st
     }
     Ok(())
 }
+
+/// #15020 review: the placeholder scan is per trial. A sibling trial in the
+/// same `vec![...]` that binds the same name to a real value keeps its
+/// reading, and the `todo!()` trial is still lowered.
+#[test]
+fn sibling_trials_scope_the_unfilled_expected_value_per_trial()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = with_harness_main(
+        "fn score() -> i32 { 2 }\n\
+         fn trials() -> Vec<libtest_mimic::Trial> {\n\
+         vec![\n\
+         libtest_mimic::Trial::test(\"unfilled\", || {\n\
+         let expected: i32 = todo!(\"x\");\n\
+         assert!(score() == expected);\n\
+         Ok(())\n\
+         }),\n\
+         libtest_mimic::Trial::test(\"filled\", || {\n\
+         let expected: i32 = 2;\n\
+         assert!(score() == expected);\n\
+         Ok(())\n\
+         }),\n\
+         ]\n}\n",
+        "trials()",
+    );
+    let root = temp_dir("unfilled-expected-siblings")?;
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    for (name, lowered) in [("unfilled", true), ("filled", false)] {
+        let subject = index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == name)
+            .ok_or_else(|| format!("missing subject {name}: {:?}", index.harness_subjects))?;
+        let [oracle] = subject.assertions.as_slice() else {
+            return Err(format!("{name}: expected one oracle: {:?}", subject.assertions).into());
+        };
+        let unknown =
+            oracle.kind == OracleKind::Unknown && oracle.strength == OracleStrength::Unknown;
+        if unknown != lowered {
+            return Err(format!("{name}: lowered={lowered}, got {oracle:?}").into());
+        }
+    }
+    Ok(())
+}
