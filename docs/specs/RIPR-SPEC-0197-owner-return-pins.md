@@ -3624,12 +3624,15 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
   `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
 - Dropped or added guard operands (#8361): `owner_pin/short_circuit.rs`
-  unit tests `a_guard_operand_change_is_whole_top_level_operands_only` and
-  `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`;
+  unit tests `a_guard_operand_change_is_whole_top_level_operands_only`,
+  `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value` and
+  `layout_whitespace_cannot_invert_the_chain_direction`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
-  `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure` and
-  `an_added_guard_follows_the_same_agreement_rule`. The corpus case is
+  `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
+  `an_added_guard_follows_the_same_agreement_rule` and
+  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin`.
+  The corpus case is
   `benchmarks/stub_quality/cases/D_unsafe_const`. In the evidence-promotion
   honesty corpus (RIPR-SPEC-0108), `rust_guard_operand_dropped_agreement`
   (`fixtures/guard_operand_dropped_agreement`) stays `weakly_exposed` and
