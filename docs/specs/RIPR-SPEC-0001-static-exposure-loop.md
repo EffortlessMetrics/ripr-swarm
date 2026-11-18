@@ -149,6 +149,54 @@ length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
 non-empty input. A set collect or an input where both ranges are empty is the
 known limit there.
 
+A free owner whose whole body is one single-line tail that is a parameter,
+bare on one side of the diff and under one prefix `-` (a signed `i8`-`i64`
+parameter) or `!` (a `bool` or primitive integer parameter) on the other,
+gets the owner's return as its flow sink (#14815), but only when, inside the
+owner's span, the diff adds exactly that tail line and removes exactly its
+positional counterpart, so the base-side owner is the current owner with that
+line restored; the paired removed line alone never stands in for the old
+owner. The base-side item must be the one the shared base-owner identity
+verifies as the same function (same qualified path and attributes, unique
+under that path on both sides, no added line on its signature or an
+enclosing header, no changed `mod` declaration on its module chain), and
+that item must equal the current one with the tail line restored. A `cfg`
+on the function, an enclosing item, the file or a `mod` declaration on its
+chain, or any `#[path]` module declaration, refuses, so a swapped module,
+`#[cfg]` twin or `#[path]` target cannot supply another function's body.
+Because that identity does not see a `cfg` outside `mod` declarations
+(#14952), the reading also refuses when the index holds another function of
+the owner's name, or any indexed file renames an import to that name, calls
+`include!`, or defines a `macro_rules!` that may emit a module or such a
+function.
+The parameter and return types must be the same unshadowed primitive.
+`!` differs from its operand at every input, so the ordinary infection
+reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
+an exact assertion pins a bare literal call whose folded result differs
+between the base-side and current owner, or every owner call in every related
+test that names it is such a literal call; agreeing asserted calls read
+`weak`, and an argument ripr cannot fold (a local, a loop row, a constant)
+reads `unknown`. So `-a` to `a` tested by `assert_eq!(f(0), 0)` is not
+`exposed`.
+Such a literal call counts only where it runs: a call in a closure, nested
+`fn`, loop, branch, `async` block, `let`-`else` `else` block, `cfg`-gated
+statement, after a `return` or
+after a statement that always diverges on a constant (a `let`-`else` whose
+one-variant pattern cannot match its literal value, a literal `Err(..)?` or
+`None?`; RIPR-SPEC-0231 rule 8) refuses the reading. So does a call in the
+right operand of `&&` or `||` (unless the left operand is the literal `true`
+or `false` that always evaluates it), and a call in the input of any macro
+other than `vec!`, `dbg!`, the `assert*` / `debug_assert*` family and the
+`format!` / `print!` / `write!` family, because that input is token text
+(`stringify!(f(5))`). An assertion macro evaluates only its operands (one for
+`assert!` / `debug_assert!`, two for the `*_eq!` / `*_ne!` forms) and formats
+any message only when it fails, so a call in the message arguments refuses
+(`assert!(true, "{}", f(5))`) while a call in an operand still counts. A call
+in a `let`-`else` `else` block refuses; one in its initializer still counts. An evaluating macro's input that holds `&&`, `|`, `?`, a
+nested macro or a control-flow keyword refuses too, even when the call would
+run (`assert!(true && f(5) == 5)`), because the parser does not read inside
+macro input (#14968).
+
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
 `static_unknown` probe when its positional replacement in the same block
@@ -743,6 +791,26 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
   `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
   follows it.
+
+Integer and char arms read the same way (#15027): `n == 1 || n == 2` with
+`n` declared as a primitive integer (`u8` to `u128`, `usize`, `i8` to
+`i128`, `isize`), and `c == ',' || c == ';'` with `c: char`. Every arm
+uses one literal kind. Integer literals are plain decimal, with no sign,
+suffix, underscore, radix prefix or leading zero, and at most 18 digits, so
+two distinct spellings are two distinct values (`5` and `05`, `5_u32` or
+`0x5` decline). A longer literal declines too, which costs only recall. A char
+literal is one unescaped character that cannot read as an operator, so
+`'|'`, `'!'`, `'('` and any escape decline. A newtype, a float, a reference
+or a `u8` compared with a char literal declines. The infection summary names
+the kind: "every original integer-equality arm is false".
+
+When such a chain (string, integer or char) is the owner's returned tail on
+the changed line, propagation reads `yes` through the return sink. Any input
+equal to the new literal flips the whole chain, so the chain's change is the
+returned change. Any other `||` or `&&` tail keeps no sink, because a changed
+operand of `x > 1 || y` may be masked by `y`. The sink establishes
+propagation only. A test that passes only an original arm's literal still
+leaves infection short of `yes`.
 
 Guarded boundary rule (#13037): a changed comparison joined by top-level
 `&&` to guards that are each a bare owner parameter or its negation

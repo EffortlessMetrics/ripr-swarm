@@ -338,6 +338,27 @@ fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool)
     )
 }
 
+/// True when a rendered finding digest carries a `Next step` line (either
+/// prefix form the digest uses).
+fn digest_prints_next_step(digest: &str) -> bool {
+    digest
+        .lines()
+        .any(|line| line.starts_with("  Next step: ") || line.starts_with("  Next step — "))
+}
+
+/// The `Safe next action` line for a selected test gap (#14173). The digest
+/// below already states the concrete instruction as `Next step`, so the line
+/// points there instead of repeating the State line in internal words. When
+/// the digest prints no `Next step`, it names the digest lines a reader can
+/// act from (the `Why` reason and the related test). The static advisory boundary stays on both.
+fn top_gap_safe_action_line(digest_has_next_step: bool) -> &'static str {
+    if digest_has_next_step {
+        "  Safe next action: follow the Next step below; this is static advisory evidence only\n"
+    } else {
+        "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only\n"
+    }
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -367,10 +388,15 @@ pub(crate) fn render_human_triage(
     // disagree about which command is recommended.
     let recommend_start = check_case == NextActionCheckCase::PreviewAdvisory
         && recommends_gap_repair_start(triage.selected, drill_in);
+    // #14173: the digest is rendered once, before the action line, so that
+    // line can point at the `Next step` only when the digest prints one.
+    let digest = triage
+        .selected
+        .map(|finding| render_finding_digest_with_config(finding, config, &output.root));
     match check_case {
-        NextActionCheckCase::TopGap => out.push_str(
-            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
-        ),
+        NextActionCheckCase::TopGap => out.push_str(top_gap_safe_action_line(
+            digest.as_deref().is_some_and(digest_prints_next_step),
+        )),
         NextActionCheckCase::CandidateFilterHidAll => {
             // #4320: findings exist but the #3281 candidate filter hid
             // every one — the run is not a policy suppression. Claiming
@@ -386,7 +412,7 @@ pub(crate) fn render_human_triage(
             // that block, not a policy it never loaded.
             out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
                 (false, false) => {
-                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                    "  Safe next action: all findings are withheld because the changed function or an enclosing scope carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
                 }
                 (true, false) => {
                     "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
@@ -580,12 +606,8 @@ pub(crate) fn render_human_triage(
             }
         }
     }
-    if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(
-            finding,
-            config,
-            &output.root,
-        ));
+    if let (Some(finding), Some(digest)) = (triage.selected, digest) {
+        out.push_str(&digest);
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             // #13502: a candidate-tree subject cannot be replayed by `explain`.
             if !navigation.finding_routes_withheld() {
@@ -761,7 +783,7 @@ pub(crate) fn render_human_triage(
                             // target seam is not one in the seam view, so say
                             // that and point at the existing test instead.
                             out.push_str(
-                                "No test stub here: the seam a stub would target is not a reported gap in the seam view; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
+                                "No test stub here: the spot a stub would target is not a reported gap; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
                             );
                         } else {
                             out.push_str(&format!("No test stub here: {reason}\n"));
@@ -1106,8 +1128,9 @@ const GROUPED_LINE_RUNS_LISTED: usize = 3;
 /// The lines a grouped `Hidden:` row names: each run of consecutive lines as
 /// `a` or `a-b`, comma-separated, so lines 3 and 5 read `3, 5` rather than a
 /// `3-5` range that implies line 4. Beyond [`GROUPED_LINE_RUNS_LISTED`] runs
-/// the row keeps the span and says how many lines it covers:
-/// `1078-1241 (12 lines)`.
+/// the row keeps the span and counts the distinct lines inside it, not the
+/// span length:
+/// `1078-1241 (5 distinct lines)`.
 fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
     let distinct: std::collections::BTreeSet<usize> = lines.collect();
     let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -1128,7 +1151,7 @@ fn grouped_line_text(lines: impl Iterator<Item = usize>) -> String {
         return runs.iter().map(run_text).collect::<Vec<_>>().join(", ");
     }
     match (distinct.first(), distinct.last()) {
-        (Some(first), Some(last)) => format!("{first}-{last} ({} lines)", distinct.len()),
+        (Some(first), Some(last)) => format!("{first}-{last} ({} distinct lines)", distinct.len()),
         _ => String::new(),
     }
 }
@@ -2452,7 +2475,12 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        return !is_static_limited(finding) && has_repair_route(finding);
+        // #14919: an unreferenced owner is a gap but prints no repair route
+        // either (the app's repair gate still refuses it), so it ranks by
+        // class among the gaps, behind every gap whose route prints.
+        return !is_static_limited(finding)
+            && !finding.is_unreferenced_no_static_path()
+            && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -2578,6 +2606,12 @@ pub(crate) fn finding_routes_json(
 }
 
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
+    // #14919: a changed owner nothing in the workspace names (RIPR-SPEC-0219)
+    // is a test-side gap on every check surface, not a static limit; the
+    // domain predicate is the one authority, shared with the agent format.
+    if finding.is_unreferenced_no_static_path() {
+        return false;
+    }
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -2709,8 +2743,11 @@ mod tests {
             (vec![7, 7], "7"),
             (vec![10, 11, 12, 15], "10-12, 15"),
             (vec![1, 3, 5], "1, 3, 5"),
-            (vec![1, 3, 5, 7], "1-7 (4 lines)"),
-            (vec![1078, 1079, 1100, 1200, 1241], "1078-1241 (5 lines)"),
+            (vec![1, 3, 5, 7], "1-7 (4 distinct lines)"),
+            (
+                vec![1078, 1079, 1100, 1200, 1241],
+                "1078-1241 (5 distinct lines)",
+            ),
         ] {
             assert_eq!(
                 grouped_line_text(lines.clone().into_iter()),
@@ -4037,6 +4074,67 @@ mod tests {
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
+    const TOP_GAP_POINTER: &str =
+        "  Safe next action: follow the Next step below; this is static advisory evidence only";
+    const TOP_GAP_NO_POINTER: &str = "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only";
+
+    /// #14173: a selected gap whose digest prints a `Next step` gets an action
+    /// line that points at it; the old internal phrase is gone.
+    #[test]
+    fn top_gap_action_points_at_the_next_step_the_digest_prints() {
+        let mut gap = finding_at("finding:gap", "src/lib.rs", ExposureClass::WeaklyExposed);
+        gap.recommended_next_step =
+            Some("Add an exact assertion for the changed value".to_string());
+        let output = test_output(vec![gap]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(digest_prints_next_step(&out), "{out}");
+        assert_eq!(
+            out.lines()
+                .find(|line| line.starts_with("  Safe next action: ")),
+            Some(TOP_GAP_POINTER),
+            "{out}"
+        );
+        assert!(!out.contains("non-exposed"), "{out}");
+    }
+
+    /// #14173 negative control: the pointer wording is chosen from the
+    /// rendered digest, so a digest with no `Next step` line never gets it,
+    /// and either prefix form of the line counts.
+    #[test]
+    fn top_gap_action_never_points_at_an_absent_next_step() {
+        assert_eq!(
+            top_gap_safe_action_line(false).trim_end_matches('\n'),
+            TOP_GAP_NO_POINTER
+        );
+        assert_eq!(
+            top_gap_safe_action_line(true).trim_end_matches('\n'),
+            TOP_GAP_POINTER
+        );
+        assert!(!digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Related test: tests/a.rs:4 t\n  Evidence: reach yes\n"
+        ));
+        // A `Next step` mention inside another line is not the line itself.
+        assert!(!digest_prints_next_step(
+            "  no repair start offered: follow the Next step above\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Next step: Add an exact assertion\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  Next step — Static limit: inspect the helper\n"
+        ));
+    }
+
     /// #14080: a complete-with-findings outcome for `finding_count` findings.
     fn complete_outcome(
         finding_count: u64,
@@ -4210,6 +4308,8 @@ mod tests {
             finding_id: "finding:withheld".to_string(),
             owner: "shipping_cents".to_string(),
             reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
         }];
         assert_eq!(
             start_here_lines(&output),
@@ -5087,5 +5187,93 @@ mod tests {
             generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
+    }
+
+    fn unreferenced_owner_finding(id: &str) -> Finding {
+        let mut finding = finding_at(id, "src/lib.rs", ExposureClass::NoStaticPath);
+        finding.ripr.reach = StageEvidence::new(
+            StageState::No,
+            Confidence::Medium,
+            format!(
+                "No related test reaches levy {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            ),
+        );
+        finding
+    }
+
+    /// #14919: an owner nothing in the workspace names is a test gap on the
+    /// human and JSON surfaces too, so `Start here` and the canonical next
+    /// action pick it over a genuine static limit, as `--format agent` does.
+    #[test]
+    fn unreferenced_owner_is_a_top_gap_not_a_static_limit() {
+        let unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        assert!(unreferenced.is_unreferenced_no_static_path());
+        assert!(!is_static_limited(&unreferenced));
+        let limited = finding_at(
+            "finding:limited",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        assert!(is_static_limited(&limited));
+        let output = test_output(vec![limited, unreferenced]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unreferenced")
+        );
+        assert_eq!(
+            check_case_for_triage(&triage, &output),
+            NextActionCheckCase::TopGap
+        );
+    }
+
+    /// #14919 review: an unreferenced owner prints no repair route, so its
+    /// advisory next step must not lift it over a gap whose route prints.
+    #[test]
+    fn unreferenced_owner_ranks_behind_a_routed_gap() {
+        let mut unreferenced = unreferenced_owner_finding("finding:unreferenced");
+        unreferenced.recommended_next_step = Some("add a test that calls levy".to_string());
+        unreferenced.confidence = 0.9;
+        let mut routed = finding_at(
+            "finding:routed",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        routed.recommended_next_step = Some("assert the exact result".to_string());
+        routed.confidence = 0.3;
+        assert!(!has_ranked_repair_route(&unreferenced));
+        assert!(has_ranked_repair_route(&routed));
+        let output = test_output(vec![unreferenced, routed]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:routed")
+        );
+    }
+
+    /// Fail-closed: without every part of the producer's unreferenced proof
+    /// a no-static-path finding stays a static limit on the human surface.
+    #[test]
+    fn ambiguous_no_static_path_stays_static_limited() {
+        let mut no_marker = unreferenced_owner_finding("finding:no-marker");
+        no_marker.ripr.reach.summary = "No related test reaches levy".to_string();
+        let mut named_limit = unreferenced_owner_finding("finding:named-limit");
+        named_limit.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let mut unknown_reach = unreferenced_owner_finding("finding:unknown-reach");
+        unknown_reach.ripr.reach.state = StageState::Unknown;
+        let mut base_side = unreferenced_owner_finding("finding:base-side");
+        base_side.source_currentness = SourceCurrentness::BaseDeleted;
+        for finding in [no_marker, named_limit, unknown_reach, base_side] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{}", finding.id);
+            assert!(is_static_limited(&finding), "{}", finding.id);
+        }
+        let mut lone = unreferenced_owner_finding("finding:lone");
+        lone.ripr.reach.summary = "No related test reaches levy".to_string();
+        let only_limited = test_output(vec![lone]);
+        let triage = select_human_triage(&only_limited, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::StaticLimited);
     }
 }

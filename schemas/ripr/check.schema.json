@@ -553,6 +553,7 @@
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
         "withheld_by": { "enum": ["owner_mutants_skip"] },
+        "withheld_scope": { "enum": ["fn", "impl", "trait", "module", "file"] },
         "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },

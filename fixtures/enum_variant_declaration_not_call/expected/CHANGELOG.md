@@ -521,3 +521,25 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — enum_variant_declaration_not_call (43)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (44)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/human.txt`

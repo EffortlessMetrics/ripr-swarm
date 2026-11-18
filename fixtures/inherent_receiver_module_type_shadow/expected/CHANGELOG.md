@@ -166,3 +166,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_module_type_shadow (15)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_module_type_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

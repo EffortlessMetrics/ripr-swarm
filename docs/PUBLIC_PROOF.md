@@ -109,7 +109,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 416 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 289 of 821 (35.2%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 280 of 821 (34.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -168,8 +168,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 0/438 (0.0%) | 0/22 (0.0%) | 0/416 (0.0%) |
 | False exposed (of not fully discriminated) | 0/424 (0.0%) | 0/19 (0.0%) | 0/405 (0.0%) |
 | False silent (of not fully discriminated) | 0/424 (0.0%) | 0/19 (0.0%) | 0/405 (0.0%) |
-| Ideal verdict | 543/862 (63.0%) | 11/41 (26.8%) | 532/821 (64.8%) |
-| Abstained (limited or silent where acceptable) | 319/862 (37.0%) | 30/41 (73.2%) | 289/821 (35.2%) |
+| Ideal verdict | 552/862 (64.0%) | 11/41 (26.8%) | 541/821 (65.9%) |
+| Abstained (limited or silent where acceptable) | 310/862 (36.0%) | 30/41 (73.2%) | 280/821 (34.1%) |
 | Findings with a contradiction | 0/1050 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -473,13 +473,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `loop-accumulator-iter-walk` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `loop-accumulator-subtract-pin` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `loop-accumulator-table-pin` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `macro-export-crate-call` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `macro-export-group-import` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `macro-export-path-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-export-crate-call` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `macro-export-group-import` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `macro-export-path-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `macro-export-path-second-definition` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
-| `macro-module-child-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `macro-module-child-far-rows` | authored | not_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
-| `macro-module-import-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-module-child-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `macro-module-child-far-rows` | authored | not_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |
+| `macro-module-import-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `macro-module-path-module-far-rows` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `macro-table-arrow-rows-refused` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `macro-table-boundary-rows` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
@@ -846,13 +846,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0228-deref-mut-param-write` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `spec0228-field-collection-push` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0228-field-write-direct-read` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `spec0228-field-write-enum-other-field` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `spec0228-field-write-enum-other-field` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-field-write-enum-variant` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0228-field-write-getter-read` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `spec0228-field-write-misnamed-getter` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `spec0228-field-write-misnamed-getter` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-field-write-no-read` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `spec0228-field-write-sibling-read` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `spec0228-field-write-sibling-read` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-keyed-getter-other-field` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-keyed-getter-other-key` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-keyed-getter-refused-call` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |

@@ -474,11 +474,7 @@ fn reads_as_sentence(value: &str) -> bool {
 fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
     let find = capture(ripr, &find_args(), &workspace.root, None, &[])?;
     let mut steps = vec![raw_step("find", &find, workspace)];
-    let mut queue: Vec<(String, Vec<String>)> = printed_next_commands(&find.stdout)
-        .into_iter()
-        .filter(|args| needs_detail(&find.stdout, args))
-        .map(|args| ("detail".to_string(), args))
-        .collect();
+    let mut queue = detail_steps(&find.stdout);
     while let Some((label, args)) = queue.first().cloned() {
         queue.remove(0);
         if steps.len() >= MAX_FOLLOWED_STEPS {
@@ -492,6 +488,17 @@ fn route_cli_agent_loop(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>,
         }
     }
     Ok(steps)
+}
+
+/// The DETAIL commands the `init --agents` loop follows after `find`: every
+/// printed `next=` except those for rows whose `missing=` already names the
+/// exact check.
+fn detail_steps(find_stdout: &str) -> Vec<(String, Vec<String>)> {
+    printed_next_commands(find_stdout)
+        .into_iter()
+        .filter(|args| needs_detail(find_stdout, args))
+        .map(|args| ("detail".to_string(), args))
+        .collect()
 }
 
 fn raw_step(label: &str, output: &Captured, workspace: &Workspace) -> Step {
@@ -1526,6 +1533,21 @@ mod tests {
                 strings(&["explain", "--root", "/r", "probe:a"]),
                 strings(&["context", "--at", "probe:a"]),
             ]
+        );
+    }
+
+    #[test]
+    fn the_loop_follows_detail_only_for_rows_that_need_it() {
+        let find = "weakly_exposed|src/lib.rs:2|t >= 100|missing=t == 100|test=t1|id=probe:a\n\
+reachable_unrevealed|src/lib.rs:9|x|missing=-|test=-|id=probe:c\n\
+next=ripr explain --format agent probe:a\n\
+next=ripr explain --format agent probe:c\n";
+        assert_eq!(
+            detail_steps(find),
+            vec![(
+                "detail".to_string(),
+                strings(&["explain", "--format", "agent", "probe:c"])
+            )]
         );
     }
 

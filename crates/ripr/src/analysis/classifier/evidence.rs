@@ -16,13 +16,13 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_returns_record,
-    owner_touches_field_only_at, package_prefix, parameter_rebound, predicate_initialized_field,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, returned_array_construction_plain, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
-    wrapper_return_boundary_pinned,
+    oracle_crediting_relations, outer_imported_names, owner_record_read_masked_anywhere,
+    owner_returns_record, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    predicate_initialized_field, propagation_evidence_with_witness,
+    pushed_collection_compared_whole, pushed_literal_path, reach_evidence,
+    returned_array_construction_plain, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
     extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
@@ -80,9 +80,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// `classify` keeps such a finding out of `reachable_unrevealed` (#12900).
     pub(in crate::analysis) proximity_reach_of_named_owner: bool,
     /// #11870: a related test reads the field this probe's assignment writes
-    /// with a weak relational check, under the one start policy the seam side
-    /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
-    /// exposed field assignment keep its class instead of abstaining.
+    /// with a weak relational check, under the start policy the seam side asks
+    /// too (`assigned_field_weak_read_start`), or reads only other fields of
+    /// the receiver (RIPR-SPEC-0228 examples 3, 4 and 6;
+    /// `assigned_field_gap_is_placed`). Only then does a weakly exposed field
+    /// assignment keep its class instead of abstaining.
     pub(in crate::analysis) assigned_field_weakly_read: bool,
     /// When the reveal is not fully established: where a refused related
     /// assertion is, why it was refused, and whether its text calls the
@@ -324,6 +326,31 @@ impl ClassifiedProbeEvidence {
         ) {
             flow_sinks = vec![sink];
         }
+        // #14815: the owner's whole tail is the changed `a`/`-a`/`!a`, so the
+        // change reaches the owner's return. The tail text carries no cue the
+        // text reader takes as a return, so its sink is otherwise unknown.
+        if let Some(change) = context.unary_tail.as_ref()
+            && flow_sinks
+                .iter()
+                .all(|sink| sink.kind == FlowSinkKind::Unknown)
+        {
+            flow_sinks = vec![FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: change.tail.clone(),
+                line: change.line,
+                owner: context.owner_fn.map(|owner| owner.id.clone()),
+            }];
+        }
+        // #14852: a returned constant replaced by a different constant
+        // reaches the owner's return; its sink carries the raw tail text.
+        if flow_sinks
+            .iter()
+            .all(|sink| sink.kind == FlowSinkKind::Unknown)
+            && let (Some(owner), Some(change)) =
+                (context.owner_fn, context.constant_tail_change.as_ref())
+        {
+            flow_sinks = vec![change.return_sink(owner)];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -355,6 +382,19 @@ impl ClassifiedProbeEvidence {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
+        })
+        .or_else(|| {
+            context
+                .owner_fn
+                .zip(context.constant_tail_change.as_ref())
+                .and_then(|(owner, change)| {
+                    crate::analysis::classify::constant_tail_change_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                        change,
+                    )
+                })
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
@@ -604,6 +644,7 @@ impl ClassifiedProbeEvidence {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
+                unary_tail: context.unary_tail.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -953,9 +994,14 @@ impl ClassifiedProbeEvidence {
             fmt_literal_edit && fmt_display_assertion(test, assertion)
         };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
-                && (!field_oracle_needs_admission
-                    || pin_syntax.admits(test, assertion, context.index))
+            pin_syntax.admits_equality_assertion(
+                context.probe,
+                context.owner_fn,
+                test,
+                assertion,
+                context.index,
+            ) && (!field_oracle_needs_admission
+                || pin_syntax.admits(test, assertion, context.index))
         };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
@@ -1234,6 +1280,68 @@ impl ClassifiedProbeEvidence {
             .as_deref()
             .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))
             .and_then(|line| predicate_initialized_field(line, &context.probe.expression));
+        // #13037: an exact pin of a bare owner call whose literal arguments
+        // statically run the owner into the branch returning the changed
+        // expression observes that expression's value. Same execution,
+        // macro-binding and `use` admission as the bool field pin; reveal adds
+        // the import and cross-package defeats. The owner's name must also be
+        // unique in a complete index, so a bare call cannot reach a same-named
+        // free function, test stub or associated function instead (#8059).
+        let owner_constants = context.owner_fn.and_then(|owner| {
+            context
+                .index
+                .files()
+                .get(&owner.file)
+                .map(|facts| facts.source.to_string())
+        });
+        let owner_name_unique = context.workspace_complete
+            && context
+                .owner_fn
+                .is_some_and(|owner| callee_is_unique(&owner.name, context.index));
+        // A file that rebinds a primitive type name (`type i32 = u8;`, or a
+        // `use` naming one) can change the width a primitive-spelled type in
+        // the owner has, which the fold cannot see (#14950 review).
+        let owner_types_are_primitive = context.owner_fn.is_some_and(|owner| {
+            owner_constants.as_deref().is_some_and(|source| {
+                owner
+                    .start_line
+                    .checked_sub(1)
+                    .and_then(|index| source.lines().nth(index))
+                    .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                    && !file_may_rebind_primitive_type(source)
+            })
+        });
+        let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
+            matches!(context.probe.family, ProbeFamily::ReturnValue)
+                && owner_name_unique
+                && owner_types_are_primitive
+                && bool_field_pin_admitted(test, assertion)
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        &assertion.text,
+                        test,
+                        &|name| {
+                            // Only a top-level owner reads the file's
+                            // top-level constants by bare name; a nested
+                            // module resolves the name through its own
+                            // imports (#14950 review).
+                            owner_constants
+                                .as_deref()
+                                .filter(|source| {
+                                    owner
+                                        .start_line
+                                        .checked_sub(1)
+                                        .and_then(|index| source.lines().nth(index))
+                                        .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                                })
+                                .and_then(|source| top_level_constant(source, name))
+                        },
+                    )
+                })
+        };
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1297,6 +1405,7 @@ impl ClassifiedProbeEvidence {
                                 )
                             })
                 },
+                reached_tail_pin: &reached_tail_pin,
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
@@ -1720,7 +1829,26 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
-                &assertion_admitted,
+                // #14726: a predicate that sets one record field pairs only
+                // with an assertion every owner-record read of which is
+                // that field or the whole record (#14562).
+                // `assert_eq!(opts("--verbose").retries, 3)` feeds the
+                // boundary input but reads another field, and
+                // `assert_eq!((boundary.retries, opts("-v").verbose), ..)`
+                // reads the field only from a call on another input.
+                &|test, assertion| {
+                    assertion_admitted(test, assertion)
+                        && !pairing_bool_field.zip(context.owner_fn).is_some_and(
+                            |(field, owner)| {
+                                owner_record_read_masked_anywhere(
+                                    test,
+                                    &assertion.text,
+                                    &owner.name,
+                                    field,
+                                )
+                            },
+                        )
+                },
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
                 &|test, assertion| {
@@ -1959,7 +2087,7 @@ impl ClassifiedProbeEvidence {
                             .filter(|(_, reason)| reason.establishes_reach(true))
                             .map(|(test, _)| *test)
                             .collect();
-                        crate::analysis::classify::assigned_field_weak_read_start(
+                        crate::analysis::classify::assigned_field_gap_is_placed(
                             owner,
                             &context.probe.expression,
                             &path,
@@ -2105,6 +2233,7 @@ impl ClassifiedProbeEvidence {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
+                            context.owner_fn,
                             test,
                             assertion,
                             context.index,
@@ -2224,6 +2353,7 @@ impl ClassifiedProbeEvidence {
                         pin_syntax
                             .equality_assertion_refusal(
                                 context.probe,
+                                context.owner_fn,
                                 test,
                                 assertion,
                                 context.index,
@@ -2589,7 +2719,9 @@ impl ClassifiedProbeEvidence {
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
         // the field (a helper, a projection, a getter it cannot resolve), so
-        // it abstains as before instead of claiming a gap.
+        // it abstains as before instead of claiming a gap. A weak relational
+        // read of the field, or reads of only other fields (examples 3, 4 and
+        // 6), placed by `assigned_field_gap_is_placed`, keep the class.
         if class == ExposureClass::WeaklyExposed
             && matches!(probe.family, ProbeFamily::FieldConstruction)
             && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
@@ -3122,6 +3254,130 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
         start = end;
     }
     text
+}
+
+/// #13037: whether `source` may give a primitive type name another meaning
+/// in a top-level owner: a `type` item named like a primitive, a `use` that
+/// names a primitive (an import or an `as` rebinding), a top-level glob
+/// `use` that could bring either in, or a macro that could expand to one.
+fn file_may_rebind_primitive_type(source: &str) -> bool {
+    const PRIMITIVES: [&str; 13] = [
+        "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
+        "isize",
+    ];
+    // A raw identifier is the same identifier: `type r#i32 = u8;` rebinds
+    // `i32` (#14950 review).
+    let masked = crate::analysis::extract::mask_comments_and_strings(source).replace("r#", "");
+    // A macro can expand to such a `type` or `use` item without spelling it:
+    // a `macro_rules!` definition, or a top-level item macro invocation.
+    if masked.contains("macro_rules")
+        || masked.lines().any(|line| {
+            !line.starts_with(char::is_whitespace)
+                && line
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+                    .next()
+                    .is_some_and(|head| {
+                        !head.is_empty()
+                            && line
+                                .get(head.len()..)
+                                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+                    })
+        })
+    {
+        return true;
+    }
+    let words: Vec<(usize, &str)> = masked
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .scan(0usize, |offset, word| {
+            let start = *offset;
+            *offset += word.len() + 1;
+            Some((start, word))
+        })
+        .filter(|(_, word)| !word.is_empty())
+        .collect();
+    words.windows(2).any(|pair| {
+        let (start, word) = pair[0];
+        match word {
+            // `type i32 = u8;`
+            "type" => PRIMITIVES.contains(&pair[1].1),
+            // Every `use` up to its `;`, across lines: one that names a
+            // primitive, or any glob.
+            "use" => {
+                let Some(rest) = masked.get(start..) else {
+                    return true;
+                };
+                let statement = rest.split(';').next().unwrap_or(rest);
+                // A glob changes a top-level owner's scope only from the top
+                // level (an indented `use super::*;` in a test module does
+                // not), and the owner itself must be top level.
+                let line_start = masked
+                    .get(..start)
+                    .and_then(|before| before.rfind('\n'))
+                    .map_or(0, |index| index + 1);
+                let top_level = masked
+                    .get(line_start..)
+                    .is_some_and(|line| !line.starts_with(char::is_whitespace));
+                (statement.contains('*') && top_level)
+                    || statement
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|part| PRIMITIVES.contains(&part))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// #13037: the initializer text and declared type of `name` when the file
+/// declares it exactly once, as a top-level (unindented) `const` the owner reads by its
+/// bare name, and imports no other binding of that name. A declaration nested
+/// in a `mod`, `impl` or fn, or a `use` naming it, could be a different
+/// binding from the one the owner sees, so it does not resolve.
+fn top_level_constant(source: &str, name: &str) -> Option<(String, String)> {
+    let value = crate::analysis::value_resolution::named_constant(source, name)
+        .value()?
+        .to_string();
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    // A glob import can bring a different binding of the name into the
+    // owner's scope without naming it (#14950 review).
+    if masked.lines().any(|line| {
+        (line.starts_with("use ") || line.starts_with("pub use ")) && line.contains('*')
+    }) {
+        return None;
+    }
+    let mut top_level = 0usize;
+    let mut declared_type = None;
+    for line in masked.lines() {
+        let words: Vec<&str> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        if !words.contains(&name) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ")
+            || trimmed.starts_with("pub use ")
+            || words.first() == Some(&"use")
+        {
+            return None;
+        }
+        let declares = ["const", "static"].iter().any(|keyword| {
+            words
+                .windows(2)
+                .any(|pair| pair[0] == *keyword && pair[1] == name)
+        });
+        if declares {
+            // A `static` (possibly `mut`) can change before the owner reads
+            // it, so only a `const` resolves.
+            if line.starts_with(char::is_whitespace) || words.contains(&"static") {
+                return None;
+            }
+            top_level += 1;
+            let after_name = line.split_once(&format!("{name}:"))?.1;
+            declared_type = Some(after_name.split_once('=')?.0.trim().to_string());
+        }
+    }
+    (top_level == 1).then_some((value, declared_type?))
 }
 
 #[cfg(test)]

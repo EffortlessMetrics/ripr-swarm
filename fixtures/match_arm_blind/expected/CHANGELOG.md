@@ -563,3 +563,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_blind (33)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless match_arm_blind --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_blind (34)
+
+Reason:
+RIPR-SPEC-0229 (#12078): the repo seam reads check's arm selection, so an arm no test input selects is weakly gripped there too and the check-versus-repair conflict advisory becomes the missing-input refusal
+
+Command:
+`cargo xtask goldens bless match_arm_blind --reason "..."`
+
+Updated:
+- `expected/human.txt`
