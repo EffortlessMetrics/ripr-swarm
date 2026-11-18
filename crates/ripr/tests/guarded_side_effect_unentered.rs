@@ -747,3 +747,31 @@ fn a_named_bound_the_owner_shadows_or_cannot_see_names_no_guard() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn an_uncalled_wrapper_names_the_guard_but_a_live_impl_inside_one_does_not() -> Result<(), String> {
+    // #15006 review: a production wrapper nothing calls cannot run the
+    // owner, so its `add(v, 20)` leaves the guard named.
+    let test = test_calling("    add(&mut v, 4);");
+    let dead_wrapper = "pub fn add_big(v: &mut Vec<u32>) {\n    add(v, 20);\n}\n\n";
+    let findings = push_findings_with_prelude("x > 10", &test, dead_wrapper)?;
+    assert!(
+        findings.iter().any(names_unentered_guard),
+        "an uncalled wrapper names the guard: {:?}",
+        findings
+            .iter()
+            .map(|finding| &finding.ripr.infect)
+            .collect::<Vec<_>>()
+    );
+    // An `impl` declared inside an uncalled function is live: dropping a
+    // `Big` passes 20, which enters the guard.
+    let live_impl = "pub struct Big;\n\nfn unused() {\n    impl Drop for Big {\n        fn drop(&mut self) {\n            add(&mut Vec::new(), 20);\n        }\n    }\n}\n\n";
+    for finding in push_findings_with_prelude("x > 10", &test, live_impl)? {
+        assert!(
+            !names_unentered_guard(&finding),
+            "a live impl inside an uncalled function names nothing: {:?}",
+            finding.ripr.infect
+        );
+    }
+    Ok(())
+}
