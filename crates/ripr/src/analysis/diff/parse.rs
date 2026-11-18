@@ -336,6 +336,7 @@ mod parser_state {
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path, source_line_text,
     };
+    use crate::analysis::diff::side_prefix::MnemonicSides;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
@@ -408,6 +409,9 @@ mod parser_state {
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
+        /// #15103: this section's sides use git's mnemonic prefixes; its
+        /// header and path markers are read respelled as `a/` and `b/`.
+        section_mnemonic_sides: Option<MnemonicSides>,
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
@@ -654,6 +658,16 @@ mod parser_state {
             if self.in_hunk || self.combined_quarantine {
                 return false;
             }
+            // #15103: rename or copy metadata means the header's two tokens
+            // are two real paths, not one path under mnemonic prefixes.
+            if ["similarity index ", "rename from ", "copy from "]
+                .iter()
+                .any(|prefix| raw.starts_with(prefix))
+                && let Some(sides) = self.section_mnemonic_sides.take()
+            {
+                self.section_old_path = parse_git_old_path(sides.raw_header());
+                self.section_git_header = Some(sides.raw_header().to_owned());
+            }
             if let Some(percent) = raw.strip_prefix("similarity index ") {
                 let value = percent
                     .trim()
@@ -878,6 +892,16 @@ mod parser_state {
                 return true;
             }
 
+            let respelled = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map(|sides| sides.canonical_marker(raw).into_owned());
+            let raw = respelled.as_deref().unwrap_or(raw);
+            // The section's new-path marker ends its marker pair: a later
+            // plain section in the same stream names its own paths.
+            if raw.starts_with("+++ ") {
+                self.section_mnemonic_sides = None;
+            }
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);
@@ -985,8 +1009,13 @@ mod parser_state {
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
-            self.section_old_path = parse_git_old_path(raw);
-            self.section_git_header = raw.starts_with("diff --git ").then(|| raw.to_owned());
+            self.section_mnemonic_sides = MnemonicSides::of_header(raw);
+            let header = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map_or(raw, MnemonicSides::canonical_header);
+            self.section_old_path = parse_git_old_path(header);
+            self.section_git_header = header.starts_with("diff --git ").then(|| header.to_owned());
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
