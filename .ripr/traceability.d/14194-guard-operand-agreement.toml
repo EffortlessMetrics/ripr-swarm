@@ -11,5 +11,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_string_literal_edit_is_not_a_retained_operand",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_wrapper_assertion_text_still_names_the_pinned_call",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::layout_whitespace_cannot_invert_the_chain_direction",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_guard_operand_change_is_whole_top_level_operands_only",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::guard_operand_runs_agree_only_when_every_run_reads_the_identity_value",
   "crates/ripr/tests/short_circuit_or_tail.rs::the_substituted_rendered_call_withholds_exactly_like_the_direct_pin",
 ]
