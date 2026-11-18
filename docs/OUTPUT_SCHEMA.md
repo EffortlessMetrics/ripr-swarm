@@ -18156,6 +18156,19 @@ Field contract:
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
   document.
+- `repair_start_scope` — optional top-level block, present only in the
+  stdout of a bare `ripr repair --json` (no item) whose start was not
+  narrowed to the change (#13701): no diff could be read (no base resolved,
+  or an unreadable `--base`), the diff changes nothing, or the diff changes
+  no Rust production code (only tests, docs or other files). A repeated
+  `--json` start that resumes the awaiting attempt adds the same block to
+  the status document it prints. Members: `narrowed_to_change` (always
+  `false`), `note` (the plain note the human start prints on stderr, naming
+  why the start is not narrowed) and `base_command` (the `ripr repair --root
+  <root> --base <ref>` rerun template; `<ref>` is the reader's to name, so it
+  is not a runnable step). A start whose diff touches a repairable spot
+  carries no such block. The selection menu under `--json` carries the same
+  note in its `cli_refusal` `error.message` instead.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
