@@ -531,6 +531,45 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
             "dropped_aliases lists {alias} exactly when a finding dropped it"
         );
     }
+    // #13673: `canonical_gap_id` and basis-free `evidence_stages` rows drop
+    // exactly when they restate their owner, and the dropped value is
+    // recoverable from that owner.
+    let stage_order = ["reach", "infect", "propagate", "observe", "discriminate"];
+    let (mut gap_dropped, mut stages_dropped) = (false, false);
+    for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings) {
+        if let Some(id) = full_finding.get("canonical_gap_id") {
+            let restated = full_finding["canonical_gap"].get("id") == Some(id);
+            assert_eq!(terse_finding.get("canonical_gap_id").is_none(), restated);
+            gap_dropped |= restated;
+        }
+        if let Some(rows) = full_finding.get("evidence_stages") {
+            let rebuilt: Vec<Value> = stage_order
+                .iter()
+                .map(|stage| {
+                    serde_json::json!({
+                        "stage": stage,
+                        "state": full_finding["ripr"][stage]["state"],
+                        "confidence": full_finding["ripr"][stage]["confidence"],
+                    })
+                })
+                .collect();
+            let restated = rows.as_array() == Some(&rebuilt);
+            assert_eq!(terse_finding.get("evidence_stages").is_none(), restated);
+            stages_dropped |= restated;
+        }
+    }
+    assert_eq!(
+        aliases.contains(&Value::from("canonical_gap_id")),
+        gap_dropped
+    );
+    assert_eq!(
+        aliases.contains(&Value::from("evidence_stages")),
+        stages_dropped
+    );
+    assert!(
+        gap_dropped && stages_dropped,
+        "fixture must exercise both aliases"
+    );
     // The schema's terse branch cannot tie a missing action to its alias
     // without a version bump, so the producer invariant is held here.
     for terse_finding in terse_findings {

@@ -23,9 +23,9 @@ pub(crate) fn agent_card_plain_lines(
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
     hold: Option<&CardStartHold>,
+    start_summary: Option<&str>,
 ) -> Vec<String> {
     let mut lines = vec!["Repair brief for this gap".to_string()];
-    lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
     // would also start (#11397, #11381).
@@ -43,6 +43,23 @@ pub(crate) fn agent_card_plain_lines(
         && card.readiness.repair_ready
         && !refused;
     let ready = card.readiness.repair_ready && !refused;
+    // `start_summary` is only meaningful for a started, ready attempt whose
+    // id the summary actually printed (inside its continue command): every
+    // other case keeps the full brief, since the summary then did not carry
+    // the continue command, attempt id and packet path these lines repeat.
+    let skip_repeats = started
+        && start_summary
+            .zip(card.attempt.as_ref())
+            .is_some_and(|(text, attempt)| text.contains(attempt.attempt_id.as_str()));
+    // A line is only left out when the summary printed that exact text: the
+    // card prefers a matched finding's expression and a route-specific
+    // assertion, which the packet-derived summary may not carry.
+    let summary_has = |needle: &str| {
+        start_summary.is_some_and(|text| text.lines().any(|line| line.trim() == needle))
+    };
+    if !(skip_repeats && summary_has(&format!("changed behavior: {}", card.changed_behavior))) {
+        lines.push(format!("  Changed behavior: {}", card.changed_behavior));
+    }
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
     } else if let Some(attempt) = card
@@ -89,21 +106,31 @@ pub(crate) fn agent_card_plain_lines(
             None => "  Not ready to repair yet.".to_string(),
         });
     }
-    lines.push(format!(
-        "  Suggested assertion: {}",
-        match (
-            &card.assertion_goal_detail,
-            card.instruction.has_suggested_assertion
-        ) {
-            (Some(detail), true) => detail.clone(),
-            // A repair that can start or has started has a route, so the
-            // "no bounded repair route" wording would contradict it.
-            _ if ready || started => {
-                "none; ripr has no exact assertion to suggest for this gap.".to_string()
+    // The start summary prints the same `assertion shape:` for a suggested
+    // assertion, so only the "none" wording (which it does not print) stays.
+    let suggested_assertion_is_shown_above = skip_repeats
+        && card.instruction.has_suggested_assertion
+        && card
+            .assertion_goal_detail
+            .as_deref()
+            .is_some_and(|detail| summary_has(&format!("assertion shape: {detail}")));
+    if !suggested_assertion_is_shown_above {
+        lines.push(format!(
+            "  Suggested assertion: {}",
+            match (
+                &card.assertion_goal_detail,
+                card.instruction.has_suggested_assertion
+            ) {
+                (Some(detail), true) => detail.clone(),
+                // A repair that can start or has started has a route, so the
+                // "no bounded repair route" wording would contradict it.
+                _ if ready || started => {
+                    "none; ripr has no exact assertion to suggest for this gap.".to_string()
+                }
+                _ => instruction_plain_words(card.instruction.state).to_string(),
             }
-            _ => instruction_plain_words(card.instruction.state).to_string(),
-        }
-    ));
+        ));
+    }
     match &card.selected_target {
         Some(RepairCardTarget::Existing { file, line, .. }) => {
             lines.push(format!("  Test to extend: {file}:{line}"));
@@ -160,7 +187,8 @@ pub(crate) fn agent_card_plain_lines(
                             if input.starts_with("focused test edit for attempt"))
                 }) =>
         {
-            if let Some(attempt) = &card.attempt {
+            // The start summary already ends with the same continue command.
+            if let Some(attempt) = card.attempt.as_ref().filter(|_| !skip_repeats) {
                 let command = format!(
                     "ripr continue --root {} --attempt {}",
                     root_arg(),
@@ -195,7 +223,7 @@ pub(crate) fn agent_card_plain_lines(
         ));
     }
     lines.push(plain_done_when_line(&card.done_when));
-    if let Some(attempt) = &card.attempt {
+    if let Some(attempt) = card.attempt.as_ref().filter(|_| !skip_repeats) {
         lines.push(format!(
             "  Repair attempt: {} ({})",
             attempt.attempt_id, attempt.state
@@ -233,11 +261,14 @@ pub(crate) fn agent_card_plain_lines(
     // actionable lines, next to the machine-readable route that takes it.
     lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
-    lines.push(format!(
-        "  Machine-readable details (JSON): {packet_command}"
-    ));
-    if let Some(form) = crate::output::markdown::powershell_text_variant(packet_command) {
-        lines.push(format!("  (PowerShell) {form}"));
+    // The start summary prints the packet file path already.
+    if !skip_repeats {
+        lines.push(format!(
+            "  Machine-readable details (JSON): {packet_command}"
+        ));
+        if let Some(form) = crate::output::markdown::powershell_text_variant(packet_command) {
+            lines.push(format!("  (PowerShell) {form}"));
+        }
     }
     lines.push("  More fields: add --verbose.".to_string());
     lines

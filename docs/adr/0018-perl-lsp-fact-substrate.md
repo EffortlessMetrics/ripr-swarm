@@ -1,6 +1,6 @@
 # ADR 0018: Perl LSP Fact Substrate
 
-Status: proposed
+Status: accepted
 
 Date: 2026-06-04
 

@@ -100,60 +100,96 @@ pub(in crate::analysis::language::python) fn apply_test_local_shadows<'a>(
     owners: &mut [PythonOwner],
     files: impl Iterator<Item = &'a PathBuf>,
 ) {
-    let files = files.map(PathBuf::as_path).collect::<BTreeSet<_>>();
-    let mut locals_by_name: BTreeMap<String, Vec<(PathBuf, &Path)>> = BTreeMap::new();
-    let mut test_dirs: BTreeSet<PathBuf> = BTreeSet::new();
-    for file in &files {
-        if is_test_file(file) {
-            test_dirs.insert(file.parent().unwrap_or(Path::new("")).to_path_buf());
-        }
-        if let Some((name, dir)) = local_module(file) {
-            locals_by_name.entry(name).or_default().push((dir, file));
-        }
-    }
-    if locals_by_name.is_empty() || test_dirs.is_empty() {
-        return;
-    }
-    let path_dirs_by_test_dir = test_dirs
-        .iter()
-        .map(|dir| (dir.clone(), prepend_path_dirs(dir, &files)))
-        .collect::<BTreeMap<_, _>>();
-    for owner in owners.iter_mut() {
-        let mut names = BTreeSet::new();
-        let modules = owner_module_paths(&owner.file)
-            .into_iter()
-            .chain(owner.reexport_modules.iter().cloned())
-            .chain(
-                owner
-                    .ambiguous_src_modules
-                    .iter()
-                    .map(|ambiguous| ambiguous.module.clone()),
-            );
-        for module in modules {
-            if let Some(root) = module.split('.').next().filter(|root| !root.is_empty()) {
-                names.insert(root.to_string());
+    let index = TestLocalShadowIndex::build(files);
+    index.apply(owners);
+}
+
+/// The workspace-wide lookups [`TestLocalShadowIndex::apply`] reads, built once
+/// so a caller applying shadows slice by slice (repo scans load one production
+/// file at a time) does not rebuild them per slice.
+pub(in crate::analysis::language::python) struct TestLocalShadowIndex {
+    locals_by_name: BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
+    path_dirs_by_test_dir: BTreeMap<PathBuf, Vec<PathBuf>>,
+}
+
+impl TestLocalShadowIndex {
+    pub(in crate::analysis::language::python) fn build<'a>(
+        files: impl Iterator<Item = &'a PathBuf>,
+    ) -> Self {
+        let files = files.map(PathBuf::as_path).collect::<BTreeSet<_>>();
+        let mut locals_by_name: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+        let mut test_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        for file in &files {
+            if is_test_file(file) {
+                test_dirs.insert(file.parent().unwrap_or(Path::new("")).to_path_buf());
+            }
+            if let Some((name, dir)) = local_module(file) {
+                locals_by_name
+                    .entry(name)
+                    .or_default()
+                    .push((dir, file.to_path_buf()));
             }
         }
-        owner.test_local_shadows = names
-            .into_iter()
-            .filter_map(|module| {
-                let local_dirs = locals_by_name
-                    .get(&module)?
-                    .iter()
-                    .filter(|(_, file)| !is_owners_own_module(file, &owner.file))
-                    .map(|(dir, _)| dir)
-                    .collect::<BTreeSet<_>>();
-                let affected = path_dirs_by_test_dir
-                    .iter()
-                    .filter(|(_, path_dirs)| path_dirs.iter().any(|dir| local_dirs.contains(dir)))
-                    .map(|(test_dir, _)| test_dir.clone())
-                    .collect::<Vec<_>>();
-                (!affected.is_empty()).then_some(TestLocalShadow {
-                    module,
-                    test_dirs: affected,
+        let path_dirs_by_test_dir = if locals_by_name.is_empty() {
+            BTreeMap::new()
+        } else {
+            test_dirs
+                .iter()
+                .map(|dir| (dir.clone(), prepend_path_dirs(dir, &files)))
+                .collect()
+        };
+        Self {
+            locals_by_name,
+            path_dirs_by_test_dir,
+        }
+    }
+
+    /// Sets `test_local_shadows` on every owner of the slice.
+    pub(in crate::analysis::language::python) fn apply(&self, owners: &mut [PythonOwner]) {
+        if self.locals_by_name.is_empty() || self.path_dirs_by_test_dir.is_empty() {
+            return;
+        }
+        for owner in owners.iter_mut() {
+            let mut names = BTreeSet::new();
+            let modules = owner_module_paths(&owner.file)
+                .into_iter()
+                .chain(owner.reexport_modules.iter().cloned())
+                .chain(
+                    owner
+                        .ambiguous_src_modules
+                        .iter()
+                        .map(|ambiguous| ambiguous.module.clone()),
+                );
+            for module in modules {
+                if let Some(root) = module.split('.').next().filter(|root| !root.is_empty()) {
+                    names.insert(root.to_string());
+                }
+            }
+            owner.test_local_shadows = names
+                .into_iter()
+                .filter_map(|module| {
+                    let local_dirs = self
+                        .locals_by_name
+                        .get(&module)?
+                        .iter()
+                        .filter(|(_, file)| !is_owners_own_module(file, &owner.file))
+                        .map(|(dir, _)| dir)
+                        .collect::<BTreeSet<_>>();
+                    let affected = self
+                        .path_dirs_by_test_dir
+                        .iter()
+                        .filter(|(_, path_dirs)| {
+                            path_dirs.iter().any(|dir| local_dirs.contains(dir))
+                        })
+                        .map(|(test_dir, _)| test_dir.clone())
+                        .collect::<Vec<_>>();
+                    (!affected.is_empty()).then_some(TestLocalShadow {
+                        module,
+                        test_dirs: affected,
+                    })
                 })
-            })
-            .collect();
+                .collect();
+        }
     }
 }
 

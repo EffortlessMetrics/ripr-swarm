@@ -5,7 +5,7 @@
 //! any of these outputs fails here instead of silently taxing every agent turn.
 //! A deliberate cut lowers the ceiling in the same change; a deliberate
 //! addition must justify raising it.
-use super::{printed_path, run_command, unique_external_workspace};
+use super::{DeclaredHunkScratch, printed_path, run_command, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -25,8 +25,9 @@ const TESTS: &str = "#[cfg(test)]\nmod tests {\n    use super::*;\n\
     #[test] fn parses() { assert!(parse(\"12\").is_ok()); }\n\
     #[test] fn gold() { assert_eq!(tier(50), \"gold\"); }\n}\n";
 
-fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
+fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(project.clone());
     fs::create_dir_all(project.join("src"))?;
     fs::write(
         project.join("Cargo.toml"),
@@ -48,7 +49,7 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
         }
     }
     fs::write(project.join("change.diff"), diff)?;
-    Ok(project)
+    Ok((project, cleanup))
 }
 
 fn run(project: &Path, args: &[&str]) -> TestResult<String> {
@@ -80,7 +81,7 @@ fn within(label: &str, text: &str, ceiling: usize) {
 
 #[test]
 fn agent_facing_outputs_stay_inside_their_byte_budgets() -> TestResult {
-    let project = workspace("agent-output-budget")?;
+    let (project, _cleanup) = workspace("agent-output-budget")?;
     // First run prints the one-time legend; budget the steady-state rerun.
     run(&project, &["check", "--diff", "change.diff"])?;
     let human = run(&project, &["check", "--diff", "change.diff"])?;
@@ -137,7 +138,7 @@ Hidden:
     );
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
-    within("check --format json-terse", &terse, 49_000);
+    within("check --format json-terse", &terse, 38_500);
     within("check --format github", &github, 3_300);
     Ok(())
 }
@@ -146,7 +147,7 @@ Hidden:
 /// under `next`; per-seam `verification` carries only the suggested test.
 #[test]
 fn agent_brief_states_workflow_commands_once() -> TestResult {
-    let project = workspace("agent-brief-budget")?;
+    let (project, _cleanup) = workspace("agent-brief-budget")?;
     let brief = run(
         &project,
         &["agent", "brief", "--diff", "change.diff", "--json"],
@@ -170,6 +171,7 @@ fn agent_brief_states_workflow_commands_once() -> TestResult {
 #[test]
 fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResult {
     let root = super::repair_route_workspace("agent repair start budget")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     let root_arg = root.to_string_lossy().into_owned();
     let output = super::run_ripr_with_env(
         &[
@@ -224,11 +226,71 @@ fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResu
             "stderr must not repeat `{repeated}` from stdout:\n{stderr}"
         );
     }
-    let lines = combined.lines().count();
-    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 15)");
+    // The run line names the exact native command for the new test (#14320).
     assert!(
-        lines <= 15,
-        "agent repair start grew to {lines} lines, over its 15-line budget:\n{combined}"
+        stdout.contains("Run the new test: cargo test --manifest-path ")
+            && stdout.contains(" --test pricing "),
+        "stdout must name the focused test command:\n{stdout}"
     );
+    // 16: one line more than before #14320, spent on that run command, the
+    // step a developer otherwise has to work out by hand.
+    let lines = combined.lines().count();
+    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 16)");
+    assert!(
+        lines <= 16,
+        "agent repair start grew to {lines} lines, over its 16-line budget:\n{combined}"
+    );
+    Ok(())
+}
+
+/// The task-first `ripr repair <id>` stdout is the start summary followed by
+/// the handoff card. The card must not repeat what the summary just printed
+/// (changed behavior, assertion shape, continue command, packet route,
+/// attempt id), and the whole stdout stays inside a byte budget.
+#[test]
+fn ripr_repair_start_does_not_repeat_the_summary_in_the_card() -> TestResult {
+    let root = super::repair_route_workspace("ripr repair start budget")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = super::run_ripr_with_env(
+        &["repair", super::REPAIR_ROUTE_SEAM, "--root", &root_arg],
+        &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
+    );
+    // The binary prints `/` separators on Windows, so fold the root the same way
+    // it is printed instead of replacing the backslash spelling of the argument.
+    let stdout = String::from_utf8(output.stdout)?.replace(&printed_path(&root), "<root>");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    // Positive: the summary and the card's own lines are both present.
+    for kept in [
+        "Repair prepared for seam ",
+        "assertion shape: ",
+        "Next, after the test edit: ripr continue ",
+        "Repair brief for this gap",
+        "  Ready to repair. The repair has started and is waiting for your test.",
+        "  Files you may change: ",
+        "  Done when: ",
+    ] {
+        assert!(stdout.contains(kept), "stdout lost `{kept}`:\n{stdout}");
+    }
+    // Negative: the card does not restate the summary.
+    for repeated in [
+        "  Changed behavior: ",
+        "  Suggested assertion: ",
+        "  Next: write the test, then run",
+        "  Repair attempt: ",
+        "  Machine-readable details (JSON): ",
+    ] {
+        assert!(
+            !stdout.contains(repeated),
+            "the card repeats `{repeated}` from the start summary:\n{stdout}"
+        );
+    }
+    assert_eq!(
+        stdout.matches("ripr continue ").count(),
+        1,
+        "the continue command must print once:\n{stdout}"
+    );
+    within("ripr repair start (stdout)", &stdout, 1_450);
     Ok(())
 }

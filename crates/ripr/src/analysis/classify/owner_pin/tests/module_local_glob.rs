@@ -266,6 +266,32 @@ fn an_unresolved_include_anywhere_leaves_the_glob_workspace_wide() {
     assert!(is_binding(&refusal_of(&index, SUITE)));
 }
 
+/// RIPR-SPEC-0369 / #14116: named member re-exports do not turn a local
+/// module glob into a foreign glob, even while placement is unavailable.
+#[test]
+fn sibling_member_reexports_preserve_assertion_admission_with_an_include_limit() {
+    use crate::analysis::facts::RustIncludeLimitation;
+    let lib = "mod model;\nuse model::*;\npub(crate) use model::{A, B};\nmod suite;\npub fn weight(x: u32) -> u32 { x * 3 }\n";
+    for (model, admitted) in [
+        ("pub struct A; pub struct B;", true),
+        // A local module's real public macro import must still be seen.
+        (
+            "pub struct A; pub struct B; pub use foreign::assert_eq;",
+            false,
+        ),
+    ] {
+        let mut index = index(&[(LIB, lib), ("src/model.rs", model), (SUITE, SUITE_BODY)]);
+        index.include_limitations.push(RustIncludeLimitation {
+            parent: PathBuf::from("tests/unrelated.rs"),
+            line: 1,
+            expression: "include!(\"leaf.rs\")".to_string(),
+            reason_code: "rust_include_nested_module_context".to_string(),
+        });
+        assert!(TargetRoots::new(&index).disabled, "placement stays refused");
+        assert_eq!(refusal_of(&index, SUITE).is_none(), admitted, "{model}");
+    }
+}
+
 #[test]
 fn a_public_glob_is_not_confined() {
     let public = "pub use rayon::prelude::*;\n";
@@ -328,4 +354,30 @@ fn review_macro_use_can_shadow_builtin_derive_in_ancestor() {
     let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
     let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
     assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+/// #14116: std's `thread_local!` in the file does not turn the file's own
+/// module glob (`mod inner; use inner::*;`) into a foreign glob, so a test in
+/// that file keeps its `assert_eq!` credit. A non-std item macro still refuses.
+#[test]
+fn a_thread_local_beside_a_sibling_module_glob_keeps_the_test_credited() {
+    let tests = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn weighs() {\n        assert_eq!(weight(4), 12);\n    }\n}\n";
+    let body = "pub fn weight(x: u32) -> u32 {\n    x * 3 + helper()\n}\n";
+    for (item_macro, admitted) in [
+        ("thread_local! { static C: u8 = 0; }", true),
+        ("std::thread_local! { static C: u8 = 0; }", true),
+        ("dep::items! {}", false),
+    ] {
+        let suite = format!("mod inner;\nuse inner::*;\n{item_macro}\n{body}{tests}");
+        let index = index(&[
+            (LIB, "mod suite;\n"),
+            (SUITE, suite.as_str()),
+            ("src/suite/inner.rs", "pub fn helper() -> u32 {\n    0\n}\n"),
+        ]);
+        assert_eq!(
+            refusal_of(&index, SUITE).is_none(),
+            admitted,
+            "{item_macro}"
+        );
+    }
 }

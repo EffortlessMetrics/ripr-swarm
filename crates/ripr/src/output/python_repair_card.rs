@@ -46,10 +46,15 @@ fn native_pytest_route_parts<'a>(
     allow_qualified: bool,
 ) -> Option<NativePytestRoute<'a>> {
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
+    // The producer chose the interpreter once (#13801): PATH `python`, or a
+    // project venv interpreter it found statically. The route repeats that
+    // choice and never looks at the filesystem itself.
+    let program = crate::domain::pytest_verify_interpreter(raw)?;
     if !safe_qualified_name(&name.replace("::", "."))
         || (!allow_qualified && name.contains("::"))
         || name.rsplit("::").next()? != selected
-        || crate::domain::python_pytest_verify_display(file, name, windows).as_deref() != Some(raw)
+        || crate::domain::python_pytest_verify_display_for(program, file, name, windows).as_deref()
+            != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
         || Path::new(file)
             .components()
@@ -58,7 +63,7 @@ fn native_pytest_route_parts<'a>(
         return None;
     }
     Some(NativePytestRoute {
-        program: "python",
+        program,
         args: ["-m", "pytest", node],
         cwd: ".",
     })
@@ -265,11 +270,14 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
             &verify_command,
             &repair_action,
         ),
-        suggested_assertion: suggested_assertion(
-            &repair_family,
+        suggested_assertion: unread_owner_result_field_assertion(
+            finding,
+            &suggested_test_name,
             &missing_discriminator,
-            &verify_command,
-        ),
+        )
+        .unwrap_or_else(|| {
+            suggested_assertion(&repair_family, &missing_discriminator, &verify_command)
+        }),
         suggested_test_file,
         suggested_test_name,
         suggested_test_node_id,
@@ -511,6 +519,25 @@ fn field_assertion(missing_discriminator: &str) -> String {
         }
     }
     format!("Assert the returned object or field satisfies `{missing_discriminator}`.")
+}
+
+/// The assertion on the test's own binding of the owner's returned instance,
+/// only when the analyzer established that the selected test binds it once
+/// and never reads the changed field.
+fn unread_owner_result_field_assertion(
+    finding: &Finding,
+    test_name: &str,
+    missing_discriminator: &str,
+) -> Option<String> {
+    let (binding, field) = crate::domain::python_unread_owner_result_field(
+        finding.evidence.iter().map(String::as_str),
+        test_name,
+        missing_discriminator,
+    )?;
+    let (_, rhs) = split_equality_discriminator(missing_discriminator)?;
+    Some(format!(
+        "Assert the field on the owner result the test already binds: `assert {binding}.{field} == {rhs}`."
+    ))
 }
 
 fn pytest_exception_assertion(missing_discriminator: &str) -> String {
@@ -792,6 +819,31 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    #[test]
+    fn native_route_runs_the_producer_selected_interpreter_only() -> Result<(), String> {
+        let route = super::native_pytest_route_parts;
+        let file = "tests/test_order.py";
+        let node = "tests/test_order.py::test_total";
+        for program in ["python", ".venv/bin/python", "venv/bin/python"] {
+            let raw = format!("{program} -m pytest {node}");
+            let parts = route(file, node, &raw, "test_total", false, false)
+                .ok_or_else(|| format!("`{raw}` must give a native route"))?;
+            assert_eq!(parts.program, program);
+            assert_eq!(parts.args, ["-m", "pytest", node]);
+        }
+        for raw in [
+            "python3 -m pytest tests/test_order.py::test_total",
+            "/tmp/evil/bin/python -m pytest tests/test_order.py::test_total",
+            "../.venv/bin/python -m pytest tests/test_order.py::test_total",
+        ] {
+            assert!(
+                route(file, node, raw, "test_total", false, false).is_none(),
+                "{raw}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

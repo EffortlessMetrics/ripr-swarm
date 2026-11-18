@@ -25,6 +25,8 @@ mod python_module_reader_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
+mod python_project_venv_verify_route;
+#[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
 #[cfg(feature = "lang-python")]
 mod python_test_style_matrix;
@@ -42,7 +44,7 @@ mod typescript_repo_mode_repair_failclosed;
 #[cfg(feature = "lang-typescript")]
 mod typescript_table_row_packets;
 
-fn sample_finding(file: &str, line: usize) -> Finding {
+pub(super) fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         confidence_basis: Vec::new(),
@@ -129,6 +131,8 @@ pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }

@@ -1,0 +1,14 @@
+# Golden Output Changes
+
+## Pending — rust_predicate_appended_char_arm (1)
+
+Reason:
+RIPR-SPEC-0001: an input equal to an appended integer or char equality arm reaches the change, and an appended-arm tail carries it to the return (#15027)
+
+Command:
+`cargo xtask goldens bless rust_predicate_appended_char_arm --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
