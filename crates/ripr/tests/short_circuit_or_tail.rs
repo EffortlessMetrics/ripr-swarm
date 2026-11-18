@@ -397,7 +397,7 @@ fn a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter() 
     // The helper's third parameter is also named `n`. The substituted call
     // `is_even(n)` must not read the helper's `4`: with the loan withheld the
     // test's `let n = 0` is unreadable (a plain identifier argument is read
-    // only from a constant-row `for` table), so agreement cannot be proven and
+    // only from a constant-row `for` table), so agreement cannot be established and
     // the pin stays exposed. Without the filter the helper's `4` is read, the
     // dropped guard agrees, and the class drops to weakly_exposed — that is
     // the discrimination this test pins (#14194 review).
