@@ -266,9 +266,9 @@ fn canonical_positive_journey_completes_before_edit_after_with_closed_movement()
         run_printed_ripr(&candidate, &roots.fixture, &roots.decoy, &continue_command)?;
     require_success("printed ripr continue", &after_phase)?;
 
-    let before_path = roots
-        .fixture
-        .join("target/ripr/workflow/before.repo-exposure.json");
+    let before_path = roots.fixture.join(format!(
+        "target/ripr/repair-attempts/{attempt_id}/artifacts/before.repo-exposure.json"
+    ));
     let after_path = roots
         .fixture
         .join("target/ripr/workflow/after.repo-exposure.json");

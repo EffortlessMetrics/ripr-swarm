@@ -62,11 +62,8 @@ pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_FILE: &str = "before.check-findings.j
 /// same producer's artifact, written by `ripr agent repair --phase after`.
 pub(crate) const GAP_BOUND_AFTER_SNAPSHOT_FILE: &str = "after.check-findings.json";
 
-/// The workflow-side copy of a gap-bound attempt's repair packet. Distinct
-/// from the seam loop's `agent-packet.json` so a gap-bound start never
-/// overwrites a seam-bound projection nor makes `ripr agent status` read a
-/// gap id as a seam it can build `--seam-id` commands for.
-pub(crate) const GAP_BOUND_PACKET_ARTIFACT: &str = "target/ripr/workflow/gap-repair-packet.json";
+/// The preparation-local packet for a gap-bound attempt.
+pub(crate) const GAP_BOUND_PACKET_FILE: &str = "gap-repair-packet.json";
 
 /// The manifest artifact role carrying that snapshot. Distinct from the
 /// seam-bound `before_snapshot` role (a repo-exposure document) so no
