@@ -299,6 +299,14 @@ running test; no named stop reason is added on this issue.
   `test = false` lib or bin, a bench, or an undiscovered test file) keeps
   its credit, as on base. The same mount through `#[path]` is an indexed
   edge, so the skipped holder is seen and the credit is withheld.
+- Undiscovered and example targets, under-credit (#14972 review): the
+  `required-features` check reads only the package's own default feature
+  closure, the same owner bins use (#7266). A `test = true` example (or a
+  `[[bin]]`) whose required feature is enabled only through another
+  workspace member's dependency edge (`a = { path = "../a", features =
+  ["special"] }`) runs under a workspace `cargo test` by feature
+  unification, but reads as skipped here and loses its credit. Tracked for
+  both target kinds in #15079.
 - `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
 - Undiscovered and example targets, over-credit (#14972 review): cargo
