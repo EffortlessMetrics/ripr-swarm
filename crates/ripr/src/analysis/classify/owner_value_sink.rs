@@ -655,14 +655,32 @@ fn std_path_is_unshadowed(source: &str, absolute: bool) -> bool {
             .descendants()
             .filter_map(ast::UseTree::cast)
             .any(uncertain_glob)
-        && !file.descendants().any(|node| {
-            ast::MacroCall::can_cast(node.kind())
-                && node.parent().is_some_and(|parent| {
-                    matches!(
-                        parent.kind(),
-                        ra_ap_syntax::SyntaxKind::SOURCE_FILE | ra_ap_syntax::SyntaxKind::ITEM_LIST
-                    )
-                })
+        && !relative_std_can_be_shadowed_by_macro(file)
+}
+
+// Statement expansions can add a binding even when the AST contains no
+// declaration for it. Permit only the comparison macros used by the reader
+// when this file has no evidence of rebinding those prelude names.
+fn relative_std_can_be_shadowed_by_macro(file: &ra_ap_syntax::SyntaxNode) -> bool {
+    const ASSERTIONS: &[&str] = &["assert", "assert_eq", "assert_ne"];
+    let can_rebind_assertion = file.descendants().any(|node| {
+        if let Some(name) = ast::Name::cast(node.clone()) {
+            return ASSERTIONS.contains(&name.text().trim_start_matches("r#"));
+        }
+        ast::Attr::cast(node).is_some_and(|attr| {
+            contains_as_whole_word(&attr.syntax().text().to_string(), "macro_use")
+        })
+    }) || ASSERTIONS
+        .iter()
+        .any(|name| crate::analysis::syntax::use_rebinds_crate_name(file, name));
+    file.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            crate::analysis::syntax::macro_call_is_statement(&call)
+                && (can_rebind_assertion
+                    || !call.path().is_some_and(|path| {
+                        ASSERTIONS.contains(&path.syntax().text().to_string().as_str())
+                    }))
         })
 }
 

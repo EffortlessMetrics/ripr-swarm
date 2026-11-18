@@ -324,8 +324,52 @@ pub fn over(qty: u32) -> bool { qty >= 10 }
         "pub mod std { pub mod mem { pub fn replace(_: &mut bool, _: bool) -> bool { true } } }",
     )
     .map_err(|error| error.to_string())?;
+    assert_relative_and_absolute_replace_grades(root)
+}
+
+#[test]
+fn repo_mem_replace_distinguishes_statement_macro_shadow_from_absolute_path() -> Result<(), String>
+{
+    let scratch = subject("")?;
+    std::fs::write(
+        scratch.0.join("src/lib.rs"),
+        r#"pub fn over(qty: u32) -> bool {
+    qty >= 10
+}
+#[cfg(test)]
+mod tests {
+    use super::over;
+    macro_rules! install {
+        ($root:ident) => {
+            mod $root {
+                pub mod mem {
+                    pub fn replace(_: &mut bool, _: bool) -> bool { true }
+                }
+            }
+        };
+    }
+    #[test]
+    fn relative() {
+        install!(std);
+        assert_eq!(std::mem::replace(&mut over(10), false), true);
+        assert_eq!(std::mem::replace(&mut over(0), false), true);
+    }
+    #[test]
+    fn absolute() {
+        install!(std);
+        assert_eq!(::std::mem::replace(&mut (over(10)), false), true);
+        assert_eq!(::std::mem::replace(&mut (over(0)), false), false);
+    }
+}
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_relative_and_absolute_replace_grades(&scratch.0)
+}
+
+fn assert_relative_and_absolute_replace_grades(root: &std::path::Path) -> Result<(), String> {
     let output = ripr::app::repo_seam_inventory_input(CheckInput {
-        root: root.clone(),
+        root: root.to_path_buf(),
         mode: Mode::Fast,
         ..CheckInput::default()
     });
