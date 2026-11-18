@@ -1803,6 +1803,8 @@ mod tests {
 const WEAK_OWNER_NAMED_ASSERTION: &str = "assert!(Version::parse(\"1x\").is_err());";
 const STRONG_OWNER_NAMED_ASSERTION: &str =
     "assert_eq!(Version::parse(\"1x\").unwrap_err(), \"bad digit\");";
+const WEAK_UNREACHING_OWNER_NAMED_ASSERTION: &str =
+    "assert!(u64::from_str_radix(\"1x\", 10).is_err());";
 const STRONG_UNREACHING_OWNER_NAMED_ASSERTION: &str =
     "assert_eq!(format!(\"bad {}\", \"digit\"), \"bad digit\");";
 
@@ -1891,6 +1893,29 @@ fn eight_proximity_rows_do_not_displace_the_owner_named_weak_row() -> Result<(),
         weak_bound_row(&finding).map(|test| test.name.as_str()),
         Some("numeric_identifier_rejects_garbage")
     );
+    Ok(())
+}
+
+#[test]
+fn eight_proximity_rows_do_not_displace_a_weak_owner_named_row_that_never_reaches_the_owner()
+-> Result<(), String> {
+    // #12098 lift in isolation: the weak owner-named row calls nothing on the
+    // owner's caller chain, so near-owner ordering (#15026) cannot move it. It
+    // is still kept in the window, and row 0 is not rescored.
+    let finding = crowded_owner_named_fixture(10, WEAK_UNREACHING_OWNER_NAMED_ASSERTION)?;
+    assert_eq!(finding.related_tests_total(), 11);
+    assert_eq!(
+        finding.related_tests.len(),
+        8,
+        "{:?}",
+        finding.related_tests
+    );
+    let (index, row) = owner_named_row(&finding)
+        .ok_or_else(|| format!("owner-named row was displaced: {:?}", finding.related_tests))?;
+    assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
+    assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Weak);
+    assert_ne!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(finding.related_tests[0].name, "aa_unrelated_00");
     Ok(())
 }
 
