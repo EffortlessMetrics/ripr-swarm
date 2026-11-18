@@ -5982,7 +5982,9 @@ fn finalize_related_tests_with_direct_rows(
     let near = |test: &RelatedTest| {
         near_owner.contains(&(test.file.clone(), test.line, test.name.clone()))
     };
-    related.sort_by_key(|test| {
+    // The near key clones a row identity, so it is computed once per row;
+    // `sort_by_cached_key` is stable like `sort_by_key`.
+    related.sort_by_cached_key(|test| {
         (
             std::cmp::Reverse(related_test_rank(test)),
             !touched(test),
