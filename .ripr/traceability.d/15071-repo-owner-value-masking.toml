@@ -2,6 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0094"
 tests = [
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_discarded_owner_aliases_mask_both_seams",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_owner_binding_requires_a_passive_initializer",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_unresolved_owner_binding_does_not_preserve_strong_credit",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_owner_value_binding_with_write_capability_masks_both_seams",

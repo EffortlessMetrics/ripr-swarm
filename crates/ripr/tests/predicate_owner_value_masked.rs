@@ -364,6 +364,22 @@ fn repo_unresolved_owner_binding_does_not_preserve_strong_credit() -> Result<(),
 }
 
 #[test]
+fn repo_discarded_owner_aliases_mask_both_seams() -> Result<(), String> {
+    for body in [
+        "let got = over(10); assert_eq!((got, true).1, true);",
+        "let got = over(10); let alias = got; assert_eq!({ let _ = alias; true }, true);",
+        "let got = over(10); macro_rules! ignore { ($v:expr) => { true }; } assert_eq!(ignore!(got), true);",
+        "let got = over(10); assert_eq!(Some(true).unwrap_or(got), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips(
+        "let got = over(10); assert_eq!((got, true).0, true);",
+        "strongly_gripped",
+    )
+}
+
+#[test]
 fn repo_owner_binding_requires_a_passive_initializer() -> Result<(), String> {
     for body in [
         "let got = std::cell::Cell::from(over(10)); got.set(true); assert_eq!(got.get(), true);",

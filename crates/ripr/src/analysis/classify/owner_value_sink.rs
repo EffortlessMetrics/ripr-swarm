@@ -29,6 +29,10 @@ use super::reveal::contains_as_whole_word;
 use crate::analysis::extract::{assertion_oracle_text, mask_comments_and_strings};
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{AstNode, ast, ast::HasArgList, ast::HasGenericArgs, ast::HasName};
+use std::{
+    cell::OnceCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 /// How the owner call's value relates to an assertion's compared operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,6 +206,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         credit: false,
         strict: false,
         test_index,
+        owner_aliases: OnceCell::new(),
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -251,6 +256,7 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
         credit: false,
         strict: true,
         test_index: None,
+        owner_aliases: OnceCell::new(),
     };
     // A sub-expression the operand's own reading never visits (a closure
     // argument, an `if` branch, a method argument of the owner's value:
@@ -343,6 +349,7 @@ pub(in crate::analysis) fn bool_field_assertion(
         credit: true,
         strict: false,
         test_index: None,
+        owner_aliases: OnceCell::new(),
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -742,6 +749,7 @@ struct Reader<'a> {
     /// cannot follow to one `let` is not read as unrelated.
     strict: bool,
     test_index: Option<&'a RustIndex>,
+    owner_aliases: OnceCell<BTreeSet<String>>,
 }
 
 impl Reader<'_> {
@@ -825,10 +833,32 @@ impl Reader<'_> {
         }
     }
 
-    /// `Masked` when `node` names the owner anywhere, else `Absent`: the
-    /// reading for a shape that carries no value this module can follow.
+    /// Refusal for a shape we cannot follow, including a discarded local
+    /// that may hold the owner's value. A successful operand read still
+    /// decides whether the value reaches the comparison.
     fn unfollowed(&self, node: &ra_ap_syntax::SyntaxNode) -> Sink {
-        if self.mentions(&node.text().to_string()) {
+        let names_owner = self.mentions(&node.text().to_string());
+        let names_alias = self.test_index.is_some()
+            && node.descendants().any(|child| {
+                if let Some(path) = ast::PathExpr::cast(child.clone()) {
+                    return path
+                        .path()
+                        .filter(|path| path.qualifier().is_none())
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| {
+                            self.owner_connected_locals()
+                                .contains(name.text().trim_start_matches("r#"))
+                        });
+                }
+                // Opaque macro inputs have tokens rather than parsed paths.
+                ast::TokenTree::cast(child).is_some_and(|tree| {
+                    let text = mask_comments_and_strings(&tree.syntax().text().to_string());
+                    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|word| self.owner_connected_locals().contains(word))
+                })
+            });
+        if names_owner || names_alias {
             Sink::Masked
         } else {
             Sink::Absent
@@ -1276,12 +1306,18 @@ impl Reader<'_> {
         }
     }
 
-    /// A refusal-only dependency walk for bindings the value reader cannot
-    /// follow. It checks all same-name initializers without selecting a
-    /// scope, and visits each name at most once. It never grants credit.
-    fn may_bind_owner_value(&self, root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
-        use std::collections::{BTreeMap, BTreeSet};
+    fn owner_connected_locals(&self) -> &BTreeSet<String> {
+        self.owner_aliases.get_or_init(|| {
+            parse_body(&self.test.body)
+                .map(|parse| self.collect_owner_connected_locals(parse.tree().syntax()))
+                .unwrap_or_default()
+        })
+    }
 
+    /// Refusal-only dependencies from possible initializer and assignment
+    /// sources. No scope or write order is inferred. The reverse walk visits
+    /// each owner-connected local once and is reused by every fallback.
+    fn collect_owner_connected_locals(&self, root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
         let mut initializers: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for statement in root.descendants().filter_map(ast::LetStmt::cast) {
             let Some(pattern) = statement.pat() else {
@@ -1293,7 +1329,9 @@ impl Reader<'_> {
                 .filter_map(ast::IdentPat::cast)
             {
                 if let Some(bound) = pattern.name() {
-                    let sources = initializers.entry(bound.text().to_string()).or_default();
+                    let sources = initializers
+                        .entry(bound.text().trim_start_matches("r#").to_string())
+                        .or_default();
                     if let Some(initializer) = statement.initializer() {
                         sources.push(initializer.syntax().text().to_string());
                     }
@@ -1317,29 +1355,28 @@ impl Reader<'_> {
                 }
             }
         }
-        let mut pending = vec![name];
-        let mut visited = BTreeSet::new();
-        while let Some(local) = pending.pop() {
-            if !visited.insert(local) {
-                continue;
-            }
-            for initializer in initializers.get(local).into_iter().flatten() {
-                if self.mentions(initializer) {
-                    return true;
+        let mut reverse: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        let mut pending = Vec::new();
+        for (local, sources) in &initializers {
+            for source in sources {
+                if self.mentions(source) {
+                    pending.push(local.as_str());
                 }
-                let masked = mask_comments_and_strings(initializer);
-                pending.extend(
-                    masked
-                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                        .filter_map(|part| {
-                            initializers
-                                .get_key_value(part)
-                                .map(|(key, _)| key.as_str())
-                        }),
-                );
+                let masked = mask_comments_and_strings(source);
+                for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+                    if let Some((key, _)) = initializers.get_key_value(word) {
+                        reverse.entry(key.as_str()).or_default().push(local);
+                    }
+                }
             }
         }
-        false
+        let mut connected = BTreeSet::new();
+        while let Some(local) = pending.pop() {
+            if connected.insert(local.to_string()) {
+                pending.extend(reverse.get(local).into_iter().flatten().copied());
+            }
+        }
+        connected
     }
 
     /// A bare name the test body binds exactly once with a plain `let`.
@@ -1376,7 +1413,9 @@ impl Reader<'_> {
         let unfollowed_local = || {
             if default_unfollowed == Sink::Masked
                 || (self.test_index.is_some()
-                    && self.may_bind_owner_value(parse.tree().syntax(), &name))
+                    && self
+                        .owner_connected_locals()
+                        .contains(name.trim_start_matches("r#")))
             {
                 Sink::Masked
             } else {
