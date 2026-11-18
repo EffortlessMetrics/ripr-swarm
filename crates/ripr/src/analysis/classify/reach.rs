@@ -677,7 +677,10 @@ pub(in crate::analysis) fn out_of_root_member_identity(root: &Path) -> Option<St
     directories.dedup();
     let mut identity = String::new();
     for directory in directories {
-        let manifest = std::fs::read(directory.join("Cargo.toml")).ok();
+        // The bounded metadata reader, like every other manifest read: a
+        // manifest that is not a regular file or is over the metadata ceiling
+        // is "unreadable" here, never an unbounded read while keying.
+        let manifest = crate::bounded_input::read_metadata_toml(directory.join("Cargo.toml")).ok();
         let mut traits: Vec<String> = member_trait_names(std::slice::from_ref(&directory))
             .into_iter()
             .collect();
@@ -687,7 +690,7 @@ pub(in crate::analysis) fn out_of_root_member_identity(root: &Path) -> Option<St
             directory.to_string_lossy(),
             manifest.map_or_else(
                 || "manifest_unreadable".to_string(),
-                |bytes| crate::analysis::seam_cache::hash_bytes(&bytes),
+                |text| crate::analysis::seam_cache::hash_str(&text),
             ),
             traits.join(","),
         ));
