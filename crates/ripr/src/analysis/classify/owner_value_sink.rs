@@ -547,6 +547,37 @@ fn borrows_mutably(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
         })
 }
 
+/// A `ref mut` binding also creates a write-capable alias. The borrowed
+/// place is the initializer or scrutinee, not a RefExpr inside the pattern.
+fn binds_mutable_reference(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    let reads_local = |expr: Option<ast::Expr>| {
+        expr.is_some_and(|expr| has_identifier(&expr.syntax().text().to_string(), name))
+    };
+    let binds = |pattern: Option<ast::Pat>| {
+        pattern.is_some_and(|pattern| {
+            pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .any(|binding| binding.ref_token().is_some() && binding.mut_token().is_some())
+        })
+    };
+    root.descendants().any(|node| {
+        if let Some(statement) = ast::LetStmt::cast(node.clone()) {
+            return binds(statement.pat()) && reads_local(statement.initializer());
+        }
+        if let Some(condition) = ast::LetExpr::cast(node.clone()) {
+            return binds(condition.pat()) && reads_local(condition.expr());
+        }
+        ast::MatchExpr::cast(node).is_some_and(|matched| {
+            reads_local(matched.expr())
+                && matched
+                    .match_arm_list()
+                    .is_some_and(|arms| arms.arms().any(|arm| binds(arm.pat())))
+        })
+    })
+}
+
 fn has_identifier(text: &str, name: &str) -> bool {
     mask_comments_and_strings(text)
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
@@ -1251,7 +1282,9 @@ impl Reader<'_> {
         // the value the owner returned.
         let write_possible = || {
             let root = parse.tree();
-            assigns_through(root.syntax(), &name) || borrows_mutably(root.syntax(), &name)
+            assigns_through(root.syntax(), &name)
+                || borrows_mutably(root.syntax(), &name)
+                || (self.test_index.is_some() && binds_mutable_reference(root.syntax(), &name))
         };
         if self.credit
             && (statement.initializer().is_some_and(|initializer| {
