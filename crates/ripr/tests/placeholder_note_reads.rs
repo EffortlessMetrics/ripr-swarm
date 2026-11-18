@@ -170,3 +170,22 @@ fn an_interpolated_placeholder_keeps_the_note() -> Result<(), String> {
         ))
     }
 }
+
+/// Agreement on the lowering path: an `assert_eq!` reading the placeholder is
+/// lowered to unknown by #14810 and carries the note, even with a message
+/// that names the placeholder too.
+#[test]
+fn a_lowered_assert_eq_reading_the_placeholder_keeps_the_note() -> Result<(), String> {
+    let finding = TempRepo::create(&lib(
+        "assert_eq!(price(100), expected, \"expected total\");",
+    ))?
+    .changed_return()?;
+    if placeholder_notes(&finding).len() == 1 {
+        Ok(())
+    } else {
+        Err(format!(
+            "a lowered assert_eq! on the placeholder carries one note, got {:?}",
+            finding.evidence
+        ))
+    }
+}

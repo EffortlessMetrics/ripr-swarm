@@ -25,8 +25,7 @@ use crate::analysis::classify::{
     unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    assertion_reads_placeholder, extract_identifier_tokens, mask_comments_and_strings,
-    placeholder_bound_variables,
+    assertion_reads_placeholder, mask_comments_and_strings, placeholder_bound_variables,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
