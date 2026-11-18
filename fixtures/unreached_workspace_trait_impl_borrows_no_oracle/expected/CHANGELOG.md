@@ -242,3 +242,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (19)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

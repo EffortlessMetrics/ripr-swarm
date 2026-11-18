@@ -721,3 +721,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_fstring_length_invariant_aggregate (42)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_fstring_length_invariant_aggregate --reason "..."`
+
+Updated:
+- `expected/human.txt`

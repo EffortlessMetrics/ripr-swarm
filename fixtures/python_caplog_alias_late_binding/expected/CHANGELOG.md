@@ -141,3 +141,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_caplog_alias_late_binding (12)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_late_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -248,3 +248,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_single_call_control (20)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_single_call_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
