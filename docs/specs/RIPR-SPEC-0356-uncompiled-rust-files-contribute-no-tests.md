@@ -222,13 +222,19 @@ against a member's unified set, computed from the same `cargo metadata
    enabled features name `dep:key` (metadata lists the implicit `key =
    ["dep:key"]` feature when no `dep:` syntax hides it) or a `key/feature`
    enable; an explicit feature that only shares the dependency's name does
-   not activate it. Requests expand through the receiving member's
+   not activate it. A strong `key/feature` enable also turns on the
+   dependent's own feature named `key` when one exists, as cargo does, so
+   that feature's enables count too; a weak `key?/feature` does not. Requests expand through the receiving member's
    feature table, and the pass repeats until no set grows, so a chain
    through several members resolves.
 3. A build dependency does not count: under resolver 2 its features are
    built apart from the target build that runs the tests. A platform-specific
    (`[target.'cfg(..)'.dependencies]`) edge does not count either: ripr does
-   not evaluate the cfg, so the edge keeps the base reading.
+   not evaluate the cfg, so the edge keeps the base reading. Nor does an
+   edge from another member into a proc-macro member: cargo builds that
+   proc-macro for the host, so the features requested on it, and what they
+   chain onward, never reach the tested build. A proc-macro member's own
+   features still count, since `cargo test` builds it as a tested root.
 4. Doubt fails toward no skip. A dependency entry whose `path` names a
    member but whose other fields cannot be read, or a member's unreadable
    `features` table, puts that member in doubt; a `dependencies` field that
@@ -242,7 +248,9 @@ against a member's unified set, computed from the same `cargo metadata
 
 This only re-admits a target Cargo builds in that workspace build: a request
 for another feature, an inactive optional edge, a chain the dependent leaves
-off, a build dependency and a platform-specific edge keep the skip. The query and its owner do not
+off, a build dependency, a platform-specific edge and a request that
+reaches the bin only through a proc-macro member's host build keep the
+skip. The query and its owner do not
 change.
 
 ## Required Evidence
@@ -300,11 +308,16 @@ change.
   third member requests reads `exposed` with its test related, as do a
   `[[test]]` target and a `test = true` example under the same request. A
   `workspace = true` inherited edge, a self dev dependency and an old-style
-  `x = ["a"]` enable of an optional dependency also read `exposed`. A
+  `x = ["a"]` enable of an optional dependency also read `exposed`, as do
+  a proc-macro member's own request, a proc-macro requester's chain through
+  a normal member, and a strong `a/other` chain that turns on the
+  dependent's feature `a = ["dep:a", "a/special"]`. A
   request for another feature, no request, a chain behind a feature left
   off, an inactive optional or weak `a?/special` edge, an explicit feature
-  that only shares the optional dependency's name, a build dependency and
-  a `cfg(windows)` edge keep the skip.
+  that only shares the optional dependency's name, a build dependency, a
+  `cfg(windows)` edge, a request into a proc-macro member that chains to
+  `a/special`, and a strong-chain dependent whose `x` nothing enables keep
+  the skip.
 
 ## Known Limits
 

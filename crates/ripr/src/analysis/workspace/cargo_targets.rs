@@ -899,6 +899,12 @@ struct MemberDependency {
 /// through the receiving member's feature table, and the pass repeats until
 /// no set grows, so chains through several members resolve.
 ///
+/// An edge into a proc-macro member is left out: cargo builds a
+/// proc-macro for the host, so what another member requests on it (and
+/// what those features chain onward) does not reach the tested build. A
+/// proc-macro member's own default features still chain to its
+/// dependencies, since `cargo test` builds it as a tested root.
+///
 /// Build dependencies are left out: under resolver 2 a build dependency's
 /// features do not unify with the target build that runs the tests (a
 /// resolver 1 workspace keeps the under-credit #7266 already had). A
@@ -916,8 +922,12 @@ struct MemberDependency {
 fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBuf, MemberFeatures> {
     let mut tables: BTreeMap<PathBuf, BTreeMap<String, Vec<String>>> = BTreeMap::new();
     let mut members: BTreeMap<PathBuf, MemberFeatures> = BTreeMap::new();
+    let mut proc_macros: BTreeSet<PathBuf> = BTreeSet::new();
     for package in packages {
         if let Some(dir) = package_manifest_dir(package) {
+            if is_proc_macro_package(package) {
+                proc_macros.insert(lexical(&dir));
+            }
             let (table, doubt) = feature_table_with_doubt(package);
             let features = MemberFeatures {
                 enabled: expand_default_features(&table),
@@ -957,6 +967,9 @@ fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBu
                 continue;
             };
             match member_dependency(dependency, target_dir.clone()) {
+                // Another member's edge into a proc-macro builds it for the
+                // host, apart from the tested build (#15079 review).
+                Some(Some(edge)) if proc_macros.contains(&edge.target_dir) => {}
                 Some(Some(edge)) => edges.push((dependent.clone(), edge)),
                 Some(None) => {}
                 None => target.doubt = true,
@@ -1005,6 +1018,21 @@ fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBu
         }
     }
     members
+}
+
+/// Whether metadata lists a `proc-macro` target for `package`.
+fn is_proc_macro_package(package: &serde_json::Value) -> bool {
+    package
+        .get("targets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|targets| {
+            targets.iter().any(|target| {
+                target
+                    .get("kind")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "proc-macro"))
+            })
+        })
 }
 
 /// Whether any feature of `table` enables `key` (`dep:key`, `key/feature`
@@ -1118,7 +1146,7 @@ fn expand_features_into(
 ) {
     let mut stack: Vec<String> = requests
         .iter()
-        .filter_map(|request| local_feature_enable(request))
+        .filter_map(|request| local_feature_enable(request, table))
         .filter(|request| request != "default" || table.contains_key("default"))
         .collect();
     while let Some(name) = stack.pop() {
@@ -1126,7 +1154,11 @@ fn expand_features_into(
             continue;
         }
         if let Some(enables) = table.get(&name) {
-            stack.extend(enables.iter().filter_map(|item| local_feature_enable(item)));
+            stack.extend(
+                enables
+                    .iter()
+                    .filter_map(|item| local_feature_enable(item, table)),
+            );
         }
     }
 }
@@ -1145,7 +1177,7 @@ fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet
         }
         if let Some(enables) = features.get(&name) {
             for item in enables {
-                if let Some(local) = local_feature_enable(item) {
+                if let Some(local) = local_feature_enable(item, features) {
                     stack.push(local);
                 }
             }
@@ -1154,12 +1186,20 @@ fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet
     enabled
 }
 
-fn local_feature_enable(item: &str) -> Option<String> {
+/// The local feature one enable turns on, if any. A plain name is itself.
+/// A strong `key/feature` enable also turns on the package's own feature
+/// named `key` when one exists (cargo enables it with the optional
+/// dependency, #15079 review); `dep:key` and weak `key?/feature` do not.
+fn local_feature_enable(item: &str, table: &BTreeMap<String, Vec<String>>) -> Option<String> {
     let item = item.trim();
-    if item.is_empty() || item.starts_with("dep:") || item.contains('/') {
+    if item.is_empty() || item.starts_with("dep:") {
         return None;
     }
-    Some(item.to_string())
+    match item.split_once('/') {
+        None => Some(item.to_string()),
+        Some((key, _)) if !key.ends_with('?') && table.contains_key(key) => Some(key.to_string()),
+        Some(_) => None,
+    }
 }
 
 /// Whether every `required-features` name is in the member's analyzed

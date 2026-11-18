@@ -395,3 +395,61 @@ fn only_the_implicit_dependency_feature_activates_an_optional_edge() -> Result<(
     .expect_withheld("t", "explicit feature sharing the name")?;
     Ok(())
 }
+
+/// Members `a` (the bin), `b` and `c` with the given manifest tails.
+fn abc_workspace(b_tail: &str, c_tail: &str) -> Result<TempWorkspace, String> {
+    let main = bin_source();
+    let b = member_b(b_tail);
+    let c = format!("[package]\nname = \"c\"\nversion = \"0.0.0\"\nedition = \"2021\"\n{c_tail}");
+    TempWorkspace::create(
+        WORKSPACE_ABC,
+        &[
+            ("a/Cargo.toml", BIN_MEMBER_A),
+            ("a/src/main.rs", &main),
+            ("b/Cargo.toml", &b),
+            ("b/src/lib.rs", ""),
+            ("c/Cargo.toml", &c),
+            ("c/src/lib.rs", ""),
+        ],
+        "a/src/main.rs",
+    )
+}
+
+#[test]
+fn a_request_into_a_proc_macro_member_stays_on_the_host() -> Result<(), String> {
+    // `c` enables `x` on the proc-macro `b`, which builds for the host, so
+    // `x = ["a/special"]` reaches only the host build of `a` and cargo
+    // skips `tool`.
+    abc_workspace(
+        "\n[lib]\nproc-macro = true\n\n[dependencies]\na = { path = \"../a\" }\n\n[features]\nx = [\"a/special\"]\n",
+        "\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n",
+    )?
+    .expect_withheld("t", "request into a proc-macro")?;
+    // The proc-macro member's own request is part of the tested build.
+    abc_workspace(
+        "\n[lib]\nproc-macro = true\n\n[dependencies]\na = { path = \"../a\", features = [\"special\"] }\n",
+        "",
+    )?
+    .expect_credited("t", "proc-macro member's own request")?;
+    // A proc-macro requester's chain through a normal member counts too.
+    abc_workspace(
+        "\n[dependencies]\na = { path = \"../a\" }\n\n[features]\nx = [\"a/special\"]\n",
+        "\n[lib]\nproc-macro = true\n\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n",
+    )?
+    .expect_credited("t", "proc-macro requester chain")?;
+    Ok(())
+}
+
+#[test]
+fn a_strong_chain_turns_on_the_optional_dependency_feature() -> Result<(), String> {
+    // `x = ["a/other"]` activates the optional `a` and also `b`'s own
+    // feature `a`, whose `a/special` then reaches `a`.
+    let b = "\n[dependencies]\na = { path = \"../a\", optional = true }\n\n[features]\nx = [\"a/other\"]\na = [\"dep:a\", \"a/special\"]\n";
+    abc_workspace(
+        b,
+        "\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n",
+    )?
+    .expect_credited("t", "strong chain enables feature `a`")?;
+    abc_workspace(b, "")?.expect_withheld("t", "nothing enables `x`")?;
+    Ok(())
+}

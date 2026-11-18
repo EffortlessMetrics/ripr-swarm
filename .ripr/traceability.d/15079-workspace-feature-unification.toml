@@ -16,5 +16,7 @@ tests = [
   "crates/ripr/tests/workspace_feature_unification.rs::a_workspace_inherited_edge_keeps_credit",
   "crates/ripr/tests/workspace_feature_unification.rs::a_self_dev_dependency_request_keeps_credit",
   "crates/ripr/tests/workspace_feature_unification.rs::only_the_implicit_dependency_feature_activates_an_optional_edge",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_request_into_a_proc_macro_member_stays_on_the_host",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_strong_chain_turns_on_the_optional_dependency_feature",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::harness_verdict::workspace_features_unify_member_requests_and_record_doubt",
 ]
