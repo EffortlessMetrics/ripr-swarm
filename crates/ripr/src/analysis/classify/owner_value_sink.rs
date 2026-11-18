@@ -1248,13 +1248,15 @@ impl Reader<'_> {
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
             return unfollowed_local;
         };
-        if self.credit
-            && matches!(
-                statement.pat(),
-                Some(ast::Pat::IdentPat(pattern))
-                    if pattern.mut_token().is_some() || pattern.ref_token().is_some()
-            )
-        {
+        let mutable_binding = matches!(
+            statement.pat(),
+            Some(ast::Pat::IdentPat(pattern)) if pattern.mut_token().is_some()
+        );
+        let by_reference = matches!(
+            statement.pat(),
+            Some(ast::Pat::IdentPat(pattern)) if pattern.ref_token().is_some()
+        );
+        if self.credit && (mutable_binding || by_reference) {
             return Sink::Absent;
         }
         // A name some other pattern binds too (`if let Some(o) = ..`,
@@ -1312,7 +1314,10 @@ impl Reader<'_> {
         // Repo grading already relates this test to the owner. Losing the
         // initial value must therefore withhold credit, rather than return
         // Absent and leave the original oracle grade in place.
-        if self.test_index.is_some() && initial.reaches() && write_possible() {
+        // A mutable local can also be written by an implicit mutable
+        // receiver (e.g. clone_from), with no assignment or borrow node.
+        // Without receiver resolution, only follow immutable locals here.
+        if self.test_index.is_some() && initial.reaches() && (mutable_binding || write_possible()) {
             return Sink::Masked;
         }
         initial

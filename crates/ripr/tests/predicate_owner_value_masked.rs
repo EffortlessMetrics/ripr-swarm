@@ -319,6 +319,19 @@ fn repo_mem_replace_binding_keeps_credit_until_a_possible_write() -> Result<(), 
 }
 
 #[test]
+fn repo_mem_replace_mutable_receiver_cannot_keep_both_seams_strong() -> Result<(), String> {
+    assert_repo_grips_with_summary(
+        "let mut got = std::mem::replace(&mut over(10), false); got.clone_from(&true); assert_eq!(got, true);",
+        "weakly_gripped",
+        Some("masks the owner"),
+    )?;
+    assert_repo_grips(
+        "let got = std::mem::replace(&mut over(10), false); let mut other = false; other.clone_from(&true); assert_eq!(got, other);",
+        "strongly_gripped",
+    )
+}
+
+#[test]
 fn repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams() -> Result<(), String> {
     assert_repo_grips(
         "let got = std::mem::replace(&mut over(10), false); let ref alias = got; assert_eq!(got, true); let _ = alias;",
