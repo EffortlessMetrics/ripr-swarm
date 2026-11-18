@@ -373,6 +373,14 @@ fn a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling() -> Resul
             "let _ = g(2); assert!(true); assert_eq!(other(), 4);",
             "error_path",
         ),
+        // An owner call only in the sibling's diagnostic arguments runs only
+        // when that assertion fails, so it reads nothing (#15014 review).
+        (
+            "side_effect_literal_beside_owner_call_in_diagnostic",
+            SIDE_EFFECT_OWNER,
+            "let mut s = S { v: vec![] }; s.add(5); assert!(true); assert_eq!(other(), vec![1], \"{:?}\", s.add(9));",
+            "side_effect",
+        ),
     ] {
         let class = marked_class(key, &with_test(owner, body), family)?;
         if class != "reachable_unrevealed" {

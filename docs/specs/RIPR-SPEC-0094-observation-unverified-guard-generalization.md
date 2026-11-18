@@ -997,7 +997,10 @@ displace that reading. It reads the owner's result when its text, with
 comments and strings masked, calls the owner by name, or names a test `let`
 bound from an owner call (the shared sink-identity binding,
 `oracle_binds_sink_identity`). Whether it is an assertion macro does not
-matter.
+matter, but a known assertion macro is read through its compared operands
+only: a call in its diagnostic arguments
+(`assert_eq!(other(), 4, "{:?}", g(9))`) runs only when the assertion fails,
+so it reads nothing and the fallback stays with the dropped literal.
 
 Invariant: an unconditional literal-only assertion never raises a test's
 class, and never lowers it below the same test without it, except where that
@@ -1036,7 +1039,9 @@ constant, a call, a nested macro), a byte or raw string prefix, an unknown
 macro or `assert_matches!`, an unparseable test body, or an assertion that
 does not sit at a top-level statement of the test body at its own line (for
 example one produced by a helper or macro expansion) leaves the assertion as
-it was. Dropping the literal never removes credit another assertion in the
+it was. So does a literal that has a nested twin with the same text on its
+line (`if g(2) { assert_eq!("a b", "ab"); } assert_eq!("ab", "ab");`), since
+an assertion fact records only its line and text. Dropping the literal never removes credit another assertion in the
 test supplies (`assert!(true); assert_eq!(f(5), 7)` stays `exposed`).
 
 Known limits:

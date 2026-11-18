@@ -18,7 +18,9 @@
 //! from an owner call) gets the count the test has without the literal.
 
 use crate::analysis::classifier::oracle_binds_sink_identity;
-use crate::analysis::extract::{assertion_compares_only_literals, mask_comments_and_strings};
+use crate::analysis::extract::{
+    assertion_compares_only_literals, assertion_oracle_text, mask_comments_and_strings,
+};
 use crate::analysis::facts::{OracleFact, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast};
@@ -56,11 +58,30 @@ pub(super) fn is_unconditional_literal_only_assertion(
         line.is_some_and(|line| test.start_line.saturating_add(line) == assertion.line)
             && squash(&node.text().to_string()) == wanted
     };
-    list.statements()
+    let top_level = list
+        .statements()
         .any(|statement| at_assertion(statement.syntax()))
         || list
             .tail_expr()
-            .is_some_and(|tail| at_assertion(tail.syntax()))
+            .is_some_and(|tail| at_assertion(tail.syntax()));
+    // The fact records only a line and text, so a nested assertion on the
+    // same line with the same squashed text (`if g(2) { assert_eq!("a b",
+    // "ab"); } assert_eq!("ab", "ab");`) may be the fact's subject. Keep it
+    // as before (fail closed).
+    let nested_twin = list
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            let node = call.syntax();
+            at_assertion(node)
+                && node
+                    .ancestors()
+                    .filter_map(ast::StmtList::cast)
+                    .next()
+                    .is_some_and(|inner| inner.syntax() != list.syntax())
+        });
+    top_level && !nested_twin
 }
 
 fn squash(text: &str) -> String {
@@ -78,7 +99,10 @@ fn squash(text: &str) -> String {
 /// decision is the shared sink-identity binding
 /// (`oracle_binds_sink_identity`) over the assertion and test body with
 /// comments and strings masked, so an owner name inside a string literal
-/// binds nothing. Without a known owner name this answers `false`.
+/// binds nothing. A known assertion macro is read through its compared
+/// operands only (`assertion_oracle_text`): a call in its diagnostic
+/// arguments runs only when the assertion fails, so it reads nothing the
+/// passing assertion checks. Without a known owner name this answers `false`.
 pub(super) fn reads_owner_result(
     test_body: &str,
     assertion: &OracleFact,
@@ -87,8 +111,9 @@ pub(super) fn reads_owner_result(
     let Some(owner) = owner.filter(|owner| !owner.is_empty()) else {
         return false;
     };
+    let compared = assertion_oracle_text(&assertion.text).unwrap_or_else(|| assertion.text.clone());
     oracle_binds_sink_identity(
-        &mask_comments_and_strings(&assertion.text),
+        &mask_comments_and_strings(&compared),
         &mask_comments_and_strings(test_body),
         Some(owner),
     )
@@ -139,6 +164,8 @@ mod tests {
             ("g(2).unwrap()", None),
             ("\"g(2)\".len()", Some("g")),
             ("assert!(!o.is_empty())", Some("add")),
+            ("assert_eq!(other(), 4, \"{:?}\", g(9))", Some("g")),
+            ("assert!(o.is_empty(), \"{}\", g(9).is_ok())", Some("g")),
         ] {
             assert!(!reads_owner_result(unbound, &fact(text), owner), "{text}");
         }
