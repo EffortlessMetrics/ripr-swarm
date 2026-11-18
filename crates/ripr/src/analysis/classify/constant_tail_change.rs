@@ -38,6 +38,12 @@
 //!   `use` line ([`base_side_may_rebind_trusted_macros`]). The diff parser
 //!   registers no section for a deleted file, so a deleted file is seen
 //!   only through such a removed line in a surviving file.
+//!
+//! #14938: the same folder also answers the opposite question for probe
+//! seeding, [`is_equal_constant_respelling`]: a returned constant rewritten
+//! as the same value (`65` → `0x41`, `"A"` → `"\x41"`, `1.0` → `1e0`) with
+//! every numeric literal suffix kept. Floats fold (as bit patterns) only
+//! for that equality; a float tail is never an admitted change.
 
 use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
 use crate::analysis::facts::FunctionSummary;
