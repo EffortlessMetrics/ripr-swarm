@@ -150,7 +150,7 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
         // `status` use decides; a bare Cargo.toml stays quiet.
         return crate::analysis::root_has_no_inspectable_workspace(root).then(|| {
             format!(
-                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet. The configuration is written with Rust enabled; `ripr check` has nothing to analyze here until you add source. If the project lives in a subdirectory, rerun `ripr init --root <dir>` there; after adding Python or TypeScript source, rerun `ripr init --force` so the configuration enables it.",
+                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet. The generated configuration enables Rust only; `ripr check` has nothing to analyze here until you add source. If the project lives in a subdirectory, rerun `ripr init --root <dir>` there; after adding Python or TypeScript source, rerun `ripr init --force` so the configuration enables it.",
                 output::path::human_path(root)
             )
         });
