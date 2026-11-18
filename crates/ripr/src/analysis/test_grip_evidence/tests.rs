@@ -24844,3 +24844,135 @@ fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Re
     assert_ne!(weaker[0].0, "z_score", "{weaker:?}");
     Ok(())
 }
+
+/// The discriminate state of the `discounted_total` seam whose expression is
+/// `seam_expression`, with `prod_body` as the owner's body and `test_body` as
+/// the single test's body (#14569).
+fn discounted_total_seam_state(
+    prod_body: &str,
+    seam_expression: &str,
+    test_body: &str,
+) -> Result<StageState, String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = format!(
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {{\n{prod_body}}}\n"
+    );
+    let tests = PathBuf::from("tests/pricing.rs");
+    let tests_src = format!("#[test]\nfn pins_the_total() {{\n{test_body}}}\n");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src.as_str()),
+        (tests, tests_src.as_str()),
+    ])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue
+                && seam
+                    .expression()
+                    .trim()
+                    .trim_start_matches("return ")
+                    .trim_end_matches(';')
+                    == seam_expression
+        })
+        .ok_or_else(|| format!("expected the `{seam_expression}` seam; seams: {seams:?}"))?;
+    Ok(evidence_for_seam(seam, &index).discriminate.state)
+}
+
+/// Both returns are branch-local, so the gate decides each one by the
+/// branch the pinned call takes.
+const DISCOUNT_BODY: &str = "    if amount >= discount_threshold {\n        return amount - 10;\n    } else {\n        return amount;\n    }\n";
+
+/// #14569: two plain bindings of the same name used to leave the operand
+/// unresolved, and unresolved kept credit. The assertion reads the second
+/// binding, so its call's branch decides: `(100, 50)` takes the then branch,
+/// so the else-branch return is not reached and the then-branch return is.
+#[test]
+fn a_rebound_let_resolves_to_the_binding_the_assertion_reads() -> Result<(), String> {
+    let test_body = "    let got = discounted_total(50, 100);\n    let got = discounted_total(100, 50);\n    assert_eq!(got, 90);\n";
+    assert_ne!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount", test_body)?,
+        StageState::Yes,
+        "the second binding's call does not reach the else-branch return"
+    );
+    assert_eq!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", test_body)?,
+        StageState::Yes,
+        "the second binding's call reaches the then-branch return"
+    );
+    let reversed = "    let got = discounted_total(100, 50);\n    let got = discounted_total(50, 100);\n    assert_eq!(got, 50);\n";
+    assert_ne!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", reversed)?,
+        StageState::Yes,
+        "the second binding's call does not reach the then-branch return"
+    );
+    Ok(())
+}
+
+/// #14569 control: a single plain binding of the owner call still resolves
+/// and keeps the reaching call's credit, so the fix is not "refuse every
+/// rebind".
+#[test]
+fn a_single_let_bound_reaching_call_keeps_its_grip() -> Result<(), String> {
+    let test_body = "    let got = discounted_total(100, 50);\n    assert_eq!(got, 90);\n";
+    assert_eq!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", test_body)?,
+        StageState::Yes
+    );
+    Ok(())
+}
+
+/// #14569: a binding inside a nested block that closes before the assertion
+/// is not what the assertion reads. The outer binding's call `(100, 50)`
+/// takes the then branch, so the else-branch return is not reached.
+#[test]
+fn a_let_in_a_closed_test_block_does_not_bind_the_asserted_value() -> Result<(), String> {
+    let test_body = "    let got = discounted_total(100, 50);\n    {\n        let got = discounted_total(50, 100);\n        let _ = got;\n    }\n    assert_eq!(got, 90);\n";
+    assert_ne!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount", test_body)?,
+        StageState::Yes,
+        "the outer binding's call does not reach the else-branch return"
+    );
+    assert_eq!(
+        discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", test_body)?,
+        StageState::Yes,
+        "the outer binding's call reaches the then-branch return"
+    );
+    Ok(())
+}
+
+/// #14569: an owner `let` inside a nested block that closes before the seam's
+/// `if` shadows nothing the condition reads, so it no longer keeps credit for
+/// a call that takes the other branch.
+#[test]
+fn an_owner_let_in_a_closed_block_does_not_keep_an_unreached_seams_grip() -> Result<(), String> {
+    let prod_body = "    {\n        let amount = 0;\n        let _ = amount;\n    }\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n";
+    let else_call = "    assert_eq!(discounted_total(50, 100), 50);\n";
+    assert_ne!(
+        discounted_total_seam_state(prod_body, "amount - 10", else_call)?,
+        StageState::Yes,
+        "an out-of-scope rebind must not keep the then-branch return's grip"
+    );
+    let reaching = "    assert_eq!(discounted_total(100, 50), 90);\n";
+    assert_eq!(
+        discounted_total_seam_state(prod_body, "amount - 10", reaching)?,
+        StageState::Yes,
+        "the reaching call keeps its grip"
+    );
+    Ok(())
+}
+
+/// #14569 control: an owner `let` in a block that holds the seam's `if`
+/// shadows the parameter the condition reads, so the fold is stale and the
+/// gate keeps today's credit.
+#[test]
+fn an_owner_let_in_a_block_holding_the_seam_keeps_its_grip() -> Result<(), String> {
+    let prod_body = "    {\n        let amount = -amount;\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n";
+    let negated = "    assert_eq!(discounted_total(-50, 0), 40);\n";
+    assert_eq!(
+        discounted_total_seam_state(prod_body, "amount - 10", negated)?,
+        StageState::Yes,
+        "a rebind in scope at the seam keeps the reaching call's grip"
+    );
+    Ok(())
+}

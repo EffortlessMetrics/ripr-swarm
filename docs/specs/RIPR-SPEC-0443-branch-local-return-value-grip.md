@@ -96,7 +96,13 @@ The gate is `seam_branch_reached_by_call` in
 answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
 
 - The compared operands are resolved through their `let` initializers first
-  (`assertion_operands`), so a call bound to a local is read.
+  (`assertion_operands`), so a call bound to a local is read. When the
+  assertion's text occurs once in the test body, the binding read is the last
+  plain `let` of the name before it whose block is still open there, so a
+  rebind (`let got = f(1); let got = f(2);`) resolves to the second call and a
+  `let` in a nested block that closed earlier is skipped (#14569). An
+  initializer that reads the name itself (`let got = got.unwrap();`) is not
+  resolved. Without that single anchor only a sole plain binding resolves.
 - Exactly one operand must be a call to the owner whose arguments all fold to
   integers: the bare `owner(..)` form, `owner(..).await`, or a
   single-identifier wrapper (`wrapper(owner(..))`), matching the sibling
@@ -107,7 +113,10 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
 - If the owner body rebinds a parameter (`let name = ..`), assigns one
   (`name = ..`, `name += ..`) or binds one in a `for` pattern, anywhere in
   the body including a loop body, the answer is `None`: the call-argument
-  environment is stale.
+  environment is stale. A `let` whose enclosing block neither holds the
+  seam's `if` nor overlaps a condition on its path is out of scope for every
+  folded condition and does not count (#14569); assignments and mutable
+  borrows count wherever they are.
 - The seam expression must be the tail or a statement of exactly one `if`
   branch, matched by the seam's own line. Both arms holding it, or more than
   one `if` holding it, answers `None`. A seam whose own line is not inside an
@@ -203,6 +212,16 @@ refuses.
     before the gate) beside a `Weak` test that reaches the branch: the
     discriminate stage is not `Yes`, and its summary reads "kind matches; the
     call does not reach the seam's branch".
+15. `let got = discounted_total(50, 100); let got = discounted_total(100,
+    50); assert_eq!(got, 90);` on `if .. { return amount - 10; } else {
+    return amount; }`: the `return amount` seam is not `Yes` and the
+    `return amount - 10` seam is `Yes` (#14569).
+16. The same assertion reading an outer `let got = discounted_total(100, 50);`
+    past a closed `{ let got = discounted_total(50, 100); }`: the outer call
+    decides (#14569).
+17. An owner `{ let amount = 0; }` block that closes before the `if`, asserted
+    at `(50, 100) == 50`: the `return amount - 10` seam is not `Yes`. The same
+    `let` in a block holding the `if` keeps today's credit (#14569).
 
 ## Amendment (#13037): a reached computed tail is observed by its exact pin
 
@@ -322,6 +341,11 @@ evidence-promotion honesty corpus.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_rebound_let_resolves_to_the_binding_the_assertion_reads`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_single_let_bound_reaching_call_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_closed_test_block_does_not_bind_the_asserted_value`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_closed_block_does_not_keep_an_unreached_seams_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_block_holding_the_seam_keeps_its_grip`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value`
