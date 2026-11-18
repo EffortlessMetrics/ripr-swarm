@@ -154,6 +154,12 @@ pub struct RustIndex {
     /// composition pass; transient like `execution_module_parents`, and
     /// cleared on any membership change so a stale verdict cannot linger.
     pub(crate) cfg_kani_module_files: BTreeSet<PathBuf>,
+    /// Files whose tests composition withheld because every execution root
+    /// is a target `cargo test` does not run (#14962: `[lib] test = false`
+    /// and kin, from cargo metadata). Transient like
+    /// `cfg_kani_module_files`; the same-run extension reads it to refuse a
+    /// merge that revives those tests (#12947).
+    pub(crate) cargo_test_skipped_files: BTreeSet<PathBuf>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -659,6 +665,7 @@ impl RustIndex {
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -760,6 +767,7 @@ impl RustIndex {
         self.call_identity_memos.clear();
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear

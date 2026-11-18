@@ -925,7 +925,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 // above also declines.
                 .filter(|()| !owner_has_other_callers && !assertion_macros_rebound)
                 .and(owner)
-                .and_then(|owner| added_string_arm_input(probe, activation, owner))
+                .and_then(|owner| added_equality_arm_input(probe, activation, owner))
             {
                 // #14388: the edit appends `|| param == "lit"` to a chain of
                 // string equalities on the same parameter, and a related
@@ -937,7 +937,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Yes,
                     Confidence::Medium,
                     format!(
-                        "A related test passes {literal}, which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change"
+                        "A related test passes {}, which makes the added `||` arm true while every original {}-equality arm is false, so the input reaches the change",
+                        literal.0,
+                        literal.1.label()
                     ),
                 )
             } else if probe_literals.is_empty() {
@@ -1771,11 +1773,38 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
 /// exactly `"b"`. Distinct literals make every original arm false on that
 /// input and the new arm true, so the old and new predicates differ. Anything
 /// else returns `None` and the ordinary reading stays.
-fn added_string_arm_input(
+///
+/// #15027: integer and char arms read the same way (`n == 1 || n == 2`,
+/// `c == ',' || c == ';'`). Every arm must use one literal kind, and the
+/// parameter must be declared as a primitive integer for integer literals or
+/// `char` for char literals, whose `==` compares the value. Integer literals
+/// are plain decimal (no sign, suffix, underscore, radix prefix or leading
+/// zero), so distinct spellings are distinct values; char literals are one
+/// unescaped character that cannot read as an operator.
+fn added_equality_arm_input(
     probe: &Probe,
     activation: &ActivationEvidence,
     owner: &FunctionSummary,
-) -> Option<String> {
+) -> Option<(String, ArmLiteralKind)> {
+    let (parameter, literal, kind) = appended_equality_arm(probe, owner)?;
+    activation
+        .observed_values
+        .iter()
+        .filter(|fact| fact.context == ValueContext::FunctionArgument)
+        .filter_map(|fact| fact.value.split_once(" = "))
+        .any(|(name, value)| name.trim() == parameter && value.trim() == literal)
+        .then_some((literal, kind))
+}
+
+/// #15027: the structural half of [`added_equality_arm_input`]: `probe`
+/// appends one `|| p == lit` arm to a chain of equalities on the owner
+/// parameter `p`, under every guard listed there except the test input. Any
+/// input equal to `lit` makes the whole predicate flip, which is also what
+/// lets the owner-tail return sink carry such a chain (flow.rs).
+pub(in crate::analysis) fn appended_equality_arm(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<(String, String, ArmLiteralKind)> {
     let before = probe.before.as_deref()?;
     let only_or = |text: &str| {
         let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
@@ -1784,10 +1813,10 @@ fn added_string_arm_input(
     if !only_or(&probe.expression) || !only_or(before) {
         return None;
     }
-    let arms = |text: &str| -> Option<Vec<(String, String)>> {
+    let arms = |text: &str| -> Option<Vec<(String, String, ArmLiteralKind)>> {
         boolean_conditions(text)
             .into_iter()
-            .map(string_equality_arm)
+            .map(equality_arm)
             .collect()
     };
     let after_arms = arms(&probe.expression)?;
@@ -1797,32 +1826,100 @@ fn added_string_arm_input(
         return None;
     }
     let parameter = &added.0;
+    let kind = added.2;
     let mut literals = after_arms
         .iter()
-        .map(|(_, literal)| literal)
+        .map(|(_, literal, _)| literal)
         .collect::<Vec<_>>();
     literals.sort();
     literals.dedup();
-    if after_arms.iter().any(|(name, _)| name != parameter) || literals.len() != after_arms.len() {
+    if after_arms
+        .iter()
+        .any(|(name, _, arm_kind)| name != parameter || *arm_kind != kind)
+        || literals.len() != after_arms.len()
+    {
         return None;
     }
     // A parameter type with its own `PartialEq<&str>` could make an original
-    // arm true on the new literal, so only plain string types qualify.
+    // arm true on the new literal, so only plain string types qualify, and
+    // likewise only primitive integers and `char` for those literals.
     if !super::activation::call_parameter_names(owner).contains(parameter)
         || !super::activation::parameter_type(owner, parameter)
-            .is_some_and(|ty| is_plain_string_type(&ty))
+            .is_some_and(|ty| kind.admits_parameter_type(&ty))
         || parameter_is_rebound(&owner.body, parameter)
         || !chain_is_first_decision(&owner.body, &probe.expression)
     {
         return None;
     }
-    activation
-        .observed_values
-        .iter()
-        .filter(|fact| fact.context == ValueContext::FunctionArgument)
-        .filter_map(|fact| fact.value.split_once(" = "))
-        .any(|(name, value)| name.trim() == parameter && value.trim() == added.1)
-        .then(|| added.1.clone())
+    Some((parameter.clone(), added.1.clone(), kind))
+}
+
+/// The literal kind of one appended-arm equality (#14388, #15027).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum ArmLiteralKind {
+    Str,
+    Int,
+    Char,
+}
+
+impl ArmLiteralKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Str => "string",
+            Self::Int => "integer",
+            Self::Char => "char",
+        }
+    }
+
+    /// Whether `==` between a parameter of type `ty` and a literal of this
+    /// kind compares the value itself.
+    fn admits_parameter_type(self, ty: &str) -> bool {
+        match self {
+            Self::Str => is_plain_string_type(ty),
+            Self::Int => matches!(
+                ty.trim(),
+                "u8" | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+            ),
+            Self::Char => ty.trim() == "char",
+        }
+    }
+
+    /// The kind of `text` when it is one literal this reading accepts.
+    fn of(text: &str) -> Option<Self> {
+        if text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains(['"', '\\'])
+        {
+            return (!text[1..text.len() - 1].contains("==")).then_some(Self::Str);
+        }
+        // Plain decimal only: `5` and `05` or `5_u8` would otherwise be two
+        // spellings of one value.
+        if !text.is_empty()
+            && text.len() <= 18
+            && text.bytes().all(|byte| byte.is_ascii_digit())
+            && (text == "0" || !text.starts_with('0'))
+        {
+            return Some(Self::Int);
+        }
+        let mut inner = text.strip_prefix('\'')?.strip_suffix('\'')?.chars();
+        let (Some(only), None) = (inner.next(), inner.next()) else {
+            return None;
+        };
+        // An escape could spell another char's value, and an operator
+        // character could be read as part of the chain.
+        (only.is_ascii_alphanumeric() || ",;:.-_+*/#@$%^~?<> ".contains(only)).then_some(Self::Char)
+    }
 }
 
 /// Whether nothing in the owner before `chain` can take a call away from it
@@ -1894,27 +1991,20 @@ fn is_plain_string_type(ty: &str) -> bool {
     matches!(inner, "str" | "String")
 }
 
-/// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
-/// plain identifier and a string literal with no escapes; anything else is
-/// `None`.
-fn string_equality_arm(arm: &str) -> Option<(String, String)> {
+/// `name == literal` or `literal == name` as `(name, literal, kind)`, for a
+/// plain identifier and a literal [`ArmLiteralKind::of`] accepts; anything
+/// else is `None`.
+fn equality_arm(arm: &str) -> Option<(String, String, ArmLiteralKind)> {
     let (left, right) = arm.split_once("==")?;
     let (left, right) = (left.trim(), right.trim());
-    let is_literal = |text: &str| {
-        text.len() >= 2
-            && text.starts_with('"')
-            && text.ends_with('"')
-            && !text[1..text.len() - 1].contains(['"', '\\'])
-    };
-    let (name, literal) = if is_literal(right) {
-        (left, right)
-    } else if is_literal(left) {
-        (right, left)
+    let (name, literal, kind) = if let Some(kind) = ArmLiteralKind::of(right) {
+        (left, right, kind)
+    } else if let Some(kind) = ArmLiteralKind::of(left) {
+        (right, left, kind)
     } else {
         return None;
     };
-    (is_plain_identifier(name) && !literal[1..literal.len() - 1].contains("=="))
-        .then(|| (name.to_string(), literal.to_string()))
+    is_plain_identifier(name).then(|| (name.to_string(), literal.to_string(), kind))
 }
 
 /// Whether `body` might give `name` a value other than the caller's
@@ -2835,6 +2925,125 @@ mod tests {
             other_callers,
             assertion_macros_rebound,
         )
+    }
+
+    /// #15027: integer and char arms read like string arms; every near miss,
+    /// including spellings that may share a value, stays unknown.
+    #[test]
+    fn an_input_equal_to_an_appended_integer_or_char_arm_reaches_the_change() {
+        let int_body = "pub fn small(n: u32) -> bool {\n    n == 1 || n == 2\n}\n";
+        let reached =
+            added_string_arm_evidence(int_body, "n == 1", "n == 1 || n == 2", &["n = 2"], false);
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("integer-equality"),
+            "{}",
+            reached.summary
+        );
+        let char_body = "pub fn sep(c: char) -> bool {\n    c == ',' || c == ';'\n}\n";
+        let reached = added_string_arm_evidence(
+            char_body,
+            "c == ','",
+            "c == ',' || c == ';'",
+            &["c = ';'"],
+            false,
+        );
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("char-equality"),
+            "{}",
+            reached.summary
+        );
+        // The string message is unchanged.
+        let str_body =
+            "pub fn pick(flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let reached = added_string_arm_evidence(
+            str_body,
+            "flag == \"-v\"",
+            "flag == \"-v\" || flag == \"--verbose\"",
+            &["flag = \"--verbose\""],
+            false,
+        );
+        assert!(
+            reached
+                .summary
+                .contains("every original string-equality arm is false"),
+            "{}",
+            reached.summary
+        );
+
+        // Inputs that do not hit the added arm, or another caller.
+        for (input, others) in [("n = 1", false), ("n = 3", false), ("n = 2", true)] {
+            let evidence =
+                added_string_arm_evidence(int_body, "n == 1", "n == 1 || n == 2", &[input], others);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{input}: {}",
+                evidence.summary
+            );
+        }
+        // Integer types only: a newtype or float may compare otherwise.
+        for body in [
+            "pub fn small(n: Level) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: f64) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: &u32) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: char) -> bool {\n    n == 1 || n == 2\n}\n",
+        ] {
+            let evidence =
+                added_string_arm_evidence(body, "n == 1", "n == 1 || n == 2", &["n = 2"], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{body}: {}",
+                evidence.summary
+            );
+        }
+        // `char` only for char literals.
+        let wide = "pub fn sep(c: u8) -> bool {\n    c == ',' || c == ';'\n}\n";
+        let evidence = added_string_arm_evidence(
+            wide,
+            "c == ','",
+            "c == ',' || c == ';'",
+            &["c = ';'"],
+            false,
+        );
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        // Spellings that may share one value, mixed kinds and operator or
+        // escaped chars decline.
+        for (before, after, input) in [
+            ("n == 5", "n == 5 || n == 05", "n = 05"),
+            ("n == 5", "n == 5 || n == 5_u32", "n = 5_u32"),
+            ("n == 5", "n == 5 || n == 0x5", "n = 0x5"),
+            ("n == 10", "n == 10 || n == 1_0", "n = 1_0"),
+            ("n == 1", "n == 1 || n == -2", "n = -2"),
+            ("n == 1", "n == 1 || n == 1", "n = 1"),
+            ("n == 1", "n == 1 || n == 'a'", "n = 'a'"),
+        ] {
+            let body = format!("pub fn small(n: u32) -> bool {{\n    {after}\n}}\n");
+            let evidence = added_string_arm_evidence(&body, before, after, &[input], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
+        for (before, after, input) in [
+            ("c == 'A'", "c == 'A' || c == '\\x41'", "c = '\\x41'"),
+            ("c == ','", "c == ',' || c == '|'", "c = '|'"),
+            ("c == ','", "c == ',' || c == '!'", "c = '!'"),
+            ("c == ','", "c == ',' || c == '\\''", "c = '\\''"),
+        ] {
+            let body = format!("pub fn sep(c: char) -> bool {{\n    {after}\n}}\n");
+            let evidence = added_string_arm_evidence(&body, before, after, &[input], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
     }
 
     /// #14388 review: only types whose `==` against a literal compares the

@@ -308,7 +308,12 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
 
 const FIELD_BASE: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
 const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
-const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n";
+/// A refusing field fixture: the only test reads a sibling field straight off
+/// the owner call. Binding the result first (`let c = default_config();
+/// assert!(!c.verbose);`) is the #13700 unread-field shape, which now starts
+/// (`tests/unread_owner_result_field_repair_start.rs`), so these refusal
+/// tests keep the unbound spelling that still refuses for the same reason.
+const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    assert!(!default_config().verbose);\n}\n";
 
 /// #12861: a scoped change with open spots that cannot start closes on the
 /// per-spot reasons, not on a repository tour that sends the reader back to
@@ -674,10 +679,21 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
         write_test(&format!("{run}    assert!(c.count > 0);"))
     );
     assert_no_write_start("writetwo", WRITE_BASE, &changed, &two, "static_unknown")?;
+    // The field is written and only other fields are read: a gap
+    // (RIPR-SPEC-0228 example 4), but nothing weak to strengthen, so no start.
+    for (label, body) in [
+        ("writeonly", format!("{run}    assert!(c.other == 0);")),
+        ("writesibling", format!("{run}    assert!(c.other > 0);")),
+    ] {
+        assert_no_write_start(
+            label,
+            WRITE_BASE,
+            &changed,
+            &write_test(&body),
+            "weakly_exposed",
+        )?;
+    }
     for (label, base, new, body) in [
-        // The field is written and never read: nothing weak to strengthen.
-        ("writeonly", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other == 0);")),
-        ("writesibling", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other > 0);")),
         (
             "writeotherbinding",
             WRITE_BASE,

@@ -57,6 +57,10 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// RIPR-SPEC-0096: what evaluating a changed `let` returned unmodified
     /// showed; `None` when any part was unreadable.
     pub binding_return_flow: Option<super::BindingReturnFlow>,
+    /// #14852: the owner's whole-body constant tail replaced a different
+    /// whole-body constant tail on the base side; `None` when any part of
+    /// that reading failed.
+    pub constant_tail_change: Option<super::ConstantTailChange>,
     /// #12040: the changed line is, or declares a constant named by, a
     /// same-file compile-time assertion. Selects the `compile_time_invariant`
     /// stop reason and withholds a ruled-out reach (`no_static_path`) as
@@ -105,6 +109,7 @@ impl<'a> ProbeContext<'a> {
             const_readers: Vec::new(),
             const_flow: None,
             binding_return_flow: None,
+            constant_tail_change: None,
             compile_time_guarded: false,
             unary_tail: None,
             #[cfg(feature = "lang-rust")]

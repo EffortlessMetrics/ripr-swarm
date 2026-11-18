@@ -168,9 +168,11 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   8,731 estimated tokens over the original six scenarios; with it, 2,594 for
   the same answers (#14536). `baseline.json` records the current figure. A
   row with `(+N more)` or a clipped `…` value is followed too.
-- `struct_field` reads `reference_test_closes_loop: false` since #14565 stopped
-  crediting the sibling field's assertion; the intended bool-field assertion
-  alone does not yet earn credit (#14701).
+- `struct_field` closes since #14726: #14701 credits the bool-field
+  assertion for the `field_construction` seam, and the predicate seam now reads
+  the added `flag == "--verbose"` arm as its boundary, pairing only with an
+  assertion that reads the `verbose` field. Before that, #14565 had stopped
+  crediting the sibling field's assertion and the loop read `false`.
 - `cli-human` shows one finding and hides the rest, so on the two-gap scenario
   the second gap stays hidden.
 - MCP costs about 25 times the agent loop to reach the same answers (82,254
@@ -179,10 +181,10 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
 - `mcp-brief` (#14327) reaches every answer for 56,168 tokens, against 82,254
   on `mcp`. When the route landed, its eight `ripr_get_gap` reads dropped from
   12,294 to 3,083, so the fixed `tools/list` cost now dominates.
-- Loop: after the reference test, two of the eight gap scenarios still end
+- Loop: after the reference test, one of the eight gap scenarios still ends
   with `verify=refused`, so an agent following the block cannot finish there:
-  `struct_field` (above) and `private_helper`. `changed_constant_return`
-  closed once #14380 (#14325) landed.
+  `private_helper`. `changed_constant_return` closed once #14380 (#14325)
+  landed, and `struct_field` once #14726 did.
 - Harder scenarios (`match_arm_value`, `private_helper`, `inclusive_range`,
   `refactor_control`):
   - `match_arm_value` and `inclusive_range` read correctly on the loop: the
@@ -196,8 +198,11 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   - `refactor_control`, a behavior-preserving extraction, prints no gap but
     still ends with a `stop=` line, so it is not silent
     (`silent_on_control: false`, #12770).
-  - `agent-brief` misses all three harder gaps; `cli-agent-find` misses
-    `private_helper`.
+  - `agent-brief` reads the repo seam view, so it answers `match_arm_value`
+    since #12078 (an arm no test input selects is weakly gripped there too).
+    It still misses `inclusive_range`, whose gap depends on the before-text
+    (`0..n` and `0..=n` agree at `n = 0`) that the repo view never reads, and
+    `private_helper` (#13069). `cli-agent-find` misses `private_helper`.
 - `error_variant` once got two identical gap rows for its one changed line;
   #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` has one
   extra gap row (`extra_gaps: 1`).

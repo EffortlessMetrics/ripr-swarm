@@ -553,3 +553,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (46)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/human.txt`

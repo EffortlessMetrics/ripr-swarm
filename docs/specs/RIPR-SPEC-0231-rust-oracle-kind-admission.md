@@ -587,7 +587,19 @@ Two pattern terms are used below.
      region stops early at an item declaration or attribute at statement
      start, because a nested `fn` stays callable from earlier code; a
      divergence nested in a condition, a match arm or a closure ends only
-     its own block.
+     its own block;
+   - the statements after a statement that always diverges on a constant
+     (#14968), up to the same end: a `let PATTERN = VALUE else { .. };`
+     whose pattern is exactly one `Some(..)`, `None`, `Ok(..)` or `Err(..)`
+     variant and whose value is a literal of another variant
+     (`let Some(x) = None::<i32> else { return; };`), or a statement that
+     starts with a literal `Err(..)?` or `None?` (each optionally with a
+     turbofish). A value that can match, an or-pattern, a computed value,
+     `Ok(..)?` and `Some(..)?` stay reached. When the `else` block holds a
+     `return` at its own depth, RIPR-SPEC-0197 execution admission reads
+     that earlier return, so a strong assertion after it stays for that
+     refusal, as after a plain `return`; after any other constant
+     divergence admission reads no exit, so every oracle is dropped.
 
    One oracle stays for the authority that already decides it: a strong
    `assert_eq!` or `assert!` in a literal-false block, an uncalled closure
@@ -710,10 +722,17 @@ Two pattern terms are used below.
       same name to anything else drops the name, so an ambiguous body
       keeps today's reading;
     - the reading this replaces is strong (`exact_value`,
-      `whole_object_equality`, `exact_error_variant` or `snapshot`).
+      `whole_object_equality`, `exact_error_variant` or `snapshot`), or
+      a medium or weak one (#14882).
 
-    Only a strong reading is lowered: a weak or smoke reading already
-    withholds the credit and keeps its kind. The rule only removes credit,
+    A weak `relational_check` is lowered too (#14882): the owner return pin
+    raises `assert!(price(amount, threshold) == expected)` to strong relative
+    to the probe, as it does the terminal guard
+    `if price(amount, threshold) != expected { return Err(..) }`, whose
+    assertion twin (#3284) takes this rule on the lexical and parser
+    extraction paths. Harness inline trials do not apply it yet. A smoke
+    or none reading claims no comparison and keeps its kind. The rule
+    only removes credit,
     so it creates no path to `exposed`. A filled initializer
     (`let expected: i32 = 9_990;`), a computed one
     (`let expected = price(amount, threshold);`) and an assertion that

@@ -68,14 +68,21 @@ pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClas
 /// unfilled placeholder macro (`let expected: i32 = todo!(..)`) pins no
 /// expected value, so it earns no strong credit. `ripr agent stub --write`
 /// writes exactly this shape, and crediting it tells an agent that wrote the
-/// stub that the gap is closed. Only a strong reading is lowered: a weak or
-/// relational reading already withholds the credit.
+/// stub that the gap is closed. A strong, medium or weak reading is lowered.
+/// #14882: a weak `relational_check` is lowered too, because the owner
+/// return pin raises `assert!(price(100) == expected)` or the terminal guard
+/// `if price(100) != expected { return Err(..) }` to strong relative to the
+/// probe. A smoke or none reading claims no comparison and keeps its kind.
 pub(crate) fn without_unfilled_expected(
     classification: OracleClassification,
     assertion: &str,
     placeholders: &std::collections::BTreeSet<String>,
 ) -> OracleClassification {
-    if classification.strength != OracleStrength::Strong || placeholders.is_empty() {
+    if !matches!(
+        classification.strength,
+        OracleStrength::Strong | OracleStrength::Medium | OracleStrength::Weak
+    ) || placeholders.is_empty()
+    {
         return classification;
     }
     // #14810 round 3: match against the assertion's semantic operands, not
@@ -85,10 +92,9 @@ pub(crate) fn without_unfilled_expected(
     // helpers keep the whole-text fallback.
     let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
     let masked = mask_assertion_reads(&operand_text);
-    let tokens = crate::analysis::extract::text::extract_identifier_tokens(&masked);
     if !placeholders
         .iter()
-        .any(|name| tokens.iter().any(|token| token == name))
+        .any(|name| reads_local_name(&masked, name))
     {
         return classification;
     }
@@ -114,6 +120,55 @@ pub(crate) fn without_unfilled_expected_parts(
     (classification.kind, classification.strength)
 }
 
+/// Whether `masked` reads `name` as a local: a whole identifier that is not a
+/// member or path segment. `fixture.expected` and `Self::expected` name a
+/// field and an item, not the local `expected`; `expected.field` and
+/// `&expected` read it (#14882 review).
+fn reads_local_name(masked: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut start = 0;
+    while let Some(offset) = masked[start..].find(name) {
+        let at = start + offset;
+        let end = at + name.len();
+        start = end;
+        let before = masked[..at].chars().next_back();
+        let after = masked[end..].chars().next();
+        if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
+            continue;
+        }
+        let prefix = masked[..at].trim_end();
+        let member = prefix.ends_with('.') && !prefix.ends_with("..");
+        if member || prefix.ends_with("::") {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// Whether a string literal that opens after `prefix` is a format string:
+/// the first argument of a macro call (`format!(`), or the second after a
+/// plain destination (`write!(f, `). Only a format string's `{name}` hole
+/// reads `name`; an ordinary `"{expected}"` literal is text (#14882 review).
+fn opens_format_string(prefix: &str) -> bool {
+    let trimmed = prefix.trim_end();
+    let macro_open = |head: &str| head.trim_end().ends_with('!');
+    if let Some(head) = trimmed.strip_suffix('(') {
+        return macro_open(head);
+    }
+    if let Some(head) = trimmed.strip_suffix(',')
+        && let Some(open) = head.rfind('(')
+    {
+        let destination = head[open + 1..].trim();
+        let plain = !destination.is_empty()
+            && destination
+                .chars()
+                .all(|ch| ch == '_' || ch == '.' || ch == '&' || ch.is_alphanumeric());
+        return plain && macro_open(&head[..open]);
+    }
+    false
+}
+
 /// Mask what is not a read in an assertion operand: comments, string
 /// literals, and the escaped `{{`/`}}` braces of a format string. The
 /// contents of a `{...}` interpolation hole survive, because
@@ -126,6 +181,7 @@ fn mask_assertion_reads(text: &str) -> String {
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut in_string = false;
+    let mut format_string = false;
     while i < chars.len() {
         let ch = chars[i];
         if in_line_comment {
@@ -166,7 +222,7 @@ fn mask_assertion_reads(text: &str) -> String {
                 i += 1;
                 continue;
             }
-            if ch == '{' {
+            if ch == '{' && format_string {
                 if chars.get(i + 1) == Some(&'{') {
                     // `{{` is an escaped brace: literal text, not a read.
                     out.push_str("  ");
@@ -204,6 +260,7 @@ fn mask_assertion_reads(text: &str) -> String {
         }
         if ch == '"' {
             in_string = true;
+            format_string = opens_format_string(&out);
             out.push('"');
             i += 1;
             continue;
