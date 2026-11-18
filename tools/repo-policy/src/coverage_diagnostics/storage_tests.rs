@@ -326,8 +326,15 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
         });
     }
     let mut writer = Flushed::default();
-    emit_snapshot(&mut writer, &json!({"phase": "during"}), &sample, 7, 60_000)
-        .map_err(|error| error.to_string())?;
+    emit_snapshot(
+        &mut writer,
+        &json!({"phase": "during"}),
+        &sample,
+        &json!({"status": "unavailable"}),
+        7,
+        60_000,
+    )
+    .map_err(|error| error.to_string())?;
     assert!(writer.bytes.len() <= SNAPSHOT_BYTES);
     assert!(writer.record_sizes.iter().all(|size| *size <= LINE_BYTES));
     let text = std::str::from_utf8(&writer.bytes).map_err(|error| error.to_string())?;
@@ -337,6 +344,7 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
         .map(serde_json::from_str)
         .collect::<std::result::Result<_, _>>()
         .map_err(|error| error.to_string())?;
+    assert_eq!(records[0]["host_memory"]["status"], "unavailable");
     assert_eq!(writer.writes, records.len());
     assert_eq!(writer.flushes, records.len());
     assert_eq!(

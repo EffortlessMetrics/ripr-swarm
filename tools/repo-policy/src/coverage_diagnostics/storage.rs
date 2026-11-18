@@ -32,11 +32,13 @@ pub(super) fn run() -> Result<i32> {
         SAMPLE_INTERVAL,
         PERIODIC_SAMPLES,
         |event| {
+            let memory = super::memory::observe(Path::new("/proc/meminfo"));
             let snapshot = snapshot(&roots, Limits::default());
             if let Err(error) = emit_snapshot(
                 &mut io::stdout().lock(),
                 &event,
                 &snapshot,
+                &memory,
                 sequence,
                 started.elapsed().as_millis(),
             ) {
@@ -533,6 +535,7 @@ fn emit_snapshot(
     writer: &mut impl Write,
     event: &Value,
     snapshot: &Snapshot,
+    memory: &Value,
     sequence: u64,
     elapsed_ms: u128,
 ) -> io::Result<()> {
@@ -543,6 +546,7 @@ fn emit_snapshot(
         "elapsed_ms": elapsed_ms,
         "command": {"program": "cargo", "arguments": CARGO_ARGS},
         "non_atomic": true,
+        "host_memory": memory,
         "allocation_assignment": "first_seen_device_inode",
         "event": event,
         "partial": snapshot.partial,
