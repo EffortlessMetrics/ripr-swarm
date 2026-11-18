@@ -3181,3 +3181,196 @@ marker = "libtest_mimic"
     }
     Ok(())
 }
+
+/// #14310: git stores symbolic links, so a clone can deliver `ripr.toml` as a
+/// link to any file on the machine. A parse error quotes the offending line,
+/// so the target must not be read at all. The refusal is one fixed sentence:
+/// it names the entry, and carries neither the target's path nor its content.
+#[cfg(unix)]
+#[test]
+fn config_link_leaving_the_repository_is_refused_before_it_is_read() -> Result<(), String> {
+    const SENTINEL: &str = "canary-outside-content-14310";
+    let outside = temp_root("link-escape-outside-zq")?;
+    let outside_name = outside
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("outside name")?
+        .to_string();
+    let private = outside.join("private-zq.txt");
+    write_file(&private, &format!("TOKEN={SENTINEL}\n"))?;
+    let repo = temp_root("link-escape-repo")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    let member = repo.join("member");
+    fs::create_dir_all(&member).map_err(|err| format!("create member: {err}"))?;
+
+    // Control: read directly, the same content is quoted by the parse error.
+    write_file(&repo.join("ripr.toml"), &format!("TOKEN={SENTINEL}\n"))?;
+    let quoted = match load_for_root(&repo) {
+        Ok(_) => return Err("control: expected a parse error".to_string()),
+        Err(error) => error,
+    };
+    assert!(quoted.contains(SENTINEL), "{quoted}");
+    fs::remove_file(repo.join("ripr.toml")).map_err(|err| format!("remove control: {err}"))?;
+
+    // Targets: the file, a directory, and a FIFO (opening it for reading
+    // would block, so a refusal that returns shows the target is not opened).
+    let fifo = outside.join("fifo-zq");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .map_err(|err| format!("mkfifo: {err}"))?;
+    assert!(made.success(), "mkfifo failed");
+    // Chains that end outside: a link to an in-repository link, and a link
+    // through an in-repository directory link.
+    std::os::unix::fs::symlink(&private, repo.join("hop.toml"))
+        .map_err(|err| format!("hop link: {err}"))?;
+    std::os::unix::fs::symlink(&outside, repo.join("hopdir"))
+        .map_err(|err| format!("hop dir link: {err}"))?;
+
+    let targets: [(&str, PathBuf); 5] = [
+        ("file", private.clone()),
+        ("directory", outside.clone()),
+        ("fifo", fifo.clone()),
+        ("link chain", repo.join("hop.toml")),
+        (
+            "linked directory",
+            repo.join("hopdir").join("private-zq.txt"),
+        ),
+    ];
+    let entries: [(&str, &Path, PathBuf); 3] = [
+        ("root entry", &repo, repo.join("ripr.toml")),
+        ("ancestor entry", &member, repo.join("ripr.toml")),
+        ("member entry", &member, member.join("ripr.toml")),
+    ];
+    for (target_label, target) in &targets {
+        for (entry_label, root, entry) in &entries {
+            let label = format!("{target_label} via {entry_label}");
+            std::os::unix::fs::symlink(target, entry)
+                .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+            let outcome = load_for_root_failure(root);
+            fs::remove_file(entry).map_err(|err| format!("{label}: remove link: {err}"))?;
+            let error = match outcome {
+                Ok(_) => return Err(format!("{label}: expected a refusal, got a config")),
+                Err(ConfigLoadFailure::Read(error)) => error,
+                Err(ConfigLoadFailure::Parse { .. }) => {
+                    return Err(format!("{label}: the target was read and parsed"));
+                }
+            };
+            for leaked in [SENTINEL, "private-zq", "fifo-zq", outside_name.as_str()] {
+                assert!(!error.contains(leaked), "{label}: `{leaked}` in {error}");
+            }
+            assert!(
+                error.contains(CONFIG_LINK_LEAVES_REPOSITORY),
+                "{label}: {error}"
+            );
+            assert!(error.contains("ripr.toml"), "{label}: {error}");
+        }
+    }
+    let _ = fs::remove_dir_all(&repo);
+    let _ = fs::remove_dir_all(&outside);
+    Ok(())
+}
+
+/// #14310: a link that cannot be resolved keeps the existing loud read error
+/// (#5304), and an absent entry keeps the built-in defaults.
+#[cfg(unix)]
+#[test]
+fn unresolvable_config_links_and_absent_entries_keep_their_contracts() -> Result<(), String> {
+    let repo = temp_root("link-escape-unresolvable")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    assert!(load_for_root(&repo)?.source_path().is_none());
+    for (label, target) in [
+        ("dangling outside", "/no-such-dir-14310/none.toml"),
+        ("loop", "ripr.toml"),
+    ] {
+        std::os::unix::fs::symlink(target, repo.join("ripr.toml"))
+            .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+        let outcome = load_for_root(&repo);
+        fs::remove_file(repo.join("ripr.toml")).map_err(|err| format!("{label}: {err}"))?;
+        let error = match outcome {
+            Ok(_) => return Err(format!("{label}: expected an error, got a config")),
+            Err(error) => error,
+        };
+        assert!(error.starts_with("read "), "{label}: {error}");
+        assert!(
+            !error.contains(CONFIG_LINK_LEAVES_REPOSITORY),
+            "{label}: {error}"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #14310 control: a `ripr.toml` link whose target stays inside the
+/// repository still loads, from the root and from a member directory.
+#[cfg(unix)]
+#[test]
+fn config_link_inside_the_repository_still_loads() -> Result<(), String> {
+    let repo = temp_root("link-inside-repo")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    let member = repo.join("member");
+    fs::create_dir_all(&member).map_err(|err| format!("create member: {err}"))?;
+    let shared = repo.join("shared").join("ripr.shared.toml");
+    write_file(&shared, "[analysis]\nmode = \"deep\"\n")?;
+
+    for (label, root, entry) in [
+        ("root entry", &repo, repo.join("ripr.toml")),
+        ("member entry", &member, member.join("ripr.toml")),
+    ] {
+        std::os::unix::fs::symlink(&shared, &entry)
+            .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+        let loaded = load_for_root(root);
+        fs::remove_file(&entry).map_err(|err| format!("{label}: remove link: {err}"))?;
+        let config = loaded.map_err(|error| format!("{label}: {error}"))?;
+        assert!(
+            config.analysis().mode().is_some(),
+            "{label}: mode not loaded"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #14310: with no `.git` entry above it, the tree is the link's own
+/// directory, so a link to a sibling directory is refused and a link beside
+/// its target loads.
+#[cfg(unix)]
+#[test]
+fn config_link_without_a_repository_marker_is_bounded_by_its_own_directory() -> Result<(), String> {
+    let base = temp_root("link-no-marker")?;
+    let tree = base.join("tree");
+    let sibling = base.join("sibling");
+    write_file(&sibling.join("other.toml"), "[analysis]\nmode = \"deep\"\n")?;
+    write_file(&tree.join("local.toml"), "[analysis]\nmode = \"deep\"\n")?;
+
+    std::os::unix::fs::symlink(sibling.join("other.toml"), tree.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let refused = load_for_root(&tree);
+    fs::remove_file(tree.join("ripr.toml")).map_err(|err| format!("remove link: {err}"))?;
+    // The bound is the nearest enclosing `.git` entry. Cargo can place the
+    // temporary directory inside a checkout, and then the sibling is inside
+    // that repository and loads; with no marker above, the link's own
+    // directory is the bound and the sibling is refused.
+    let enclosing_marker = base
+        .ancestors()
+        .any(|ancestor| fs::symlink_metadata(ancestor.join(".git")).is_ok());
+    match (enclosing_marker, refused) {
+        (true, Ok(config)) => assert!(config.analysis().mode().is_some()),
+        (false, Err(error)) => {
+            assert!(error.contains(CONFIG_LINK_LEAVES_REPOSITORY), "{error}");
+        }
+        (marker, outcome) => {
+            return Err(format!(
+                "sibling link: enclosing marker {marker}, loaded {}",
+                outcome.is_ok()
+            ));
+        }
+    }
+
+    std::os::unix::fs::symlink("local.toml", tree.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let loaded = load_for_root(&tree);
+    let _ = fs::remove_dir_all(&base);
+    assert!(loaded?.analysis().mode().is_some());
+    Ok(())
+}
