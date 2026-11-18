@@ -3257,7 +3257,9 @@ fn sole_forwarding_wrapper<'a>(
         return None;
     };
     let wrapper = *wrapper;
-    if wrapper.item.container != FunctionContainer::Free
+    if owner.item.container != FunctionContainer::Free
+        || owner.source_role != FunctionSourceRole::Production
+        || wrapper.item.container != FunctionContainer::Free
         || wrapper.source_role != FunctionSourceRole::Production
         || wrapper.name == owner.name
         || index
@@ -3587,6 +3589,63 @@ mod tests {
         RelationReason, SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
+
+    /// #15034: the wrapper reading needs every related test to call the
+    /// wrapper and none to name the owner, and declines when a macro body
+    /// names the wrapper.
+    #[test]
+    fn the_forwarding_wrapper_reading_reads_only_wrapper_only_tests() -> Result<(), String> {
+        let read = |extra: &str, test_body: &str| -> Result<bool, String> {
+            let source = format!(
+                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel(cents)\n}}\n{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "round_to_nickel")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "stays")
+                .ok_or("missing test")?;
+            Ok(super::forwarding_wrapper_invisibility(
+                &index,
+                owner,
+                "cents / 5 * 5",
+                "(cents + 2) / 5 * 5",
+                &[test],
+            )
+            .is_some_and(|evidence| evidence.state == StageState::Weak))
+        };
+        assert!(read("", "    assert_eq!(cash_total(105), 105);")?);
+        // The changed values differ at 103, so the reading declines.
+        assert!(!read("", "    assert_eq!(cash_total(103), 105);")?);
+        // A test that also names the owner, or never calls the wrapper.
+        assert!(!read(
+            "",
+            "    assert_eq!(cash_total(105), 105);\n    assert_eq!(round_to_nickel(105), 105);"
+        )?);
+        assert!(!read("", "    assert_eq!(105, 105);")?);
+        // A macro body that names the wrapper may feed it other inputs.
+        assert!(!read(
+            "macro_rules! total {\n    ($c:expr) => { cash_total($c + 1) };\n}\n",
+            "    assert_eq!(cash_total(105), 105);"
+        )?);
+        Ok(())
+    }
 
     /// #15034: only a sole, uniquely named, unheld free wrapper whose body
     /// forwards its own parameters in order is read as the owner.
