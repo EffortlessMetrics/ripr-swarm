@@ -1,12 +1,13 @@
 //! End-to-end pin for the bitflags-shaped trait-default `.contains` false
-//! link (#11113 remainder).
+//! link (#11113).
 //!
-//! `classify/*` is fenced on this leaf, so the tests record the production
-//! path as it stands: a `macro_rules!` that spells `impl Flags for TestFlags`
-//! still fail-opens the std-receiver demotion from #11208, while the same
-//! `Vec<(&str, TestFlags)>` receiver without that macro is not
-//! `direct_owner_call`. Relating a tuple-element `.contains` to the trait
-//! owner is out of scope.
+//! A `Vec<(&str, TestFlags)>` receiver calls `slice::contains`, never the
+//! trait default `Flags::contains`. The std-receiver demotion from #11208
+//! must hold when a `macro_rules!` declares `TestFlags` and implements
+//! `Flags` for it, as a bitflags-shaped crate does. Where the macro does not
+//! establish the impl's self type (a `$metavariable`, or `Vec` itself), the
+//! relation keeps today's credit. Relating a `TestFlags::contains` path
+//! argument to the trait owner is out of scope.
 
 #![cfg(feature = "lang-rust")]
 
@@ -67,6 +68,116 @@ fn cases() {
         let _ = name;
     }
     assert!(value.contains(&("A", TestFlags::A)));
+}
+"#;
+
+const DIRECT_CONTAINS: &str = r#"crate::test_flags!();
+
+#[test]
+fn cases() {
+    let value = TestFlags::A;
+    assert!(value.contains(TestFlags::A));
+}
+"#;
+
+/// The macro's impl self type is a metavariable: which type gets the impl is
+/// decided at the call site, which this rule does not read.
+const METAVAR_LIB: &str = r#"pub mod traits;
+pub use traits::Flags;
+
+#[macro_export]
+macro_rules! test_flags {
+    ($name:ident) => {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        struct $name {
+            bits: u8,
+        }
+        impl $name {
+            const A: Self = Self { bits: 0b01 };
+            const B: Self = Self { bits: 0b10 };
+        }
+        impl $crate::Flags for $name {
+            fn bits(&self) -> u8 {
+                self.bits
+            }
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests;
+"#;
+
+const METAVAR_CONTAINS: &str = r#"crate::test_flags!(TestFlags);
+
+#[test]
+fn cases() {
+    let value: Vec<(&str, TestFlags)> = vec![("A", TestFlags::A), ("B", TestFlags::B)];
+    assert!(value.contains(&("A", TestFlags::A)));
+}
+"#;
+
+/// The macro implements the trait for `Vec` as well as for its own type, so
+/// `value.contains(..)` on a `Vec` can be the trait default method.
+const VEC_IMPL_LIB: &str = r#"pub mod traits;
+pub use traits::Flags;
+
+#[macro_export]
+macro_rules! test_flags {
+    () => {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        struct TestFlags {
+            bits: u8,
+        }
+        impl TestFlags {
+            const A: Self = Self { bits: 0b01 };
+            const B: Self = Self { bits: 0b10 };
+        }
+        impl $crate::Flags for TestFlags {
+            fn bits(&self) -> u8 {
+                self.bits
+            }
+        }
+        impl $crate::Flags for Vec<u8> {
+            fn bits(&self) -> u8 {
+                self.len() as u8
+            }
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests;
+"#;
+
+/// The reduced crate from the #11113 reproduction: the macro is invoked in
+/// `src/tests/mod.rs`, `iter.rs` calls `Vec::contains`, and `contains.rs`
+/// hands `TestFlags::contains` to a helper.
+const SPLIT_TESTS_MOD: &str = "crate::test_flags!();\nmod contains;\nmod iter;\n";
+
+const SPLIT_CONTAINS: &str = r#"use super::*;
+use crate::Flags;
+
+#[test]
+fn cases() {
+    case(TestFlags::A, &[(TestFlags::A, true), (TestFlags::B, false)], TestFlags::contains);
+}
+
+#[track_caller]
+fn case<T: Flags + std::fmt::Debug>(value: T, inputs: &[(T, bool)], inherent: impl FnOnce(&T, T) -> bool + Copy) {
+    for (input, expected) in inputs {
+        assert_eq!(*expected, inherent(&value, *input), "{:?}.contains({:?})", value, input);
+    }
+}
+"#;
+
+const SPLIT_ITER: &str = r#"use super::*;
+
+#[test]
+fn test_defined_names() {
+    let all_named: Vec<(&str, TestFlags)> = vec![("A", TestFlags::A), ("B", TestFlags::B)];
+    let expected_flag = &("A", TestFlags::A);
+    assert!(all_named.contains(expected_flag));
 }
 "#;
 
@@ -132,6 +243,14 @@ impl Fixture {
             NEW_CONTAINS_BODY,
         )?;
         fixture.write("change.diff", &diff)?;
+        Ok(fixture)
+    }
+
+    /// The macro crate with the reproduction's `src/tests` layout.
+    fn create_split_tests() -> Result<Self, String> {
+        let fixture = Self::create(MACRO_LIB, SPLIT_CONTAINS)?;
+        fixture.write("src/tests/mod.rs", SPLIT_TESTS_MOD)?;
+        fixture.write("src/tests/iter.rs", SPLIT_ITER)?;
         Ok(fixture)
     }
 
@@ -243,58 +362,161 @@ fn related_summary(finding: &Finding) -> String {
 }
 
 fn cases_reason(finding: &Finding) -> Option<RelationReason> {
+    test_reason(finding, "cases", "src/tests/contains.rs")
+}
+
+fn test_reason(finding: &Finding, name: &str, file: &str) -> Option<RelationReason> {
     finding.related_tests.iter().find_map(|test| {
-        (test.name == "cases" && path_ends_with(&test.file, "src/tests/contains.rs"))
+        (test.name == name && path_ends_with(&test.file, file))
             .then_some(test.relation_reason)
             .flatten()
     })
 }
 
-/// Bitflags-shaped crate: `macro_rules!` generates `TestFlags` and `impl Flags
-/// for TestFlags`. Today's production still fail-opens the #11208 demotion, so
-/// `cases` is `direct_owner_call` and the finding reads `infection_unknown`
-/// rather than `no_static_path`.
-#[test]
-fn bitflags_macro_shape_still_credits_vec_contains_as_direct_owner_call() -> Result<(), String> {
-    let fixture = Fixture::create(MACRO_LIB, MACRO_CONTAINS)?;
-    let finding = fixture.contains_finding()?;
-    let dump = format!(
+fn dump(finding: &Finding) -> String {
+    format!(
         "class={} reach={} related={}",
         finding.class.as_str(),
         finding.ripr.reach.state.as_str(),
-        related_summary(&finding)
-    );
-    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
+        related_summary(finding)
+    )
+}
+
+/// Bitflags-shaped crate: `macro_rules!` declares `TestFlags` and spells
+/// `impl Flags for TestFlags`. The impl's self type is a type the macro
+/// declares, so the `Vec` receiver cannot be the trait's receiver and `cases`
+/// is a name-only relation that grants no reach.
+#[test]
+fn bitflags_macro_shape_does_not_credit_vec_contains_as_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(MACRO_LIB, MACRO_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    let dump = dump(&finding);
+    match cases_reason(&finding) {
+        Some(RelationReason::WeakTokenSubstring) => {}
+        other => {
+            return Err(format!(
+                "macro-declared TestFlags must demote Vec::contains to weak_token_substring, got {other:?} ({dump})"
+            ));
+        }
+    }
+    if finding.ripr.reach.state.as_str() == "yes" {
         return Err(format!(
-            "setup drifted: expected today's fail-open direct_owner_call, got {dump}"
+            "Vec::contains must not grant reach to Flags::contains: {dump}"
         ));
     }
-    if finding.class != ExposureClass::InfectionUnknown {
+    // The macro spelling must read exactly as the source-level impl does:
+    // same class, reach and next step as the #11208 control fixture.
+    let plain = Fixture::create(PLAIN_LIB, PLAIN_CONTAINS)?.contains_finding()?;
+    if finding.class != plain.class
+        || finding.ripr.reach.state.as_str() != plain.ripr.reach.state.as_str()
+        || finding.recommended_next_step != plain.recommended_next_step
+    {
         return Err(format!(
-            "setup drifted: expected today's infection_unknown class (not no_static_path), got {dump}"
+            "macro-declared TestFlags must read as the source-level impl does: {dump} next={:?} vs {} next={:?}",
+            finding.recommended_next_step,
+            self::dump(&plain),
+            plain.recommended_next_step
+        ));
+    }
+    if matches!(
+        finding.class,
+        ExposureClass::Exposed | ExposureClass::WeaklyExposed
+    ) {
+        return Err(format!(
+            "Vec::contains must not lend Flags::contains an exposed reading: {dump}"
+        ));
+    }
+    Ok(())
+}
+
+/// The #11113 reproduction layout: `iter.rs::test_defined_names` calls
+/// `Vec::contains` and must not be a direct call of `Flags::contains`, nor
+/// lend it reach. `contains.rs::cases` names the trait method only as a path
+/// argument; relating it is a separate rule and it is not asserted here.
+#[test]
+fn reproduction_layout_does_not_credit_iter_vec_contains() -> Result<(), String> {
+    let fixture = Fixture::create_split_tests()?;
+    let finding = fixture.contains_finding()?;
+    let dump = dump(&finding);
+    match test_reason(&finding, "test_defined_names", "src/tests/iter.rs") {
+        None | Some(RelationReason::WeakTokenSubstring) => {}
+        other => {
+            return Err(format!(
+                "test_defined_names calls Vec::contains and must be name-only at most, got {other:?} ({dump})"
+            ));
+        }
+    }
+    if finding.ripr.reach.state.as_str() == "yes" {
+        return Err(format!(
+            "Vec::contains must not grant reach to Flags::contains: {dump}"
+        ));
+    }
+    if matches!(
+        finding.class,
+        ExposureClass::Exposed | ExposureClass::WeaklyExposed
+    ) {
+        return Err(format!(
+            "Vec::contains must not lend Flags::contains an exposed reading: {dump}"
+        ));
+    }
+    Ok(())
+}
+
+/// Positive control: in the same macro crate, a call whose receiver is a
+/// `TestFlags` value is still a direct call of the trait default method.
+#[test]
+fn bitflags_macro_shape_keeps_a_testflags_receiver_as_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(MACRO_LIB, DIRECT_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
+        return Err(format!(
+            "a TestFlags receiver must stay direct_owner_call: {}",
+            dump(&finding)
         ));
     }
     if finding.ripr.reach.state.as_str() != "yes" {
         return Err(format!(
-            "today's fail-open still claims reach yes, got {dump}"
+            "a TestFlags receiver must keep reach yes: {}",
+            dump(&finding)
         ));
     }
-    let next = finding
-        .recommended_next_step
-        .as_deref()
-        .ok_or_else(|| format!("missing next step: {dump}"))?;
-    if !next.contains("Open the related test") {
+    Ok(())
+}
+
+/// Unresolved control: the impl's self type is a `$metavariable`, so syntax
+/// does not establish which type implements `Flags`. The relation keeps
+/// today's credit; reading the call site is not part of this rule.
+#[test]
+fn metavariable_self_type_keeps_todays_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(METAVAR_LIB, METAVAR_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
         return Err(format!(
-            "today's next step still sends the user into the Vec test: {next}"
+            "setup drifted: a metavariable self type should keep direct_owner_call, got {}",
+            dump(&finding)
+        ));
+    }
+    Ok(())
+}
+
+/// Negative control: the macro also spells `impl Flags for Vec<u8>`, so a
+/// `Vec` receiver can run the trait default method and keeps its credit.
+#[test]
+fn macro_impl_for_vec_keeps_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(VEC_IMPL_LIB, MACRO_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
+        return Err(format!(
+            "a macro impl for Vec must keep direct_owner_call, got {}",
+            dump(&finding)
         ));
     }
     Ok(())
 }
 
 /// Control: the same `Vec<(&str, TestFlags)>` receiver without a crate-level
-/// `macro_rules!` that spells `impl Flags for` is not `direct_owner_call`.
-/// That is the #11208 production path this leaf can prove without touching
-/// `classify/*`.
+/// `macro_rules!` that spells `impl Flags for` is not `direct_owner_call`
+/// (the #11208 production path).
 #[test]
 fn source_level_testflags_vec_receiver_is_not_direct_owner_call() -> Result<(), String> {
     let fixture = Fixture::create(PLAIN_LIB, PLAIN_CONTAINS)?;

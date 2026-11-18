@@ -1,0 +1,20 @@
+# Registers the bitflags-shaped std-receiver tests (#11113): `Vec::contains`
+# in a test is a name-only relation to a trait default `Flags::contains` when
+# a macro declares the flags type and implements the trait for it; an
+# unestablished macro self type keeps the existing relation.
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/tests/bitflags_trait_receiver.rs::bitflags_macro_shape_does_not_credit_vec_contains_as_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::reproduction_layout_does_not_credit_iter_vec_contains",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::bitflags_macro_shape_keeps_a_testflags_receiver_as_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::metavariable_self_type_keeps_todays_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::macro_impl_for_vec_keeps_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::source_level_testflags_vec_receiver_is_not_direct_owner_call",
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_macro_declared_self_type_when_reading_impl_then_std_is_ruled_out",
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_unestablished_self_type_when_reading_impl_then_credit_is_kept",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver.rs",
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs",
+]
