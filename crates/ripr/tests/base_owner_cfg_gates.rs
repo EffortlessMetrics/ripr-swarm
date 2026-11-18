@@ -35,6 +35,10 @@ impl TempRepo {
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         for (path, text) in files {
+            if let Some(parent) = root.join(path).parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
             std::fs::write(root.join(path), text)
                 .map_err(|error| format!("write {path} failed: {error}"))?;
         }
@@ -166,7 +170,18 @@ fn tail_class(
     items: &str,
     import: &str,
 ) -> Result<(ExposureClass, Finding), String> {
-    let files = [
+    tail_class_with(path, owner_file, items, import, &[])
+}
+
+/// [`tail_class`] with `extra` files beside the four it writes.
+fn tail_class_with(
+    path: TailPath,
+    owner_file: &str,
+    items: &str,
+    import: &str,
+    extra: &[(&str, &str)],
+) -> Result<(ExposureClass, Finding), String> {
+    let mut files = vec![
         ("src/lib.rs", lib_with(items, import, path)),
         (owner_file, path.owner()),
         ("src/fake.rs", path.stub()),
@@ -175,6 +190,11 @@ fn tail_class(
             "pub fn g(x: i32) -> i32 {\n    x\n}\n".to_string(),
         ),
     ];
+    files.extend(
+        extra
+            .iter()
+            .map(|(file, text)| (*file, (*text).to_string())),
+    );
     let findings = TempRepo::create(&files, &path.patch(owner_file))?.findings()?;
     let tail = path.new_tail();
     let mut matching = findings.iter().filter(|finding| {
@@ -262,7 +282,6 @@ fn gated_shapes_outside_mod_declarations_read_propagation_unknown() -> Result<()
 /// here), with the propagation witness credited either way.
 #[test]
 fn ungated_controls_keep_their_credit_on_both_tail_paths() -> Result<(), String> {
-    const DIRECT: &str = "use crate::real::ready;";
     let mut wrong = Vec::new();
     for path in [TailPath::Constant, TailPath::Unary] {
         for (name, items, import, expected) in [
@@ -309,4 +328,251 @@ fn ungated_controls_keep_their_credit_on_both_tail_paths() -> Result<(), String>
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     Ok(())
+}
+
+/// One narrowed-gate case: `(name, owner file, lib.rs items, test-module
+/// import, extra files, expected class on the constant and the unary tail
+/// path)`. An expected `PropagationUnknown` is a refusal that withholds
+/// propagation credit; any other class must carry the propagation witness.
+/// A positive expects main's class on each path: the unary tail keeps its
+/// own same-name, rename, `include!` and `macro_rules!` refusals, so on that
+/// path main itself reads several of these shapes `propagation_unknown`.
+type NarrowCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    Vec<(&'static str, &'static str)>,
+    [ExposureClass; 2],
+);
+
+fn check_narrow_cases(cases: Vec<NarrowCase>) -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for (index, path) in [TailPath::Constant, TailPath::Unary]
+        .into_iter()
+        .enumerate()
+    {
+        for (name, owner_file, items, import, extra, classes) in &cases {
+            let expected = &classes[index];
+            let (class, finding) = tail_class_with(path, owner_file, items, import, extra)?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            let gated = *expected == ExposureClass::PropagationUnknown;
+            if class != *expected || credited == gated {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// The test module's direct import of the owner.
+const DIRECT: &str = "use crate::real::ready;";
+
+/// A macro emitting an out-of-line `mod $m;`, defined in another package.
+const OTHER_PACKAGE_DECLARE: &str = "macro_rules! declare {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        mod $m;\n    };\n}\n";
+
+/// #14952 review R1: only a macro that may emit an out-of-line module (or an
+/// `include!` or `#[path]`) gates, and only owners in the package defining
+/// it unless it is exported. Positives (main's class restored): a macro
+/// emitting only inline modules, and a non-exported `mod $m;` macro in
+/// another package. Negatives (still gated): the same macro exported, the
+/// same macro in the owner's own package, and a macro emitting `include!`
+/// (newly gated: its body holds no `mod`).
+#[test]
+fn macro_gates_need_an_out_of_line_module_in_the_owners_package() -> Result<(), String> {
+    const EXPORTED: &str = "#[macro_export]\nmacro_rules! declare {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        mod $m;\n    };\n}\n";
+    check_narrow_cases(vec![
+        (
+            "inline-only macro",
+            "src/real.rs",
+            "mod real;\nmacro_rules! wrap {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        mod $m {\n            pub fn helper() {}\n        }\n    };\n}\nwrap!(inner);\n",
+            DIRECT,
+            vec![],
+            [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        ),
+        (
+            "mod-emitting macro in another package",
+            "src/real.rs",
+            "mod real;\n",
+            DIRECT,
+            vec![("other/src/lib.rs", OTHER_PACKAGE_DECLARE)],
+            [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        ),
+        (
+            "exported mod-emitting macro in another package",
+            "src/real.rs",
+            "mod real;\n",
+            DIRECT,
+            vec![("other/src/lib.rs", EXPORTED)],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "mod-emitting macro in the owner's package",
+            "src/real.rs",
+            "mod real;\nmacro_rules! declare {\n    ($m:ident) => {\n        #[cfg(not(test))]\n        mod $m;\n    };\n}\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "include-emitting macro in the owner's package",
+            "src/real.rs",
+            "mod real;\nmacro_rules! inc {\n    ($f:literal) => {\n        include!($f);\n    };\n}\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+    ])
+}
+
+/// #14952 review R2: a private `#[cfg(unix)] use super::ready;` inside the
+/// `#[cfg(test)]` module, where nothing else can bind `ready`, only decides
+/// whether `ready` names the parent's item or nothing: main's
+/// `weakly_exposed` (the glob-reached re-export) is restored. Negatives: a
+/// gated rename in the test module, the same import beside a glob that may
+/// bind `ready`, and a private gated rename at file scope (which the test
+/// module's `use super::*` reaches, so a `pub`-only rule would be unsound).
+#[test]
+fn a_redundant_gated_test_import_is_not_a_gate() -> Result<(), String> {
+    check_narrow_cases(vec![
+        (
+            "gated super import in the test module",
+            "src/real.rs",
+            "mod real;\npub use real::ready;\n",
+            "use super::*;\n    #[cfg(unix)]\n    use super::ready;",
+            vec![],
+            [ExposureClass::WeaklyExposed, ExposureClass::WeaklyExposed],
+        ),
+        (
+            "gated rename in the test module",
+            "src/real.rs",
+            "mod real;\nmod fake;\npub use real::ready;\n",
+            "use super::*;\n    #[cfg(unix)]\n    use super::fake::stub as ready;",
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "gated super import beside another glob",
+            "src/real.rs",
+            "mod real;\nmod fake;\npub use real::ready;\n",
+            "use crate::fake::*;\n    #[cfg(unix)]\n    use super::ready;",
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "private gated rename at file scope",
+            "src/real.rs",
+            "mod real;\nmod fake;\npub use real::ready;\n#[cfg(test)]\nuse fake::stub as ready;\n",
+            GLOB,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+    ])
+}
+
+/// #14952 review R3: a gate must name a crate-local path. A gated `use`
+/// rooted at a sysroot crate (`std::fmt::Write as ready`, a
+/// `std::io::prelude::*` glob) and an `include!` of another file with the
+/// owner's stem (`../data/real.rs`) no longer gate: main's class is
+/// restored. Negatives: the same names through crate-local roots
+/// (`self::fake::stub as ready`, a `self::prelude::*` glob, a bare
+/// `fake::stub`) and an `include!` resolving to the owner's own file.
+#[test]
+fn gates_must_name_crate_local_paths() -> Result<(), String> {
+    const PRELUDE: &str = "use crate::prelude::ready;";
+    check_narrow_cases(vec![
+        (
+            "std rename to the owner's name",
+            "src/real.rs",
+            "mod real;\n#[cfg(unix)]\nuse std::fmt::Write as ready;\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::WeaklyExposed,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "std glob over a module named like the owner file",
+            "src/prelude.rs",
+            "mod prelude;\n#[cfg(unix)]\nuse std::io::prelude::*;\n",
+            PRELUDE,
+            vec![],
+            [ExposureClass::Exposed, ExposureClass::Exposed],
+        ),
+        (
+            "include of another file with the owner's stem",
+            "src/real.rs",
+            "mod real;\n#[cfg(unix)]\nmod data {\n    include!(\"../data/real.rs\");\n}\n",
+            DIRECT,
+            vec![("data/real.rs", "pub fn other() {}\n")],
+            [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        ),
+        (
+            "self rename to the owner's name",
+            "src/real.rs",
+            "mod real;\nmod fake;\n#[cfg(unix)]\nuse self::fake::stub as ready;\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "bare local rename to the owner's name",
+            "src/real.rs",
+            "mod real;\nmod fake;\n#[cfg(unix)]\nuse fake::stub as ready;\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "self glob over the owner's module",
+            "src/prelude.rs",
+            "mod prelude;\n#[cfg(unix)]\npub use self::prelude::*;\n",
+            PRELUDE,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+        (
+            "include resolving to the owner's file",
+            "src/real.rs",
+            "mod real;\n#[cfg(unix)]\nmod shim {\n    include!(\"real.rs\");\n}\n",
+            DIRECT,
+            vec![],
+            [
+                ExposureClass::PropagationUnknown,
+                ExposureClass::PropagationUnknown,
+            ],
+        ),
+    ])
 }

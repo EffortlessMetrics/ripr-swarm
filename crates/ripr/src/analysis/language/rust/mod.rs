@@ -3280,17 +3280,17 @@ impl RustAdapter {
                             // The facts list every parsed declaration; the
                             // lexical test keeps a file the index could not
                             // parse, which then reads as unreadable. A gate
-                            // outside a declaration needs a `cfg` (on a
-                            // `use`), an `include` or a `macro`.
+                            // outside a declaration has its own lexical
+                            // superset, owned beside the scanner.
                             !facts.module_declarations.is_empty()
-                                || facts.source.contains("cfg")
-                                || facts.source.contains("include")
-                                || facts.source.contains("macro")
                                 || facts.source.lines().any(|line| {
                                     line.contains("mod ") && line.trim_end().ends_with(';')
                                 })
+                                || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
+                                    &facts.source,
+                                )
                         })
-                        .map(|(_, facts)| facts.data().source.as_ref()),
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                     changed_files.iter().map(|changed| {
                         (
                             changed,

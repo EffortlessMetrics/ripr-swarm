@@ -244,20 +244,40 @@ changed body. The identity reports a gate when any of these holds:
   file, whose leaf or rename is the owner's name, or whose glob or `self`
   import names a module named like a component of the owner file's path
   (#14952). A test module's private import gated only by its module's
-  `#[cfg(test)]` is not a gate;
+  `#[cfg(test)]` is not a gate. Two gated imports are not gates either. One
+  rooted at a sysroot crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in
+  a module whose items cannot shadow that root (no item, `use`, `extern
+  crate`, non-sysroot glob or macro call naming it) names that crate, which
+  holds no workspace function. A private `use super::name;` directly inside
+  a `#[cfg(test)]` module in which nothing else can bind `name` (no other
+  `use` binding it, no glob but `super::*`, no item, `extern crate` or macro
+  call naming it) binds `name` to the parent's item or to nothing, so it
+  cannot swap the function a test reaches. Every other root (`crate`,
+  `self`, `super`, a module or any other crate name) counts as crate-local:
+  telling a third-party crate from a workspace package or local module would
+  need the manifests, so the fail-closed reading keeps those gates;
 - the owner file is not a crate root and no out-of-line `mod` declaration is
   named like its module (or no module is named like a directory above it),
   as for a file reached only through `include!`, however the macro is
   spelled (#14952);
-- an `include!` with a literal path names the owner file's stem;
-- a `macro_rules!` or `macro` body holds a `mod` token and the owner file is
-  not a crate root.
+- an `include!` whose literal path, resolved against the including file's
+  directory, is the owner file; a literal that cannot be resolved (absolute,
+  or climbing above the including path) gates the owner file's stem by name;
+- a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
+  followed by a name and no `{` body), an `include!` or a `#[path]`
+  (`path =`), and the owner file is not a crate root of the package that
+  defines the macro (the directories above its `src`, `tests`, `examples` or
+  `benches` anchor), or of any package when the macro is exported
+  (`#[macro_export]`, or a `macro` with a visibility). A macro emitting only
+  inline `mod name { .. }` modules is not a gate.
 
 A diff that adds or removes any of these refuses the identity. Names
 approximate the module chain, so among these checks a name can only gate more
-owners than the exact chain would, with one exception: a module of the same
+owners than the exact chain would, with two exceptions: a module of the same
 name in another directory satisfies the declaration check for a file reached
-only through a renamed `include!`. Not read: an `include!` whose path is not
+only through a renamed `include!`, and a package scope is read from the path
+layout, so a non-exported macro reaches every target of its package but no
+other package. Not read: an `include!` whose path is not
 a literal (`concat!(env!("OUT_DIR"), ..)`, which names a generated file), a
 module or re-export emitted by a procedural macro, and a private `use`
 gated only through its enclosing module. Each claim that relies on the
