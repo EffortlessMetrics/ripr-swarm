@@ -3040,6 +3040,51 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         Ok(())
     }
 
+    /// #15148 review: a deadline that expires after the batch session's
+    /// entry but during its filter listing still starts no session. The
+    /// budget clock answers live once (the listing's own pre-spawn check)
+    /// and expired afterwards, so an entry-only checkpoint would pass and
+    /// spawn the session with a refused filter-pin call.
+    #[test]
+    fn a_deadline_that_expires_during_the_batch_filter_listing_starts_no_session()
+    -> Result<(), String> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let checks = std::sync::Arc::new(AtomicUsize::new(0));
+        let clock_checks = std::sync::Arc::clone(&checks);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(1),
+            std::sync::Arc::new(move || {
+                if clock_checks.fetch_add(1, Ordering::Relaxed) < 1 {
+                    started
+                } else {
+                    started + Duration::from_secs(1)
+                }
+            }),
+        );
+        match with_token(&token, || {
+            CatFileBatch::spawn(&root, Duration::from_secs(30))
+        }) {
+            Err(error) if error.is_analysis_cancelled() => {}
+            Err(error) => return Err(format!("expected the cancellation, got: {error}")),
+            Ok(_) => {
+                return Err("a deadline that expired during setup started a session".to_string());
+            }
+        }
+        if token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded) {
+            return Err(format!(
+                "expected the deadline abort, got {:?}",
+                token.observed_abort()
+            ));
+        }
+        if checks.load(Ordering::Relaxed) < 2 {
+            return Err("the budget clock was not consulted after the listing".to_string());
+        }
+        Ok(())
+    }
+
     /// Deterministic kill+reap proof for a hung fixture child (#3742
     /// Slice 2): drives `poll_child` with the 50ms discriminating
     /// deadline (or a pre-cancelled token when `cancelled`), then asserts
