@@ -3400,6 +3400,9 @@ fn inlined_owner<'a>(
         let masked = mask_comments_and_strings(text);
         if masked != text
             || masked.contains("::")
+            // A range (`0..n`) puts its bound right after a `.`, which the
+            // field-access rule below would leave unsubstituted.
+            || masked.contains("..")
             || masked.contains('|')
             || masked.contains('!')
             || identifier_tokens(&masked).any(|token| {
@@ -3945,6 +3948,27 @@ mod tests {
         ] {
             assert_eq!(read(vec![owner.clone(), wrapper(body)]), None, "{body}");
         }
+        // The substitution parenthesizes each argument and refuses a range,
+        // whose bound follows a `.` and would be left unsubstituted.
+        let computed = function(
+            "total",
+            "src/lib.rs",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents * 2)\n}",
+        );
+        let arguments = vec!["cents * 2".to_string()];
+        let substitute = super::inlined_owner(&owner, &computed, &arguments);
+        assert_eq!(
+            substitute
+                .as_ref()
+                .and_then(|substitute| substitute("(cents + 2) / 5 * 5")),
+            Some("((cents * 2) + 2) / 5 * 5".to_string())
+        );
+        assert_eq!(
+            substitute
+                .as_ref()
+                .and_then(|substitute| substitute("(0..cents).sum()")),
+            None
+        );
         // A second holder of the owner, a holder of the wrapper, or a second
         // function named like the wrapper declines.
         let second_owner_holder = function(

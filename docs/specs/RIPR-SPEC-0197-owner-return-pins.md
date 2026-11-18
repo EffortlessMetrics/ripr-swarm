@@ -3894,8 +3894,8 @@ arguments are `w`'s parameters in declaration order, a test's `w(args)` is
 `owner(args)` and the reading folds the owner as written. Otherwise each owner
 parameter in the owner's body, the change and its baseline is replaced by its
 argument expression, and the reading folds that composition at the test's
-literal inputs. An owner body with a `let`, `match`, loop, closure, nested
-`fn`, path or macro, or one that uses a name of `w`'s parameters for anything
+literal inputs. An owner body with a `let`, `match`, loop, closure, range,
+nested `fn`, path or macro, or one that uses a name of `w`'s parameters for anything
 but an owner parameter, declines that substitution. Every related test must
 call `w`, and none may name the owner. The summary names the wrapper ("Every
 related test calls `cash_total`, which passes its arguments straight to the
