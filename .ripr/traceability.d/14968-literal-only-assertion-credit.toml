@@ -9,5 +9,6 @@ tests = [
   "crates/ripr/tests/literal_only_assertion_credit.rs::an_unconditional_literal_assertion_never_lowers_the_implicit_reading",
   "crates/ripr/tests/literal_only_assertion_credit.rs::a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling",
   "crates/ripr/tests/literal_only_assertion_credit.rs::a_dropped_literal_never_lowers_an_assertion_that_reads_the_owner",
+  "crates/ripr/tests/literal_only_assertion_credit.rs::a_rebound_owner_binding_fails_closed_beside_a_dropped_literal",
   "crates/ripr/src/analysis/classify/literal_assertion.rs::tests::owner_result_readers_call_the_owner_or_read_its_binding",
 ]

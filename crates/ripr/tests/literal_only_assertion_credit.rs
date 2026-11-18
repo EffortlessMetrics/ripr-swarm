@@ -385,6 +385,30 @@ fn a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling() -> Resul
 }
 
 #[test]
+fn a_rebound_owner_binding_fails_closed_beside_a_dropped_literal() -> Result<(), String> {
+    // The shared binding authority drops a name that any pattern rebinds,
+    // even in a nested scope, so the surviving read no longer counts as an
+    // owner read and the dropped literal keeps the fallback (fail closed).
+    let without_literal = result_owner_classes(
+        "scoped_rebind_alone",
+        "{ let r = g(2); if let Some(r) = Some(1) { let _ = r; } assert!(r.is_err()); }",
+    )?;
+    let with_literal = result_owner_classes(
+        "scoped_rebind_assert_true",
+        "{ let r = g(2); if let Some(r) = Some(1) { let _ = r; } assert!(true); assert!(r.is_err()); }",
+    )?;
+    assert_eq!(
+        (without_literal.0.as_str(), without_literal.1.as_str()),
+        WEAK
+    );
+    assert_eq!(
+        (with_literal.0.as_str(), with_literal.1.as_str()),
+        ("weakly_exposed", "reachable_unrevealed")
+    );
+    Ok(())
+}
+
+#[test]
 fn a_dropped_literal_never_lowers_an_assertion_that_reads_the_owner() -> Result<(), String> {
     let mut lowered = Vec::new();
     for (key, function, (error_path, predicate)) in [

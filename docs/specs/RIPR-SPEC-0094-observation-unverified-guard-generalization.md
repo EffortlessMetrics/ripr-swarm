@@ -995,7 +995,10 @@ no-literal reading was itself single-assertion fallback credit on a sibling
 that neither calls the owner nor reads a binding bound from an owner call
 (`assert!(!o.is_empty())` or `assert_eq!(other(), 4)` above, which read
 `weakly_exposed` without the literal). There the test keeps the
-`reachable_unrevealed` it had before this rule.
+`reachable_unrevealed` it had before this rule. "Reads a binding" is as the
+shared binding authority resolves it: a name that any pattern in the test
+rebinds, even in a nested scope, is not an owner binding, so such a read
+fails closed to that same exception (see Known limits).
 
 ```rust
 g(2).unwrap_err(); assert!(true);                   // weakly_exposed, as without assert!(true)
@@ -1034,6 +1037,13 @@ Known limits:
   not the assertion's text.
 - A guarded literal whose guard reads nothing from the owner
   (`if cfg_flag { assert!(true) }`) keeps its earlier reading.
+- A scoped rebinding of an owner binding
+  (`let r = g(2); if let Some(r) = Some(1) { .. } assert!(true);
+  assert!(r.is_err());`) reads `reachable_unrevealed` on the predicate probe,
+  where the same test without the literal reads `weakly_exposed`.
+  `oracle_binds_sink_identity` drops any name a pattern rebinds, without
+  scope, so the surviving read is not counted as an owner read. This is fail
+  closed; a scope-aware binder belongs to the shared owner, not this rule.
 - A `?` alone gives no implicit credit (`g(3)?; Ok(())` reads
   `reachable_unrevealed`). Under the invariant above, `g(3)?; assert!(true);
   Ok(())` reads the same. Its earlier `weakly_exposed` came only from the
@@ -1043,7 +1053,7 @@ Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
 `crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
 `crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
 (bare-call, owner-read, guarded-literal, implicit-observer,
-owner-reading-assertion and unrelated-sibling rows), and
+owner-reading-assertion, scoped-rebinding and unrelated-sibling rows), and
 `owner_result_readers_call_the_owner_or_read_its_binding` in
 `crates/ripr/src/analysis/classify/literal_assertion.rs`.
 
