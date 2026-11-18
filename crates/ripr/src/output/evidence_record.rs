@@ -1482,93 +1482,52 @@ impl StageLimitationCategory {
 /// names. Their wire tokens are pinned by the evidence-audit maps and the
 /// fixture corpora, so a variant keeps its token even where a typed kind
 /// covers similar ground (`unsupported_mock_shape` is not `mocked_module`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UntypedStageLimitation {
-    ConstructorFieldOwnerAmbiguous,
-    FieldAssignmentValueUnresolved,
-    CrossFileConstantUnresolved,
-    MacroGeneratedValue,
-    OpaqueHelperCall,
-    UnsupportedMockShape,
-    SnapshotFieldUnknown,
-    SideEffectSinkUnknown,
-    ActivationOwnerCallAbsent,
-    ActivationOwnerCallAbsentCallPresenceTargetAffinity,
-    ActivationOwnerCallAbsentAssertionTargetAffinity,
-    ActivationOwnerCallAbsentAffinityOnly,
-    ActivationOwnerCallAbsentSameFileOnly,
-    ActivationOwnerCallUnresolved,
-    ActivationValueUnresolved,
-    OpaqueStaticEvidence,
-    ReachabilityStaticUnknown,
-    ActivationStaticUnknown,
-    PropagationStaticUnknown,
-    ObservationStaticUnknown,
-    DiscriminationStaticUnknown,
-    Unclassified,
+/// Declares the enum, its `ALL` list and its wire tokens from one table, so a
+/// variant cannot exist without appearing in `ALL` and in the guard tests that
+/// walk it.
+macro_rules! untyped_stage_limitations {
+    ($($variant:ident => $token:literal,)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum UntypedStageLimitation {
+            $($variant,)+
+        }
+
+        impl UntypedStageLimitation {
+            #[cfg(test)]
+            const ALL: &'static [UntypedStageLimitation] = &[$(Self::$variant,)+];
+
+            fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $token,)+
+                }
+            }
+        }
+    };
 }
 
-impl UntypedStageLimitation {
-    #[cfg(test)]
-    const ALL: [UntypedStageLimitation; 22] = [
-        Self::ConstructorFieldOwnerAmbiguous,
-        Self::FieldAssignmentValueUnresolved,
-        Self::CrossFileConstantUnresolved,
-        Self::MacroGeneratedValue,
-        Self::OpaqueHelperCall,
-        Self::UnsupportedMockShape,
-        Self::SnapshotFieldUnknown,
-        Self::SideEffectSinkUnknown,
-        Self::ActivationOwnerCallAbsent,
-        Self::ActivationOwnerCallAbsentCallPresenceTargetAffinity,
-        Self::ActivationOwnerCallAbsentAssertionTargetAffinity,
-        Self::ActivationOwnerCallAbsentAffinityOnly,
-        Self::ActivationOwnerCallAbsentSameFileOnly,
-        Self::ActivationOwnerCallUnresolved,
-        Self::ActivationValueUnresolved,
-        Self::OpaqueStaticEvidence,
-        Self::ReachabilityStaticUnknown,
-        Self::ActivationStaticUnknown,
-        Self::PropagationStaticUnknown,
-        Self::ObservationStaticUnknown,
-        Self::DiscriminationStaticUnknown,
-        Self::Unclassified,
-    ];
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::ConstructorFieldOwnerAmbiguous => "constructor_field_owner_ambiguous",
-            Self::FieldAssignmentValueUnresolved => "field_assignment_value_unresolved",
-            Self::CrossFileConstantUnresolved => "cross_file_constant_unresolved",
-            Self::MacroGeneratedValue => "macro_generated_value",
-            Self::OpaqueHelperCall => "opaque_helper_call",
-            Self::UnsupportedMockShape => "unsupported_mock_shape",
-            Self::SnapshotFieldUnknown => "snapshot_field_unknown",
-            Self::SideEffectSinkUnknown => "side_effect_sink_unknown",
-            Self::ActivationOwnerCallAbsent => "activation_owner_call_absent",
-            Self::ActivationOwnerCallAbsentCallPresenceTargetAffinity => {
-                "activation_owner_call_absent_call_presence_target_affinity"
-            }
-            Self::ActivationOwnerCallAbsentAssertionTargetAffinity => {
-                "activation_owner_call_absent_assertion_target_affinity"
-            }
-            Self::ActivationOwnerCallAbsentAffinityOnly => {
-                "activation_owner_call_absent_affinity_only"
-            }
-            Self::ActivationOwnerCallAbsentSameFileOnly => {
-                "activation_owner_call_absent_same_file_only"
-            }
-            Self::ActivationOwnerCallUnresolved => "activation_owner_call_unresolved",
-            Self::ActivationValueUnresolved => "activation_value_unresolved",
-            Self::OpaqueStaticEvidence => "opaque_static_evidence",
-            Self::ReachabilityStaticUnknown => "reachability_static_unknown",
-            Self::ActivationStaticUnknown => "activation_static_unknown",
-            Self::PropagationStaticUnknown => "propagation_static_unknown",
-            Self::ObservationStaticUnknown => "observation_static_unknown",
-            Self::DiscriminationStaticUnknown => "discrimination_static_unknown",
-            Self::Unclassified => "static_limitation_unclassified",
-        }
-    }
+untyped_stage_limitations! {
+    ConstructorFieldOwnerAmbiguous => "constructor_field_owner_ambiguous",
+    FieldAssignmentValueUnresolved => "field_assignment_value_unresolved",
+    CrossFileConstantUnresolved => "cross_file_constant_unresolved",
+    MacroGeneratedValue => "macro_generated_value",
+    OpaqueHelperCall => "opaque_helper_call",
+    UnsupportedMockShape => "unsupported_mock_shape",
+    SnapshotFieldUnknown => "snapshot_field_unknown",
+    SideEffectSinkUnknown => "side_effect_sink_unknown",
+    ActivationOwnerCallAbsent => "activation_owner_call_absent",
+    ActivationOwnerCallAbsentCallPresenceTargetAffinity => "activation_owner_call_absent_call_presence_target_affinity",
+    ActivationOwnerCallAbsentAssertionTargetAffinity => "activation_owner_call_absent_assertion_target_affinity",
+    ActivationOwnerCallAbsentAffinityOnly => "activation_owner_call_absent_affinity_only",
+    ActivationOwnerCallAbsentSameFileOnly => "activation_owner_call_absent_same_file_only",
+    ActivationOwnerCallUnresolved => "activation_owner_call_unresolved",
+    ActivationValueUnresolved => "activation_value_unresolved",
+    OpaqueStaticEvidence => "opaque_static_evidence",
+    ReachabilityStaticUnknown => "reachability_static_unknown",
+    ActivationStaticUnknown => "activation_static_unknown",
+    PropagationStaticUnknown => "propagation_static_unknown",
+    ObservationStaticUnknown => "observation_static_unknown",
+    DiscriminationStaticUnknown => "discrimination_static_unknown",
+    Unclassified => "static_limitation_unclassified",
 }
 
 fn static_limitation_category(stage: &str, state: &str, reason: &str) -> StageLimitationCategory {
@@ -4464,7 +4423,7 @@ mod tests {
             .map(|kind| kind.as_str())
             .collect();
         let mut untyped = std::collections::HashSet::new();
-        for category in UntypedStageLimitation::ALL {
+        for category in UntypedStageLimitation::ALL.iter().copied() {
             let token = category.as_str();
             assert!(
                 !typed.contains(token),
@@ -4479,48 +4438,6 @@ mod tests {
             StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch)
         );
         assert!(typed.contains("dynamic_dispatch"));
-    }
-
-    /// Exhaustive by construction: a new untyped variant does not compile
-    /// until it gets an ordinal here, and then fails the test below until
-    /// `ALL` lists it, so the shadow and pin tests cannot skip it.
-    fn untyped_stage_limitation_ordinal(category: UntypedStageLimitation) -> usize {
-        use UntypedStageLimitation as U;
-        match category {
-            U::ConstructorFieldOwnerAmbiguous => 0,
-            U::FieldAssignmentValueUnresolved => 1,
-            U::CrossFileConstantUnresolved => 2,
-            U::MacroGeneratedValue => 3,
-            U::OpaqueHelperCall => 4,
-            U::UnsupportedMockShape => 5,
-            U::SnapshotFieldUnknown => 6,
-            U::SideEffectSinkUnknown => 7,
-            U::ActivationOwnerCallAbsent => 8,
-            U::ActivationOwnerCallAbsentCallPresenceTargetAffinity => 9,
-            U::ActivationOwnerCallAbsentAssertionTargetAffinity => 10,
-            U::ActivationOwnerCallAbsentAffinityOnly => 11,
-            U::ActivationOwnerCallAbsentSameFileOnly => 12,
-            U::ActivationOwnerCallUnresolved => 13,
-            U::ActivationValueUnresolved => 14,
-            U::OpaqueStaticEvidence => 15,
-            U::ReachabilityStaticUnknown => 16,
-            U::ActivationStaticUnknown => 17,
-            U::PropagationStaticUnknown => 18,
-            U::ObservationStaticUnknown => 19,
-            U::DiscriminationStaticUnknown => 20,
-            U::Unclassified => 21,
-        }
-    }
-
-    #[test]
-    fn untyped_stage_limitation_all_is_complete_and_ordered() {
-        for (index, category) in UntypedStageLimitation::ALL.iter().enumerate() {
-            assert_eq!(
-                untyped_stage_limitation_ordinal(*category),
-                index,
-                "{category:?}"
-            );
-        }
     }
 
     #[test]
