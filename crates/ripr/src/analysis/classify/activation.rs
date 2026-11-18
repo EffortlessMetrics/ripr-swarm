@@ -4766,6 +4766,19 @@ fn missing_guard_entry_discriminator(
     if related_tests.is_empty() || !workspace_complete {
         return None;
     }
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may enter the guard and no mention scan below can see it
+    // (#15010, as in `missing_match_arm_discriminator`). An unestablished
+    // container may be one, so only a known non-trait owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return None;
+    }
     // The cheap text read first: most side effects sit under no readable
     // guard, and those need no workspace lookups.
     let guard = super::arm_selection::GuardEntry::establish(probe, owner, |name| {
