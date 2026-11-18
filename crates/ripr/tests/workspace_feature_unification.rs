@@ -302,3 +302,39 @@ fn an_integration_target_whose_required_feature_a_member_enables_keeps_credit() 
     assert_withheld(&other, "gate", "member request for `other`");
     Ok(())
 }
+
+/// Member `a`: a library and a `test = true` example that needs `special`
+/// (#14972).
+const EXAMPLE_MEMBER_A: &str = "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[features]\nspecial = []\nother = []\n\n[[example]]\nname = \"demo\"\ntest = true\nrequired-features = [\"special\"]\n";
+
+const EXAMPLE_TESTS: &str = "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(a::f(5), 7);\n    }\n}\n";
+
+#[test]
+fn a_tested_example_whose_required_feature_a_member_enables_keeps_credit() -> Result<(), String> {
+    // The same unified set decides a `test = true` example (#14972).
+    let lib = OWNER.to_string();
+    let workspace = |b_tail: &str| {
+        TempWorkspace::create(
+            WORKSPACE,
+            &[
+                ("a/Cargo.toml", EXAMPLE_MEMBER_A),
+                ("a/src/lib.rs", &lib),
+                ("a/examples/demo.rs", EXAMPLE_TESTS),
+                ("b/Cargo.toml", &member_b(b_tail)),
+                ("b/src/lib.rs", ""),
+            ],
+            "a/src/lib.rs",
+        )
+    };
+    let unified =
+        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
+            .finding()?;
+    assert_credited(&unified, "t", "member request for `special`");
+    let other =
+        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
+            .finding()?;
+    assert_withheld(&other, "t", "member request for `other`");
+    let alone = workspace("")?.finding()?;
+    assert_withheld(&alone, "t", "no member request");
+    Ok(())
+}
