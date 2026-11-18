@@ -837,11 +837,27 @@ impl Reader<'_> {
         }
     }
 
+    // Only the repo reader follows indexed binding initializers. An
+    // initializer may expose a write capability even for an immutable name.
+    fn follows_repo_initializer(&self, depth: usize) -> bool {
+        depth > 0 && self.test_index.is_some()
+    }
+
     fn sink(&self, expr: &ast::Expr, depth: usize) -> Sink {
         match expr {
             ast::Expr::ParenExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::PrefixExpr(inner) => self.inner(inner.expr(), depth),
-            ast::Expr::RefExpr(inner) => self.inner(inner.expr(), depth),
+            ast::Expr::RefExpr(borrow) => {
+                let value = self.inner(borrow.expr(), depth);
+                if self.follows_repo_initializer(depth)
+                    && borrow.mut_token().is_some()
+                    && value.reaches()
+                {
+                    Sink::Masked
+                } else {
+                    value
+                }
+            }
             ast::Expr::CastExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::TryExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::AwaitExpr(inner) => self.inner(inner.expr(), depth),
@@ -992,10 +1008,6 @@ impl Reader<'_> {
             .arg_list()
             .map(|list| list.args().collect::<Vec<_>>())
             .unwrap_or_default();
-        let parts = arguments
-            .iter()
-            .map(|argument| self.sink(argument, depth))
-            .collect::<Vec<_>>();
         // Only the old value of a directly borrowed temporary is tracked.
         // The replacement may carry the owner call, but it is stored rather
         // than returned. An arbitrary helper named replace proves nothing.
@@ -1005,18 +1017,24 @@ impl Reader<'_> {
                 "::std::mem::replace" => Some(true),
                 _ => None,
             }
-            && let [ast::Expr::RefExpr(destination), _] = arguments.as_slice()
+            && let [ast::Expr::RefExpr(destination), replacement] = arguments.as_slice()
             && destination.mut_token().is_some()
             && destination.expr().is_some_and(is_replace_temporary)
             && self.replace_path_is_unshadowed(absolute)
-            && let [old, replacement] = parts.as_slice()
         {
-            return match (*old, *replacement) {
+            // The borrow is consumed by replace, so the returned old value
+            // does not inherit the destination's write capability.
+            let old = self.inner(destination.expr(), depth);
+            return match (old, self.sink(replacement, depth)) {
                 (Sink::Absent, Sink::Absent) => Sink::Absent,
                 (Sink::Absent, _) => Sink::Masked,
                 (old, _) => old,
             };
         }
+        let parts = arguments
+            .iter()
+            .map(|argument| self.sink(argument, depth))
+            .collect::<Vec<_>>();
         // `Some(x)`, `Ok(x)`, `Wrapper(x)`: a variant or tuple-struct payload.
         if name.starts_with(|first: char| first.is_ascii_uppercase()) {
             return self.container(parts);
@@ -1026,6 +1044,16 @@ impl Reader<'_> {
             .and_then(|qualifier| qualifier.segment())
             .and_then(|segment| segment.name_ref())
             .map(|name| name.text().to_string());
+        if self.follows_repo_initializer(depth)
+            && name == "new"
+            && matches!(
+                qualifier.as_deref(),
+                Some("Cell" | "RefCell" | "UnsafeCell" | "Mutex" | "RwLock")
+            )
+            && parts.iter().any(|part| part.reaches())
+        {
+            return Sink::Masked;
+        }
         if name == "new"
             && qualifier
                 .as_deref()
@@ -1053,6 +1081,9 @@ impl Reader<'_> {
             return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
+        if self.follows_repo_initializer(depth) && receiver.reaches() && name.ends_with("_mut") {
+            return Sink::Masked;
+        }
         // `masked.eq(&over(10))`: a comparing method's result depends on its
         // argument whatever the receiver is.
         if ARGUMENT_COMPARING_METHODS.contains(&name.as_str())
@@ -1201,6 +1232,57 @@ impl Reader<'_> {
         }
     }
 
+    /// A refusal-only dependency walk for bindings the value reader cannot
+    /// follow. It checks all same-name initializers without selecting a
+    /// scope, and visits each name at most once. It never grants credit.
+    fn may_bind_owner_value(&self, root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut initializers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for statement in root.descendants().filter_map(ast::LetStmt::cast) {
+            let (Some(pattern), Some(initializer)) = (statement.pat(), statement.initializer())
+            else {
+                continue;
+            };
+            let text = initializer.syntax().text().to_string();
+            for pattern in pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+            {
+                if let Some(bound) = pattern.name() {
+                    initializers
+                        .entry(bound.text().to_string())
+                        .or_default()
+                        .push(text.clone());
+                }
+            }
+        }
+        let mut pending = vec![name];
+        let mut visited = BTreeSet::new();
+        while let Some(local) = pending.pop() {
+            if !visited.insert(local) {
+                continue;
+            }
+            for initializer in initializers.get(local).into_iter().flatten() {
+                if self.mentions(initializer) {
+                    return true;
+                }
+                let masked = mask_comments_and_strings(initializer);
+                pending.extend(
+                    masked
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .filter_map(|part| {
+                            initializers
+                                .get_key_value(part)
+                                .map(|(key, _)| key.as_str())
+                        }),
+                );
+            }
+        }
+        false
+    }
+
     /// A bare name the test body binds exactly once with a plain `let`.
     fn binding(&self, path: &ast::PathExpr, depth: usize) -> Sink {
         let Some(name) = path
@@ -1221,17 +1303,30 @@ impl Reader<'_> {
             .count();
         // #14726: under `strict`, a local bound by a `let` this module
         // cannot follow may hold the owner's record, so it masks.
-        let unfollowed_local = if self.strict && lets > 0 {
+        let default_unfollowed = if self.strict && lets > 0 {
             Sink::Masked
         } else {
             Sink::Absent
         };
-        if depth >= LET_DEPTH || lets != 1 {
-            return unfollowed_local;
+        if lets == 0 || (self.test_index.is_none() && (depth >= LET_DEPTH || lets != 1)) {
+            return default_unfollowed;
         }
         let Some(parse) = parse_body(&self.test.body) else {
-            return unfollowed_local;
+            return default_unfollowed;
         };
+        let unfollowed_local = || {
+            if default_unfollowed == Sink::Masked
+                || (self.test_index.is_some()
+                    && self.may_bind_owner_value(parse.tree().syntax(), &name))
+            {
+                Sink::Masked
+            } else {
+                Sink::Absent
+            }
+        };
+        if depth >= LET_DEPTH || lets != 1 {
+            return unfollowed_local();
+        }
         let mut initializers = parse
             .tree()
             .syntax()
@@ -1246,7 +1341,7 @@ impl Reader<'_> {
                 )
             });
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
-            return unfollowed_local;
+            return unfollowed_local();
         };
         let mutable_binding = matches!(
             statement.pat(),
@@ -1262,7 +1357,7 @@ impl Reader<'_> {
         // A name some other pattern binds too (`if let Some(o) = ..`,
         // `for o in ..`, a closure parameter) may be a different value at
         // the read, which the one `let` cannot show.
-        if self.credit
+        if (self.credit || self.test_index.is_some())
             && parse
                 .tree()
                 .syntax()
@@ -1276,7 +1371,7 @@ impl Reader<'_> {
                 .count()
                 != 1
         {
-            return Sink::Absent;
+            return unfollowed_local();
         }
         // A write-capable initializer (`&mut opts(10)`, `.as_mut()`) lets an
         // immutable binding change the record before the read, and any

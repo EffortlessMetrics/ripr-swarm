@@ -2,6 +2,8 @@
 [[extend]]
 id = "RIPR-SPEC-0094"
 tests = [
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_unresolved_owner_binding_does_not_preserve_strong_credit",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_owner_value_binding_with_write_capability_masks_both_seams",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_mutable_receiver_cannot_keep_both_seams_strong",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_binding_keeps_credit_until_a_possible_write",

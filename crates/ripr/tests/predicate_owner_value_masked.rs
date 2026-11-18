@@ -332,6 +332,38 @@ fn repo_mem_replace_mutable_receiver_cannot_keep_both_seams_strong() -> Result<(
 }
 
 #[test]
+fn repo_owner_value_binding_with_write_capability_masks_both_seams() -> Result<(), String> {
+    assert_repo_grips(
+        "let got = &over(10); assert_eq!(*got, true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "let got = &mut over(10); got.clone_from(&true); assert_eq!(*got, true);",
+        "fn set(x: &mut bool) { *x = true; } let got = &mut over(10); set(got); assert_eq!(*got, true);",
+        "let got = std::cell::Cell::new(over(10)); got.set(true); assert_eq!(got.get(), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_unresolved_owner_binding_does_not_preserve_strong_credit() -> Result<(), String> {
+    for body in [
+        "let got = over(10); let got = true; assert_eq!(got, true);",
+        "let original = over(10); let got = original; let got = true; assert_eq!(got, true);",
+        "let a = over(10); let b = a; let c = b; let d = c; let e = d; assert_eq!(e, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips_with_summary(
+        "let _got = over(10); let other = false; let other = true; assert_eq!(other, true);",
+        "strongly_gripped",
+        Some("kind-match true"),
+    )
+}
+
+#[test]
 fn repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams() -> Result<(), String> {
     assert_repo_grips(
         "let got = std::mem::replace(&mut over(10), false); let ref alias = got; assert_eq!(got, true); let _ = alias;",
