@@ -5423,7 +5423,7 @@ fn discriminate_evidence(
             // `Weak` — the disagreement this PR exists to remove.
             let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
             let owner_value_masked =
-                owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some());
+                owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some(), index);
             let graded = if (branch_withheld || owner_value_masked)
                 && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             {
@@ -5880,11 +5880,16 @@ fn owner_value_is_masked(
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
     boolean_tail: bool,
+    index: &RustIndex,
 ) -> bool {
     let Some(owner) = owner.filter(|_| boolean_tail) else {
         return false;
     };
-    crate::analysis::classify::owner_field_value_flow(test, &oracle.text, &owner.name, None)
+    let files = index.files();
+    let source = files
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    crate::analysis::classify::owner_field_value_flow(test, &oracle.text, &owner.name, None, source)
         == crate::analysis::classify::OwnerValueFlow::Masked
 }
 
@@ -6777,7 +6782,7 @@ fn best_oracle(
         // agree when the call misses this branch or masks the owner value.
         let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && (branch_gate_withholds(seam, oracle, test, owner_fn)
-                || owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some()))
+                || owner_value_is_masked(oracle, test, owner_fn, boolean_pin.is_some(), index))
         {
             OracleStrength::Weak
         } else {

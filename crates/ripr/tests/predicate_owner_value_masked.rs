@@ -289,6 +289,21 @@ fn repo_observed_owner_values_keep_both_tail_seams_strong() -> Result<(), String
 }
 
 #[test]
+fn repo_mem_replace_observes_only_the_old_temporary_on_both_seams() -> Result<(), String> {
+    assert_repo_grips(
+        "assert_eq!(std::mem::replace(&mut over(10), false), true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "assert_eq!(std::mem::replace(&mut true, over(10)), true);",
+        "let replace = |_: &mut bool, _: bool| true; assert_eq!(replace(&mut over(10), false), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
 fn repo_observing_assertion_keeps_credit_beside_a_masked_assertion() -> Result<(), String> {
     for body in [
         "assert_eq!(Some(over(10)).is_some(), true); assert_eq!(over(10), true);",

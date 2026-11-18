@@ -176,6 +176,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
     assertion_text: &str,
     owner: &str,
     kept_field: Option<&str>,
+    test_source: Option<&str>,
 ) -> OwnerValueFlow {
     if owner.is_empty() {
         return OwnerValueFlow::Absent;
@@ -200,6 +201,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
         kept_field,
         credit: false,
         strict: false,
+        test_source,
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -248,6 +250,7 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
         kept_field: Some(kept_field),
         credit: false,
         strict: true,
+        test_source: None,
     };
     // A sub-expression the operand's own reading never visits (a closure
     // argument, an `if` branch, a method argument of the owner's value:
@@ -339,6 +342,7 @@ pub(in crate::analysis) fn bool_field_assertion(
         kept_field: Some(field),
         credit: true,
         strict: false,
+        test_source: None,
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -594,6 +598,21 @@ fn macro_arguments(call: &ast::MacroCall) -> Option<Vec<String>> {
     Some(arguments)
 }
 
+// This bounded spelling rule needs the test file to rule out visible
+// declarations and imports named std. It does not resolve imported aliases.
+fn std_path_is_unshadowed(source: &str) -> bool {
+    let Some(parse) = parse_clean_source_file_memoized(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    !crate::analysis::syntax::use_rebinds_crate_name(file.syntax(), "std")
+        && !file
+            .syntax()
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .any(|name| name.text().trim_start_matches("r#") == "std")
+}
+
 struct Reader<'a> {
     test: &'a TestSummary,
     owner: &'a str,
@@ -610,6 +629,7 @@ struct Reader<'a> {
     /// (`(boundary.retries, opts("-v").verbose)`), and a local this module
     /// cannot follow to one `let` is not read as unrelated.
     strict: bool,
+    test_source: Option<&'a str>,
 }
 
 impl Reader<'_> {
@@ -842,6 +862,28 @@ impl Reader<'_> {
             .iter()
             .map(|argument| self.sink(argument, depth))
             .collect::<Vec<_>>();
+        // Only the old value of a directly borrowed temporary is tracked.
+        // The replacement may carry the owner call, but it is stored rather
+        // than returned. An arbitrary helper named replace proves nothing.
+        if name == "replace"
+            && matches!(
+                callee.syntax().text().to_string().as_str(),
+                "std::mem::replace" | "::std::mem::replace"
+            )
+            && let [ast::Expr::RefExpr(destination), _] = arguments.as_slice()
+            && destination.mut_token().is_some()
+            && destination.expr().is_some_and(|value| {
+                matches!(value, ast::Expr::CallExpr(_) | ast::Expr::Literal(_))
+            })
+            && self.test_source.is_some_and(std_path_is_unshadowed)
+            && let [old, replacement] = parts.as_slice()
+        {
+            return match (*old, *replacement) {
+                (Sink::Absent, Sink::Absent) => Sink::Absent,
+                (Sink::Absent, _) => Sink::Masked,
+                (old, _) => old,
+            };
+        }
         // `Some(x)`, `Ok(x)`, `Wrapper(x)`: a variant or tuple-struct payload.
         if name.starts_with(|first: char| first.is_ascii_uppercase()) {
             return self.container(parts);
@@ -1176,7 +1218,7 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
             generated: None,
         };
-        owner_field_value_flow(&test, assertion, "over", kept_field)
+        owner_field_value_flow(&test, assertion, "over", kept_field, None)
     }
 
     /// #14726: under the strict pairing reading, one reaching part does not
