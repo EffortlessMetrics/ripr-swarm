@@ -550,9 +550,10 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
 
 /// `git_command` for a caller with a deadline: the filter listing runs inside
 /// that deadline, and the returned budget is what is left for the call. A
-/// zero budget starts no listing, and a budget the listing used up comes back
-/// as zero, so in both cases the caller's collector reports the timeout
-/// without spawning git.
+/// zero budget starts no listing, so the caller's collector reports the
+/// timeout without spawning git. A listing that used the whole budget must
+/// not turn the caller's deadline into a zero one: the call still reports the
+/// deadline it was given, not "zero deadline (not spawned)" (#14242 review).
 fn git_command_within(
     root: &Path,
     args: &[&str],
@@ -560,7 +561,14 @@ fn git_command_within(
 ) -> (Command, Option<Duration>) {
     let started = std::time::Instant::now();
     let pins = repository_filter_pins(root, budget);
-    let remaining = budget.map(|budget| budget.saturating_sub(started.elapsed()));
+    let remaining = budget.map(|budget| {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            budget
+        } else {
+            remaining
+        }
+    });
     (git_command_with_filter_pins(root, args, &pins), remaining)
 }
 
