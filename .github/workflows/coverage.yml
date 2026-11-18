@@ -48,8 +48,9 @@ jobs:
       - name: Prepare locked proptest profile dependencies
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      # Runner-loss guard (#4978, #12719). The scheduled run on main died three
-      # days running about six minutes into the instrumented build with "The
+      # Runner-loss guard (#4978, #12719). The former scheduled run on main (retired
+      # by #12973; the lane is dispatch-only now) died three days running
+      # about six minutes into the instrumented build with "The
       # runner has received a shutdown signal" and exit 143, with 65 GB of disk
       # still free. The all-features `ripr` lib test compile peaks near the
       # runner's 16 GB (#12726), and instrumentation adds to it. The required
