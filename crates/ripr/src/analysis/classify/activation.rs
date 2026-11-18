@@ -4830,7 +4830,8 @@ fn missing_guard_entry_discriminator(
 /// that selects one arm can still run another. The same refusals as
 /// [`missing_guard_entry_discriminator`]: a callee may call it back
 /// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
-/// read, or anything outside the related tests names it
+/// read, a read macro's name is rebound ([`read_macro_name_rebound`]), or
+/// anything outside the related tests names it
 /// ([`owner_named_outside_related_tests`]): its own body (a direct,
 /// `Self::`-qualified or `self.` self-call), a helper passed as a function
 /// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
@@ -4847,6 +4848,11 @@ fn owner_may_call_itself(
     owner_may_reenter(owner, functions_by_name)
         || invokes_unread_macro(&owner.body)
         || owner_named_outside_related_tests(index, &owner.name, related_tests)
+        // The read macros are trusted by name (#15022, as in
+        // `missing_guard_entry_discriminator`): a workspace that defines,
+        // imports or may glob in another macro under one of those names can
+        // run the owner with an input the call it wraps never shows.
+        || read_macro_name_rebound(index)
 }
 
 /// Whether a function the owner reaches through its calls names the owner
