@@ -414,6 +414,7 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
 mod package_aliases;
 mod param_fixtures;
@@ -729,12 +730,18 @@ struct PythonOwner {
     /// The owner is a route handler whose response body is its returned dict
     /// (#13869): every static route decorator takes only keywords that leave
     /// the body alone (no `response_model` or `response_class`), the return
-    /// annotation is absent, and the function has exactly one
+    /// annotation is absent or a bare `dict`, and the function has exactly one
     /// `return`, of a dict literal with distinct string-literal keys, and no
     /// `yield` or `raise`. A workspace post-pass may withdraw it.
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// The route handler's return annotation is a bare `dict` (#13869). The
+    /// workspace post-pass withdraws `route_returns_body` from such an owner
+    /// when any source may rebind `dict`, which would make the annotation a
+    /// response model; an unannotated handler keeps its credit.
+    #[serde(default)]
+    route_dict_annotation: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1814,6 +1821,13 @@ impl PythonAdapter {
                 .map(|source| related_tests::route_decorator_lines(source))
                 .sum(),
         );
+        related_tests::withdraw_dict_annotated_routes(
+            &mut all_owners,
+            workspace_read
+                .sources
+                .values()
+                .any(|source| related_tests::rebinds_builtin_dict(source)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -2663,6 +2677,8 @@ mod dunder_helper_reach_tests;
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod owner_result_field_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]

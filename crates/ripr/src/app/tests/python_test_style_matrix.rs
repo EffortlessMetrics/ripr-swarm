@@ -536,8 +536,20 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> Price:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
-            "bare dict annotation",
-            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+            "shadowed dict annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass dict(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "tuple-bound dict annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\ndict, unused = Price, None\n\n\n@app.get(\"/price\")\ndef price() -> (dict):\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "star-imported dict annotation",
+            "from fastapi import FastAPI\nfrom src.models import *\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "bracketed dict target",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n(\n    unused,\n    dict,\n) = None, Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
             "parenthesized route alias",
@@ -550,6 +562,50 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         (
             "commented schema option",
             "from fastapi import FastAPI\n\napp = FastAPI(  # options\n    **{\"openapi\" \"_url\": \"/price\"}\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "assembled globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nglobals()[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "compound-line dict import",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nif True: from src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "frame globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport sys\nsys._getframe().f_globals[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "function globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\ndef _h(): pass\n_h.__globals__[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "fullwidth dict name",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nｄｉｃｔ = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict import after a bracketed docstring",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n\"\"\"\nsee (\n\"\"\"\nfrom src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "case pattern dict capture",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nmatch {\"k\": Price}:\n    case {\"k\": dict}:\n        pass\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "f-string dict walrus",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nf\"{(dict := Price)}\"\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "getattr builtins dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport os\nb = getattr(os, \"__built\" \"ins__\")\nb[\"tcid\"[::-1]] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "patched module dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nfrom unittest.mock import patch\n\npatch(\"src.app.dict\", Price, create=True).start()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict rebound by code in a string",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport timeit\n\ntimeit.timeit(\"import sys; sys.modules['src.app'].dict = sys.modules['src.app'].Price\", number=1)\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
             "unpacked application options",
@@ -1236,6 +1292,39 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "string punctuation change: read {:?}",
             finding.class
         ));
+    }
+    // Control: the builtin `dict` used as a return annotation (on one line or
+    // after a split signature), a parameter annotation or a call is not a
+    // rebinding, so the changed key stays credited.
+    for (name, app) in [
+        (
+            "dict return annotation",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "split signature dict annotation",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef shape(value: dict) -> dict:\n    return dict(value)\n\n\n@app.get(\"/price\")\nasync def price(\n    vip: bool = True,\n) -> dict :\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], PRICE_EDIT, &strong)?;
+        if finding.class != ExposureClass::Exposed {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
+    }
+    // Control: an f-string and a PATCH route trip the `dict` rebinding scan,
+    // which withdraws only `-> dict` credit; an unannotated handler beside
+    // them stays credited, and the same handler under `-> dict` does not.
+    for (name, annotation, credited) in [
+        ("unannotated handler beside an f-string", "", true),
+        ("dict handler beside an f-string", " -> dict", false),
+    ] {
+        let app = format!(
+            "from fastapi import FastAPI\n\napp = FastAPI()\nGREETING = f\"{{app}}\"\n\n\n@app.patch(\"/other\")\ndef other():\n    return {{\"ok\": 1}}\n\n\n@app.get(\"/price\")\ndef price(){annotation}:\n    return {{\"total\": 200 - 10, \"count\": 3}}\n"
+        );
+        let finding = check_style(name, &[("src/app.py", &app)], PRICE_EDIT, &strong)?;
+        if (finding.class == ExposureClass::Exposed) != credited {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
     }
     // A test file that registers its own route on the app.
     let test_route = format!(

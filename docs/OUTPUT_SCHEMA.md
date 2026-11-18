@@ -2840,6 +2840,14 @@ The evidence-first fields are additive in schema `0.2`:
   assertion than the strength-only pick, which can be equally strong).
   `oracle_alignment` keeps what the selected assertions show.
 
+  An `orthogonal` card is delegated to an agent packet only when its finding's
+  `evidence` carries `python_owner_result_field_unread: <binding>.<field>
+  (<test>)` for the card's selected test and `self.<field>` discriminator
+  (reason `python_unread_owner_result_field_with_bounded_repair_route`,
+  RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
+  repaired read on that binding surfaces `direct` with
+  `strong_oracle_observes_owner_result_field`.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
@@ -18150,6 +18158,19 @@ Field contract:
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
   document.
+- `repair_start_scope` — optional top-level block, present only in the
+  stdout of a bare `ripr repair --json` (no item) whose start was not
+  narrowed to the change (#13701): no diff could be read (no base resolved,
+  or an unreadable `--base`), the diff changes nothing, or the diff changes
+  no Rust production code (only tests, docs or other files). A repeated
+  `--json` start that resumes the awaiting attempt adds the same block to
+  the status document it prints. Members: `narrowed_to_change` (always
+  `false`), `note` (the plain note the human start prints on stderr, naming
+  why the start is not narrowed) and `base_command` (the `ripr repair --root
+  <root> --base <ref>` rerun template; `<ref>` is the reader's to name, so it
+  is not a runnable step). A start whose diff touches a repairable spot
+  carries no such block. The selection menu under `--json` carries the same
+  note in its `cli_refusal` `error.message` instead.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.

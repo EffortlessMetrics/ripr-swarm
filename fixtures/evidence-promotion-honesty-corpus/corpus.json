@@ -370,6 +370,60 @@
       ]
     },
     {
+      "id": "python_route_response_shadowed_dict",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_shadowed_dict",
+      "vector": "route_response_shadowed_dict_annotation_is_not_the_body",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_route_response_tuple_dict",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_route_response_tuple_dict",
+      "vector": "route_response_tuple_bound_dict_annotation_is_not_the_body",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_unpacked_options",
       "language": "python",
       "tier": "pure",
@@ -19951,6 +20005,30 @@
       ]
     },
     {
+      "id": "rust_stub_todo_guard_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_guard_expected_value",
+      "vector": "an_unfilled_expected_value_pins_nothing_through_a_guard_or_weak_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_computed_return_tail_reached_promoted",
       "language": "rust",
       "tier": "pure",
@@ -20067,6 +20145,78 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_int_arm",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_int_arm",
+      "vector": "an_input_equal_to_an_appended_integer_arm_reaches_the_returned_change",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_int_arm_old_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_int_arm_old_input",
+      "vector": "an_original_arm_input_does_not_reach_an_appended_arm",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_char_arm",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_char_arm",
+      "vector": "an_input_equal_to_an_appended_char_arm_reaches_the_returned_change",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
         }
       ]
     }

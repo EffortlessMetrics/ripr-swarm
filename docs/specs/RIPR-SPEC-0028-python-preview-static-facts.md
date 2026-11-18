@@ -1420,6 +1420,64 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  Unread owner-result field (#13827, the Python analogue of Rust #13804): a
+  changed unconditional, top-level `self.<field> = ...` statement alone on
+  the changed line (no other statement starts or ends there; the field not
+  starting with `__`), whose right-hand side holds no call, walrus or bare
+  `self`, in a plain method
+  whose only `return` is its last statement `return self` (or in `__init__`,
+  with no `return`) of a plain top-level class (no base, keyword, decorator, or
+  class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
+  `__dict__`, `__new__`, `__class__`, `property`, `getattr(`, `attrgetter`,
+  `setattr(`, `vars(`, `locals(` or `globals(`; every method taking `self`
+  first and running straight through, with no nested `def` or `class`,
+  lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
+  closure kept from `__init__` can overwrite the field after the builder
+  returns; nothing else in the owner module naming the class, since
+  `Req.timeout = _fixed` after the class body replaces the method; an ASCII
+  owner module and test body, since Python folds identifiers by NFKC; no dunder
+  attribute in the class (`self.__getstate__()` returns the instance
+  dictionary); no store
+  to a method name on any base, since `self.timeout = ...` shadows the
+  builder on the instance; a class body of only undecorated methods, literal
+  bindings, docstrings and `pass`, since any other class-level value could be a
+  descriptor; no `case` line; no class-level binding of the field; no other
+  write of the field in the method; only plain assignments after the changed
+  line besides the final `return self`, with no call and no bare `self`; no
+  bare `self` anywhere in the class but the owner's final `return self` (an
+  `s = self` or `self.me = self` alias can overwrite the field); no other store
+  of `.<field>` in the class but `self.<field> = ...` in `__init__`, which runs
+  first (another method's write, kept as a bound method, can overwrite it); no
+  method name loaded in the class except as a call's callee (a bound method
+  kept on the instance runs later); and no
+  read of `.<field>` anywhere in the class, which could derive an attribute the
+  test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
+  evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
+  when the one related test is a strong, undecorated, fixture-free,
+  module-level pytest function whose body is straight-line
+  (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
+  (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
+  class, `from <owner module> import Cls` without an alias, which nothing in the test module
+  rebinds or attribute-writes and no autouse fixture, setup hook or opaque
+  module code can reach; the test module importing nothing else but `pytest`)
+  exactly once, makes no call but the owner construction and call, names no
+  dunder, uses
+  `<binding>` only as reads of other non-dunder, non-method attributes (a
+  bound method read like `reset = r.reset` can be called later; no call, method
+  call, subscript, whole-value use, rebinding or walrus), calls the owner once,
+  and never names the field anywhere in its text (nor `patch`, `mock`,
+  `getattr`, `setattr`, `vars(`, `globals(`, `locals(`, `exec(` or `eval(`).
+  The gap ledger delegates `orthogonal`/`strong_oracle_observes_different_sink`
+  to an agent packet only with that line for the card's own selected test and
+  `self.<field>` discriminator (reason
+  `python_unread_owner_result_field_with_bounded_repair_route`); every other
+  orthogonal card stays `python_oracle_alignment_pair_not_delegatable`. The
+  card then suggests `assert <binding>.<field> == <expected value>`.
+  `strong_oracle_observes_owner_result_field` (`direct`) credits the same shape
+  with that repair applied: the field read once, only in one top-level
+  `assert <binding>.<field> == <literal>` (either side, no message), so a
+  repair the fact starts can close. A relational or computed comparison, or an
+  owner that returns another object, takes no such credit.
   `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
   edit that deletes the leading `isinstance(other, <own class>) and` from the
   method's only `return`, when the remaining expression is exactly
