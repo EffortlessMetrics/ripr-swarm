@@ -293,7 +293,13 @@ running test; no named stop reason is added on this issue.
   false `auto*` key, because the holder's package then sets no skip premise;
   with either, the probe runs and the module's tests are withheld. A bench
   root is not modelled.
-  `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
+- Undiscovered and example targets, over-credit (#14972 review): the mount
+  scan stays textual for `include!`, so an example `include!`d only by
+  another target that `cargo test` does not run (another skipped example, a
+  `test = false` lib or bin, a bench, or an undiscovered test file) keeps
+  its credit, as on base. The same mount through `#[path]` is an indexed
+  edge, so the skipped holder is seen and the credit is withheld.
+- `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
 - Undiscovered and example targets, over-credit (#14972 review): cargo
   metadata does not report `harness`, so an `[[example]] test = true
