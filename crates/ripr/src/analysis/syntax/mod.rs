@@ -1,6 +1,8 @@
 mod adapter;
 mod bolero;
 mod constant_return;
+pub(crate) mod external_docs;
+mod fn_cfg_gates;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
@@ -21,6 +23,7 @@ pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;
+pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
@@ -28,7 +31,6 @@ pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::module_declaration_unestablished_gate;
-pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
@@ -82,12 +84,13 @@ pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
-    ForwardedCallbackParam, GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes,
-    call_making_closure_positions, closure_argument_positions, closure_argument_positions_many,
-    fn_name_binding_count, forwarded_callback_params, governed_cfg_test_modules,
-    has_test_attribute, inline_unit_module_layout, invoked_callback_params,
-    invoked_callback_params_many, macro_call_columns, module_item_scopes, module_path_targets,
-    param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
+    EnclosingScopeKind, ForwardedCallbackParam, GovernedCfgTestModule, InvokedCallbackParam,
+    ModuleItemScopes, call_making_closure_positions, closure_argument_positions,
+    closure_argument_positions_many, enclosing_scopes, fn_name_binding_count,
+    forwarded_callback_params, governed_cfg_test_modules, has_test_attribute,
+    inline_unit_module_layout, invoked_callback_params, invoked_callback_params_many,
+    macro_call_columns, module_item_scopes, module_path_targets, param_never_mentioned,
+    passes_call_making_closure, passes_call_making_closure_many,
     unconditionally_invoked_param_positions,
 };
 pub(crate) use ra::{parser_oracles_for_function, parser_oracles_for_functions_many};

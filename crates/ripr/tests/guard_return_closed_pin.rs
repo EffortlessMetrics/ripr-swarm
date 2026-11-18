@@ -324,3 +324,42 @@ fn a_file_that_may_rebind_an_integer_type_keeps_the_pin_unproven() -> Result<(),
     }
     Ok(())
 }
+
+/// #14387: a changed value in a tail `if`/`else` branch (#14385's probe) is
+/// credited the same way: the pin's literal takes the changed branch and the
+/// two versions return different values there.
+#[test]
+fn an_exact_pin_on_a_changed_tail_branch_value_is_exposed_only_where_it_runs() -> Result<(), String>
+{
+    let owner = |value: &str| {
+        format!(
+            "pub fn rate(t: u32) -> u32 {{
+    if t > 500 {{
+        1
+    }} else if t >= 100 {{
+        {value}
+    }} else {{
+        0
+    }}
+}}"
+        )
+    };
+    let (after, before) = (owner("t / 5"), owner("t / 10"));
+    for (assertion, expected_exposed) in [
+        ("assert_eq!(rate(200), 40);", true),
+        ("assert_eq!(rate(200), 20);", true),
+        ("assert_eq!(rate(600), 1);", false),
+        ("assert_eq!(rate(50), 0);", false),
+        ("assert_eq!(rate(200), 99);", false),
+    ] {
+        let findings =
+            TempRepo::create(&lib(&after, assertion), &fn_diff(&before, &after))?.findings()?;
+        let changed = finding_on_line(&findings, 5, "t / 5")?;
+        assert_eq!(
+            changed.class == ExposureClass::Exposed,
+            expected_exposed,
+            "{assertion}: {changed:?}"
+        );
+    }
+    Ok(())
+}

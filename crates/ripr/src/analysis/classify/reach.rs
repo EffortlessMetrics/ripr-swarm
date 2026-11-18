@@ -2,10 +2,11 @@ use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use super::related_tests::{is_established_free_function, package_prefix};
 use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::syntax::external_docs::may_include_external_docs;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
-use ra_ap_syntax::{AstNode, ast};
+use ra_ap_syntax::AstNode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -159,9 +160,10 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
                 .map(|file| count_namings_for_owner(&file.source, owner))
                 .sum(),
         )
-        || index.files().values().any(|file| {
-            includes_external_docs_with(&file.source, file.data().macro_candidates.is_some())
-        })
+        || index
+            .files()
+            .values()
+            .any(|file| file_includes_external_docs(file.data()))
 }
 
 /// Attributes that never make a function callable without a source naming
@@ -312,25 +314,32 @@ impl UnseenReachNames {
             .values()
             .map(|file| file.data().source.as_ref())
             .collect();
-        // The producer stores macro candidates only for a source it parsed
-        // without errors, which is what the external-docs gate may rely on.
-        let with_clean: Vec<(&str, bool)> = index
+        // The producer answers external docs from its own clean parse
+        // (#13754), so only a file without that answer (lexical fallback,
+        // hand-built facts) is parsed here. Those parses are independent and
+        // run on the rayon pool; `build` can also be reached from a
+        // classification worker (through a `OnceLock` init), where the scans
+        // run in line, as `memoize_many` does.
+        let external_docs = index
             .files()
             .values()
-            .map(|file| {
-                (
-                    file.data().source.as_ref(),
-                    file.data().macro_candidates.is_some(),
-                )
-            })
-            .collect();
-        // The external-docs parse is most of this scan and every file is
-        // independent, so the parses run on the rayon pool. `build` can also
-        // be reached from a classification worker (through a `OnceLock`
-        // init); there the scans run in line, as `memoize_many` does.
-        let external_docs = includes_external_docs_many(&with_clean)
-            .into_iter()
-            .any(|includes| includes);
+            .any(|file| file.data().external_docs == Some(true))
+            || {
+                let unanswered: Vec<(&str, bool)> = index
+                    .files()
+                    .values()
+                    .filter(|file| file.data().external_docs.is_none())
+                    .map(|file| {
+                        (
+                            file.data().source.as_ref(),
+                            file.data().macro_candidates.is_some(),
+                        )
+                    })
+                    .collect();
+                includes_external_docs_many(&unanswered)
+                    .into_iter()
+                    .any(|includes| includes)
+            };
         // Each source's tallies are a pure function of its text, and one diff
         // run builds this struct over several overlapping indexes (admission,
         // main, each widened reach index), so the run scope scans each
@@ -454,30 +463,17 @@ pub(in crate::analysis) fn includes_external_docs_with(source: &str, clean: bool
     )
 }
 
-/// Whitespace the gate skips between `doc` and `=`: Unicode `White_Space`
-/// plus the two marks Rust's lexer also treats as whitespace
-/// (`Pattern_White_Space`) that `char::is_whitespace` leaves out.
-fn rust_or_unicode_whitespace(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '\u{200E}' | '\u{200F}')
-}
-
-/// The cheap text gate in front of the parse: a source that never spells
-/// `doc` and `!` cannot include external docs. A source known to parse
-/// cleanly (`clean`: the file-fact producer already parsed it without
-/// errors) also needs a `doc` followed by `=`, because a key-value `doc`
-/// attribute has the `=` token right after its name with only whitespace or
-/// a comment between. A following `/` (a possible comment) keeps the source
-/// a candidate. An unclean source stays a candidate on the first test alone:
-/// the scan answers `true` for a source it cannot parse.
-fn may_include_external_docs(source: &str, clean: bool) -> bool {
-    source.contains("doc")
-        && source.contains('!')
-        && (!clean
-            || source.match_indices("doc").any(|(at, name)| {
-                source[at + name.len()..]
-                    .trim_start_matches(rust_or_unicode_whitespace)
-                    .starts_with(['=', '/'])
-            }))
+/// Whether `file` pulls documentation in from outside its text: the answer
+/// the producer stored from its clean parse (#13754), or else the gated
+/// parse of [`includes_external_docs_with`]. The producer stores macro
+/// candidates only for a source it parsed without errors, which is what the
+/// text gate may rely on.
+pub(in crate::analysis) fn file_includes_external_docs(
+    file: &crate::analysis::facts::FileData,
+) -> bool {
+    file.external_docs.unwrap_or_else(|| {
+        includes_external_docs_with(&file.source, file.macro_candidates.is_some())
+    })
 }
 
 /// [`includes_external_docs_with`] for every `(source, clean)` of a scan, in order. The
@@ -519,20 +515,7 @@ fn external_docs_uncached(source: &str) -> bool {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
         return true;
     };
-    parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Attr::cast)
-        .any(|attribute| {
-            attribute.meta().is_some_and(|meta| {
-                meta.skip_cfg_attrs().into_iter().any(|meta| {
-                    meta.simple_name().is_some_and(|name| name == "doc")
-                        && matches!(meta, ast::Meta::KeyValueMeta(value)
-                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
-                })
-            })
-        })
+    crate::analysis::syntax::external_docs::tree_includes_external_docs(parse.tree().syntax())
 }
 
 fn workspace_trait_names(index: &RustIndex) -> HashSet<String> {
@@ -1599,6 +1582,88 @@ mod tests {
             4 * functions.len(),
             "the uncached per-owner path still parses every file for every owner"
         );
+    }
+
+    /// #13754: the file-fact producer answers external docs from the clean
+    /// parse it already holds, so the unseen-reach scan reads the stored bit
+    /// and parses nothing; facts without the answer still parse, with the
+    /// same verdict.
+    #[test]
+    fn producer_answers_external_docs_so_unseen_reach_parses_nothing() -> Result<(), String> {
+        let plain = [
+            ("src/plain.rs", "pub fn plain() {}\n"),
+            (
+                "src/literal.rs",
+                "#![doc = \"mentions include_str! in a literal\"]\npub fn lit() {}\n",
+            ),
+            (
+                "src/let_doc.rs",
+                "pub fn read() -> &'static str {\n    let doc = include_str!(\"x.md\");\n    doc\n}\n",
+            ),
+        ];
+        let documented = [
+            (
+                "src/gated.rs",
+                "#![cfg_attr(docsrs, doc = include_str!(\"../README.md\"))]\npub fn gated() {}\n",
+            ),
+            (
+                "src/lib.rs",
+                "#![doc = include_str!(\"../README.md\")]\npub fn documented() {}\n",
+            ),
+        ];
+        // Premise: each stored answer is the gated parse's answer for that
+        // clean source, and the producer stored one for every file.
+        for (path, source) in plain.iter().chain(&documented) {
+            let index = parsed_index(&[(path, source)])?;
+            let file = index
+                .files()
+                .get(Path::new(path))
+                .ok_or_else(|| format!("{path} indexed"))?;
+            assert!(
+                file.data().macro_candidates.is_some(),
+                "{path} parses cleanly"
+            );
+            let expected = documented.iter().any(|(doc_path, _)| doc_path == path);
+            assert_eq!(file.data().external_docs, Some(expected), "{path}");
+            assert_eq!(
+                includes_external_docs_with(source, true),
+                expected,
+                "{path}"
+            );
+        }
+
+        let without_docs = parsed_index(&plain)?;
+        let mut with_docs_files = plain.to_vec();
+        with_docs_files.extend(documented);
+        let with_docs = parsed_index(&with_docs_files)?;
+        let _ = take_external_docs_parse_count();
+        assert!(!UnseenReachNames::build(&without_docs).external_docs);
+        assert!(UnseenReachNames::build(&with_docs).external_docs);
+        let owner = owner_named(&with_docs, "plain")?;
+        assert!(owner_may_be_reached_unseen(owner, &with_docs));
+        assert_eq!(
+            take_external_docs_parse_count(),
+            0,
+            "stored answers leave nothing to parse"
+        );
+
+        // Hand-built facts carry no answer: the scan parses them and agrees.
+        let mut owned = with_docs.clone();
+        for (path, _) in &with_docs_files {
+            let mut facts = owned
+                .owned_file(Path::new(path))
+                .ok_or_else(|| format!("{path} indexed"))?;
+            facts.external_docs = None;
+            owned.insert_file_only(PathBuf::from(path), facts);
+        }
+        let _ = take_external_docs_parse_count();
+        assert!(UnseenReachNames::build(&owned).external_docs);
+        assert_eq!(
+            take_external_docs_parse_count(),
+            4,
+            "without stored answers each file that passes the text gate parses"
+        );
+        Ok(())
     }
 
     #[test]

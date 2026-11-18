@@ -1123,6 +1123,17 @@ impl OwnerReach<'_, '_> {
             })
     }
 
+    /// The implicit-dispatch method names in this owner's reaching set, other
+    /// than the owner's own name. Probes the short method list against the
+    /// set instead of scanning the whole reaching set, which ran once per
+    /// related test and assertion (#12947).
+    fn reaching_implicit_dispatch_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        IMPLICIT_DISPATCH_METHODS
+            .iter()
+            .copied()
+            .filter(|name| *name != self.owner_name && self.reaching.contains(name))
+    }
+
     /// Indexed implicit dispatch witnessed by this test, rather than a trait
     /// declaration elsewhere on the reverse owner path. Unknown calls retain
     /// reach uncertainty but cannot supply effect-observation authority.
@@ -1136,17 +1147,12 @@ impl OwnerReach<'_, '_> {
                 && super::related_tests::test_dispatches_trait_impl(test, function)
         };
         dispatches(owner)
-            || self
-                .reaching
-                .iter()
-                .copied()
-                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
-                .any(|name| {
-                    self.graph
-                        .by_name
-                        .get(name)
-                        .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
-                })
+            || self.reaching_implicit_dispatch_names().any(|name| {
+                self.graph
+                    .by_name
+                    .get(name)
+                    .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
+            })
     }
 
     /// Assertion-local shared-sink authority; declaration/reach alone is
@@ -1169,17 +1175,12 @@ impl OwnerReach<'_, '_> {
                 )
         };
         observes(owner)
-            || self
-                .reaching
-                .iter()
-                .copied()
-                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
-                .any(|name| {
-                    self.graph
-                        .by_name
-                        .get(name)
-                        .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
-                })
+            || self.reaching_implicit_dispatch_names().any(|name| {
+                self.graph
+                    .by_name
+                    .get(name)
+                    .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
+            })
     }
 
     /// Whether `assertion_text` calls an indexed function that has no name
@@ -4155,6 +4156,7 @@ mod tests {
                 source: source.into(),
                 item_scopes: None,
                 macro_candidates: None,
+                external_docs: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -6083,6 +6085,7 @@ mod tests {
                     source: source.into(),
                     item_scopes: None,
                     macro_candidates: None,
+                    external_docs: None,
                 },
             )
         };

@@ -1,0 +1,134 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_computed_return_tail_primitive_alias/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:4a4fef79a549c891ef0715b5651da63ca1c1778813dc58610eefe08b6e05f7b0","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:f222f9b2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping_cost:return_value:return_value:base*2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shipping_cost:return_value:return_value:base*2",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shipping_cost",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "base*2"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:f222f9b2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "base * 2"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach shipping_cost: express_pins_the_folded_branch"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: base * 2"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach shipping_cost: express_pins_the_folded_branch", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: base * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: base * 2 (line 9)", "related test tests/shipping.rs:4 express_pins_the_folded_branch uses strong exact value oracle: assert_eq!(shipping_cost(100, 10, true), 800);", "source assertion argument value 800 at line 5", "source function argument value express = true at line 5", "source function argument value order_cents = 10 at line 5", "source function argument value weight_g = 100 at line 5"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"base * 2","line":9}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: base * 2", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach shipping_cost: express_pins_the_folded_branch"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert_eq!(shipping_cost(100, 10, true), 800);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "800",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "express = true",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "order_cents = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "weight_g = 100",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "800",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "express = true",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "order_cents = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "weight_g = 100",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "express_pins_the_folded_branch",
+          "file": "tests/shipping.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping_cost(100, 10, true), 800);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `express_pins_the_folded_branch` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "suggested_next_action": "The related test `express_pins_the_folded_branch` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

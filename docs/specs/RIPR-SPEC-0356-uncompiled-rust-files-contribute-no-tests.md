@@ -21,6 +21,9 @@ Linked plan:
 Linked issues:
 
 - #8999
+- #14962 (tests compiled only into a target `cargo test` skips: `[lib]
+  test = false`, `[[bin]] test = false`, a bin's unmet default-feature
+  `required-features`)
 
 Linked PRs:
 
@@ -79,6 +82,86 @@ Any doubt keeps the file as before: it stays indexed with its tests. The
 change only removes credit; it never adds a relation, raises a class or
 strengthens an oracle.
 
+### Targets `cargo test` skips (#14962)
+
+A file Cargo does compile can still hold tests that never run. `[lib] test =
+false` keeps the library's unit-test binary out of `cargo test`, which prints
+`running 0 tests`, so a `#[cfg(test)] mod tests` in `src/lib.rs` or in any
+module the library declares is not a discriminator. The executable tests of a
+file are withheld, exactly as for an uncompiled file, when all of these hold:
+
+1. Composition knows the file's every module ancestry (no include edge,
+   lexical fallback, or unresolved, ambiguous or cyclic edge), so each
+   execution root is known.
+2. Every execution root is the `src_path` of at least one cargo metadata
+   target, and `cargo test` runs none of them: each is a `lib`-family or
+   `bin` target whose metadata `test` flag is false or whose
+   `required-features` are unmet under cargo defaults. The query is
+   `ManifestInventory::crate_root_unit_tests_skipped`, the same metadata
+   owner that already decides `[[test]] test = false` (#7265) and
+   `required-features` (#7266). A skipped `[[test]]` target keeps those
+   existing owners (the harness verdict and the #8016 file drop) and never
+   establishes a skip here; a live `[[test]]` whose `path` is the root keeps
+   the root's tests.
+3. The holder's package manifest spells `test = false` on `[lib]` or a
+   `[[bin]]`, or a `[[bin]]` names `required-features`. This only gates the
+   metadata probe so an ordinary workspace spends no `cargo metadata`
+   subprocess.
+4. No `Cargo.toml` is dirty in a committed-history check: the probe reads the
+   working tree, not the `HEAD` bytes the files were loaded from (#8016).
+5. No other target can mount the file, judged from every workspace source on
+   disk rather than from the run's index, because a draft or instant run
+   indexes less and a build-script `include!` never enters any index (#14962
+   review). The walk covers the workspace root and every cargo metadata
+   member, skipping only Cargo's build directories (`target` directly under
+   the root or a member, and `CARGO_TARGET_DIR`) and `.git`, so a module
+   directory named `target` or a hidden source directory (`#[path =
+   ".gen/m.rs"]`) is read; in a committed-history check it also reads the
+   `HEAD` text of dirty files. A symlinked `.rs` file, or a symlinked
+   directory that holds a `.rs` file or another symlink (read up to 1,000
+   entries), can alias the file under a name no text ties back to it, so it
+   is doubt; a directory link without Rust sources is not. The
+   file keeps its tests when any source outside its own skipped ancestry
+   spells its file name (a `#[path]`, a static `include!`, a build script that
+   writes a mount) or declares a `mod` of its stem; when any source may mount
+   through a file the scan cannot name or read, judged on Rust tokens (a
+   small lexer that drops comments and keeps string, raw-string and char
+   literals whole, so neither a comment nor a `"http://x"` string can hide or
+   fake a mount): a `macro_rules!` or `macro` body holding a `mod`, `include`
+   or non-`::` `path` token (`mod /* c */ $n`); any `include` token other
+   than an `include!` (any delimiter) whose operand is a string literal
+   naming a `.rs` file (`include!(concat!(env!("OUT_DIR"), ..))`,
+   `include!("gen.inc")`, and an alias such as `use std::include as inc;`
+   whose `inc!` no rule could follow); a
+   `path` attribute whose value is a metavariable or a non-`.rs` string
+   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
+   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
+   is no doubt; when a source spells a mount operand with escapes (an
+   `include!` operand or `path` value holding a backslash names no `.rs`
+   file the scan can match, however the tokens are spaced); when any file of
+   the holder's ancestry other than its skipped roots is mounted from
+   outside the ancestry by the same name-or-stem test (a `.../<dir>/mod.rs`
+   is keyed on its directory: a `mod <dir>` declaration, or any spelling of
+   `mod.rs`, since a relative operand such as `"../mod.rs"` need not spell
+   `<dir>`; an unmounted `mod.rs` layout keeps the skip), or any ancestry
+   file, the holder
+   included, is listed by cargo metadata as a live or unmodeled target
+   (`[[test]] path`, `build`, an example), so a `[[test]]` rooted at an
+   intermediate module keeps the leaf's tests; or when
+   the walk cannot finish (an unreadable file, more than 20,000 entries).
+   So the verdict does not change with `--mode`.
+
+The file and its functions stay indexed. Doctests are a separate rustdoc run
+(`[lib] doctest`) and register after this pass, so a doc example keeps its
+credit. An integration test under `tests/` is its own `test` target, so it
+keeps its credit while the library's unit tests are withheld. A module that a
+tested target also compiles (a `src/main.rs` declaring the library's module)
+keeps its tests. Unavailable metadata, a root cargo does not list, and an
+`example`, `bench` or build-script root never establish a skip.
+
+The withheld changed owner reads `no_static_path` like any owner without a
+running test; no named stop reason is added on this issue.
+
 ## Required Evidence
 
 - Positive: a haystack `#[test]` is not a related test of the changed owner,
@@ -88,6 +171,28 @@ strengthens an oracle.
   `include!`, by a same-stem `mod`, below a macro that builds `mod` operands,
   or beside a lexical-fallback crate root keeps its tests; so does a package
   whose crate root is not indexed.
+- Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
+  child module, and `[[bin]] test = false` unit tests do not credit a
+  discriminator (nor, as before, a `[[test]] test = false` target), while
+  the same tests with `test` on read
+  `exposed`; an integration test and a doc example of the `[lib] test =
+  false` crate still read `exposed`, as does a module a tested bin also
+  declares; and a same-run index extension that revives withheld tests
+  matches a fresh build.
+- Mounts (#14962 review): a `#[path]` mount of the file from another member,
+  from a `tests/` target, from a build-script-generated `include!`, from a
+  module directory named `target` and through a symlinked alias keep
+  `exposed` in every `--mode`; a mount from a hidden source directory reads in
+  every mode what the same tree reads with the tests left on, with the test
+  still related (that layout's assertion binding stays `static_unknown`
+  either way); a generated `include!{..}`/`include![..]` mount and a macro
+  mount `mod /* m */ $n` into a tested bin read in every mode what their
+  tests-on controls read (`exposed`); the plain skip reads the same in every
+  mode, also beside an ordinary `macro_rules!` and a symlinked directory
+  without Rust sources. Round 5: an `include!("gen.inc")` and a
+  `#[path = "m.txt"]` mount of a non-`.rs` file, and a macro mount
+  `mod /* c */ $n` after a `"http://x"` string, read in every mode what
+  their tests-on controls read (`exposed`).
 
 ## Known Limits
 
@@ -101,11 +206,43 @@ strengthens an oracle.
 - Build scripts that write sources into the tree, `cargo script` files and
   other non-Cargo compilers are not modelled; a file only they compile loses
   its tests here.
+- Skipped targets (#14962): a non-member package outside the workspace root
+  that `#[path]`-mounts the file is not walked. The mount scan is textual, so
+  an unrelated mention of the file name or a same-named `mod` anywhere keeps
+  the credit (more doubt, never less). A file whose skipped ancestry the run
+  did not index keeps its tests (`--mode instant` can then credit what
+  `ready` withholds, the over-credit direction the base already had).
+  `[lib] harness = false` is not modelled. Further over-credit limits, all
+  in the doubt direction: a same-stem `mod` anywhere keeps the file (the stem
+  is not tied to a directory), a mention inside a comment counts, a file
+  named `tests.rs` is matched by name like any other, and a tree with more
+  than 20,000 entries fails open to credit.
+- Skipped targets, under-credit (#14962 review n4): the walk does not read
+  Cargo's build directories, so a source kept under a member-root `target/`
+  directory that mounts the file (`#[path = "../target/m.rs"]` whose
+  `m.rs` names `a/src/shared.rs`) is missed, and the file's tests are
+  withheld although `cargo test` of the mounting crate runs them. Sources
+  under a build directory are unusual and Cargo may delete them on
+  `cargo clean`.
+- Skipped targets, under-credit (#14962 review n8): macros defined outside
+  the scanned sources are not modelled. A proc-macro (for example a
+  workspace proc-macro member), or a macro or `include` re-export from a
+  non-member path dependency (`ext::inc!(concat!(env!("OUT_DIR"), ..))`),
+  that emits a `mod` declaration or a `#[path = ...] pub mod m;` built by
+  string formatting can mount the file into a tested target without any
+  token the scan recognizes, and the file's tests are then withheld
+  although `cargo test` of that target runs them.
 
 ## Non-Goals
 
 - Runtime mutation proof or sufficiency claims.
-- A general module resolver or a `cargo metadata` call.
+- A general module resolver. The haystack rule makes no `cargo metadata`
+  call. The skipped-target rule uses the existing `ManifestInventory` probe,
+  but in a new instance per composition pass: a repository whose manifest
+  switches a lib or bin `test` off (or a bin names `required-features`) pays
+  one `cargo metadata --no-deps --offline` per index build (a check builds up
+  to two), plus one walk of the workspace sources once a candidate passes the
+  metadata checks. Other repositories pay nothing.
 
 ## Acceptance Examples
 
@@ -120,13 +257,23 @@ strengthens an oracle.
 
 - `crates/ripr/tests/outside_target_haystack.rs`.
 - `crates/ripr/src/analysis/facts/stray_files.rs` unit and index tests.
+- `crates/ripr/tests/lib_test_false_credit.rs` (#14962).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `crate_root_unit_test_skip_follows_metadata_test_flags` (#14962).
+- `crates/ripr/src/analysis/facts/role_composition.rs`:
+  `mount_operand_doubt_needs_a_dynamic_mount_operand` (#14962 review).
+- `crates/ripr/src/analysis/seam_inventory.rs`:
+  `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/facts/stray_files.rs`: `is_stray_shape`,
   `never_compiled`.
 - `crates/ripr/src/analysis/facts/role_composition.rs`:
-  `files_outside_module_tree`, `withhold_tests_outside_module_tree`.
+  `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
+  `files_in_skipped_unit_test_targets` (#14962).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
 
 ## Metrics
 
