@@ -809,7 +809,8 @@ diagnostic witness; `ripr check --format json` never serializes
 
 Repository text (assertion source, test names, observed values, paths) reaches
 the human reports verbatim. Every human report printed to a terminal (`check`
-default and `--format human-full`, `explain`) passes through one final escape:
+default and `--format human-full`, `explain`, the human `diff` report and the
+`pilot` terminal summary (#14285)) passes through one final escape:
 control characters other than newline and tab, and the bidi
 formatting characters (U+061C, U+200E/F, U+202A-E, U+2066-9), print as `\u{XX}`.
 A repository therefore cannot clear the screen, retitle the window, overwrite a
@@ -1267,6 +1268,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
+- `crates/ripr/src/output/diff_report.rs::tests::human_report_escapes_terminal_control_and_bidi_characters`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_terminal_escapes_control_characters_in_repository_paths`
 - `crates/ripr/tests/hostile_repos.rs::control_bytes_in_names_and_config_never_reach_github_output_stderr_or_commands`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state`
