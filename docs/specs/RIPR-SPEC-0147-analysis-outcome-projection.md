@@ -76,6 +76,14 @@ path without text hunks. The existing deletion, submodule, artifact and
 prior-limitation guard conditions are unchanged. Pure rename-only input without
 content or mode changes retains complete `no_changed_lines`.
 
+A `copy from`/`copy to` section is not a rename: its source stays in place,
+so every line of the destination is new code the patch does not carry. When
+the section's header and both lines name the same pair of paths, the diff
+intake reads the destination from the working tree as an added file, the
+changed lines the patch names without copy detection. A destination that is
+not a regular file below the root is disclosed as
+`changed_file_absent_from_worktree`.
+
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;

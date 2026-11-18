@@ -1450,8 +1450,15 @@ fn run_pipeline_for_diff_text_with_language_config(
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
-    let parsed_diff =
+    let mut parsed_diff =
         diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+    // #15121: a file the diff creates by copy is new code the patch does not
+    // carry; read it as an added file before any guard or adapter counts it.
+    diff::expand_copy_destinations(
+        &mut parsed_diff.changed_files,
+        &parsed_diff.copy_destination_paths,
+        &options.root,
+    )?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,

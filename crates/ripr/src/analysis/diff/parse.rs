@@ -152,6 +152,11 @@ pub(crate) struct ParsedDiff {
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
+    /// #15121: destinations of `copy from`/`copy to` sections, pure or
+    /// edited. A copy leaves its source in place, so every line of the
+    /// destination is new code the patch does not carry; the diff intake
+    /// reads these files as added (`expand_copy_destinations`).
+    pub(crate) copy_destination_paths: Vec<PathBuf>,
     /// File sections (#4375) that opened with a registered textual `+++ `
     /// header, are not submodule gitlink or binary-sentinel sections, and
     /// closed without a validated hunk body line. Positive means the
@@ -339,6 +344,8 @@ mod parser_state {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
+    use crate::analysis::diff::path::{parse_copy_from_path, parse_copy_to_path};
+
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
     /// line cannot silently end the quarantine.
@@ -435,6 +442,8 @@ mod parser_state {
         pure_rename_counted: bool,
         pure_rename_file_count: usize,
         pure_rename_paths: Vec<PathBuf>,
+        copy_from_path: Option<PathBuf>,
+        copy_destination_paths: Vec<PathBuf>,
         /// Set while an n-way (`@@@`) hunk body is being skipped. Cleared at the
         /// next file boundary or the next ordinary `@@` header.
         combined_quarantine: bool,
@@ -529,6 +538,10 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        pub(super) fn copy_destination_paths(&self) -> Vec<PathBuf> {
+            self.copy_destination_paths.clone()
         }
 
         /// Ordinary changed-line payloads recorded so far (#2398).
@@ -696,7 +709,42 @@ mod parser_state {
                 });
                 return true;
             }
-            false
+            self.handle_copy_metadata(raw, files)
+        }
+
+        /// #15121: `copy from`/`copy to` under a `similarity index` line. The
+        /// destination is registered as a changed file even when the section
+        /// carries no hunk, and recorded as a copy destination only when the
+        /// header and both lines name the same pair of paths.
+        fn handle_copy_metadata(
+            &mut self,
+            raw: &str,
+            files: &mut BTreeMap<PathBuf, ChangedFile>,
+        ) -> bool {
+            if raw.starts_with("copy from ") {
+                self.copy_from_path = parse_copy_from_path(raw);
+                return true;
+            }
+            let Some(path) = parse_copy_to_path(raw) else {
+                return false;
+            };
+            let valid_copy_pair = self.rename_section
+                && self
+                    .section_git_header
+                    .as_deref()
+                    .zip(self.copy_from_path.as_deref())
+                    .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
+            if valid_copy_pair {
+                if !self.copy_destination_paths.contains(&path) {
+                    self.copy_destination_paths.push(path.clone());
+                }
+                self.current_path = Some(path.clone());
+                files.entry(path.clone()).or_insert_with(|| ChangedFile {
+                    path,
+                    ..ChangedFile::default()
+                });
+            }
+            true
         }
 
         pub(super) fn handle_submodule_mode(&mut self, raw: &str) -> bool {
@@ -1002,6 +1050,7 @@ mod parser_state {
             self.pure_rename_counted = false;
             self.combined_quarantine = false;
             self.conflict_region = None;
+            self.copy_from_path = None;
             true
         }
 

@@ -1,0 +1,13 @@
+# Registers the copy-section controls (#15121) under RIPR-SPEC-0147: a file a
+# patch creates with `copy from`/`copy to` is read as an added file, with the
+# plain patch as the reference result; renames and unverified copy lines keep
+# their reading.
+[[extend]]
+id = "RIPR-SPEC-0147"
+tests = [
+  "crates/ripr/src/analysis/diff/copy_section.rs::tests::a_copy_destination_reads_as_the_added_file_the_plain_patch_names",
+  "crates/ripr/src/analysis/diff/copy_section.rs::tests::only_a_verified_copy_destination_on_disk_is_expanded",
+  "crates/ripr/src/analysis/diff/copy_section.rs::tests::whole_file_lines_are_numbered_from_one_without_endings",
+  "crates/ripr/tests/diff_file_copy_sections.rs::a_copied_file_gets_the_findings_of_the_same_file_added_plainly",
+  "crates/ripr/tests/diff_file_copy_sections.rs::a_rename_stays_moved_code_and_a_missing_copy_is_disclosed",
+]
