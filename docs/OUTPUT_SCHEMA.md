@@ -2840,6 +2840,14 @@ The evidence-first fields are additive in schema `0.2`:
   assertion than the strength-only pick, which can be equally strong).
   `oracle_alignment` keeps what the selected assertions show.
 
+  An `orthogonal` card is delegated to an agent packet only when its finding's
+  `evidence` carries `python_owner_result_field_unread: <binding>.<field>
+  (<test>)` for the card's selected test and `self.<field>` discriminator
+  (reason `python_unread_owner_result_field_with_bounded_repair_route`,
+  RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
+  repaired read on that binding surfaces `direct` with
+  `strong_oracle_observes_owner_result_field`.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
@@ -3597,7 +3605,8 @@ JSON fields:
   `rust_inherent_receiver_unestablished`, or
   `typescript_workspace_discovery_truncated`, or
   `typescript_workspace_read_limited`, or
-  `rust_future_never_polled`.
+  `rust_future_never_polled`, or
+  `activation_boundary_input_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -4017,9 +4026,9 @@ from the parsed syntax tree; a file that does not parse cleanly, a file read
 through the lexical fallback, and an owner the parser cannot name exactly once
 are never withheld. A `#[mutants::skip] mod name;` declaration is not followed
 into the module's own file (put `#![mutants::skip]` at the top of that file
-instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats withhold
-seams instead of findings, and read only the owner function's own attributes
-for now (see [Repo scope](#repo-scope-owner-opt-outs-14139) below).
+instead). These scopes apply to diff-scoped `ripr check`. The repo-scope formats make the
+same decision and withhold seams instead of findings (see
+[Repo scope](#repo-scope-owner-opt-outs-14139) below).
 
 The opt-out is the team's recorded intent, not static evidence. A withheld
 finding keeps its `classification` (it is never reclassified as `exposed`),
@@ -4088,13 +4097,16 @@ The `ripr check --format` repo formats
 `repo-exposure-json`, `repo-exposure-summary-json`, `repo-exposure-md`,
 `repo-seams-json`, `repo-seams-md`, `repo-badge-json`, `repo-badge-shields`,
 `repo-badge-plus-json` and `repo-badge-plus-shields` withhold every seam whose
-owner function itself carries the attribute. An enclosing `impl`, `trait`,
-module or file skip does not withhold a repo seam yet (tracked in #15000), so
-those seams keep reporting. The decision is
-the same parser-backed recognizer, read once when the seam is extracted and
-carried with the seam through the classified seam caches; the cache key's
-`files_content_hash` covers the attribute's bytes, so adding or removing it
-never replays the other state. A withheld seam is removed from the format's
+owner function carries the attribute, or sits inside an `impl`, `trait`,
+inline module or function that carries it, or in a file whose inner
+`#![mutants::skip]` skips it (#15000). The decision is the one `ripr check`
+applies to diff findings (RIPR-SPEC-0450), so the two scopes withhold the same
+owners; like diff scope, a `#[mutants::skip] mod name;` declaration is not
+followed into the module's own file. It is made once per file when the seams
+are extracted and carried with each seam through the classified seam caches;
+every enclosing scope lives in the owner's own file, whose bytes the cache
+key's `files_content_hash` covers, so adding or removing the attribute never
+replays the other state. A withheld seam is removed from the format's
 `seams` list and from every count derived from it (`metrics`, class counts,
 `unsuppressed_exposure_gaps`, `top_files`, the badge count). It is not
 reclassified. The JSON formats add one top-level member, emitted only when at
@@ -4447,6 +4459,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` (candidate source files) or its 5x total-entry backstop before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
 - `typescript_workspace_read_limited` -- (RIPR-SPEC-0240, additive, #11985) TypeScript workspace reads refused discovered source files under `RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`, so a test or call path may be absent from the evidence index. A TypeScript or JavaScript finding that would be `no_static_path` with no earlier named limit becomes `static_unknown` with this kind and stop reason `gap_evidence_unresolved`. Findings with observed related tests and existing named limits are unchanged. Actionability names the same limit, and recovery names both byte settings or a narrower root. The read refusals still mark the run partial; no finding is invented for an unread changed source. The existing typed-limitation contract withholds canonical repair-gap and TypeScript repair-packet projection. The optional kind uses the existing wire shape/version and makes no coverage claim.
 - `rust_future_never_polled` -- (RIPR-SPEC-0240, additive, #13702) Every test that reaches the changed `async fn` owner is a plain synchronous `#[test]` (no async test attribute such as `#[tokio::test]` or `#[async_std::test]`) whose every owner call builds a future and drops it unpolled: a bare statement, the sole argument of `std::mem::drop(..)`/`core::mem::drop(..)` (or of a bare `drop(..)` when no user-defined `drop` is indexed or brought into the test's file), or a `let` initializer bound to `_` or to a name the test never mentions again, in a body with no `.await`, `async` block, `block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn` or `poll` spelling. The owner's body never runs in those tests, so reach is not claimed: the reach stage becomes `unknown` ("future created but never polled"), infection becomes `unknown` when it reads `yes` or `weak` (propagation, read from the owner's own code, is kept), stale reach and infection evidence lines are dropped, and a `weakly_exposed`, `reachable_unrevealed`, `infection_unknown` or `propagation_unknown` finding becomes `static_unknown` with stop reason `gap_evidence_unresolved`. Every related test, whatever its relation, must be one of those direct-call tests, and every spelling of the owner's name in the indexed files must be its declaration, one of those test bodies or a plain `use` leaf. An awaited call, a call driven by an executor, an async test attribute, a mention inside a macro, a closure whose tail expression is the call, a `use … as …` alias or `macro_rules!` naming the owner, a user-defined `drop`, another function naming the owner, or a helper relation keeps today's reading; a closure whose body drops the call as a statement (`let c = || { fetch_len("abc"); }; c();`) still drops the future unpolled and is named. Nothing is credited and no runtime is chosen; repair does not start. The optional kind uses the existing wire shape/version and makes no coverage claim.
+- `activation_boundary_input_unresolved` -- (RIPR-SPEC-0068, additive, #14951) A changed Rust predicate boundary compares an operand that binds to no owner argument ripr can read from a test call (local, computed such as `cents % 100 > 49`, iterator-derived or closure-derived). The repo seam's activate-stage summary leads with this token and the evidence record's static-limitation `category` is read from it, with the sub-case in `repair_route`. A `check` finding carries it only when its owner is `no_static_path` with reach `no`, the reach summary ends with `(unreferenced in workspace)`, at least one test is related, and the shared decision finds the boundary input unresolved; the class, stages and related tests are unchanged, and the agent header counts it as a named limit rather than in `gaps=`. Nothing is credited; this is not a coverage claim. The optional kind uses the existing wire shape/version.
 
 Reserved `flow_sink` values:
 
@@ -11088,7 +11101,7 @@ Field contract:
   working-set card whose seam passes the fail-closed repair-packet flip
   (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
   <id> --phase before`, the start of the repair transaction. Its before phase
-  prints the `--attempt ... --phase after` command. Absent on limitation,
+  prints the `ripr continue ... --attempt` command that runs the after phase. Absent on limitation,
   ineligible, and gap-ledger cards; consumers must not derive it from
   `seam_id`. Inline publish planning closes the comment body with it in place
   of the bare `ripr agent verify` line.
@@ -12107,7 +12120,13 @@ Field contract:
 
 - `schema_version` - currently `"0.1"`.
 - `status` - one of `pass`, `advisory`, `acknowledged`, `blocked`, or
-  `config_error`.
+  `config_error`. `visible-only` mode never blocks on findings, so every completed
+  visible-only run that is not `blocked` or `config_error` reads `advisory`,
+  including one with every `summary` count at zero and no `warnings`; `pass`
+  is emitted only by the enforcing modes. Consumers that need "was anything
+  found" should read `summary` and `warnings` together with `mode`, not
+  `status` alone. The Markdown projection adds a one-paragraph note under the
+  counts when a visible-only report reads `advisory` with nothing recorded.
 - `mode` - one of `visible-only`, `acknowledgeable`, `baseline-check`, or
   `calibrated-gate`.
 - `inputs` - normalized paths and labels used by the evaluator. Optional inputs
@@ -18148,6 +18167,19 @@ Field contract:
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
   document.
+- `repair_start_scope` — optional top-level block, present only in the
+  stdout of a bare `ripr repair --json` (no item) whose start was not
+  narrowed to the change (#13701): no diff could be read (no base resolved,
+  or an unreadable `--base`), the diff changes nothing, or the diff changes
+  no Rust production code (only tests, docs or other files). A repeated
+  `--json` start that resumes the awaiting attempt adds the same block to
+  the status document it prints. Members: `narrowed_to_change` (always
+  `false`), `note` (the plain note the human start prints on stderr, naming
+  why the start is not narrowed) and `base_command` (the `ripr repair --root
+  <root> --base <ref>` rerun template; `<ref>` is the reader's to name, so it
+  is not a runnable step). A start whose diff touches a repairable spot
+  carries no such block. The selection menu under `--json` carries the same
+  note in its `cli_refusal` `error.message` instead.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
@@ -20730,7 +20762,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.182",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.183",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21515,7 +21547,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.182",
+      "schema_version": "1.183",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

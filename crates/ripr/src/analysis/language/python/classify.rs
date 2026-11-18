@@ -24,6 +24,7 @@ use super::no_behavior::{
     is_comment_or_whitespace_only_change, is_new_def_header_without_defaults,
     is_python_no_behavior_line_at, is_structural_def_header_text,
 };
+use super::owner_result_field::{owner_result_field_read, unread_owner_result_field};
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
     python_infection_evidence, python_propagation_evidence,
@@ -162,6 +163,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
     pub(super) pytest_import_unshadowed: bool,
+    /// This owner's loop header changed in a multi-line diff. Without an
+    /// isolated old-body witness, sibling edits cannot borrow oracle credit.
+    pub(super) compound_loop_edit: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -896,6 +900,31 @@ fn classify_change_for_owner_inner<'a>(
         },
         None => alignment,
     };
+    // The bound result of a self-returning owner method, asserted exactly on
+    // the changed field: the shape the unread-owner-result-field repair asks
+    // for, credited so that repair can close.
+    let owner_result_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                owner_result_field_read(owner, source, line, &family, &related, &related_candidates)
+            })
+        })
+        .flatten();
+    let alignment = match owner_result_read {
+        Some(read) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(read.assertion_text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_owner_result_field".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: read.test_name,
+                test_file: read.test_file,
+                text: read.assertion_text,
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -941,6 +970,17 @@ fn classify_change_for_owner_inner<'a>(
         },
         &related_candidates,
     )
+    .or_else(|| {
+        super::range_activation::loop_context_limit(
+            owner,
+            owner_source.unwrap_or(""),
+            line,
+            line_text,
+            old_line_text,
+            no_behavior.sole_line_replacement,
+            no_behavior.compound_loop_edit,
+        )
+    })
     // A pinned lambda body edit or dataclass default edit is read by the
     // module-value credit, which lifts only the limit its own reading answers.
     .filter(|limit| {
@@ -1176,19 +1216,14 @@ fn classify_change_for_owner_inner<'a>(
             && inactive_term.is_none()
             && !no_behavior.multi_line_def_header_line)
             .then(|| {
-                guard_activation::python_guarded_arm_gap(
+                guard_activation::python_old_side_guarded_arm_gap(
                     &view.owner,
                     view.source,
                     view.line,
                     &related_candidates,
                     &focus,
+                    &view.parameters,
                 )
-                .filter(|gap| {
-                    super::deleted_lines::guard_names_only_parameters(
-                        &gap.discriminator,
-                        &view.parameters,
-                    )
-                })
             })
             .flatten()
     });
@@ -2141,6 +2176,21 @@ fn classify_change_for_owner_inner<'a>(
             "suggested_test_location_reason: {}",
             placement.location_reason
         ));
+    }
+    // The unread-owner-result-field fact is evidence only: it never changes
+    // the class or the alignment above. It is read only where the strong
+    // oracle observes a different sink, so the gap ledger can delegate that
+    // one bounded shape and keep every other orthogonal finding denied.
+    if matches!(class, ExposureClass::WeaklyExposed)
+        && static_limit.is_none()
+        && repair_placement.is_some()
+        && surfaced_alignment.oracle_alignment == "orthogonal"
+        && surfaced_alignment.alignment_reason == "strong_oracle_observes_different_sink"
+        && let Some(fact) = owner_source.and_then(|source| {
+            unread_owner_result_field(owner, source, line, &family, &related, &related_candidates)
+        })
+    {
+        evidence.push(fact.evidence_line());
     }
     // Row-local misses are explanation only (#5491): written after the class
     // and every stage are final, and read by no decision above.

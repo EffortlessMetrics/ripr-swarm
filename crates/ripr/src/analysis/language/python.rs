@@ -388,6 +388,7 @@ mod loop_walk;
 mod may_reach;
 mod message_pin;
 mod module_value;
+mod range_activation;
 mod test_local_literal;
 mod type_checking_block;
 mod type_guard;
@@ -414,6 +415,7 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
 mod package_aliases;
 mod param_fixtures;
@@ -729,12 +731,18 @@ struct PythonOwner {
     /// The owner is a route handler whose response body is its returned dict
     /// (#13869): every static route decorator takes only keywords that leave
     /// the body alone (no `response_model` or `response_class`), the return
-    /// annotation is absent, and the function has exactly one
+    /// annotation is absent or a bare `dict`, and the function has exactly one
     /// `return`, of a dict literal with distinct string-literal keys, and no
     /// `yield` or `raise`. A workspace post-pass may withdraw it.
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// The route handler's return annotation is a bare `dict` (#13869). The
+    /// workspace post-pass withdraws `route_returns_body` from such an owner
+    /// when any source may rebind `dict`, which would make the annotation a
+    /// response model; an unannotated handler keeps its credit.
+    #[serde(default)]
+    route_dict_annotation: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1814,6 +1822,13 @@ impl PythonAdapter {
                 .map(|source| related_tests::route_decorator_lines(source))
                 .sum(),
         );
+        related_tests::withdraw_dict_annotated_routes(
+            &mut all_owners,
+            workspace_read
+                .sources
+                .values()
+                .any(|source| related_tests::rebinds_builtin_dict(source)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -2183,13 +2198,27 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges) = old_source
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
                 .as_deref()
                 .map(|source| {
                     let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let compound_loop_owners = workspace_read
+                .sources
+                .get(&changed.path)
+                .map(|source| {
+                    range_activation::compound_loop_owners(
+                        changed,
+                        source,
+                        &all_owners,
+                        old_source.as_deref(),
+                        &old_owners,
                     )
                 })
                 .unwrap_or_default();
@@ -2371,6 +2400,12 @@ impl PythonAdapter {
                     ),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
+                    compound_loop_edit: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| compound_loop_owners.contains(&owner.symbol_id())),
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2422,6 +2457,7 @@ impl PythonAdapter {
                     .get(&changed.path)
                     .map(String::as_str),
                 &all_owners,
+                &compound_loop_owners,
                 &all_tests,
                 &findings,
                 &mut value_origins,
@@ -2664,6 +2700,8 @@ mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
 #[cfg(test)]
+mod owner_result_field_tests;
+#[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
@@ -2723,6 +2761,8 @@ mod tests;
 mod import_adds_binding_tests;
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod range_activation_tests;
 #[cfg(test)]
 mod type_checking_block_tests;
 #[cfg(test)]

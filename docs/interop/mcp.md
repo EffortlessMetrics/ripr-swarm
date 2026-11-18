@@ -686,9 +686,10 @@ ignored) in the server `env` beside `RIPR_MCP_TEXT_CONTENT`. Any other value,
 including the older explicit `slim`, keeps the slim default. The tool
 descriptions were also cut to purpose, when to call, safety boundary and
 failure codes. Measured over stdio (whole `tools/list` response line):
-45,938 bytes before #13803 with schemas, 11,884 by default now, and
-40,955 with `full`. With the schemas gone by default, each description names
-the failure codes an agent most needs before calling; the complete `code`
+45,938 bytes before #13803 with schemas, 11,884 by default after it, and
+40,955 with `full`. With every tool argument described (#9360) and the later
+full-listing disclosures, they measure 12,075 and 42,266. With the schemas
+gone by default, each description names the failure codes an agent most needs before calling; the complete `code`
 enum stays in the full listing's `outputSchema`. An unrecognized value
 (for example a misspelled `full`) is not diagnosed: it serves the slim
 listing, so a validating host should check that `outputSchema` is present.

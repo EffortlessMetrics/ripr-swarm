@@ -3434,8 +3434,10 @@ fn run_command_uses_the_effective_cargo_target_name() -> Result<(), String> {
         scratch.cleanup()?;
     }
 
-    // The target name cannot be established: omit the command rather than
-    // print one (`--test discount`) that cargo would reject.
+    // Under `autotests = false` with no `[[test]]`, `tests/discount.rs` is
+    // not a Cargo target, so its tests never run and it is not a related
+    // test (RIPR-SPEC-0356, #14972). The stub must not land there, and no
+    // command may name it (`--test discount`, which cargo would reject).
     let scratch = existing_target_scratch(
         "autotests = false\n",
         "src/lib.rs",
@@ -3446,12 +3448,15 @@ fn run_command_uses_the_effective_cargo_target_name() -> Result<(), String> {
     let root = scratch.directory.clone();
     let document = stub_json(&root, "src/lib.rs:2")?;
     assert_eq!(
-        document["placement"]["kind"], "existing_integration_file",
+        document["placement"]["kind"], "new_inline_module",
         "{document}"
     );
     assert!(
-        document["run_command"].is_null(),
-        "no command when the target is not registered: {document}"
+        !document["run_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--test discount"),
+        "no command may name the unregistered file: {document}"
     );
     scratch.cleanup()
 }
