@@ -270,14 +270,12 @@ fn preview_guide_violations(doc: &str, cells: &[CapabilityCell]) -> Vec<String> 
 const PREVIEW_GUIDE: &str = "docs/LANGUAGE_ADAPTER_PREVIEW.md";
 
 fn current_preview_guide() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/LANGUAGE_ADAPTER_PREVIEW.md");
+    let path = crate::test_manifest_dir().join("../../docs/LANGUAGE_ADAPTER_PREVIEW.md");
     std::fs::read_to_string(&path).unwrap_or_default()
 }
 
 fn current_support_tiers() -> String {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/status/SUPPORT_TIERS.md");
+    let path = crate::test_manifest_dir().join("../../docs/status/SUPPORT_TIERS.md");
     std::fs::read_to_string(&path).unwrap_or_default()
 }
 

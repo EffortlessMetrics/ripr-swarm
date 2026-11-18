@@ -155,7 +155,7 @@ fn corpus() -> Result<Vec<String>, String> {
     // The shipped source spans both crates after ADR 0027: this crate holds
     // the domain compartment, the facade crate holds the rest. The corpus is
     // still every literal in the shipped source, so read both trees.
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = crate::test_manifest_dir();
     let mut files = Vec::new();
     source_files(&manifest.join("src"), &mut files)?;
     let facade = manifest.join("../ripr/src");

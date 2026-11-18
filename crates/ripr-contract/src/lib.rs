@@ -14,3 +14,12 @@ pub mod domain;
 pub mod path_identity;
 mod path_unicode;
 pub mod value_origins;
+// Cargo and Nextest provide the test package's runtime manifest directory.
+// Nextest remaps this value when consuming a producer's binary elsewhere.
+#[cfg(test)]
+fn test_manifest_dir() -> std::path::PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(
+        || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        std::path::PathBuf::from,
+    )
+}
