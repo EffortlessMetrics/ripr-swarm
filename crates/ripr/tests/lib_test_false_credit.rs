@@ -1003,7 +1003,7 @@ fn skipped_example_shapes_are_withheld_in_every_mode() -> Result<(), String> {
         1,
     )?;
     assert_no_static_path_in_every_mode(&unmet, "a `test = true` example with an unmet feature")?;
-    let untested = TempCrate::create_in(
+    let skipped_example = TempCrate::create_in(
         &package_manifest(
             "",
             "\n[features]\ndefault = [\"x\"]\nx = []\n\n[[example]]\nname = \"demo\"\nrequired-features = [\"x\"]\n",
@@ -1013,7 +1013,7 @@ fn skipped_example_shapes_are_withheld_in_every_mode() -> Result<(), String> {
         1,
     )?;
     assert_no_static_path_in_every_mode(
-        &untested,
+        &skipped_example,
         "a default-feature example without `test = true`",
     )
 }

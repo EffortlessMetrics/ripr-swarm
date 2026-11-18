@@ -288,8 +288,8 @@ running test; no named stop reason is added on this issue.
 - Undiscovered and example targets (#14972): a file in another package
   compiled only through `#[path]` by a skipped target is still judged by its
   own package's premise (the #14962 limit). Within one package, a `src/`
-  module mounted only by an untested example through `#[path]` also keeps
-  its credit when the package manifest has no `[[example]]` table and no
+  module mounted through `#[path]` only by an example that `cargo test`
+  skips also keeps its credit when the package manifest has no `[[example]]` table and no
   false `auto*` key, because the holder's package then sets no skip premise;
   with either, the probe runs and the module's tests are withheld. A bench
   root is not modelled.
