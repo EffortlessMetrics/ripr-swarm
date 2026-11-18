@@ -292,7 +292,7 @@ fn static_movement(
             (
                 "Agent receipt is unreadable or invalid; static movement is not available.",
                 "Agent receipt is unreadable or invalid.",
-                "Inspect the receipt file, then reissue it with the receipt command listed by agent status.",
+                "Inspect the receipt file, then reissue it: rerun `ripr agent verify`, then `ripr agent receipt`.",
             )
         };
         return AgentReviewStaticMovement {

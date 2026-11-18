@@ -587,7 +587,7 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     let packet = block(&summary, "### Agent review packet");
     assert!(
         packet.starts_with(
-            "- Receipt: `target/ripr/reports/agent-receipt.json` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it; `ripr agent status --root .` names the receipt command on a local checkout.\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
+            "- Receipt: `target/ripr/reports/agent-receipt.json` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it on a local checkout: rerun `ripr agent verify`, then `ripr agent receipt`.\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
         ),
         "{packet}"
     );

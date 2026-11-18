@@ -960,7 +960,7 @@ impl Summary {
             // "No receipt yet" would send the reader to start a repair over
             // evidence that exists; name the file and the full packet.
             self.line(&format!(
-                "- Receipt: `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it; `ripr agent status --root .` names the receipt command on a local checkout."
+                "- Receipt: `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it on a local checkout: rerun `ripr agent verify`, then `ripr agent receipt`."
             ));
             self.line(&format!(
                 "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."

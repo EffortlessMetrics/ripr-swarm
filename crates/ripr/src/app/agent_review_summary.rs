@@ -510,7 +510,7 @@ mod tests {
             );
             assert_eq!(
                 value["static_movement"]["next_action"]["recommended_action"],
-                "Inspect the receipt file, then reissue it with the receipt command listed by agent status.",
+                "Inspect the receipt file, then reissue it: rerun `ripr agent verify`, then `ripr agent receipt`.",
                 "{label}"
             );
             assert_eq!(
