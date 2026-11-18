@@ -1076,15 +1076,11 @@ fn scope_may_bind(
     })
 }
 
-/// Whether `attr` is exactly `#[cfg(test)]`, whitespace and `r#` aside.
+/// Whether `attr` is the plain `#[cfg(test)]` gate, read through the
+/// cfg-predicate authority. Any other spelling (a raw `r#cfg`, a
+/// `cfg_attr`, a compound predicate) keeps the import a gate.
 fn is_cfg_test(attr: &ast::Attr) -> bool {
-    let text: String = attr
-        .syntax()
-        .text()
-        .to_string()
-        .split_whitespace()
-        .collect();
-    text.replace("r#", "") == "#[cfg(test)]"
+    crate::analysis::cfg_predicates::attribute_is_plain_test_gate(&attr.syntax().text().to_string())
 }
 
 /// Whether a `macro_rules!` is exported beyond its crate: a
@@ -2004,7 +2000,7 @@ mod tests {
         assert_eq!(normal("src\\real.rs"), owned(&["src", "real.rs"]));
         assert_eq!(normal("../real.rs"), None);
         assert_eq!(normal("/abs/real.rs"), None);
-        assert_eq!(normal("C:/x/real.rs"), None);
+        assert_eq!(normal("drive:real.rs"), None);
     }
 
     /// #14952 review R1-R3 at the identity layer: the narrowed shapes keep
