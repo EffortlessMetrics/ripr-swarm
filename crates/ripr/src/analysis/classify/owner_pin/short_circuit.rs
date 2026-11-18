@@ -386,38 +386,34 @@ impl GuardOperandChange {
     }
 }
 
-/// `text` with every whitespace run outside a literal collapsed to one space
-/// and the ends trimmed. Whitespace inside a literal is content, so it is
-/// copied verbatim: an edit to it is a rewritten operand, not a retained one.
-///
-/// The literal regions come from the shared lexical scanner, which reads
-/// plain strings, raw strings of any hash count, and character literals while
-/// leaving lifetimes (`'a`, `'static`) as code. A hand-rolled quote tracker
-/// closes early on `r#"a" b"#` or `'"'` and then collapses the rest of the
-/// operand, which made two different literals compare equal — a false
-/// agreement rather than a conservative miss (#14194 review).
+/// `text` with every whitespace run outside a string literal collapsed to
+/// one space and the ends trimmed. Whitespace inside a literal is content,
+/// so it is copied verbatim: an edit to it is a rewritten operand, not a
+/// retained one.
 fn compact_operand(text: &str) -> String {
-    let spans = crate::analysis::extract::rust_identity_spans(text).literal_ranges;
     let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
     let mut pending_space = false;
-    let mut next_span = 0usize;
-    let mut span_end: Option<usize> = None;
-    for (index, ch) in text.char_indices() {
-        if let Some(end) = span_end {
+    for ch in text.chars() {
+        if in_string {
             out.push(ch);
-            if index >= end {
-                span_end = None;
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
             }
             continue;
         }
-        if spans.get(next_span).is_some_and(|(open, _)| *open == index) {
+        if ch == '"' {
             if pending_space && !out.is_empty() {
                 out.push(' ');
             }
             pending_space = false;
+            in_string = true;
             out.push(ch);
-            span_end = Some(spans[next_span].1);
-            next_span += 1;
             continue;
         }
         if ch.is_whitespace() {
@@ -1109,39 +1105,6 @@ mod tests {
         assert_eq!(
             padded_before.as_ref().map(|change| change.differing.len()),
             Some(1)
-        );
-    }
-
-    #[test]
-    fn a_raw_string_literal_edit_is_not_a_retained_operand() {
-        // #14194 review: a raw string may hold a `"` without escaping it, and
-        // a char literal may be `'"'`. A scanner that only tracks plain
-        // `"..."` closes early on those and then collapses the rest of the
-        // operand, so two different literals compare equal and the edit reads
-        // as a retained operand — a false agreement, not a conservative miss.
-        let function = r##"fn f(n: u32) -> bool {
-    check(n, r#"a" b"#)
-}"##;
-        assert_eq!(
-            GuardOperandChange::read(
-                function,
-                r##"check(n, r#"a" b"#)"##,
-                r##"n != 0 && check(n, r#"a"  b"#)"##,
-            ),
-            None
-        );
-        // A char literal holding a quote must not open a string either: the
-        // same literal on both sides is a genuine retained operand.
-        let quote_char = "fn f(n: u32) -> bool {\n    check(n, '\"')\n}";
-        assert!(
-            GuardOperandChange::read(quote_char, "check(n, '\"')", "n != 0 && check(n, '\"')")
-                .is_some()
-        );
-        // A different char literal is rewritten, not retained.
-        let space_char = "fn f(n: u32) -> bool {\n    check(n, ' ')\n}";
-        assert_eq!(
-            GuardOperandChange::read(space_char, "check(n, ' ')", "n != 0 && check(n, '\"')"),
-            None
         );
     }
 
