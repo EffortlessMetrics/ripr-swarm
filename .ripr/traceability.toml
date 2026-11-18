@@ -6296,6 +6296,10 @@ id = "RIPR-SPEC-0049"
 name = "Editor setup status"
 spec = "docs/specs/RIPR-SPEC-0049-editor-setup-status.md"
 tests = [
+  "editors/vscode/test/suite/command_title_contract.test.ts::in-product text names the refresh command by its palette title (#15094)",
+  "editors/vscode/test/suite/command_title_contract.test.ts::the Commands list in docs/EDITOR_EXTENSION.md is the contributed titles, in both directions (#15094)",
+  "editors/vscode/test/suite/command_title_contract.test.ts::the command table in docs/CONFIGURATION.md matches the manifest ids and titles (#15094)",
+  "editors/vscode/test/suite/command_title_contract.test.ts::every command the extension README lists is a contributed title (#15094)",
   "editors/vscode/test/suite/extension.test.ts::status bar reports server readiness and refresh state",
   "editors/vscode/test/suite/extension.test.ts::status model reports setup files found and missing",
   "editors/vscode/test/suite/extension.test.ts::diagnoseSetup writes read-only setup report",

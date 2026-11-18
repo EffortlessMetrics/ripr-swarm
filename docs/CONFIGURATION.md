@@ -770,13 +770,14 @@ hidden from the command palette; see the note after the table):
 | Command ID | Palette title |
 | --- | --- |
 | `ripr.restartServer` | ripr: Restart Server |
-| `ripr.refreshDiagnostics` | ripr: Refresh Diagnostics |
+| `ripr.refreshDiagnostics` | ripr: Refresh Full Analysis |
 | `ripr.selectWorkspaceRoot` | ripr: Select Workspace Root |
 | `ripr.showOutput` | ripr: Show Output |
 | `ripr.showStatus` | ripr: Show Status |
 | `ripr.showAttemptStatus` | ripr: Show Repair Attempt Status |
 | `ripr.diagnoseSetup` | ripr: Diagnose Setup |
 | `ripr.startCurrentRepair` | ripr: Start Current Repair |
+| `ripr.startOrContinueRepair` | ripr: Start or Continue Repair |
 | `ripr.copyCurrentRepairPacket` | ripr: Copy Current Repair Packet |
 | `ripr.copyRepoGapMap` | ripr: Copy Repo Gap Map |
 | `ripr.openFirstPrPacket` | ripr: First PR - Open Packet |
