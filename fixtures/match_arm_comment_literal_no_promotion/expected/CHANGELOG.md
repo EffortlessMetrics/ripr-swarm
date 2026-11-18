@@ -539,3 +539,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_comment_literal_no_promotion (41)
+
+Reason:
+RIPR-SPEC-0229 (#12078): the repo seam reads check's arm selection, so an arm no test input selects is weakly gripped there too and the check-versus-repair conflict advisory becomes the missing-input refusal
+
+Command:
+`cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/human.txt`

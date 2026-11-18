@@ -204,7 +204,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json"
   ],
   "cases": [
     {
@@ -12377,6 +12378,32 @@
       ]
     },
     {
+      "id": "rust_repo_exposure_unselected_match_arm_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/unselected-match-arm",
+      "vector": "repo_exposure_exact_assertions_on_other_arms_cannot_grip_an_arm_no_test_input_selects",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "test": "small_and_large_prices",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "rust_repo_exposure_wrapper_fed_error_not_promoted",
       "language": "rust",
       "tier": "pure",
@@ -13760,7 +13787,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         }
       ]
     },
@@ -13784,7 +13811,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         }
       ]
     },
@@ -20053,6 +20080,30 @@
       ]
     },
     {
+      "id": "rust_stub_todo_guard_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_guard_expected_value",
+      "vector": "an_unfilled_expected_value_pins_nothing_through_a_guard_or_weak_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_computed_return_tail_reached_promoted",
       "language": "rust",
       "tier": "pure",
@@ -20169,6 +20220,78 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_int_arm",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_int_arm",
+      "vector": "an_input_equal_to_an_appended_integer_arm_reaches_the_returned_change",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_int_arm_old_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_int_arm_old_input",
+      "vector": "an_original_arm_input_does_not_reach_an_appended_arm",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_char_arm",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_char_arm",
+      "vector": "an_input_equal_to_an_appended_char_arm_reaches_the_returned_change",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
         }
       ]
     }

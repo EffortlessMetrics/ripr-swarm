@@ -596,7 +596,9 @@ fn owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle() -> Result<()
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert_eq!(2 + 2, 4);",
             false,
-            "strong",
+            // #14968: a literal-only assertion reads no value, so it supplies
+            // no oracle strength either.
+            "none",
         ),
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert!(weight(input) > 0);",

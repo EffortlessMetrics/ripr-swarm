@@ -943,7 +943,7 @@ pub(crate) fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Optio
 pub(crate) fn resolve_repair_start(
     root: &Path,
     base: Option<&str>,
-) -> Result<RepairStartDecision, String> {
+) -> Result<ResolvedRepairStart, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
@@ -1215,7 +1215,11 @@ pub(crate) fn resolve_repair_start(
     // #11246: inference only narrows. When no changed line could be read, the
     // spots above are not scoped to the change, and the text says so first
     // (the reason list is capped, so it is placed where it survives).
-    if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
+    let narrowed = matches!(scope, Some(ChangeScope::TouchesSeams(_)));
+    if let Some(note) = (!narrowed)
+        .then(|| unscoped_diff_note(diff.as_deref(), base, unscoped_subject::REFUSAL_SPOTS))
+        .flatten()
+    {
         refusal_reasons.insert(0, note);
     }
     // #12831: eligible seams on the change. `ripr check` is the authority on
@@ -1291,7 +1295,7 @@ pub(crate) fn resolve_repair_start(
     } else {
         None
     };
-    decide_repair_start(&RepairStartFacts {
+    let decision = decide_repair_start(&RepairStartFacts {
         root_display: &bound,
         eligible_ids: &eligible_ids,
         total_seams: classified.len(),
@@ -1301,7 +1305,43 @@ pub(crate) fn resolve_repair_start(
         candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
         change,
+    })?;
+    // #13701: a menu or a single start chosen with no readable change is not
+    // narrowed to it either, so it carries the same note the refusal leads
+    // with. The refusal already has it among its reasons.
+    let subject = match &decision {
+        RepairStartDecision::Start { .. } => Some(unscoped_subject::STARTED_SPOT),
+        RepairStartDecision::Action(..) => Some(unscoped_subject::OFFERED_CHOICES),
+        RepairStartDecision::NoEligible { .. } => None,
+    };
+    let unscoped_note = subject
+        .filter(|_| !narrowed)
+        .and_then(|subject| unscoped_diff_note(diff.as_deref(), base, subject));
+    Ok(ResolvedRepairStart {
+        decision,
+        unscoped_note,
     })
+}
+
+/// A resolved bare `ripr repair`: the decision, and whether the selection
+/// behind a start or a menu was narrowed to the change (#13701).
+pub(crate) struct ResolvedRepairStart {
+    pub(crate) decision: RepairStartDecision,
+    /// The unscoped note (#11246) when the start or the menu was chosen with
+    /// no readable change, so it is not narrowed to the change; `None` when
+    /// the diff was read (the selection is then scoped by it) and always for
+    /// a no-eligible outcome, whose reasons already lead with the note.
+    pub(crate) unscoped_note: Option<String>,
+}
+
+/// The rerun that narrows an unscoped bare `ripr repair` to the change
+/// (#13701): the same root with an explicit `--base`, whose ref the reader
+/// names, so it is a template, never a runnable step.
+pub(crate) fn unscoped_base_command(root_display: &str) -> String {
+    format!(
+        "ripr repair --root {} --base <ref>",
+        shell_arg(root_display)
+    )
 }
 
 /// The outcome after check's closure dropped candidates (#12861). Only a spot
@@ -3152,26 +3192,46 @@ pub(crate) struct ChangedNonRust {
     pub(crate) enabled: bool,
 }
 
+/// What an unscoped note is about, so one note serves the refusal list, the
+/// selection menu and a single start (#13701). Each is the phrase that
+/// precedes "not narrowed to your change".
+pub(crate) mod unscoped_subject {
+    /// The refusal's list of spots, printed after the note.
+    pub(crate) const REFUSAL_SPOTS: &str = "the spots below are";
+    /// The selection menu's choices.
+    pub(crate) const OFFERED_CHOICES: &str = "the repairs ripr offers here are";
+    /// The one spot a bare `ripr repair` started on.
+    pub(crate) const STARTED_SPOT: &str = "the spot this repair starts on is";
+}
+
 /// Why repair could not narrow its spots to the change, when it could not
-/// (#11246): no diff was readable (no base resolved), or the diff against the
-/// base changed nothing. A readable diff with changes is not unscoped here.
+/// (#11246): no diff was readable (no base resolved), the diff against the
+/// base changed nothing, or (#13701) the diff changes no Rust production line
+/// (only tests, benches, docs or other files), so no seam can be the change.
+/// A diff that changes Rust production lines adds no note here. `subject`
+/// names what is not narrowed (see [`unscoped_subject`]). Callers skip it when
+/// the diff touches a seam: that selection is narrowed.
 fn unscoped_diff_note(
     diff: Option<&[crate::analysis::ChangedFile]>,
     base: Option<&str>,
+    subject: &str,
 ) -> Option<String> {
     match (diff, base) {
         (None, Some(base)) => Some(format!(
-            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so the spots below are not narrowed to your change; check that `{base}` names a ref that exists here"
+            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so {subject} not narrowed to your change; check that `{base}` names a ref that exists here"
         )),
-        (None, None) => Some(
-            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it".to_string(),
-        ),
+        (None, None) => Some(format!(
+            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so {subject} not narrowed to your change; pass `--base <ref>` to name it"
+        )),
         (Some([]), Some(base)) => Some(format!(
-            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so the spots below are not narrowed to your change; pass `--base <ref>` to name another base"
+            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so {subject} not narrowed to your change; pass `--base <ref>` to name another base"
         )),
-        (Some([]), None) => Some(
-            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base".to_string(),
-        ),
+        (Some([]), None) => Some(format!(
+            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so {subject} not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some(files), _) if changed_rust_production_lines(files).is_none() => Some(format!(
+            "ripr read your change, but it touches no Rust production code (only tests or other files), so {subject} not narrowed to it; pass `--base <ref>` to name another base"
+        )),
         (Some(_), _) => None,
     }
 }
@@ -3179,10 +3239,11 @@ fn unscoped_diff_note(
 #[cfg(test)]
 mod unscoped_note_tests {
     use super::unscoped_diff_note;
+    use super::unscoped_subject::REFUSAL_SPOTS as SPOTS;
 
     #[test]
     fn unreadable_diff_says_no_base_could_be_found() {
-        let note = unscoped_diff_note(None, None).unwrap_or_default();
+        let note = unscoped_diff_note(None, None, SPOTS).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("no base to compare against could be found"));
         assert!(note.contains("--base <ref>"));
@@ -3190,16 +3251,16 @@ mod unscoped_note_tests {
 
     #[test]
     fn an_explicit_base_is_named_when_its_diff_cannot_be_read() {
-        let unreadable = unscoped_diff_note(None, Some("no-such-ref")).unwrap_or_default();
+        let unreadable = unscoped_diff_note(None, Some("no-such-ref"), SPOTS).unwrap_or_default();
         assert!(unreadable.contains("could not read a diff against `no-such-ref`"));
         assert!(!unreadable.contains("no base to compare against could be found"));
-        let empty = unscoped_diff_note(Some(&[]), Some("main")).unwrap_or_default();
+        let empty = unscoped_diff_note(Some(&[]), Some("main"), SPOTS).unwrap_or_default();
         assert!(empty.contains("nothing differs from `main`"));
     }
 
     #[test]
     fn empty_diff_says_nothing_differs_from_the_base() {
-        let note = unscoped_diff_note(Some(&[]), None).unwrap_or_default();
+        let note = unscoped_diff_note(Some(&[]), None, SPOTS).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("nothing differs from the base"));
     }
@@ -3210,8 +3271,28 @@ mod unscoped_note_tests {
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n",
         );
         assert!(!files.is_empty(), "fixture must parse to a changed file");
-        assert_eq!(unscoped_diff_note(Some(&files), None), None);
-        assert_eq!(unscoped_diff_note(Some(&files), Some("main")), None);
+        assert_eq!(unscoped_diff_note(Some(&files), None, SPOTS), None);
+        assert_eq!(unscoped_diff_note(Some(&files), Some("main"), SPOTS), None);
+    }
+
+    /// #13701: a readable diff that changes no Rust production line says so
+    /// in its own words, not as an unreadable change.
+    #[test]
+    fn a_diff_with_no_rust_production_line_says_it_touches_none() {
+        let files = crate::analysis::parse_unified_diff(
+            "diff --git a/tests/t.rs b/tests/t.rs\n--- a/tests/t.rs\n+++ b/tests/t.rs\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(files.len(), 2, "fixture must parse to two changed files");
+        let note = unscoped_diff_note(Some(&files), None, SPOTS).unwrap_or_default();
+        assert!(note.contains("touches no Rust production code"), "{note}");
+        assert!(
+            note.contains("the spots below are not narrowed to it"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("could not tell which lines you changed"),
+            "{note}"
+        );
     }
 }
 

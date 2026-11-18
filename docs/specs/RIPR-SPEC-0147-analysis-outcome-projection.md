@@ -97,6 +97,20 @@ Paired plain `---`/`+++` markers are ordinary body lines while both declared
 sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
+Text after a hunk whose declared counts are complete is not that hunk's body
+(#14072): empty lines there are padding, and git's mail signature separator
+(`-- `) or mbox message separator (`From <object id> <date>`) ends the hunk, so
+a patch saved with trailing blank lines and `git format-patch` output are
+well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
+is still an excess body line, also behind such padding, and a hunk that still
+owes lines reads an empty line as context and `-- ` as a removal.
+
+A `diff --git` section whose header names one path under two different
+mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
+`diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
+A header repeating one token on both sides, a header whose two paths differ,
+and a section carrying rename or copy metadata keep their literal paths; other
+custom side prefixes are not guessed (#15103).
 
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse

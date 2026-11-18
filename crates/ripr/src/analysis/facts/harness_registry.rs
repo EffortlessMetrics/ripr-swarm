@@ -920,6 +920,9 @@ fn parser_oracles_for_node_tokens(
                     if let Some(oracle) = terminal_err_return_guard_oracle(
                         &text,
                         line_index.line(token.text_range().start()),
+                        // Inline trials do not lower unfilled placeholders
+                        // yet, for guards or assertion macros alike.
+                        &std::collections::BTreeSet::new(),
                     ) {
                         assertions.push(oracle);
                     }

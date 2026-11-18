@@ -347,3 +347,28 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_argument_unrelated (27)
+
+Reason:
+RIPR-SPEC-0094: a literal-only assertion reads no value and supplies no oracle (#14968)
+
+Command:
+`cargo xtask goldens bless collection_argument_unrelated --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_unrelated (28)
+
+Reason:
+RIPR-SPEC-0094: an unconditional literal-only assertion reads as absent, so the row names no oracle text (#14968)
+
+Command:
+`cargo xtask goldens bless collection_argument_unrelated --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

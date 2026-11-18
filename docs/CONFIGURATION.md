@@ -373,6 +373,7 @@ that needs the tuning.
 | `RIPR_REPO_EXPOSURE_LATENCY_TRACE` | off when unset | When present, emits diagnostic phase/cache trace lines for repo-exposure analysis, plus one end-of-run `ripr_resource_cost_receipt` line carrying the process's own CPU time and peak resident memory, and one `ripr_cache_family_store_receipt` line naming classified-seam and corpus-fingerprint store failures (an empty row list when healthy). Presence enables tracing even if the value is empty or `0`; it does not change the analysis verdict. Everything goes to stderr, so stdout JSON is unchanged. Linux and Windows observe both figures; any other host, or a failed source read, names an explicit unavailable state and reports no number. |
 | `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN` | unset | Only read with `RIPR_REPO_EXPOSURE_LATENCY_TRACE`. A harness that scrapes the stderr receipts sets a fresh per-xtask-process (not per-run) 1-64 character ASCII alphanumeric value; the `ripr_file_fact_cache_receipt`, `ripr_cache_family_store_receipt` and `ripr_resource_cost_receipt` lines then read `<prefix> token=<value> <json>` and the phase lines read `ripr_repo_exposure_latency token=<value> phase=...`, so a line that only starts with the prefix is not trusted. It is an anti-forgery marker for text echoed from the analyzed repository, not a secret from the analyzer process itself. Unset or invalid, the lines keep the plain `<prefix> <json>` shape. It authenticates a line's origin for the harness; it changes no analysis verdict. |
 | `RIPR_PERSIST_LATENCY_TRACE` | off when unset | When present, emits diagnostic `ripr_persist_latency` wall-clock lines for repair-attempt persist spans: baseline capture (git inventory, worktree identity, index records, stability recheck, serialize, write), per-artifact staging (read, write, digest), the persist total, and after-phase state recapture (`reevaluate_*`). Presence enables tracing even if the value is empty or `0`; it does not change any verdict. Everything goes to stderr, so stdout JSON is unchanged. |
+| `RIPR_GENERATED_AT` | unset (current time) | Pins `artifact.generated_at` in `check-findings-json`, `repo-exposure-json`, `repo-seams-json` and the `ripr pilot` `repo-exposure.json` to the given stamp, so two runs over the same inputs by the same build write the same bytes, `artifact.content_sha256` included (#14230). The value must be exactly `unix_ms:<milliseconds since the Unix epoch>` (for example `unix_ms:1778179200000`); any other non-empty value refuses the run instead of stamping the current time. Unset or empty stamps the current time. Set it only for the command that needs reproducible bytes: readers that age an artifact from its stamp see the pinned time, not the time of the run. It does not affect the badge `generated_at`. |
 | `GITHUB_PR_LABELS`, `PR_LABELS` | empty | Labels for `ripr impacted-evidence` and its xtask counterpart. `GITHUB_PR_LABELS` takes precedence when readable (even if empty); `PR_LABELS` is the fallback. Comma, newline, and semicolon separators are accepted. CLI `--label`/`--labels` add to these labels; the combined set is trimmed, lowercased, deduplicated, and sorted. |
 
 Repo seam cache entries that exceed the encoded-byte ceiling, or the
@@ -770,13 +771,14 @@ hidden from the command palette; see the note after the table):
 | Command ID | Palette title |
 | --- | --- |
 | `ripr.restartServer` | ripr: Restart Server |
-| `ripr.refreshDiagnostics` | ripr: Refresh Diagnostics |
+| `ripr.refreshDiagnostics` | ripr: Refresh Full Analysis |
 | `ripr.selectWorkspaceRoot` | ripr: Select Workspace Root |
 | `ripr.showOutput` | ripr: Show Output |
 | `ripr.showStatus` | ripr: Show Status |
 | `ripr.showAttemptStatus` | ripr: Show Repair Attempt Status |
 | `ripr.diagnoseSetup` | ripr: Diagnose Setup |
 | `ripr.startCurrentRepair` | ripr: Start Current Repair |
+| `ripr.startOrContinueRepair` | ripr: Start or Continue Repair |
 | `ripr.copyCurrentRepairPacket` | ripr: Copy Current Repair Packet |
 | `ripr.copyRepoGapMap` | ripr: Copy Repo Gap Map |
 | `ripr.openFirstPrPacket` | ripr: First PR - Open Packet |

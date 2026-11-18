@@ -850,6 +850,7 @@ mod tests {
             item_scopes: facts.item_scopes,
             macro_candidates: facts.macro_candidates,
             external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax,
         })
     }
 
