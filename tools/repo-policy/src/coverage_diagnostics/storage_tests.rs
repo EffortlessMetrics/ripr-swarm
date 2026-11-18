@@ -383,21 +383,29 @@ fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result
     .map_err(|e| e.to_string())?;
     let mut command = std::process::Command::new("sh");
     let release = fixture.0.join("release");
-    command.args(["-c", "i=0; while [ ! -f \"$1\" ] && [ $i -lt 200 ]; do sleep 0.01; i=$((i+1)); done; [ -f \"$1\" ] || exit 99; exit 37", "observer-child"]).arg(&release);
+    command.args(["-c", "i=0; while [ ! -f \"$1\" ] && [ $i -lt 200 ]; do /bin/sleep 0.01; i=$((i+1)); done; [ -f \"$1\" ] || exit 99; exit 37", "observer-child"]).arg(&release);
     let mut output = Vec::new();
     let mut sequence = 0;
+    let mut observer_error = None;
     let status = run_observed(command, Duration::from_millis(10), 1, |event| {
-        if event["phase"] == "during" {
-            fs::write(&release, b"release").expect("release child");
+        if event["phase"] == "during"
+            && let Err(error) = fs::write(&release, b"release")
+        {
+            observer_error = Some(error.to_string());
         }
         let path = if event["phase"] == "final" {
             fixture.0.join("missing")
         } else {
             source.clone()
         };
-        observe_event(&mut output, &event, &[], &path, sequence, 0).expect("receipt");
+        if let Err(error) = observe_event(&mut output, &event, &[], &path, sequence, 0) {
+            observer_error = Some(error.to_string());
+        }
         sequence += 1;
     })?;
+    if let Some(error) = observer_error {
+        return Err(error);
+    }
     assert_eq!(status, 37);
     let records: Vec<Value> = std::str::from_utf8(&output)
         .map_err(|e| e.to_string())?
