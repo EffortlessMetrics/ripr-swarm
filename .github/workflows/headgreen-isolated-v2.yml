@@ -1,0 +1,257 @@
+name: HEADGREEN Isolated V2
+on:
+  pull_request:
+    types: [labeled]
+    branches:
+      - codex/headgreen-v2/singleton/trunk
+      - codex/headgreen-v2/stack/trunk
+      - codex/headgreen-v2/stack/lower
+      - codex/headgreen-v2/stack/middle
+      - codex/headgreen-v2/bad/trunk
+      - codex/headgreen-v2/bad/lower
+      - codex/headgreen-v2/bad/middle
+  merge_group:
+    types: [checks_requested]
+    branches:
+      - codex/headgreen-v2/singleton/trunk
+      - codex/headgreen-v2/stack/trunk
+      - codex/headgreen-v2/bad/trunk
+permissions:
+  contents: read
+jobs:
+  observe:
+    name: HEADGREEN Pilot Observation
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name == 'merge_group' || github.event.label.name == 'merge-ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      route: ${{ steps.observe.outputs.route }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Observe exact fixture composition
+        id: observe
+        env:
+          PILOT_PHASE: observe
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          REPO = 'EffortlessMetrics/ripr-swarm'
+          PREFIX = 'codex/headgreen-v2/'
+          # Fixture expectation registry, NOT evidence of provider-native stack registration.
+          REGISTRY = {'singleton': ['single'], 'stack': ['lower', 'middle', 'upper'], 'bad': ['lower', 'middle', 'upper']}
+          
+          def require(value, message):
+              if not value:
+                  raise SystemExit(message)
+          
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          
+          def emit(kind, **fields):
+              receipt = dict(schema='headgreen-pilot-v2', record=kind,
+                  repository=REPO, run_id=os.environ['GITHUB_RUN_ID'],
+                  run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], event=os.environ['GITHUB_EVENT_NAME'], **fields)
+              text = json.dumps(receipt, sort_keys=True)
+              print(text, flush=True)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+                  stream.write('```json\n'+text+'\n```\n')
+          
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          kind = os.environ['GITHUB_EVENT_NAME']
+          phase = os.environ['PILOT_PHASE']
+          require(phase in ('observe', 'qualify'), 'unknown phase')
+          require(os.environ['GITHUB_REPOSITORY'] == REPO, 'wrong repository')
+          if kind == 'pull_request':
+              pr = event['pull_request']
+              require(event['action'] == 'labeled' and event['label']['name'] == 'merge-ready', 'not requested')
+              require(pr['base']['repo']['full_name'] == REPO and pr['head']['repo']['full_name'] == REPO, 'foreign PR')
+              pairs = {}
+              for mode, layers in REGISTRY.items():
+                  previous = 'trunk'
+                  for layer in layers:
+                      pairs[(PREFIX+mode+'/'+previous, PREFIX+mode+'/'+layer)] = (mode, layers[:layers.index(layer)+1])
+                      previous = layer
+              pair = (pr['base']['ref'], pr['head']['ref'])
+              require(pair in pairs, 'unregistered H branch pair')
+              mode, expected = pairs[pair]
+              base, head = pr['base']['sha'], pr['head']['sha']
+              if phase == 'observe': emit('h_shape_observed', mode=mode, base_sha=base, candidate_sha=head, qualification_started=False)
+          elif kind == 'merge_group':
+              require(event['action'] == 'checks_requested', 'wrong queue action')
+              group = event['merge_group']
+              modes = {'refs/heads/'+PREFIX+m+'/trunk':m for m in REGISTRY}
+              require(group['base_ref'] in modes, 'unregistered G trunk')
+              mode = modes[group['base_ref']]
+              expected = REGISTRY[mode]
+              base, head = group['base_sha'], group['head_sha']
+              require(head == os.environ['GITHUB_SHA'], 'event G identity mismatch')
+              if phase == 'observe': emit('g_run_observed', mode=mode, base_sha=base, candidate_sha=head,
+                   group_head_ref=group['head_ref'], qualification_started=False)
+          else:
+              raise SystemExit('unsupported event')
+          for sha in (base, head):
+              require(re.fullmatch('[0-9a-f]{40}', sha) is not None, 'invalid SHA')
+              require(git('cat-file', '-t', sha).strip() == b'commit', 'not commit')
+          require(git('rev-parse', 'HEAD').decode().strip() == head, 'wrong checkout')
+          require(git('merge-base', '--is-ancestor', base, head) == b'', 'base not ancestor')
+          files = [p.decode() for p in git('ls-tree', '-r', '--name-only', head, '--', '.headgreen-pilot/').splitlines()]
+          full_expected = list(expected)
+          if kind == 'merge_group':
+              prefixes = [expected[:size] for size in range(1, len(expected)+1)]
+              matches = [layers for layers in prefixes if set(files) == {'.headgreen-pilot/'+layer+'.json' for layer in layers}]
+              require(len(matches) == 1, 'unknown or noncontiguous composition')
+              expected = matches[0]
+          else:
+              require(set(files) == {'.headgreen-pilot/'+layer+'.json' for layer in expected}, 'unexpected H composition')
+          complete = expected == full_expected
+          records = {}
+          for layer in expected:
+              path = '.headgreen-pilot/'+layer+'.json'
+              require(git('ls-tree', head, '--', path).startswith(b'100644 blob '), 'nonregular fixture')
+              value = json.loads(git('show', head+':'+path))
+              require(set(value) == {'layer', 'state'} and value['layer'] == layer and value['state'] in ('good', 'bad'), 'invalid fixture shape')
+              records[layer] = value['state']
+          # Shape-valid partial G, including bad-middle, is observation only.
+          canonical = kind == 'pull_request' or complete
+          if phase == 'observe':
+              emit('canonical_candidate_observed' if canonical else 'prefix_observed',
+                   mode=mode, event_base_sha=base, candidate_sha=head, layers=records,
+                   canonical_context_requested=canonical,
+                   claim='tree fixture shape only; not native PR membership or final semantic proof')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+                  stream.write('route='+('canonical' if canonical else 'prefix')+'\n')
+          else:
+              require(canonical, 'prefix cannot run canonical qualification')
+              if kind == 'merge_group':
+                  emit('qualification_started', mode=mode, candidate_sha=head, workload='synthetic-fixture-oracle')
+                  require(all(value == 'good' for value in records.values()), 'composed G contains bad layer')
+              emit('qualification_passed' if kind == 'merge_group' else 'shape_passed',
+                   mode=mode, event_base_sha=base, candidate_sha=head,
+                   candidate_tree=git('rev-parse', head+'^{tree}').decode().strip(), layers=records,
+                   claim='synthetic fixture oracle; H shape is not G proof; no provider membership claim')
+  qualify:
+    needs: observe
+    name: ${{ needs.observe.outputs.route == 'canonical' && 'HEADGREEN Pilot Qualification' || 'HEADGREEN Pilot Nonqualification' }}
+    if: needs.observe.result == 'success' && needs.observe.outputs.route == 'canonical'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Qualify complete G or admit H shape
+        env:
+          PILOT_PHASE: qualify
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          
+          REPO = 'EffortlessMetrics/ripr-swarm'
+          PREFIX = 'codex/headgreen-v2/'
+          # Fixture expectation registry, NOT evidence of provider-native stack registration.
+          REGISTRY = {'singleton': ['single'], 'stack': ['lower', 'middle', 'upper'], 'bad': ['lower', 'middle', 'upper']}
+          
+          def require(value, message):
+              if not value:
+                  raise SystemExit(message)
+          
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          
+          def emit(kind, **fields):
+              receipt = dict(schema='headgreen-pilot-v2', record=kind,
+                  repository=REPO, run_id=os.environ['GITHUB_RUN_ID'],
+                  run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], event=os.environ['GITHUB_EVENT_NAME'], **fields)
+              text = json.dumps(receipt, sort_keys=True)
+              print(text, flush=True)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+                  stream.write('```json\n'+text+'\n```\n')
+          
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          kind = os.environ['GITHUB_EVENT_NAME']
+          phase = os.environ['PILOT_PHASE']
+          require(phase in ('observe', 'qualify'), 'unknown phase')
+          require(os.environ['GITHUB_REPOSITORY'] == REPO, 'wrong repository')
+          if kind == 'pull_request':
+              pr = event['pull_request']
+              require(event['action'] == 'labeled' and event['label']['name'] == 'merge-ready', 'not requested')
+              require(pr['base']['repo']['full_name'] == REPO and pr['head']['repo']['full_name'] == REPO, 'foreign PR')
+              pairs = {}
+              for mode, layers in REGISTRY.items():
+                  previous = 'trunk'
+                  for layer in layers:
+                      pairs[(PREFIX+mode+'/'+previous, PREFIX+mode+'/'+layer)] = (mode, layers[:layers.index(layer)+1])
+                      previous = layer
+              pair = (pr['base']['ref'], pr['head']['ref'])
+              require(pair in pairs, 'unregistered H branch pair')
+              mode, expected = pairs[pair]
+              base, head = pr['base']['sha'], pr['head']['sha']
+              if phase == 'observe': emit('h_shape_observed', mode=mode, base_sha=base, candidate_sha=head, qualification_started=False)
+          elif kind == 'merge_group':
+              require(event['action'] == 'checks_requested', 'wrong queue action')
+              group = event['merge_group']
+              modes = {'refs/heads/'+PREFIX+m+'/trunk':m for m in REGISTRY}
+              require(group['base_ref'] in modes, 'unregistered G trunk')
+              mode = modes[group['base_ref']]
+              expected = REGISTRY[mode]
+              base, head = group['base_sha'], group['head_sha']
+              require(head == os.environ['GITHUB_SHA'], 'event G identity mismatch')
+              if phase == 'observe': emit('g_run_observed', mode=mode, base_sha=base, candidate_sha=head,
+                   group_head_ref=group['head_ref'], qualification_started=False)
+          else:
+              raise SystemExit('unsupported event')
+          for sha in (base, head):
+              require(re.fullmatch('[0-9a-f]{40}', sha) is not None, 'invalid SHA')
+              require(git('cat-file', '-t', sha).strip() == b'commit', 'not commit')
+          require(git('rev-parse', 'HEAD').decode().strip() == head, 'wrong checkout')
+          require(git('merge-base', '--is-ancestor', base, head) == b'', 'base not ancestor')
+          files = [p.decode() for p in git('ls-tree', '-r', '--name-only', head, '--', '.headgreen-pilot/').splitlines()]
+          full_expected = list(expected)
+          if kind == 'merge_group':
+              prefixes = [expected[:size] for size in range(1, len(expected)+1)]
+              matches = [layers for layers in prefixes if set(files) == {'.headgreen-pilot/'+layer+'.json' for layer in layers}]
+              require(len(matches) == 1, 'unknown or noncontiguous composition')
+              expected = matches[0]
+          else:
+              require(set(files) == {'.headgreen-pilot/'+layer+'.json' for layer in expected}, 'unexpected H composition')
+          complete = expected == full_expected
+          records = {}
+          for layer in expected:
+              path = '.headgreen-pilot/'+layer+'.json'
+              require(git('ls-tree', head, '--', path).startswith(b'100644 blob '), 'nonregular fixture')
+              value = json.loads(git('show', head+':'+path))
+              require(set(value) == {'layer', 'state'} and value['layer'] == layer and value['state'] in ('good', 'bad'), 'invalid fixture shape')
+              records[layer] = value['state']
+          # Shape-valid partial G, including bad-middle, is observation only.
+          canonical = kind == 'pull_request' or complete
+          if phase == 'observe':
+              emit('canonical_candidate_observed' if canonical else 'prefix_observed',
+                   mode=mode, event_base_sha=base, candidate_sha=head, layers=records,
+                   canonical_context_requested=canonical,
+                   claim='tree fixture shape only; not native PR membership or final semantic proof')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+                  stream.write('route='+('canonical' if canonical else 'prefix')+'\n')
+          else:
+              require(canonical, 'prefix cannot run canonical qualification')
+              if kind == 'merge_group':
+                  emit('qualification_started', mode=mode, candidate_sha=head, workload='synthetic-fixture-oracle')
+                  require(all(value == 'good' for value in records.values()), 'composed G contains bad layer')
+              emit('qualification_passed' if kind == 'merge_group' else 'shape_passed',
+                   mode=mode, event_base_sha=base, candidate_sha=head,
+                   candidate_tree=git('rev-parse', head+'^{tree}').decode().strip(), layers=records,
+                   claim='synthetic fixture oracle; H shape is not G proof; no provider membership claim')
