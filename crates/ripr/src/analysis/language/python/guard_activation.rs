@@ -58,6 +58,87 @@ pub(super) fn python_guarded_arm_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<GuardedArmGap> {
+    guarded_arm_gap(
+        owner,
+        owner_source,
+        changed_line,
+        related_candidates,
+        focus,
+        None,
+    )
+}
+
+/// [`python_guarded_arm_gap`] for a removed line read in the old file
+/// (#11889). Module constants and locals resolve on the new side, which an
+/// old-side guard cannot trust, so only what names nothing but the owner's
+/// `parameters` is evaluated:
+///
+/// - an enclosing guard is read through its parameter-only `and` conjuncts.
+///   One provably false conjunct makes the conjunction false whatever the
+///   dropped ones say (`seq_index is None and start < 0` under `start = 0`).
+///   A guard holding `or` or a conditional expression is read whole or not at
+///   all, since dropping an operand there can turn a true guard false;
+/// - an early exit or an `if`/`elif` chain condition excludes a row by
+///   HOLDING, which a partial conjunction cannot show, so it is read only when
+///   the whole condition names parameters alone.
+pub(super) fn python_old_side_guarded_arm_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    parameters: &[String],
+) -> Option<GuardedArmGap> {
+    guarded_arm_gap(
+        owner,
+        owner_source,
+        changed_line,
+        related_candidates,
+        focus,
+        Some(parameters),
+    )
+}
+
+/// The part of an enclosing guard an old-side read may evaluate: the whole
+/// condition when it names only `parameters`, else its parameter-only `and`
+/// conjuncts, else nothing.
+pub(super) fn parameter_only_guard(condition: &str, parameters: &[String]) -> Option<String> {
+    use super::deleted_lines::guard_names_only_parameters;
+    let conjuncts = super::guard_atoms::split_top_level(condition, " and ");
+    // A dropped call or walrus can rebind a parameter used by a kept
+    // conjunct. Evaluating only the kept text would then use the call-time
+    // value for a different runtime value (#14273).
+    if conjuncts
+        .iter()
+        .any(|conjunct| conjunct_can_rebind(conjunct))
+    {
+        return None;
+    }
+    if guard_names_only_parameters(condition, parameters) {
+        return Some(condition.to_string());
+    }
+    if ["or", "if", "else", "lambda", "for"]
+        .iter()
+        .any(|keyword| keyword_outside_quotes(condition, keyword))
+    {
+        return None;
+    }
+    let kept: Vec<&str> = conjuncts
+        .into_iter()
+        .map(str::trim)
+        .filter(|conjunct| guard_names_only_parameters(conjunct, parameters))
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(" and "))
+}
+
+fn guarded_arm_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    old_side_parameters: Option<&[String]>,
+) -> Option<GuardedArmGap> {
     let GuardWalk {
         conditions,
         else_chains,
@@ -66,6 +147,29 @@ pub(super) fn python_guarded_arm_gap(
     if conditions.is_empty() && early_exits.is_empty() && else_chains.is_empty() {
         return None;
     }
+    // What each kind of condition may be evaluated as. The reported
+    // conditions stay whole; an unreadable one simply never excludes a row.
+    let readable_guards: Vec<(usize, String)> = conditions
+        .iter()
+        .filter_map(|(line, condition)| match old_side_parameters {
+            None => Some((*line, condition.clone())),
+            Some(parameters) => {
+                parameter_only_guard(condition, parameters).map(|kept| (*line, kept))
+            }
+        })
+        .collect();
+    let readable_whole = |list: &[(usize, String)]| -> Vec<(usize, String)> {
+        list.iter()
+            .filter(|(_, condition)| {
+                old_side_parameters.is_none_or(|parameters| {
+                    super::deleted_lines::guard_names_only_parameters(condition, parameters)
+                })
+            })
+            .cloned()
+            .collect()
+    };
+    let readable_exits = readable_whole(&early_exits);
+    let readable_chains = readable_whole(&else_chains);
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
@@ -89,7 +193,7 @@ pub(super) fn python_guarded_arm_gap(
     // unevaluable guard is never excluded, so one unreadable input keeps
     // the verdict.
     let every_row_excluded = rows.iter().all(|row| {
-        conditions.iter().any(|(condition_line, condition)| {
+        readable_guards.iter().any(|(condition_line, condition)| {
             super::guard_atoms::guard_condition_holds(
                 owner,
                 condition,
@@ -98,7 +202,7 @@ pub(super) fn python_guarded_arm_gap(
                 &constants,
                 owner_source,
             ) == Some(false)
-        }) || early_exits.iter().any(|(condition_line, condition)| {
+        }) || readable_exits.iter().any(|(condition_line, condition)| {
             // A row that satisfies an earlier `if X: return ...` leaves the
             // owner before the changed line, so the line never runs for it.
             super::guard_atoms::guard_condition_holds(
@@ -109,7 +213,7 @@ pub(super) fn python_guarded_arm_gap(
                 &constants,
                 owner_source,
             ) == Some(true)
-        }) || else_chains.iter().any(|(condition_line, condition)| {
+        }) || readable_chains.iter().any(|(condition_line, condition)| {
             // A row that satisfies any condition of the `if`/`elif` chain
             // owning an `else` arm takes an earlier arm, so the `else` arm
             // holding the changed line never runs for it (#9184).
@@ -872,6 +976,57 @@ pub(super) fn condition_holds(
         }
     }
     (!unreadable).then_some(true)
+}
+
+/// Whether a conjunct has call or walrus syntax that can change a parameter
+/// another conjunct reads. A call is a `(` outside string literals that
+/// follows `)`, `]` or a name; a grouping parenthesis follows an operator or
+/// a keyword (`(x is None)`, `kind in ('a', 'b')`, `not (x)`) and is not one
+/// (#14273).
+pub(super) fn conjunct_has_call_or_walrus(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(_) if byte == b'\\' => index += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b':' && bytes.get(index + 1) == Some(&b'=') => return true,
+            None if byte == b'(' && callee_precedes(&text[..index]) => return true,
+            None => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Whether the text before a `(` ends in something that can be called.
+fn callee_precedes(before: &str) -> bool {
+    let before = before.trim_end();
+    if before.ends_with(')') || before.ends_with(']') {
+        return true;
+    }
+    let name_start = before
+        .bytes()
+        .rposition(|byte| !is_identifier_byte(byte))
+        .map_or(0, |position| position + 1);
+    let name = &before[name_start..];
+    !name.is_empty() && !["in", "is", "not", "and", "or", "if", "else"].contains(&name)
+}
+
+/// Whether a conjunct can rebind or mutate a parameter another conjunct
+/// reads. The `isinstance(` and `len(` atoms the guard reader evaluates
+/// itself are not such a call; anything called inside or after them is.
+pub(super) fn conjunct_can_rebind(conjunct: &str) -> bool {
+    let conjunct = conjunct.trim();
+    let rest = conjunct
+        .strip_prefix("isinstance(")
+        .or_else(|| conjunct.strip_prefix("len("))
+        .unwrap_or(conjunct);
+    conjunct_has_call_or_walrus(rest)
 }
 
 /// True when `text` applies `or`, `not` or a conditional expression

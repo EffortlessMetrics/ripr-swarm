@@ -303,6 +303,11 @@ quieter.
 
 ## Commands
 
+The `ripr: Get Started` walkthrough (Command Palette, `Welcome: Open
+Walkthrough...`) covers trusting the workspace, opening a Rust file, checking
+that the server started with `ripr: Diagnose Setup`, reading the first
+finding, and acting on it.
+
 - `ripr: Restart Server`
 - `ripr: Refresh Diagnostics`
 - `ripr: Select Workspace Root`

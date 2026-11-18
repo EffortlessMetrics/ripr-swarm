@@ -6312,6 +6312,7 @@ tests = [
   "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a leading ~ in ripr.server.path means the home directory, and nothing else is rewritten (#15075)",
   "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a relative ripr.server.path with a directory part is refused by name; a bare command is not (#15075)",
   "editors/vscode/test/suite/server_resolver_compatibility.test.ts::resolveServer probes the expanded home path and never probes a relative one (#15075)",
+  "editors/vscode/test/suite/walkthrough_contract.test.ts::the check-setup step runs a contributed command and names the missing-server fixes (#13638)",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
