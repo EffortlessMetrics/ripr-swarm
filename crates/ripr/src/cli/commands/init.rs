@@ -150,7 +150,7 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
         // `status` use decides; a bare Cargo.toml stays quiet.
         return crate::analysis::root_has_no_inspectable_workspace(root).then(|| {
             format!(
-                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet. The generated configuration enables Rust only; `ripr check` has nothing to analyze here until you add source. If the project lives in a subdirectory, rerun `ripr init --root <dir>` there; after adding Python or TypeScript source, rerun `ripr init --force` so the configuration enables it.",
+                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet, so `ripr check` has nothing to analyze here. If the project lives in a subdirectory, run init there with `--root <dir>`. The generated configuration enables only the languages detected now; after adding source in another language, rerun init for this root with `--force`.",
                 output::path::human_path(root)
             )
         });
@@ -1370,7 +1370,13 @@ mod tests {
             warning.contains("has no Cargo.toml and no source file ripr reads yet"),
             "{warning}"
         );
-        assert!(warning.contains("ripr init --root <dir>"), "{warning}");
+        assert!(warning.contains("with `--root <dir>`"), "{warning}");
+        // No pasteable `ripr init --force`: without the selected root it
+        // would overwrite the configuration of whatever directory it runs in.
+        assert!(!warning.contains("ripr init --force"), "{warning}");
+        // A marker-only root gets its language enabled, so the warning makes
+        // no claim about which languages the configuration enables.
+        assert!(!warning.contains("Rust"), "{warning}");
 
         std::fs::write(root.join("main.go"), "package main\n")
             .map_err(|err| format!("write main.go: {err}"))?;
