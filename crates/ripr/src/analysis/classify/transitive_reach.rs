@@ -1205,12 +1205,13 @@ impl OwnerCallers<'_> {
     pub(in crate::analysis) fn test_calls_owner_or_caller(&self, test: &TestFact) -> bool {
         test.calls.iter().any(|call| {
             let name = call.name.as_str();
-            let own_declaration = name == test.name
-                && contains_identifier(&call.text, "fn")
-                && call.text.contains(&format!("fn {name}"));
-            !is_macro_call(name)
-                && !own_declaration
-                && (name == self.owner_name || self.reaching.contains(name))
+            // Name checks first: the declaration check formats only for a
+            // call that already names the owner or a caller.
+            (name == self.owner_name || self.reaching.contains(name))
+                && !is_macro_call(name)
+                && !(name == test.name
+                    && contains_identifier(&call.text, "fn")
+                    && call.text.contains(&format!("fn {name}")))
         })
     }
 }
