@@ -6028,6 +6028,9 @@ tests = [
   "xtask/src/main.rs::tests::gap_decision_ledger_static_unknown_only_stays_report_only",
   "xtask/src/main.rs::tests::gap_decision_ledger_missing_artifact_requires_regeneration",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_decision_ledger_parses_corpus_records_and_summarizes_projection_boundaries",
+  "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::record_markdown_shows_commands_and_anchors_exactly",
+  "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::ordinary_record_markdown_keeps_its_bytes",
+  "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::ledger_warnings_cannot_open_html_or_notify",
   "crates/ripr/src/output/gap_source_subject.rs::tests::subject_relative_path_preserves_whitespace_identity",
   "crates/ripr/src/output/gap_source_subject.rs::tests::subject_relative_path_rejects_prefix_and_root_escape",
   "crates/ripr/src/output/gap_source_subject.rs::tests::source_subject_keeps_whitespace_paths_and_stales_only_the_changed_identity",
@@ -6089,6 +6092,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/gap_decision_ledger/markdown.rs",
   "crates/ripr/src/output/gap_source_subject.rs",
   "crates/ripr/src/output/gap_source_subject/shared.rs",
   "crates/ripr/src/output/mod.rs",
