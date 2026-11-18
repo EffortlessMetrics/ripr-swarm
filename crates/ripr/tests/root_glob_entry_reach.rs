@@ -174,6 +174,7 @@ fn a_second_glob_may_bring_another_cash_total_and_does_not_link() -> Result<(), 
 fn a_glob_of_a_library_module_does_not_link() -> Result<(), String> {
     let outcome = in_module("pub mod m;\n", "use money::m::*;\n")?;
     assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
     Ok(())
 }
 
@@ -190,5 +191,23 @@ fn a_test_file_definition_of_the_entry_name_shadows_the_glob() -> Result<(), Str
     let outcome =
         at_root("use money::*;\n\nfn cash_total(cents: u32) -> u32 {\n    cents + 2\n}\n")?;
     assert_ne!(outcome.classification, "exposed");
+    Ok(())
+}
+
+#[test]
+fn a_test_file_tuple_struct_named_like_the_entry_shadows_the_glob() -> Result<(), String> {
+    // `cash_total(103)` builds the local tuple struct, not the library call.
+    let outcome =
+        at_root("use money::*;\n\n#[derive(Debug, PartialEq)]\nstruct cash_total(u32);\n")?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
+
+#[test]
+fn a_glob_in_a_sibling_module_of_the_test_file_does_not_link() -> Result<(), String> {
+    let outcome = at_root("use money::*;\n\nmod other {\n    use std::cmp::*;\n}\n")?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
     Ok(())
 }

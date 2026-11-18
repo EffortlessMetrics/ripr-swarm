@@ -3426,7 +3426,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
             && segments[1] == "*"
     }) && entry_module
         .as_deref()
-        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)));
+        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)))
+        && !test_file_declares_item_named(&facts.source, &caller.name);
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
@@ -3444,6 +3445,38 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the test file declares any item named `name` at any depth (a `fn`,
+/// a tuple or unit `struct`, an enum, a `const`/`static`, a module, a macro),
+/// or does not parse cleanly. A file item beats a glob import, so a root glob
+/// delivers the library's entry only when no such item exists (#15073).
+fn test_file_declares_item_named(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    parse.tree().syntax().descendants().any(|node| {
+        let Some(item) = ast::Item::cast(node) else {
+            return false;
+        };
+        let named = match &item {
+            ast::Item::Fn(i) => i.name(),
+            ast::Item::Const(i) => i.name(),
+            ast::Item::Static(i) => i.name(),
+            ast::Item::Struct(i) => i.name(),
+            ast::Item::Enum(i) => i.name(),
+            ast::Item::Union(i) => i.name(),
+            ast::Item::Trait(i) => i.name(),
+            ast::Item::TypeAlias(i) => i.name(),
+            ast::Item::Module(i) => i.name(),
+            ast::Item::MacroRules(i) => i.name(),
+            ast::Item::MacroDef(i) => i.name(),
+            _ => None,
+        };
+        named.is_some_and(|found| found.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Whether the test file declares a `const` or `static` named `name` anywhere

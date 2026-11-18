@@ -463,8 +463,10 @@ can only hint that a caller "may lead here" without changing anything.
   could bring another binding of the name), a glob of a library module
   (`use <lib>::m::*;`), a glob in a unit test under `src/`, an entry the root
   does not re-export, and every other refusal in this section keep the bare
-  call unrelated. A test-file definition of the entry's name still shadows the
-  glob.
+  call unrelated. Any item the test file declares under the entry's name, at
+  any depth (a `fn`, a tuple `struct`, a `const`, a module, a macro), beats the
+  glob and keeps the call unrelated, as does a test file that does not parse
+  cleanly.
 
   The library must also bind that module path to the entry's file: every
   file-module segment is declared once by an unconditional, un-remapped
