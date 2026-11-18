@@ -2192,8 +2192,10 @@ and only per pinned call:
    tail as its whole body; the chain must use one operator, with none of
    it inside a parenthesis, bracket or brace; each operand only one version
    holds must be an item 1 operand; the operands both versions keep are
-   compared as text and never read, so they may be any expression. Fail
-   open to today's reading: a rewritten operand, an unreadable argument, a
+   compared as text and never read, so they may be any expression. Retained
+   operands are compared as text with layout whitespace outside literals
+   ignored, and literal contents compared exactly. Fail open to today's
+   reading: a rewritten operand, an unreadable argument, a
    call with no run, or any shape outside this one keeps its current
    result. This is a withholding rule only and admits no new pin.
 
