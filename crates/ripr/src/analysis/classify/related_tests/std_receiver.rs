@@ -467,9 +467,10 @@ fn last_segment_name(self_ty: &str) -> &str {
 
 /// Scan every indexed file for an impl of `trait_name` (including empty ones)
 /// whose self type is std-headed or cannot be ruled out, or a macro that
-/// spells such an impl (`macro_impl` rules out only a macro whose every impl
-/// of the trait names a user type it or an indexed file declares). A file
-/// that does not parse is treated as a match.
+/// spells such an impl (`macro_impl` rules out only a `macro_rules!`
+/// definition whose every `impl ... for` header names a user type it or an
+/// indexed file declares; a macro call keeps the text gate). A file that does
+/// not parse is treated as a match.
 fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str) -> bool {
     // This runs per resolved receiver of every related test, so keep it off
     // the whole-workspace AST: only a file that spells the trait name can hold
@@ -535,8 +536,16 @@ fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str)
                     || !is_declared(base);
             }
             // Tokens a macro expands into an impl are not parsed as an item.
-            (ast::MacroRules::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind()))
-                && macro_impl::macro_may_implement_for_std(&node, trait_name, head, &is_declared)
+            // A call's tokens are arguments, so only a definition is narrowed.
+            let definition = ast::MacroRules::can_cast(node.kind());
+            (definition || ast::MacroCall::can_cast(node.kind()))
+                && macro_impl::macro_may_implement_for_std(
+                    &node,
+                    definition,
+                    trait_name,
+                    head,
+                    &is_declared,
+                )
         })
 }
 

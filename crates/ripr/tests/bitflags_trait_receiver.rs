@@ -150,6 +150,83 @@ macro_rules! test_flags {
 mod tests;
 "#;
 
+/// A transforming macro: its definition never spells the trait name, and the
+/// call's arguments (`impl Flags for Marker {}`) are input, not expansion. The
+/// expansion implements `Flags` for `Vec<Marker>`, so a `Vec` receiver can
+/// run the trait default method.
+const TRANSFORM_LIB: &str = r#"pub mod traits;
+pub use traits::Flags;
+
+#[macro_export]
+macro_rules! test_flags {
+    () => {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        struct TestFlags {
+            bits: u8,
+        }
+        impl TestFlags {
+            const A: Self = Self { bits: 0b01 };
+            const B: Self = Self { bits: 0b10 };
+        }
+        impl $crate::Flags for TestFlags {
+            fn bits(&self) -> u8 {
+                self.bits
+            }
+        }
+    };
+}
+
+macro_rules! lift_to_vec {
+    (struct $name:ident; impl $tr:ident for $target:ident {}) => {
+        struct $name;
+        impl $tr for Vec<$target> {
+            fn bits(&self) -> u8 {
+                self.len() as u8
+            }
+        }
+    };
+}
+
+lift_to_vec!(struct Marker; impl Flags for Marker {});
+
+#[cfg(test)]
+mod tests;
+"#;
+
+/// The trait is re-exported under another name outside the macro, and the
+/// macro implements it for `Vec<u8>` under that name.
+const ALIAS_LIB: &str = r#"pub mod traits;
+pub use traits::Flags;
+pub use traits::Flags as CollectionOps;
+
+#[macro_export]
+macro_rules! test_flags {
+    () => {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        struct TestFlags {
+            bits: u8,
+        }
+        impl TestFlags {
+            const A: Self = Self { bits: 0b01 };
+            const B: Self = Self { bits: 0b10 };
+        }
+        impl $crate::Flags for TestFlags {
+            fn bits(&self) -> u8 {
+                self.bits
+            }
+        }
+        impl $crate::CollectionOps for Vec<u8> {
+            fn bits(&self) -> u8 {
+                self.len() as u8
+            }
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests;
+"#;
+
 /// The reduced crate from the #11113 reproduction: the macro is invoked in
 /// `src/tests/mod.rs`, `iter.rs` calls `Vec::contains`, and `contains.rs`
 /// hands `TestFlags::contains` to a helper.
@@ -508,6 +585,39 @@ fn macro_impl_for_vec_keeps_direct_owner_call() -> Result<(), String> {
     if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
         return Err(format!(
             "a macro impl for Vec must keep direct_owner_call, got {}",
+            dump(&finding)
+        ));
+    }
+    Ok(())
+}
+
+/// Negative control: a macro call's arguments spell `impl Flags for Marker`,
+/// but the transforming definition expands them to `impl Flags for
+/// Vec<Marker>`. A call is never narrowed, so the `Vec` receiver keeps its
+/// credit.
+#[test]
+fn transforming_macro_call_keeps_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(TRANSFORM_LIB, MACRO_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
+        return Err(format!(
+            "a macro call that names the trait must keep direct_owner_call, got {}",
+            dump(&finding)
+        ));
+    }
+    Ok(())
+}
+
+/// Negative control: the macro implements the trait for `Vec<u8>` under a
+/// re-exported alias, so no token equal to `Flags` names that impl. Any
+/// `impl ... for` header with an unestablished self type keeps the credit.
+#[test]
+fn aliased_trait_impl_for_vec_keeps_direct_owner_call() -> Result<(), String> {
+    let fixture = Fixture::create(ALIAS_LIB, MACRO_CONTAINS)?;
+    let finding = fixture.contains_finding()?;
+    if cases_reason(&finding) != Some(RelationReason::DirectOwnerCall) {
+        return Err(format!(
+            "an aliased macro impl for Vec must keep direct_owner_call, got {}",
             dump(&finding)
         ));
     }

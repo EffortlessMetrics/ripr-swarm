@@ -10,9 +10,16 @@ tests = [
   "crates/ripr/tests/bitflags_trait_receiver.rs::bitflags_macro_shape_keeps_a_testflags_receiver_as_direct_owner_call",
   "crates/ripr/tests/bitflags_trait_receiver.rs::metavariable_self_type_keeps_todays_direct_owner_call",
   "crates/ripr/tests/bitflags_trait_receiver.rs::macro_impl_for_vec_keeps_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::transforming_macro_call_keeps_direct_owner_call",
+  "crates/ripr/tests/bitflags_trait_receiver.rs::aliased_trait_impl_for_vec_keeps_direct_owner_call",
   "crates/ripr/tests/bitflags_trait_receiver.rs::source_level_testflags_vec_receiver_is_not_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_macro_declared_self_type_when_reading_impl_then_std_is_ruled_out",
   "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_unestablished_self_type_when_reading_impl_then_credit_is_kept",
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_another_trait_impl_when_self_type_is_unestablished_then_credit_is_kept",
+  "crates/ripr/src/analysis/classify/related_tests/std_receiver/macro_impl.rs::tests::given_other_impls_for_established_types_when_reading_then_std_is_ruled_out",
+]
+fixtures = [
+  "fixtures/rust_macro_declared_flags_vec_contains",
 ]
 code = [
   "crates/ripr/src/analysis/classify/related_tests/std_receiver.rs",
