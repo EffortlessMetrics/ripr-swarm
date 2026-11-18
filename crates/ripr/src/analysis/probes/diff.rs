@@ -2700,7 +2700,8 @@ fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) 
         term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
             .any(|word| word == name)
     };
-    predicate_line
+    // Comment and string text is not an operand: `a < lo && c < hi { // a`.
+    mask_comments_and_strings(predicate_line)
         .split("&&")
         .flat_map(|term| term.split("||"))
         .any(|term| names(term, first) && names(term, second))

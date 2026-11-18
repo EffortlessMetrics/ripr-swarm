@@ -181,43 +181,57 @@ index 1111111..2222222 100644
 /// behaviors: each keeps its own predicate finding, as before the guard.
 #[test]
 fn changed_bindings_in_separate_comparisons_keep_their_own_findings() -> Result<(), String> {
-    let lib = "pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {
-    let a = x & 7;
-    let c = y & 7;
-    if a < lo && c < hi {
-        return true;
+    // The trailing comment names `a` next to the `c` comparison; comment
+    // text is not an operand and must not merge the two.
+    for comment in ["", " // a"] {
+        let predicate = format!("if a < lo && c < hi {{{comment}");
+        separate_comparisons_case(&predicate)?;
     }
-    false
+    Ok(())
 }
 
+fn separate_comparisons_case(predicate: &str) -> Result<(), String> {
+    let lib = format!(
+        "pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {{
+    let a = x & 7;
+    let c = y & 7;
+    {predicate}
+        return true;
+    }}
+    false
+}}
+
 #[cfg(test)]
-mod tests {
+mod tests {{
     use super::*;
 
     #[test]
-    fn boths() {
+    fn boths() {{
         assert!(both(1, 1, 2, 2));
-    }
-}
-";
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+    }}
+}}
+"
+    );
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -1,4 +1,4 @@
- pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {
+ pub fn both(x: u64, y: u64, lo: u64, hi: u64) -> bool {{
 -    let a = x & 3;
 -    let c = y & 3;
 +    let a = x & 7;
 +    let c = y & 7;
-     if a < lo && c < hi {
-";
-    let findings = TempRepo::create(lib, diff)?.findings()?;
+     {predicate}
+"
+    );
+    let findings = TempRepo::create(&lib, &diff)?.findings()?;
     let predicates = predicates(&findings);
-    let line = (4, "if a < lo && c < hi {".to_string());
+    let line = (4, predicate.to_string());
     if predicates != [line.clone(), line] {
         return Err(format!(
-            "each comparison keeps its finding, got {predicates:?}"
+            "each comparison of `{predicate}` keeps its finding, got {predicates:?}"
         ));
     }
     for binding in ["a", "c"] {
