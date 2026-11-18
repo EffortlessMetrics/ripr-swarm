@@ -175,6 +175,16 @@ Server download unreachable:
 - This spec owns only how the unavailable state is explained; the download
   itself stays outside it (see Non-Goals).
 
+First-run walkthrough setup check:
+
+- Given the `ripr: Get Started` walkthrough, a step between opening a Rust
+  file and reading the first finding points at `ripr: Diagnose Setup`, and its
+  page names the `ripr: server missing` status and both fixes
+  (`ripr.server.path`, `ripr.server.downloadBaseUrl`) plus
+  `ripr: Restart Server`.
+- Every command link and completion event in that step is a contributed
+  command, and every setting the page names is a contributed setting.
+
 Preview disabled:
 
 - Given a Python file and preview languages disabled by config, no Python
