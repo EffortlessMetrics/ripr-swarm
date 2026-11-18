@@ -14,9 +14,9 @@
 use super::{StaticLimitKind, StopReason};
 
 impl StaticLimitKind {
-    /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
-    /// this list in step with the enum.
-    #[cfg(test)]
+    /// Every kind, so tests and closed consumers (for example the renderer
+    /// category set in #14965, which must not shadow a typed token) can walk
+    /// the vocabulary. The ordinal test keeps this list in step with the enum.
     pub const ALL: [StaticLimitKind; 36] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
