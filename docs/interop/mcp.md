@@ -442,7 +442,11 @@ and one small summary per selected item. Each summary carries
 commit-time repair-readiness projection (`repair_packet_ready` with its typed
 `repair_ineligibility` reason, `null` when ready) — the same
 `repair_packet_ready` fact the item's `ripr_get_gap` readiness block reports,
-so actionable items sort without one evidence call per candidate. Selection
+so actionable items sort without one evidence call per candidate. `file` is
+the finding location in the one spelling every surface renders
+(`./src/lib.rs`, #5996); the path inside `canonical_id` is the plain
+repository-relative form (`src/lib.rs`), and the `file` filter accepts
+either. Selection
 is the shared CLI/LSP diagnostic-budget authority over the snapshot's
 canonical items; eligibility is the producer's candidate-actionability
 predicate captured at projection time, so non-actionable items appear as

@@ -2712,6 +2712,10 @@ pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
     )
 }
 
+/// Appended to a shared-check detail that names the CLI's `--base` flag
+/// (#15105), so an agent reading the detail alone maps it to this server.
+const CLI_BASE_FLAG_NOTE: &str = "(In this session the CLI's `--base <ref>` is ripr_refresh's `base` argument and `--worktree` is `source: \"worktree\"`; any `ripr` command named above runs outside MCP.)";
+
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
 /// through `ripr_refresh`'s own `base` argument (the CLI's `--base` is not
@@ -2724,6 +2728,14 @@ fn check_failure(
     source: RefreshSource,
 ) -> AttemptFailure {
     let detail = format!("shared check authority failed: {error}");
+    // #15105: the shared authority words its repair for the CLI. A session
+    // cannot pass a flag, so a detail that names one says once which tool
+    // argument carries it; the shared wording itself keeps one owner.
+    let detail = if detail.contains("--base") {
+        format!("{detail} {CLI_BASE_FLAG_NOTE}")
+    } else {
+        detail
+    };
     // #13096: every retry names the source it was refused under. A
     // base-only retry would re-run the default input selection, which reads
     // saved tracked edits on a dirty tree even after an explicit committed
@@ -4158,6 +4170,45 @@ mod tests {
             assert_eq!(arguments["source"], source.as_str());
         }
         Ok(())
+    }
+
+    /// #15105: the shared authority's base repairs are worded for the CLI
+    /// (`--base trunk`, `--base HEAD --worktree`). The MCP detail keeps that
+    /// wording and says once which tool argument carries the flag; a detail
+    /// that names no flag is left alone.
+    #[test]
+    fn check_failure_detail_maps_a_cli_base_flag_to_the_tool_argument() {
+        use crate::core_error::CoreError;
+        let root = std::env::temp_dir().join("flag note root");
+        let shared = "could not resolve a default base. Other branches here: `trunk`; for example `--base trunk`.";
+        for error in [
+            CoreError::base_unresolvable(shared),
+            CoreError::message(format!("wrapped: {shared}")),
+        ] {
+            let failure = check_failure(&error, &root, None, RefreshSource::Committed);
+            assert!(
+                failure.detail.contains("`--base trunk`"),
+                "{}",
+                failure.detail
+            );
+            assert!(
+                failure.detail.ends_with(CLI_BASE_FLAG_NOTE),
+                "{}",
+                failure.detail
+            );
+            assert_eq!(failure.detail.matches(CLI_BASE_FLAG_NOTE).count(), 1);
+        }
+        assert!(CLI_BASE_FLAG_NOTE.contains("ripr_refresh's `base` argument"));
+        let plain = check_failure(
+            &CoreError::base_unresolvable("the base does not resolve"),
+            &root,
+            Some("gone"),
+            RefreshSource::Committed,
+        );
+        assert_eq!(
+            plain.detail,
+            "shared check authority failed: the base does not resolve"
+        );
     }
 
     /// #13096: a base refusal under an explicit committed request names
