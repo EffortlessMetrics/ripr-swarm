@@ -3122,6 +3122,10 @@ fn extract_parser_oracles(
         } else {
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
+        // #14882: lower after the ceiling, or its fallback would turn an
+        // unfilled `todo!()` compared value back into a medium snapshot.
+        let (kind, strength) =
+            without_unfilled_expected_parts(kind, strength, &assertion_text, &placeholder_vars);
         let line = line_index.line(range.start());
         expect_test_comparisons.push((
             line..=line_index.line_for_range_end(range.end()),
@@ -3140,7 +3144,7 @@ fn extract_parser_oracles(
     let function_start = line_index.line(function.syntax().text_range().start());
     // #3284: terminal Err-return guards credit as their assertion twins
     // on the parser path too, so both adapters agree.
-    for oracle in err_return_guard_oracles(&function_text, function_start) {
+    for oracle in err_return_guard_oracles(&function_text, function_start, &placeholder_vars) {
         assertions.push(oracle);
     }
     // #3727 Slice A: parser-backed shadow facts over the scanned text. The
@@ -3726,6 +3730,48 @@ fn early_error() -> Result<(), String> {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #14882 review: the expect-test comparison's snapshot ceiling must not
+    /// restore credit to a compared value that is still an unfilled
+    /// `todo!()`. The control, a computed value, keeps the medium snapshot,
+    /// which also shows the parser recognized the comparison.
+    #[test]
+    fn an_expect_test_comparison_of_a_placeholder_lowers() -> Result<(), String> {
+        let readings = |initializer: &str| -> Result<Vec<_>, String> {
+            let source = format!(
+                "#[test]\nfn t() {{\n    let expected: String = {initializer};\n    \
+                 expect_test::expect![[\"value\"]].assert_eq(&expected);\n}}\n"
+            );
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            Ok(facts
+                .tests
+                .iter()
+                .flat_map(|test| test.assertions.iter())
+                .filter(|fact| fact.text.contains("assert_eq"))
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect())
+        };
+        let control = readings("render()")?;
+        if !control.contains(&(
+            crate::domain::OracleKind::Snapshot,
+            crate::domain::OracleStrength::Medium,
+        )) {
+            return Err(format!(
+                "premise: a computed value reads snapshot: {control:?}"
+            ));
+        }
+        let lowered = readings("todo!(\"x\")")?;
+        if lowered.is_empty()
+            || lowered
+                .iter()
+                .any(|(_, strength)| *strength != crate::domain::OracleStrength::Unknown)
+        {
+            return Err(format!(
+                "a placeholder compared value must lower: {lowered:?}"
+            ));
+        }
+        Ok(())
+    }
 
     /// #14810 round 3: the line-scanned path must lower an assertion that
     /// names an unfilled placeholder local, exactly as the parser path does.

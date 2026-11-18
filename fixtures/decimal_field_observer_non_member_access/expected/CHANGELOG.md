@@ -562,3 +562,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (47)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/human.txt`

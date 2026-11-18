@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod route_body;
-use route_body::{body_returning_annotation, route_returns_body};
+use route_body::{bare_dict_annotation, body_returning_annotation, route_returns_body};
 
 #[cfg(test)]
 pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
@@ -182,6 +182,8 @@ fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut V
                 &function.body,
                 false,
             );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
             owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
             out.push(owner);
         }
@@ -195,6 +197,8 @@ fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut V
                 &function.body,
                 true,
             );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
             owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
             out.push(owner);
         }
@@ -666,6 +670,7 @@ fn owner_from_function(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body,
+        route_dict_annotation: false,
     }
 }
 
@@ -799,6 +804,7 @@ fn owner_from_class(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -843,6 +849,7 @@ pub(super) fn module_owner(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 

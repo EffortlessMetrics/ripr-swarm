@@ -550,8 +550,8 @@ Relations, first match wins (rank, oracle-eligible):
   (comments are not read; an unclosed call is opaque), or any source has
   custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
   `**` unpack in call arguments (which may pass such an option under a name
-  the source does not spell; markers are matched with and without
-  comments), or has an exception
+  the source does not spell; markers are matched with and without comments),
+  or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
@@ -572,8 +572,8 @@ Relations, first match wins (rank, oracle-eligible):
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
-  annotation (FastAPI reads one as a response model, and even `-> dict`
-  names a model when the module rebinds `dict`), and the function has exactly one `return`, of a dict literal
+  annotation other than a bare `dict` (FastAPI reads one as a response
+  model), and the function has exactly one `return`, of a dict literal
   whose keys are distinct string literals (no `**` unpack), and no `yield`
   or `raise` (a raised error answers with its own body). A
   changed `detail` key never earns this credit, because `detail` is the key
@@ -582,7 +582,23 @@ Relations, first match wins (rank, oracle-eligible):
   changed `return` never produced), another key, a rebound or inline
   response, an expression around the read, another route or verb, an
   unidentified or rival application, or an inequality grants no credit
-  (`strong_oracle_observes_route_response`, #13869);
+  (`strong_oracle_observes_route_response`, #13869).
+  A handler annotated `-> dict` keeps the credit only while no read
+  source may rebind `dict`, which the annotation would then name as a
+  response model; this withdraws only those handlers' credit, never an
+  unannotated handler's. The scan reads lexer tokens, so strings, comments,
+  brackets and one-line suites cannot hide a statement, and a `dict` token
+  counts as a read only after `->`, after a `:` inside brackets outside a
+  `case` pattern, or before a call's `(` not after `def` or `class`. A
+  source that does not lex, a star import, a non-ASCII name, a string
+  holding the word `dict` or a writer name, any f-string (its braces are not
+  read), a name that runs code or resolves a dotted target held in a string
+  (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
+  `resolve_name`), or a name that can reach or write a namespace without
+  spelling the bound name (`globals`, `vars`, `__dict__`, `getattr`,
+  `setattr`, `exec`, `sys.modules`, frame or function globals, `gc`
+  referents, the builtins) also withdraws it. Python startup hooks outside
+  the workspace, such as `sitecustomize` or installed plugins, are not read.
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through

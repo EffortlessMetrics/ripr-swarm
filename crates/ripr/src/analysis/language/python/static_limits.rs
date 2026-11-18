@@ -1992,6 +1992,7 @@ pub(super) mod tests {
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
             route_returns_body: false,
+            route_dict_annotation: false,
         }
     }
 
