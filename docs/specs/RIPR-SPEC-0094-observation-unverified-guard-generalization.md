@@ -1055,8 +1055,9 @@ dropped literals keeps the weak reading's admission: it stays
 `reachable_unrevealed` and names the same limit. A related test with no
 assertion, or with any other assertion, keeps the #10127 rule, as does a
 related-test list at its render cap. The same holds for the #3700 wrapper
-error seam: a `map_err` conversion into a boxed error whose related tests
-assert only dropped literals reads `reachable_unrevealed` and keeps the
+error seam (a changed top-level `map_err` conversion, the shape
+`wrapper_error_seam_expression` recognizes) whose related tests assert only
+dropped literals reads `reachable_unrevealed` and keeps the
 `wrapper_error_binding_unresolved` limitation and its typed next step,
 instead of asking for an assertion the suite may already contain.
 
