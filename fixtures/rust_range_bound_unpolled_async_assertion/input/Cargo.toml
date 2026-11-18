@@ -1,0 +1,4 @@
+[package]
+name = "rust_range_bound_unpolled_async_assertion"
+version = "0.1.0"
+edition = "2024"

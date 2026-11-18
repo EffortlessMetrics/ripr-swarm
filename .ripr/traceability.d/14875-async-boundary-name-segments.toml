@@ -1,0 +1,6 @@
+# The async boundary signal matches whole name segments (#14875).
+[[extend]]
+id = "RIPR-SPEC-0411"
+tests = [
+  "crates/ripr/src/analysis/classify/decision.rs::tests::async_boundary_signals_match_whole_name_segments",
+]

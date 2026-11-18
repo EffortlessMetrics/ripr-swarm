@@ -261,6 +261,135 @@ fn unusable_cache_location_never_changes_the_result() -> Result<(), String> {
     Ok(())
 }
 
+/// Start `command` in its own owned process group, let it run for
+/// `delay_micros`, then terminate the whole group and reap it (#6663). A
+/// bare `Child::kill` signals only `ripr`; a `cargo metadata` it spawned
+/// could outlive the kill and keep fixture handles open. On Linux the group
+/// is then listed and must be empty, so a surviving descendant fails the
+/// sweep instead of leaking into the next iteration.
+fn terminate_tree_after(
+    command: Command,
+    delay_micros: u64,
+) -> Result<std::process::ExitStatus, String> {
+    let mut child = ripr::process_owner::OwnedProcess::spawn_isolated(command)
+        .map_err(|error| format!("spawn ripr check: {error}"))?;
+    let group = child.id();
+    std::thread::sleep(Duration::from_micros(delay_micros));
+    // The child may already have exited; the owner treats that as settled.
+    child.terminate_tree()?;
+    let status = child.wait().map_err(|error| error.to_string())?;
+    let survivors = settled_group_survivors(group)?;
+    assert!(
+        survivors.is_empty(),
+        "descendants {survivors:?} of ripr remained after the group kill after {delay_micros}us"
+    );
+    Ok(status)
+}
+
+/// Members of `group` still listed once the exits triggered by a group kill
+/// have had a chance to land. The signal is delivered at once but each member
+/// exits on its own schedule, so one can stay listed briefly after the leader
+/// is reaped; a real survivor stays listed for the whole budget.
+fn settled_group_survivors(group: u32) -> Result<Vec<u32>, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut survivors = group_survivors(group)?;
+    while !survivors.is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+        survivors = group_survivors(group)?;
+    }
+    Ok(survivors)
+}
+
+/// Pids still in process group `group`, read from `/proc`. Only Linux has
+/// that interface here; elsewhere the check reports none.
+#[cfg(target_os = "linux")]
+fn group_survivors(group: u32) -> Result<Vec<u32>, String> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir("/proc").map_err(|error| format!("read /proc: {error}"))? {
+        let Ok(entry) = entry else { continue };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        // A process can exit between listing and reading; skip it.
+        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        // `pid (comm) state ppid pgrp ...`; comm may hold spaces and parens,
+        // so split after the last ')'.
+        let Some(tail) = stat.rsplit_once(')').map(|(_, tail)| tail) else {
+            continue;
+        };
+        let mut fields = tail.split_whitespace();
+        let state = fields.next();
+        let pgrp = fields.nth(1).and_then(|field| field.parse::<u32>().ok());
+        // A zombie is already dead and only awaits its reaper (the container
+        // init can lag); it holds no handles and runs no code.
+        if pgrp == Some(group) && !matches!(state, Some("Z" | "X")) {
+            found.push(pid);
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn group_survivors(_group: u32) -> Result<Vec<u32>, String> {
+    Ok(Vec::new())
+}
+
+/// Control for the descendant check above: a group that really holds a live
+/// descendant is listed before termination and empty after it, so the check
+/// can fail and the group kill is what clears it.
+#[cfg(target_os = "linux")]
+#[test]
+fn group_survivor_check_sees_a_live_descendant_until_the_group_is_terminated() -> Result<(), String>
+{
+    let mut command = owned_test_command(Path::new("/bin/sh"));
+    command
+        .args(["-c", "sleep 30 & wait"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = ripr::process_owner::OwnedProcess::spawn_isolated(command)
+        .map_err(|error| format!("spawn sh: {error}"))?;
+    let group = child.id();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut members = group_survivors(group)?;
+    while members.len() < 2 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+        members = group_survivors(group)?;
+    }
+    assert!(
+        members.len() >= 2,
+        "the shell and its sleeping descendant should both be in group {group}: {members:?}"
+    );
+
+    child.terminate_tree()?;
+    child.wait().map_err(|error| error.to_string())?;
+    assert_eq!(settled_group_survivors(group)?, Vec::<u32>::new());
+    Ok(())
+}
+
+/// Control for the sweep helper itself: a run that has a live descendant when
+/// `terminate_tree_after` fires must come back with the group empty. A helper
+/// that signalled only the direct child would leave the sleeper behind and
+/// trip the helper's own survivor assertion.
+#[cfg(target_os = "linux")]
+#[test]
+fn sweep_helper_clears_a_descendant_that_is_alive_at_the_kill() -> Result<(), String> {
+    let mut command = owned_test_command(Path::new("/bin/sh"));
+    command
+        .args(["-c", "sleep 30 & wait"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let status = terminate_tree_after(command, 500_000)?;
+    assert!(!status.success(), "the shell should have been terminated");
+    Ok(())
+}
+
 #[test]
 fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), String> {
     let fixture = Fixture::new("terminated")?;
@@ -270,17 +399,12 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
     let mut interrupted = 0usize;
     for delay_micros in [0u64, 300, 1_000, 3_000, 6_000, 10_000, 20_000, 40_000] {
         let _ = fs::remove_dir_all(&fixture.cache);
-        let mut child = fixture
-            .command("ge12.diff", &[])
+        let mut command = fixture.command("ge12.diff", &[]);
+        command
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
-            .spawn()
-            .map_err(|error| format!("spawn ripr check: {error}"))?;
-        std::thread::sleep(Duration::from_micros(delay_micros));
-        // The child may already have exited; a failed kill is not an error.
-        let _ = child.kill();
-        let status = child.wait().map_err(|error| error.to_string())?;
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE);
+        let status = terminate_tree_after(command, delay_micros)?;
         if !status.success() {
             interrupted += 1;
         }
@@ -331,16 +455,12 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
 
     let mut interrupted = 0usize;
     for delay_micros in [0u64, 500, 2_000, 5_000, 10_000, 20_000, 40_000] {
-        let mut child = fixture
-            .command("ge11.diff", &["--write-artifact", &artifact_arg])
+        let mut command = fixture.command("ge11.diff", &["--write-artifact", &artifact_arg]);
+        command
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE)
-            .spawn()
-            .map_err(|error| format!("spawn ripr check: {error}"))?;
-        std::thread::sleep(Duration::from_micros(delay_micros));
-        let _ = child.kill();
-        let status = child.wait().map_err(|error| error.to_string())?;
+            .env(TERMINATED_CHILD_PROFILE_ENV, TERMINATED_CHILD_PROFILE);
+        let status = terminate_tree_after(command, delay_micros)?;
         if !status.success() {
             interrupted += 1;
         }
@@ -551,7 +671,7 @@ case $RIPR_LIFECYCLE_MODE in
         printf '%s\n' "$RIPR_LIFECYCLE_PACKET" > "$out"
         printf '%s' "$RIPR_LIFECYCLE_SIDECAR" > "${out%/*}/exporter-sidecar"
         ;;
-    partial|nonzero|ignore)
+    partial|nonzero|exit130|selfsigint|ignore)
         printf '%s' '{"interrupted_export":' > "$out"
         printf '%s' '{"interrupted_export":' > "${RIPR_LIFECYCLE_MARKER}.partial"
         ;;
@@ -564,6 +684,8 @@ printf 'ready\n' > "${RIPR_LIFECYCLE_MARKER}.ready"
 case $RIPR_LIFECYCLE_MODE in
     healthy|sidecar) exit 0 ;;
     nonzero) exit 17 ;;
+    exit130) exit 130 ;;
+    selfsigint) kill -s INT "$BASHPID"; exit 99 ;;
 esac
 # Builtins only: there is no descendant process to outlive this producer.
 # The independent safety exit bounds a broken termination control.
@@ -735,7 +857,7 @@ exit 66
             child,
             marker,
             mode: mode.to_string(),
-            started: Instant::now(),
+            started: std::time::Instant::now(),
             observed_live: false,
             planted_directory: false,
             settled: false,
@@ -872,7 +994,7 @@ exit 66
                     }
                 }
             }
-            let settlement_started = Instant::now();
+            let settlement_started = std::time::Instant::now();
             loop {
                 match marker_pid(&self.marker).and_then(|pid| pid.map(primary_exists).transpose()) {
                     Ok(Some(false)) => break,
@@ -1065,6 +1187,39 @@ exit 66
         }
         staging_removed(&fixture, &failed.tmp)?;
         fixture.preserve_on_drop = false;
+        Ok(())
+    }
+
+    #[test]
+    fn managed_exporter_independent_interrupt_statuses_remain_failures() -> Result<(), String> {
+        for (mode, cause) in [("exit130", "exit status: 130"), ("selfsigint", "signal: 2")] {
+            let mut fixture = setup(&format!("managed-{mode}"))?;
+            let cold = attempt(&fixture, "cold", "healthy")?;
+            healthy(&cold)?;
+            let packet = published_path(&fixture, &cold.tmp)?;
+            let published = fs::read(&packet).map_err(|error| error.to_string())?;
+            let failed = attempt(&fixture, mode, mode)?;
+            degraded(&failed, cause)?;
+            let stderr = String::from_utf8_lossy(&failed.output.stderr);
+            if stderr.contains("check interrupted") || stderr.contains("analysis cancelled") {
+                return Err(format!(
+                    "{mode} was misreported as CLI interruption: {stderr}"
+                ));
+            }
+            if published_path(&fixture, &failed.tmp)? != packet
+                || fs::read(failed.marker.with_extension("partial"))
+                    .map_err(|error| error.to_string())?
+                    != PARTIAL.as_bytes()
+                || failed.tmp.exists()
+                || fs::read(&packet).map_err(|error| error.to_string())? != published
+            {
+                return Err(format!(
+                    "{mode} changed the published packet or retained its partial"
+                ));
+            }
+            staging_removed(&fixture, &failed.tmp)?;
+            fixture.preserve_on_drop = false;
+        }
         Ok(())
     }
 
@@ -1400,7 +1555,7 @@ exit 66
             {
                 return Err("exporter escaped the owned CLI process group".to_string());
             }
-            let signalled = Instant::now();
+            let signalled = std::time::Instant::now();
             if cli_only {
                 // Leave the exporter live so only the CLI's cancellation
                 // owner can stop and reap it. The existing group-signal
@@ -1569,7 +1724,7 @@ exit 66
             child: &mut ripr::process_owner::OwnedProcess,
             operation: &str,
         ) -> Result<(), String> {
-            let started = Instant::now();
+            let started = std::time::Instant::now();
             loop {
                 if child.try_wait().map_err(|e| e.to_string())?.is_some() {
                     return Err("CLI exited before blocked-I/O observation".to_string());
@@ -1592,7 +1747,7 @@ exit 66
 
         fn native_interrupt(child: &mut ripr::process_owner::OwnedProcess) -> Result<(), String> {
             kill(pid(child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
-            let started = Instant::now();
+            let started = std::time::Instant::now();
             loop {
                 if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
                     if status.signal() != Some(2) {
@@ -1811,7 +1966,7 @@ exit 66
                     .stderr(fs::File::create(&capture).map_err(|e| e.to_string())?);
                 let mut child =
                     ripr::process_owner::OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
-                let started = Instant::now();
+                let started = std::time::Instant::now();
                 let status = loop {
                     if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
                         break status;

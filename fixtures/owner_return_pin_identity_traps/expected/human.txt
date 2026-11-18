@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:21
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -48,7 +48,7 @@ Hidden:
     - ./src/lib.rs:7 (unrevealed, lower-priority candidate); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
     - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:50 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: same as above
     - ./src/lib.rs:55 (unknown: static analysis limited, base-side); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     weak = tests reach it but check it only loosely

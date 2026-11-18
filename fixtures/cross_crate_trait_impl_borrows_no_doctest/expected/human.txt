@@ -16,7 +16,6 @@ Start here:
   Gap ID (for scripts): gap:rust:util/src/stream/take.rs:impl Stream for Take::size_hint:predicate_boundary:predicate:x==self.remaining
   Changed behavior: x <= self.remaining
   Missing check: No detected boundary input for the changed predicate
-  Related test: util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) (no established call path to the changed code; linked by file location only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
@@ -32,9 +31,9 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
-    - infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test…
-    - 6 more detail line(s) in --format human-full
+    - reach no: No static test path found for the changed owner
+    - infection unknown: No tests were found, so activation/infection cannot be estimated
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -54,7 +53,7 @@ Hidden:
 
 
 Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 1 statically linked related
+  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through
   macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
   none does, add co-located tests that observe the changed behavior.

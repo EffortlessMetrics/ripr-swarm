@@ -12,11 +12,11 @@ use super::classify::{
     ChangeSite, OldGuardView, classify_change_for_owner_with_value_origins,
     is_python_declaration_line,
 };
+use super::no_behavior::is_python_no_behavior_line_at;
 use super::related_tests::RelatedCandidateMemo;
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
-    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges,
-    normalize_python_expression, normalized_path,
+    is_python_structural_line, line_is_in_ranges, normalize_python_expression, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
 use crate::analysis::probes::{collision_ordinals, collision_rank_key};
@@ -49,6 +49,14 @@ struct PendingDeleted {
 pub(super) struct OldSideRanges<'a> {
     pub(super) docstrings: &'a [RangeInclusive<usize>],
     pub(super) imports: &'a [RangeInclusive<usize>],
+    /// Bodies of `if TYPE_CHECKING:` in the old file: they never ran, so a
+    /// line deleted from one deleted no behavior (#14156).
+    pub(super) type_checking_only: &'a [RangeInclusive<usize>],
+    /// Old-side lines that start inside an open bracket, where a bare string
+    /// is an argument rather than a docstring (#13875). `None` when the old
+    /// file could not be lexed: every line then counts as inside brackets,
+    /// so its string lines stay analyzed.
+    pub(super) brackets: Option<&'a [RangeInclusive<usize>]>,
     /// The old file, rebuilt from the diff; `None` when the diff and the
     /// candidate file disagree.
     pub(super) source: Option<&'a str>,
@@ -435,8 +443,14 @@ pub(super) fn guard_names_only_parameters(condition: &str, parameters: &[String]
 fn is_removed_behavior_line(removed: &ChangedLine, old_side: &OldSideRanges<'_>) -> bool {
     !line_is_in_ranges(removed.line, old_side.docstrings)
         && !line_is_in_ranges(removed.line, old_side.imports)
+        && !line_is_in_ranges(removed.line, old_side.type_checking_only)
         && !is_python_import_line(&removed.text)
-        && !is_python_no_behavior_line(&removed.text)
+        && !is_python_no_behavior_line_at(
+            &removed.text,
+            old_side
+                .brackets
+                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges)),
+        )
         && !is_python_structural_line(&removed.text)
         && !is_python_declaration_line(&removed.text)
 }
