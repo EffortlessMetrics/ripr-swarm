@@ -4481,6 +4481,48 @@ mod tests {
         assert!(typed.contains("dynamic_dispatch"));
     }
 
+    /// Exhaustive by construction: a new untyped variant does not compile
+    /// until it gets an ordinal here, and then fails the test below until
+    /// `ALL` lists it, so the shadow and pin tests cannot skip it.
+    fn untyped_stage_limitation_ordinal(category: UntypedStageLimitation) -> usize {
+        use UntypedStageLimitation as U;
+        match category {
+            U::ConstructorFieldOwnerAmbiguous => 0,
+            U::FieldAssignmentValueUnresolved => 1,
+            U::CrossFileConstantUnresolved => 2,
+            U::MacroGeneratedValue => 3,
+            U::OpaqueHelperCall => 4,
+            U::UnsupportedMockShape => 5,
+            U::SnapshotFieldUnknown => 6,
+            U::SideEffectSinkUnknown => 7,
+            U::ActivationOwnerCallAbsent => 8,
+            U::ActivationOwnerCallAbsentCallPresenceTargetAffinity => 9,
+            U::ActivationOwnerCallAbsentAssertionTargetAffinity => 10,
+            U::ActivationOwnerCallAbsentAffinityOnly => 11,
+            U::ActivationOwnerCallAbsentSameFileOnly => 12,
+            U::ActivationOwnerCallUnresolved => 13,
+            U::ActivationValueUnresolved => 14,
+            U::OpaqueStaticEvidence => 15,
+            U::ReachabilityStaticUnknown => 16,
+            U::ActivationStaticUnknown => 17,
+            U::PropagationStaticUnknown => 18,
+            U::ObservationStaticUnknown => 19,
+            U::DiscriminationStaticUnknown => 20,
+            U::Unclassified => 21,
+        }
+    }
+
+    #[test]
+    fn untyped_stage_limitation_all_is_complete_and_ordered() {
+        for (index, category) in UntypedStageLimitation::ALL.iter().enumerate() {
+            assert_eq!(
+                untyped_stage_limitation_ordinal(*category),
+                index,
+                "{category:?}"
+            );
+        }
+    }
+
     #[test]
     fn untyped_stage_limitation_wire_tokens_are_pinned() {
         // The evidence-audit maps and fixture corpora key on these strings;
