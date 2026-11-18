@@ -459,8 +459,9 @@ fn push_after_paragraph(out: &mut String, tail: &str) {
 /// Full human form without the per-finding `Drill in:` block: the drill-in
 /// commands need the CLI's root and scope, which only
 /// [`render_full_with_config_and_navigation`] receives. Library callers of
-/// `ripr::render_check` keep this legacy all-findings form byte-for-byte
-/// (`human_full_preserves_legacy_all_findings_output`).
+/// `ripr::render_check` keep this legacy all-findings form's per-finding
+/// blocks byte-for-byte (`human_full_preserves_legacy_all_findings_output`);
+/// a trailing note opens after one blank line, as on the CLI (#14318).
 pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     render_full_with_config_and_navigation(output, config, None)
 }
