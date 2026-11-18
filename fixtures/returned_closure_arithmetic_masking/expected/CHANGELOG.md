@@ -243,3 +243,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (21)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/human.txt`
