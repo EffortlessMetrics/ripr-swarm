@@ -878,11 +878,12 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             .as_ref()
             .is_none_or(|views| views.len() == related.len())
     );
-    // #15026: one reverse owner-reach walk for the seam, and only when there
-    // is an order to decide.
+    // #15026: one bounded reverse name walk for the seam, and only when there
+    // is an order to decide. Not `owner_reach`: its dispatch and untraced-path
+    // work is unused here and `credited_related_tests` already pays it once.
     let owner_near = owner_fn
         .filter(|_| related.len() > 1)
-        .map(|owner| context.transitive_reach.owner_reach(&owner.name));
+        .map(|owner| context.transitive_reach.owner_callers(&owner.name));
     let mut ranked: Vec<_> = related
         .iter()
         .enumerate()

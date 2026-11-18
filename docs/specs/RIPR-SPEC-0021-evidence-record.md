@@ -240,9 +240,10 @@ or turn a weak relationship into a strong one. Activation overlap is a static
 tie-breaker from values RIPR already observes, for example a direct owner call
 whose predicate-boundary arguments are equal at the changed boundary.
 Owner nearness is a tie-breaker too: among otherwise equal rows, a test that
-reaches the owner through a caller chain is named before a same-file
-neighbour that only sorts earlier by name. It never fails open (an unknown
-call or implicit dispatch does not count), so it can only reorder equal rows.
+reaches the owner through a caller chain is named before a neighbour that
+only sorts earlier by file or name. It never fails open (an unknown
+call or implicit dispatch does not count), and it only reorders rows equal on
+keys 1-4, across files as well as within one.
 
 ## Oracle Semantics
 
