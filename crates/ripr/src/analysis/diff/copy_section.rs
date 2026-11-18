@@ -224,7 +224,9 @@ mod tests {
                     .iter()
                     .all(|file| file.added_lines.is_empty())
             );
+            std::fs::remove_dir_all(&outside).map_err(|error| error.to_string())?;
         }
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
