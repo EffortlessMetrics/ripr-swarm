@@ -298,3 +298,28 @@ For secrets, workflows, dependency policy, release scripts or command execution,
 inspect permissions, event triggers, fork behavior, artifact/log exposure and
 whether secrets can be printed or written. Routine PR repair does not need to
 read branch-protection or ruleset settings and never authorizes weakening them.
+
+### Native bless-byte parity qualification (#14509/#14510)
+
+The manual `Windows Advisory Shards` workflow accepts `bless_parity_only=true`.
+Dispatch the reviewed candidate branch; omit `candidate_sha` or set it to that
+same full SHA. This mode uses a separate concurrency group and skips the broad
+workspace shards/doctests. Both jobs check out the workflow's exact SHA and
+refuse a different candidate input.
+
+The Windows job executes the production comparison and bless write functions
+with a controlled Python-verify output fixture, including all five golden
+surfaces and CHANGELOG. Two equivalent blesses must preserve bytes; a changed
+mixed plan and a missing destination must refuse before writes. The job exports
+those preserved files and a candidate-bound SHA-256 receipt. The dependent Linux
+job downloads that run's artifact, independently checks canonical bytes, then
+runs the Linux comparison/bless path and rejects wrong-candidate and tampered
+artifact controls. Each job requires exactly one executed passing proof test.
+
+This qualifies the native write contract and cross-platform artifact transport.
+It does not execute the analyzer's full fixture corpus, reproduce the separate
+Windows batch-cache sharing report (#15018), or replace required integration CI.
+The two transport tests are ignored in ordinary suites because they require
+ordered jobs and a real transferred artifact; they must be explicitly selected
+with `--ignored --exact` by this workflow. A synthetic receipt made on Linux is
+only an instrument control, never native Windows evidence.

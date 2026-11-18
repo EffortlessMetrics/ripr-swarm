@@ -4071,7 +4071,9 @@ mod tests {
 
     // Both host branches execute on every host; this is not native Windows
     // process qualification. The native entry point passes cfg!(windows).
-    fn parity_bless_fixture(label: &str) -> Result<(PathBuf, PathBuf, FixtureRun), String> {
+    pub(super) fn parity_bless_fixture(
+        label: &str,
+    ) -> Result<(PathBuf, PathBuf, FixtureRun), String> {
         let dir = unique_temp_path(label);
         let expected = dir.join("expected");
         let actual = dir.join("actual");
@@ -5392,3 +5394,7 @@ mod tests {
             .ok_or_else(|| format!("step 4 --reason quote split a character: {step4}"))
     }
 }
+
+#[cfg(test)]
+#[path = "fixtures/bless_parity_proof.rs"]
+mod bless_parity_proof;
