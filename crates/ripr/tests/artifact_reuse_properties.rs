@@ -445,6 +445,9 @@ fn a_changed_diff_is_refused_not_answered() -> Result<(), String> {
         .ids
         .first()
         .ok_or_else(|| "control produced no finding".to_string())?;
+    // The same reuse answers before the diff changes, so the refusal below
+    // comes from the change and not from the selector or the arguments.
+    run.repo.context(&run.repo.reused(), id)?;
     let mut diff = subject.diff();
     diff.push_str("diff --git a/notes.md b/notes.md\nindex 3333333..4444444 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1,1 +1,2 @@\n first line\n+second line\n");
     run.repo.write("change.diff", &diff)?;
@@ -458,6 +461,14 @@ fn a_changed_diff_is_refused_not_answered() -> Result<(), String> {
             "reuse answered from an artifact whose diff changed: {}",
             ran.stdout
         ));
+    }
+    // The refusal must be the artifact identity check naming the diff bytes,
+    // not some other failure.
+    let said = format!("{}{}", ran.stdout, ran.stderr);
+    for expected in ["cannot be reused", "diff_bytes_hash"] {
+        if !said.contains(expected) {
+            return Err(format!("refusal does not mention `{expected}`: {said}"));
+        }
     }
     Ok(())
 }
