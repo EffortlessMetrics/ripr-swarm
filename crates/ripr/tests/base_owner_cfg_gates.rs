@@ -531,6 +531,14 @@ fn gates_must_name_crate_local_paths() -> Result<(), String> {
             [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
         ),
         (
+            "include of another file named across split literals",
+            "src/real.rs",
+            "mod real;\nmod generated {\n    include!(concat!(env!(\"OUT_DIR\"), \"/\", \"gen\", \".rs\"));\n}\n",
+            DIRECT,
+            vec![],
+            [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        ),
+        (
             "self rename to the owner's name",
             "src/real.rs",
             "mod real;\nmod fake;\n#[cfg(unix)]\nuse self::fake::stub as ready;\n",
@@ -577,34 +585,79 @@ fn gates_must_name_crate_local_paths() -> Result<(), String> {
     ])
 }
 
-/// One #15035 round-4 gap: `(name, owner file, lib.rs items, test-module
-/// import, extra files for a tail path)`.
-type GapCase = (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    fn(TailPath) -> Vec<(&'static str, String)>,
-);
+/// Files beside the four [`tail_class_with`] writes, for a tail path.
+type Extra = fn(TailPath) -> Vec<(&'static str, String)>;
+
+fn no_extra(_: TailPath) -> Vec<(&'static str, String)> {
+    Vec::new()
+}
+
+/// One #15035 gap shape and its ungated control: the same fixture with the
+/// gate (and the test-only twin it selects) removed, so a refusal caused by
+/// a fixture the reading cannot parse would fail the control.
+struct GapCase {
+    name: &'static str,
+    owner: &'static str,
+    items: &'static str,
+    import: &'static str,
+    extra: Extra,
+    control_items: &'static str,
+    control_import: &'static str,
+    control_extra: Extra,
+    /// The control's class on the constant and the unary tail path (main's
+    /// class; the unary tail keeps its own rename refusals).
+    control: [ExposureClass; 2],
+}
+
+fn tail_class_of(
+    path: TailPath,
+    owner: &str,
+    items: &str,
+    import: &str,
+    extra: Extra,
+) -> Result<(ExposureClass, Finding), String> {
+    let extra = extra(path);
+    let extra: Vec<(&str, &str)> = extra
+        .iter()
+        .map(|(file, text)| (*file, text.as_str()))
+        .collect();
+    tail_class_with(path, owner, items, import, &extra)
+}
 
 /// Each gap shape must withhold propagation credit and read
-/// `propagation_unknown` on both tail paths.
+/// `propagation_unknown` on both tail paths, and its control must read its
+/// expected class, with the propagation witness unless that class is
+/// `propagation_unknown`.
 fn check_gap_cases(cases: Vec<GapCase>) -> Result<(), String> {
     let mut wrong = Vec::new();
-    for path in [TailPath::Constant, TailPath::Unary] {
-        for (name, owner_file, items, import, extra) in &cases {
-            let extra = extra(path);
-            let extra: Vec<(&str, &str)> = extra
-                .iter()
-                .map(|(file, text)| (*file, text.as_str()))
-                .collect();
-            let (class, finding) = tail_class_with(path, owner_file, items, import, &extra)?;
+    for (index, path) in [TailPath::Constant, TailPath::Unary]
+        .into_iter()
+        .enumerate()
+    {
+        for case in &cases {
+            let (class, finding) =
+                tail_class_of(path, case.owner, case.items, case.import, case.extra)?;
             if class != ExposureClass::PropagationUnknown
                 || finding.ripr.propagate.state == StageState::Yes
             {
                 wrong.push(format!(
-                    "{path:?} {name}: {class:?} {:?}",
-                    finding.ripr.propagate
+                    "{path:?} {}: {class:?} {:?}",
+                    case.name, finding.ripr.propagate
+                ));
+            }
+            let expected = &case.control[index];
+            let (class, finding) = tail_class_of(
+                path,
+                case.owner,
+                case.control_items,
+                case.control_import,
+                case.control_extra,
+            )?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            if class != *expected || credited == (*expected == ExposureClass::PropagationUnknown) {
+                wrong.push(format!(
+                    "{path:?} {} control: {class:?} {:?}",
+                    case.name, finding.ripr.propagate
                 ));
             }
         }
@@ -621,110 +674,472 @@ fn alias_stand_in(_: TailPath) -> Vec<(&'static str, String)> {
     )]
 }
 
+const ALIAS_IMPORT: &str = "use super::imp::ready;";
+
 /// #15035 review F1: a gated `use` of a module (a plain alias, a `pub use
-/// crate::..` alias, or two same-named modules in different directories)
-/// swaps which file the test reaches, so it gates every owner in the
-/// modules its path names.
+/// crate::..` alias, an alias inside a `{..}` list or of `self`, an alias
+/// chain, or two same-named modules in different directories) swaps which
+/// file the test reaches, so it gates every owner in the modules it may
+/// alias.
 #[test]
 fn a_gated_module_alias_is_a_gate() -> Result<(), String> {
+    const CREDITED: [ExposureClass; 2] = [
+        ExposureClass::WeaklyExposed,
+        ExposureClass::PropagationUnknown,
+    ];
     check_gap_cases(vec![
-        (
-            "gated module alias",
-            "src/real.rs",
-            "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse real as imp;\n#[cfg(test)]\nuse alt as imp;\n",
-            "use super::imp::ready;",
-            alias_stand_in,
-        ),
-        (
-            "gated pub crate module alias",
-            "src/real.rs",
-            "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\npub use crate::real as imp;\n#[cfg(test)]\npub use crate::alt as imp;\n",
-            "use super::imp::ready;",
-            alias_stand_in,
-        ),
-        (
-            "gated import of same-named modules in two directories",
-            "src/a/imp.rs",
-            "mod a;\nmod b;\nmod fake;\n#[cfg(not(test))]\nuse a::imp;\n#[cfg(test)]\nuse b::imp;\n",
-            "use super::imp::ready;",
-            |_| {
-                vec![
-                    ("src/a.rs", "pub mod imp;\n".to_string()),
-                    ("src/b.rs", "pub mod imp;\n".to_string()),
-                    (
-                        "src/b/imp.rs",
-                        "pub use crate::fake::stub as ready;\n".to_string(),
-                    ),
-                ]
-            },
-        ),
+        GapCase {
+            name: "gated module alias",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse real as imp;\n#[cfg(test)]\nuse alt as imp;\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: "mod real;\nmod fake;\nmod alt;\nuse real as imp;\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: CREDITED,
+        },
+        GapCase {
+            name: "gated pub crate module alias",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\npub use crate::real as imp;\n#[cfg(test)]\npub use crate::alt as imp;\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: "mod real;\nmod fake;\nmod alt;\npub use crate::real as imp;\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: CREDITED,
+        },
+        GapCase {
+            name: "gated module alias in a use list",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse crate::{real as imp};\n#[cfg(test)]\nuse crate::{alt as imp};\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: "mod real;\nmod fake;\nmod alt;\nuse crate::{real as imp};\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: CREDITED,
+        },
+        GapCase {
+            name: "gated self alias in a use list",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse self::real::{self as imp};\n#[cfg(test)]\nuse self::alt::{self as imp};\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: "mod real;\nmod fake;\nmod alt;\nuse self::real::{self as imp};\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: CREDITED,
+        },
+        GapCase {
+            name: "gated alias behind an ungated alias chain",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\nmod sel {\n    #[cfg(not(test))]\n    pub use crate::real as inner;\n    #[cfg(test)]\n    pub use crate::alt as inner;\n}\nuse sel::inner as imp;\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: "mod real;\nmod fake;\nmod alt;\nmod sel {\n    pub use crate::real as inner;\n}\nuse sel::inner as imp;\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: CREDITED,
+        },
+        GapCase {
+            name: "gated import of same-named modules in two directories",
+            owner: "src/a/imp.rs",
+            items: "mod a;\nmod b;\nmod fake;\n#[cfg(not(test))]\nuse a::imp;\n#[cfg(test)]\nuse b::imp;\n",
+            import: ALIAS_IMPORT,
+            extra: two_directories,
+            control_items: "mod a;\nmod b;\nmod fake;\nuse a::imp;\n",
+            control_import: ALIAS_IMPORT,
+            control_extra: two_directories,
+            control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        },
     ])
 }
+
+/// `src/a/imp.rs` and `src/b/imp.rs`, the second the test-only stand-in.
+fn two_directories(_: TailPath) -> Vec<(&'static str, String)> {
+    vec![
+        ("src/a.rs", "pub mod imp;\n".to_string()),
+        ("src/b.rs", "pub mod imp;\n".to_string()),
+        (
+            "src/b/imp.rs",
+            "pub use crate::fake::stub as ready;\n".to_string(),
+        ),
+    ]
+}
+
+/// The owner file with a second item, `Helper`, beside the changed tail.
+fn owner_with_helper(path: TailPath) -> Vec<(&'static str, String)> {
+    vec![(
+        "src/real.rs",
+        format!("{}pub struct Helper;\n", path.owner()),
+    )]
+}
+
+/// [`owner_with_helper`] plus `src/other.rs` holding `other`.
+fn other_file(path: TailPath, other: &str) -> Vec<(&'static str, String)> {
+    let mut files = owner_with_helper(path);
+    files.push(("src/other.rs", other.to_string()));
+    files
+}
+
+/// #15035 round-5 review: a gated `use` gates a module only through the
+/// segments by which it may alias one (its last segment, a rename and the
+/// renamed segment, every segment of a glob or `self` import). An
+/// intermediate segment only names the module its leaf lives in, so main's
+/// class is restored for a gated import of another item of the owner's
+/// module, from another file or as a `pub` re-export, and for a third-party
+/// path through a segment named like the owner's module. Each sits beside
+/// its gated counterpart naming the owner, which still gates.
+#[test]
+fn only_aliasing_segments_of_a_gated_use_gate() -> Result<(), String> {
+    const OWNER_REEXPORT: &str = "mod real;\nmod other;\npub use real::ready;\n";
+    let shapes: Vec<(&str, &str, Extra, ExposureClass)> = vec![
+        (
+            "gated import of another item of the owner's module",
+            OWNER_REEXPORT,
+            |path| {
+                other_file(
+                    path,
+                    "#[cfg(test)]\nuse crate::real::Helper;\npub fn o() {}\n",
+                )
+            },
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "same import naming the owner",
+            OWNER_REEXPORT,
+            |path| {
+                other_file(
+                    path,
+                    "#[cfg(test)]\npub use crate::real::ready;\npub fn o() {}\n",
+                )
+            },
+            ExposureClass::PropagationUnknown,
+        ),
+        (
+            "third-party path through a segment named like the owner's module",
+            OWNER_REEXPORT,
+            |path| {
+                other_file(
+                    path,
+                    "#[cfg(feature = \"serde\")]\nuse serde_like::real::Thing;\npub fn o() {}\n",
+                )
+            },
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "same third-party path ending in the owner's module",
+            OWNER_REEXPORT,
+            |path| {
+                other_file(
+                    path,
+                    "#[cfg(feature = \"serde\")]\nuse serde_like::real;\npub fn o() {}\n",
+                )
+            },
+            ExposureClass::PropagationUnknown,
+        ),
+        (
+            "gated re-export of another item of the owner's module",
+            "mod real;\npub use real::ready;\n#[cfg(feature = \"x\")]\npub use real::Helper;\n",
+            owner_with_helper,
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "same re-export naming the owner",
+            "mod real;\n#[cfg(feature = \"x\")]\npub use real::ready;\npub use real::Helper;\n",
+            owner_with_helper,
+            ExposureClass::PropagationUnknown,
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for path in [TailPath::Constant, TailPath::Unary] {
+        for (name, items, extra, expected) in &shapes {
+            let (class, finding) = tail_class_of(path, "src/real.rs", items, GLOB, *extra)?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            if class != *expected || credited == (*expected == ExposureClass::PropagationUnknown) {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// The class of the changed tail of `Thing::ready` in `src/real.rs` (an
+/// inherent method, its tail on line 4), with `items` in `src/lib.rs` and a
+/// test calling `Thing::ready` through `use super::*`, plus the test-only
+/// `src/fake.rs` twin of `Thing` returning the new value.
+fn impl_tail_class(path: TailPath, items: &str) -> Result<(ExposureClass, Finding), String> {
+    let method = |tail: &str| {
+        format!(
+            "pub struct Thing;\nimpl Thing {{\n    {}\n        {tail}\n    }}\n}}\n",
+            path.signature()
+        )
+    };
+    let call = match path {
+        TailPath::Constant => "assert_eq!(Thing::ready(), false);",
+        TailPath::Unary => "assert_eq!(Thing::ready(5), 5);",
+    };
+    let lib = format!(
+        "{items}#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pins() {{\n        {call}\n    }}\n}}\n"
+    );
+    let patch = format!(
+        "diff --git a/src/real.rs b/src/real.rs
+index 1111111..2222222 100644
+--- a/src/real.rs
++++ b/src/real.rs
+@@ -2,5 +2,5 @@
+ impl Thing {{
+     {signature}
+-        {old}
++        {new}
+     }}
+ }}
+",
+        signature = path.signature(),
+        old = path.old_tail(),
+        new = path.new_tail(),
+    );
+    let files = vec![
+        ("src/lib.rs", lib),
+        ("src/real.rs", method(path.new_tail())),
+        ("src/fake.rs", method(path.new_tail())),
+    ];
+    let findings = TempRepo::create(&files, &patch)?.findings()?;
+    let tail = path.new_tail();
+    let mut matching = findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::ReturnValue
+            && finding.probe.location.file.ends_with("src/real.rs")
+            && finding.probe.location.line == 4
+            && finding.probe.expression.trim() == tail
+    });
+    match (matching.next(), matching.next()) {
+        (Some(finding), None) => Ok((finding.class.clone(), finding.clone())),
+        other => Err(format!(
+            "premise: exactly one return_value finding for `{tail}` in src/real.rs, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+/// #15035 round-5 review: a gated swap of the owner's impl self type
+/// (`pub use real::Thing;` beside a test-only `pub use fake::Thing;`) swaps
+/// which `Thing::ready` the test runs, so it gates the owner even though no
+/// gated path names `ready` or a module the owner may be reached through by
+/// alias. Control: the ungated re-export keeps main's credit.
+#[test]
+fn a_gated_swap_of_the_owners_self_type_is_a_gate() -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for (index, path) in [TailPath::Constant, TailPath::Unary]
+        .into_iter()
+        .enumerate()
+    {
+        for (name, items, expected) in [
+            (
+                "gated self-type twin",
+                "mod real;\nmod fake;\n#[cfg(not(test))]\npub use real::Thing;\n#[cfg(test)]\npub use fake::Thing;\n",
+                ExposureClass::PropagationUnknown,
+            ),
+            (
+                "ungated self-type re-export",
+                "mod real;\nmod fake;\npub use real::Thing;\n",
+                [
+                    ExposureClass::WeaklyExposed,
+                    ExposureClass::PropagationUnknown,
+                ][index]
+                    .clone(),
+            ),
+        ] {
+            let (class, finding) = impl_tail_class(path, items)?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            if class != expected || credited == (expected == ExposureClass::PropagationUnknown) {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// The test-module import of F2: a gated redundant `super::ready` import
+/// beside a module-level macro call.
+const MACRO_BESIDE_IMPORT: &str =
+    "use super::*;\n    #[cfg(unix)]\n    use super::ready;\n    test_imports!();";
 
 /// #15035 review F2: a module-level macro call in the `#[cfg(test)]` module
 /// may emit the import that rebinds `ready`, so the gated `use
 /// super::ready;` beside it stays a gate.
 #[test]
 fn a_macro_call_in_the_test_module_keeps_the_gate() -> Result<(), String> {
-    check_gap_cases(vec![(
-        "gated super import beside a module-level macro call",
-        "src/real.rs",
-        "mod real;\nmod fake;\npub use real::ready;\nmacro_rules! test_imports {\n    () => {\n        #[cfg(not(unix))]\n        use crate::fake::stub as ready;\n    };\n}\n",
-        "use super::*;\n    #[cfg(unix)]\n    use super::ready;\n    test_imports!();",
-        |_| Vec::new(),
-    )])
+    const ITEMS: &str = "mod real;\nmod fake;\npub use real::ready;\nmacro_rules! test_imports {\n    () => {\n        #[cfg(not(unix))]\n        use crate::fake::stub as ready;\n    };\n}\n";
+    check_gap_cases(vec![GapCase {
+        name: "gated super import beside a module-level macro call",
+        owner: "src/real.rs",
+        items: ITEMS,
+        import: MACRO_BESIDE_IMPORT,
+        extra: no_extra,
+        control_items: ITEMS,
+        control_import: "use super::*;\n    use super::ready;\n    test_imports!();",
+        control_extra: no_extra,
+        control: [ExposureClass::WeaklyExposed, ExposureClass::WeaklyExposed],
+    }])
+}
+
+/// `src/api.rs` re-exporting `ready` through `std::`.
+fn std_api(gated: bool) -> String {
+    if gated {
+        "#[cfg(not(test))]\npub use std::real::ready;\n#[cfg(test)]\npub use std::fake::stub as ready;\n".to_string()
+    } else {
+        "pub use std::real::ready;\n".to_string()
+    }
 }
 
 /// #15035 review F3: an `extern crate .. as std` anywhere in the crate makes
-/// `std::` a crate-local root, so a gated `use std::..` is a gate.
+/// `std::` a crate-local root, so a gated `use std::..` is a gate. The crate
+/// is `#![no_std]`, so the rename is valid Rust.
 #[test]
 fn a_renamed_extern_crate_disables_the_sysroot_exemption() -> Result<(), String> {
-    check_gap_cases(vec![(
-        "extern crate self as std",
-        "src/real.rs",
-        "extern crate self as std;\nmod real;\nmod fake;\nmod api;\npub use api::*;\n",
-        GLOB,
-        |_| {
-            vec![(
-                "src/api.rs",
-                "#[cfg(not(test))]\npub use std::real::ready;\n#[cfg(test)]\npub use std::fake::stub as ready;\n"
-                    .to_string(),
-            )]
-        },
-    )])
+    const ITEMS: &str =
+        "#![no_std]\nextern crate self as std;\nmod real;\nmod fake;\nmod api;\npub use api::*;\n";
+    check_gap_cases(vec![GapCase {
+        name: "extern crate self as std",
+        owner: "src/real.rs",
+        items: ITEMS,
+        import: GLOB,
+        extra: |_| vec![("src/api.rs", std_api(true))],
+        control_items: ITEMS,
+        control_import: GLOB,
+        control_extra: |_| vec![("src/api.rs", std_api(false))],
+        control: [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::PropagationUnknown,
+        ],
+    }])
 }
+
+/// `src/api.rs` importing `ready` privately after `prefix`, gated by
+/// `predicate` (`None`: the ungated import alone), with a test module
+/// pinning it.
+fn private_api(path: TailPath, prefix: &str, predicate: Option<&str>) -> String {
+    let imports = match predicate {
+        Some(predicate) => format!(
+            "#[cfg(not({predicate}))]\nuse crate::real::ready;\n#[cfg({predicate})]\nuse crate::fake::stub as ready;\n"
+        ),
+        None => "use crate::real::ready;\n".to_string(),
+    };
+    format!(
+        "{prefix}{imports}const D: &str = \"\";\npub fn ready_api() -> i32 {{ 0 }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pins() {{\n        {}\n    }}\n}}\n",
+        path.pin()
+    )
+}
+
+/// `lib.rs` for [`private_api`]: the test reaches the owner only through
+/// `src/api.rs`.
+const PRIVATE_API_ITEMS: &str =
+    "mod real;\nmod fake;\nmod api;\npub use api::ready_api as ready;\n";
 
 /// #15035 review F4: a `;` inside a string literal of the `cfg` predicate
 /// does not hide a private gated import from the caller's prefilter.
 #[test]
 fn a_semicolon_in_a_cfg_string_does_not_hide_the_gate() -> Result<(), String> {
-    check_gap_cases(vec![(
-        "private gated import under a string predicate holding a semicolon",
-        "src/real.rs",
-        "mod real;\nmod fake;\nmod api;\npub use api::ready_api as ready;\n",
-        GLOB,
-        |path| {
+    check_gap_cases(vec![GapCase {
+        name: "private gated import under a string predicate holding a semicolon",
+        owner: "src/real.rs",
+        items: PRIVATE_API_ITEMS,
+        import: GLOB,
+        extra: |path| {
             vec![(
                 "src/api.rs",
-                format!(
-                    "#[cfg(not(feature = \"x;y\"))]\nuse crate::real::ready;\n#[cfg(feature = \"x;y\")]\nuse crate::fake::stub as ready;\npub fn ready_api() -> i32 {{ 0 }}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pins() {{\n        {}\n    }}\n}}\n",
-                    path.pin()
-                ),
+                private_api(path, "", Some("feature = \"x;y\"")),
             )]
         },
-    )])
+        control_items: PRIVATE_API_ITEMS,
+        control_import: GLOB,
+        control_extra: |path| vec![("src/api.rs", private_api(path, "", None))],
+        control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+    }])
 }
+
+/// #15035 round-5 review: a raw C string (`cr"\"`, `cr#".."#`) before a
+/// private gated import is lexed as raw, so its backslash does not swallow
+/// the code after it and hide the gate from the caller's prefilter.
+#[test]
+fn a_raw_c_string_does_not_hide_the_gate() -> Result<(), String> {
+    const CR: &str = "const C: &core::ffi::CStr = cr\"\\\";\n";
+    const CR_HASH: &str = "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n";
+    check_gap_cases(vec![
+        GapCase {
+            name: "raw C string ending in a backslash",
+            owner: "src/real.rs",
+            items: PRIVATE_API_ITEMS,
+            import: GLOB,
+            extra: |path| vec![("src/api.rs", private_api(path, CR, Some("feature = \"x\"")))],
+            control_items: PRIVATE_API_ITEMS,
+            control_import: GLOB,
+            control_extra: |path| vec![("src/api.rs", private_api(path, CR, None))],
+            control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        },
+        GapCase {
+            name: "raw C string with hashes",
+            owner: "src/real.rs",
+            items: PRIVATE_API_ITEMS,
+            import: GLOB,
+            extra: |path| {
+                vec![(
+                    "src/api.rs",
+                    private_api(path, CR_HASH, Some("feature = \"x\"")),
+                )]
+            },
+            control_items: PRIVATE_API_ITEMS,
+            control_import: GLOB,
+            control_extra: |path| vec![("src/api.rs", private_api(path, CR_HASH, None))],
+            control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        },
+    ])
+}
+
+/// The control of the `include!` gaps: an ungated `imp` module re-exporting
+/// the owner without an `include!`. An `include!` naming the owner file
+/// gates whether or not it is itself gated (it compiles the file a second
+/// time), so the control drops it with the gate.
+const INCLUDE_CONTROL: &str =
+    "mod real;\nmod fake;\nmod alt;\nmod imp {\n    pub use crate::real::ready;\n}\n";
 
 /// #15035 review F5: an `include!` whose path is not a single literal
 /// (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) in a cfg-twin
-/// module gates the file its trailing literal names.
+/// module gates the file its trailing literals name, joined when they split
+/// the file name (`"/src/re", "al.rs"`, round 5).
 #[test]
 fn a_non_literal_include_is_a_gate() -> Result<(), String> {
-    check_gap_cases(vec![(
-        "cfg-twin modules including through concat",
-        "src/real.rs",
-        "mod real;\nmod fake;\n#[cfg(not(test))]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n#[cfg(test)]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/alt.rs\"));\n}\n",
-        "use super::imp::ready;",
-        alias_stand_in,
-    )])
+    check_gap_cases(vec![
+        GapCase {
+            name: "cfg-twin modules including through concat",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n#[cfg(test)]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/alt.rs\"));\n}\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: INCLUDE_CONTROL,
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        },
+        GapCase {
+            name: "cfg-twin modules including a file name split across literals",
+            owner: "src/real.rs",
+            items: "mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/re\", \"al.rs\"));\n}\n#[cfg(test)]\nmod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/alt.rs\"));\n}\n",
+            import: ALIAS_IMPORT,
+            extra: alias_stand_in,
+            control_items: INCLUDE_CONTROL,
+            control_import: ALIAS_IMPORT,
+            control_extra: alias_stand_in,
+            control: [ExposureClass::Exposed, ExposureClass::PropagationUnknown],
+        },
+    ])
 }

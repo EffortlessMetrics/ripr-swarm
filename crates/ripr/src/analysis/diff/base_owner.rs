@@ -94,9 +94,6 @@ pub(crate) fn verified_base_owner(
 ) -> Option<BaseOwner> {
     let name = unraw(name);
     let chain = module_chain_names(owner_file);
-    if modules.chain_changed(owner_file, &chain, name) {
-        return None;
-    }
     let new_parse = crate::analysis::syntax::parse_clean_source_file(new_source)?;
     let new_root = new_parse.tree().syntax().clone();
     let mut enclosing = named_functions(&new_root, name).filter(|function| {
@@ -105,6 +102,10 @@ pub(crate) fn verified_base_owner(
     });
     // Innermost last: a nested function of the same name is the owner.
     let new_fn = enclosing.next_back()?;
+    let names = owner_names(&new_fn, name);
+    if modules.chain_changed(owner_file, &chain, &names) {
+        return None;
+    }
     let new_path = qualified_path(new_source, &new_fn)?;
     let bare = bare_path(new_source, &new_fn)?;
     if !unique_under(new_source, &new_root, name, &bare) {
@@ -167,7 +168,7 @@ pub(crate) fn verified_base_owner(
         old_first_line: old_first,
         cfg_gated: cfg_gated(&new_fn)
             || cfg_gated(&old_fn)
-            || modules.chain_gated(owner_file, &chain, name)
+            || modules.chain_gated(owner_file, &chain, &names)
             || !modules.declares(owner_file),
     })
 }
@@ -596,14 +597,11 @@ impl ModuleDeclarations {
         let gated_use = source.contains("cfg") && {
             let code = blank_literals_and_comments(source);
             let words_before = |offset: usize| code.get(..offset).unwrap_or_default().trim_end();
-            code.match_indices("cfg").any(|(start, _)| {
-                let rest = code.get(start + 3..).unwrap_or_default();
-                let window = rest.split([';', '{']).next().unwrap_or_default();
-                has_word(window, "use")
-            }) || word_offsets(&code, "use").any(|offset| {
-                let before = words_before(offset);
-                before.ends_with(')') || ends_with_word(before, "pub")
-            })
+            code.split([';', '{']).any(cfg_runs_into_use)
+                || word_offsets(&code, "use").any(|offset| {
+                    let before = words_before(offset);
+                    before.ends_with(')') || ends_with_word(before, "pub")
+                })
         };
         let include = source.match_indices("include").any(|(start, word)| {
             source
@@ -764,25 +762,35 @@ impl ModuleDeclarations {
 
     /// Whether the diff may have changed which module `chain` (the names on
     /// `owner_file`'s path) names, or how its declarations, its file, or a
-    /// `use` naming the function `name`, are gated.
-    fn chain_changed(&self, owner_file: &Path, chain: &BTreeSet<String>, name: &str) -> bool {
+    /// `use` naming one of the owner's `names` (see [`owner_names`]), are gated.
+    fn chain_changed(
+        &self,
+        owner_file: &Path,
+        chain: &BTreeSet<String>,
+        names: &BTreeSet<String>,
+    ) -> bool {
         self.unreadable
             || self.changed_retarget
             || self.changed_sysroot_shadow
             || !self.changed.is_disjoint(chain)
-            || self.changed_names.contains(name)
-            || self.sysroot_shadowed && touches_chain(&self.changed_sysroot, chain, name)
+            || !self.changed_names.is_disjoint(names)
+            || self.sysroot_shadowed && touches_chain(&self.changed_sysroot, chain, names)
             || macro_scope_reaches(&self.changed_macro_scopes, owner_file)
             || included(&self.changed_files, owner_file)
     }
 
     /// Whether a declaration on `chain`, `owner_file` itself, or a `use`
-    /// naming the function `name`, may be compiled out or retargeted.
-    fn chain_gated(&self, owner_file: &Path, chain: &BTreeSet<String>, name: &str) -> bool {
+    /// naming one of the owner's `names`, may be compiled out or retargeted.
+    fn chain_gated(
+        &self,
+        owner_file: &Path,
+        chain: &BTreeSet<String>,
+        names: &BTreeSet<String>,
+    ) -> bool {
         self.retargeted
             || !self.gated.is_disjoint(chain)
-            || self.gated_names.contains(name)
-            || self.sysroot_shadowed && touches_chain(&self.sysroot_gated, chain, name)
+            || !self.gated_names.is_disjoint(names)
+            || self.sysroot_shadowed && touches_chain(&self.sysroot_gated, chain, names)
             || included(&self.gated_files, owner_file)
     }
 
@@ -807,9 +815,42 @@ impl ModuleDeclarations {
     }
 }
 
-/// Whether `names` holds `name` or a component of `chain`.
-fn touches_chain(names: &BTreeSet<String>, chain: &BTreeSet<String>, name: &str) -> bool {
-    names.contains(name) || !names.is_disjoint(chain)
+/// Whether `gated` holds one of the owner's `names` or a component of
+/// `chain`.
+fn touches_chain(
+    gated: &BTreeSet<String>,
+    chain: &BTreeSet<String>,
+    names: &BTreeSet<String>,
+) -> bool {
+    !gated.is_disjoint(names) || !gated.is_disjoint(chain)
+}
+
+/// The names a `use` can swap the owner through: the function's `name`,
+/// and every name in the self type and trait of each enclosing `impl` and
+/// in each enclosing `trait`'s name (#15035 round-5 review: a gated `pub use
+/// real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`).
+fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::from([name.to_string()]);
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if let Some(block) = ast::Impl::cast(ancestor.clone()) {
+            let types = block
+                .self_ty()
+                .map(|ty| ty.syntax().clone())
+                .into_iter()
+                .chain(block.trait_().map(|ty| ty.syntax().clone()));
+            names.extend(types.flat_map(|ty| {
+                ty.descendants()
+                    .filter_map(ast::NameRef::cast)
+                    .map(|found| unraw(found.text()).to_string())
+                    .collect::<Vec<_>>()
+            }));
+        } else if let Some(definition) = ast::Trait::cast(ancestor)
+            && let Some(found) = definition.name()
+        {
+            names.insert(unraw(found.text()).to_string());
+        }
+    }
+    names
 }
 
 /// Whether some path in `files` names `owner_file`. An owner path that
@@ -881,9 +922,11 @@ fn blank_literals_and_comments(source: &str) -> String {
                     }
                 }
             }
+            // `r"..."`, or the byte and C raw strings `br"..."` and
+            // `cr"..."` (#15035 round-5 review).
             (b'r', Some(b'#' | b'"'))
                 if !ident_before(index)
-                    || (at(index.wrapping_sub(1)) == Some(b'b')
+                    || (matches!(at(index.wrapping_sub(1)), Some(b'b' | b'c'))
                         && !ident_before(index.wrapping_sub(1))) =>
             {
                 let hashes = (index + 1..bytes.len())
@@ -939,6 +982,27 @@ fn blank_literals_and_comments(source: &str) -> String {
         index = end.max(index + 1);
     }
     String::from_utf8(code).unwrap_or_else(|_| source.to_string())
+}
+
+/// Whether some `cfg` in `segment` (blanked code holding no `;` or `{`) is
+/// followed in it by the word `use`: a `use` after the first `cfg` whose
+/// next character is not an identifier character, and whose previous one is
+/// not either or ends that `cfg` itself (`cfguse`, as a scan from a `cfg`'s
+/// end reads it). One pass, so a file of many `cfg`s with no `;` or `{`
+/// between them stays linear (#15035 round-5 review).
+fn cfg_runs_into_use(segment: &str) -> bool {
+    let Some(first) = segment.find("cfg") else {
+        return false;
+    };
+    segment.match_indices("use").any(|(start, _)| {
+        let after = segment
+            .get(start + 3..)
+            .and_then(|tail| tail.chars().next());
+        let head = segment.get(..start).unwrap_or_default();
+        start >= first + 3
+            && !after.is_some_and(is_ident_char)
+            && (head.ends_with("cfg") || !head.chars().next_back().is_some_and(is_ident_char))
+    })
 }
 
 /// Whether `text` holds `word` delimited by non-identifier characters.
@@ -1025,11 +1089,15 @@ impl OutsideGates {
     }
 
     /// Every name a gated `use` brings in: each leaf's last segment and
-    /// rename, and every segment of its path as a module name, since a leaf
-    /// may import a module (#15035 review F1). A redundant `super::name`
-    /// import of a test module brings in none, and a leaf rooted at a
-    /// sysroot crate brings its names in only as [`Self::sysroot`] (see
-    /// [`ModuleDeclarations`]).
+    /// rename. As module names, the ones through which it may alias or swap
+    /// a module (#15035 review F1, narrowed in round 5): its last segment
+    /// (`use a::imp;` may import the module `imp`), its rename and the
+    /// renamed segment (`use real as imp;`), and for a glob or `self` leaf
+    /// every segment of its path. An intermediate segment of any other leaf
+    /// (`use crate::real::Helper;`) only names the module the leaf lives in,
+    /// which it cannot swap. A redundant `super::name` import of a test
+    /// module brings in none, and a leaf rooted at a sysroot crate brings its
+    /// names in only as [`Self::sysroot`] (see [`ModuleDeclarations`]).
     fn read_use(&mut self, item: &ast::Use) {
         let Some(tree) = item.use_tree() else {
             return;
@@ -1047,27 +1115,29 @@ impl OutsideGates {
             if redundant_test_import(item, &leaf, &path) {
                 continue;
             }
-            let sysroot = sysroot_rooted(item, &path);
-            if let Some(rename) = leaf.rename().and_then(|rename| rename.name()) {
-                let rename = unraw(rename.text()).to_string();
-                if sysroot {
-                    self.sysroot.insert(rename);
-                } else {
-                    self.names.insert(rename);
-                }
-            }
+            let rename = leaf
+                .rename()
+                .and_then(|rename| rename.name())
+                .map(|rename| unraw(rename.text()).to_string());
             let own_last = leaf
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
                 .map(|name| unraw(name.text()).to_string())
                 .filter(|last| leaf.star_token().is_none() && last != "self");
-            if sysroot {
-                self.sysroot.extend(own_last);
-                self.sysroot.extend(path);
+            let names: Vec<String> = rename.into_iter().chain(own_last.clone()).collect();
+            // A glob or `self` leaf imports from (or is) every module on its
+            // path; any other leaf may be a module only by its last segment
+            // or rename.
+            let modules = match own_last {
+                Some(_) => names.clone(),
+                None => names.iter().cloned().chain(path.iter().cloned()).collect(),
+            };
+            if sysroot_rooted(item, &path) {
+                self.sysroot.extend(modules);
             } else {
-                self.names.extend(own_last);
-                self.modules.extend(path);
+                self.names.extend(names);
+                self.modules.extend(modules);
             }
         }
     }
@@ -1076,8 +1146,9 @@ impl OutsideGates {
     /// directory of `file`, or its stem when it cannot be resolved. For an
     /// argument that is not one plain string literal
     /// (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`, #15035 review
-    /// F5), the stem of its last string literal when that names a `.rs`
-    /// file, and otherwise [`Self::opaque_include`].
+    /// F5), the stem of the path its trailing string literals spell when
+    /// that names a `.rs` file (see [`trailing_literal_path`]), and otherwise
+    /// [`Self::opaque_include`].
     fn read_include(&mut self, file: &Path, call: &ast::MacroCall) {
         let Some(tree) = call.token_tree() else {
             self.opaque_include = true;
@@ -1107,14 +1178,8 @@ impl OutsideGates {
             _ => None,
         };
         let Some(text) = literal else {
-            let last = tree
-                .syntax()
-                .descendants_with_tokens()
-                .filter_map(|element| element.into_token())
-                .filter(|token| token.kind() == SyntaxKind::STRING)
-                .last()
-                .and_then(|token| string_literal_value(token.text()).map(str::to_string));
-            let stem = last.as_deref().and_then(|text| {
+            let stem = trailing_literal_path(&tree).and_then(|text| {
+                let text = text.as_str();
                 text.strip_suffix(".rs")?;
                 Path::new(text)
                     .file_stem()
@@ -1146,6 +1211,56 @@ impl OutsideGates {
             }
         }
     }
+}
+
+/// The path the trailing run of string literals of a non-literal `include!`
+/// argument spells, joined (`concat!(env!(..), "/src/re", "al.rs")` spells
+/// `/src/real.rs`, #15035 round-5 review): the literals, separated only by
+/// commas, that end its tokens before the closing delimiters. `None` when
+/// the tokens do not end in a literal, a literal has escapes, or the run
+/// follows another token and spells no `/` (a file name the preceding
+/// token may prefix).
+fn trailing_literal_path(tree: &ast::TokenTree) -> Option<String> {
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let mut rest = tokens.as_slice();
+    while let Some((last, before)) = rest.split_last() {
+        if !matches!(
+            last.kind(),
+            SyntaxKind::R_PAREN | SyntaxKind::R_BRACK | SyntaxKind::R_CURLY | SyntaxKind::COMMA
+        ) {
+            break;
+        }
+        rest = before;
+    }
+    let mut parts = Vec::new();
+    while let Some((last, before)) = rest.split_last() {
+        if last.kind() != SyntaxKind::STRING {
+            break;
+        }
+        parts.push(string_literal_value(last.text())?);
+        rest = before;
+        match rest.split_last() {
+            Some((comma, before)) if comma.kind() == SyntaxKind::COMMA => rest = before,
+            _ => break,
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.reverse();
+    let joined = parts.concat();
+    let opens_argument = rest.last().is_none_or(|token| {
+        matches!(
+            token.kind(),
+            SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY | SyntaxKind::COMMA
+        )
+    });
+    (opens_argument || joined.contains('/')).then_some(joined)
 }
 
 /// The value of a plain or raw string literal token with no escapes.
@@ -2435,6 +2550,8 @@ mod tests {
             "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        extern crate core as std;\n    }\n}\n",
             "mod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n",
             "mod imp {\n    include!(env!(\"GENERATED\"));\n}\n",
+            "const C: &core::ffi::CStr = cr\"\\\";\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
+            "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
         ] {
             let parse = crate::analysis::syntax::parse_clean_source_file(source)
                 .ok_or("fixture premise: source did not parse")?;

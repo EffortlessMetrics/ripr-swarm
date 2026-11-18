@@ -240,15 +240,23 @@ changed body. The identity reports a gate when any of these holds:
 - a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
   owner file's path, on an item enclosing one or on its declaring file, or any
   `#[path]` declaration;
-- a `use` with its own `cfg`/`cfg_attr`, or a `pub` one under a gated item or
-  file, whose leaf or rename is the owner's name, or any segment of whose
-  path names a module named like a component of the owner file's path, since
-  the leaf may itself be a module (`use real as imp;`, `use a::imp;`)
-  (#14952, #15035). A test module's private import gated only by its module's
-  `#[cfg(test)]` is not a gate. Two gated imports are not gates either. One
-  rooted at a sysroot crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in
-  a module whose items cannot shadow that root (no item, `use`, `extern
-  crate`, non-sysroot glob or macro call naming it) names that crate, which
+- a `use` written as an item (not emitted by a macro) with its own
+  `cfg`/`cfg_attr`, or a `pub` one under a gated item or file, whose leaf or
+  rename is the owner's name or a name in the self type or trait of an
+  `impl` (or the name of a `trait`) enclosing the owner (`pub use
+  real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`), or which
+  may alias a module named like a component of the owner file's path: by its
+  last segment, since the leaf may itself be a module (`use a::imp;`), by a
+  rename or the segment it renames (`use real as imp;`, `use
+  crate::{real as imp};`), or by any segment of a glob or `self` import
+  (#14952, #15035). An intermediate segment of any other leaf only names the
+  module that leaf lives in, so `#[cfg(test)] use crate::real::Helper;` does
+  not gate `src/real.rs`. A test module's private import gated only by its
+  module's `#[cfg(test)]` is not a gate. Two gated imports are not gates
+  either. One rooted at a sysroot crate (`std`, `core`, `alloc`,
+  `proc_macro`, `test`) in a module whose items cannot shadow that root (no
+  item, `use`, `extern crate`, non-sysroot glob or macro call naming it)
+  names that crate, which
   holds no workspace function, unless an `extern crate .. as` anywhere in the
   workspace (an item, or macro tokens spelling one) renames a crate to a
   sysroot name (`extern crate self as std;`): then it gates like any other
@@ -270,8 +278,11 @@ changed body. The identity reports a gate when any of these holds:
   or climbing above the including path) gates the owner file's stem by name.
   An `include!` whose argument is not one plain string literal
   (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) gates, by name, the
-  stem of its last string literal when that ends in a `.rs` file name, and
-  every owner otherwise (#15035);
+  stem of the path its trailing string literals spell, joined
+  (`"/src/re", "al.rs"` spells `/src/real.rs`), when that ends in a `.rs`
+  file name, and every owner otherwise: when the argument does not end in a
+  literal, a literal has escapes, or the run follows another token and
+  spells no `/` (#15035);
 - a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
   followed by a name and no `{` body), an `include!` or a `#[path]`
   (`path =`), and the owner file is not a crate root of the package that
@@ -290,9 +301,15 @@ expand (a `cfg_if::cfg_if!` block declaring `mod real;` beside an unrelated
 `mod real;` in another directory credits `src/real.rs`); and a package scope
 is read from the path layout, so a non-exported macro reaches every target of
 its package but no other package. Not read: a module or re-export emitted by
-a procedural macro, and a private `use` gated only through its enclosing
-module. The unary-tail reading alone keeps its own refusals for these (its
-same-name, rename, `include!` and `macro_rules!` checks above); the
+a procedural macro; a private `use` gated only through its enclosing module;
+a gated `use` that a macro's tokens emit (a `cfg_if::cfg_if!` block holding
+only gated imports or a gated module alias, a `macro_rules!` emitting a gated
+`pub use` in another file, a macro emitting an import in the test module),
+since only `use` items are read; and a gated alias of a module that only
+re-exports the owner (`#[cfg(not(test))] use api as imp;` where `api` holds
+`pub use crate::real::ready;`), since only the owner's own module chain is
+matched (#15037). The unary-tail reading alone keeps its own refusals for
+these (its same-name, rename, `include!` and `macro_rules!` checks above); the
 constant-tail reading has no such second check, so on that path these limits
 can credit.
 
