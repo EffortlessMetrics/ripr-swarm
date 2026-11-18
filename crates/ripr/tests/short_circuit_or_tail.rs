@@ -395,8 +395,12 @@ fn the_substituted_rendered_call_withholds_exactly_like_the_direct_pin() -> Resu
 fn a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter() -> Result<(), String>
 {
     // The helper's third parameter is also named `n`. The substituted call
-    // `is_even(n)` must read the test's `n = 0`, not the helper's `4`: the
-    // dropped guard decides at 0, so the pin stays exposed (#14194 review).
+    // `is_even(n)` must not read the helper's `4`: with the loan withheld the
+    // test's `let n = 0` is unreadable (a plain identifier argument is read
+    // only from a constant-row `for` table), so agreement cannot be proven and
+    // the pin stays exposed. Without the filter the helper's `4` is read, the
+    // dropped guard agrees, and the class drops to weakly_exposed — that is
+    // the discrimination this test pins (#14194 review).
     let collision = "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String, n: u32) {\n    assert_eq!(actual, expected);\n    let _ = n;\n}\n\n#[test]\nfn helper() {\n    let n = 0;\n    let actual = format!(\"{}\", is_even(n));\n    let expected = String::from(\"false\");\n    check(actual, expected, 4);\n}\n";
     let (class, _) = return_value_class(
         EVEN_DROPPED_SOURCE,
