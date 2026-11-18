@@ -14,8 +14,11 @@ struct Repo {
 
 impl Drop for Repo {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-        let _ = std::fs::remove_file(&self.marker);
+        // A failing assertion keeps the fixture for inspection.
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.root);
+            let _ = std::fs::remove_file(&self.marker);
+        }
     }
 }
 
@@ -113,8 +116,8 @@ fn repository_clean_filter_program_does_not_run() -> Result<(), String> {
     Ok(())
 }
 
-/// The pins are cached per root; a driver planted after the first call on
-/// that root is still seen, because `.git/config` changed.
+/// The listing is read for every call, so a driver planted after the first
+/// call on that root is still reset.
 #[test]
 fn clean_filter_planted_after_the_first_call_does_not_run() -> Result<(), String> {
     let repo = repo("late")?;
@@ -193,13 +196,25 @@ fn repository_gpg_program_does_not_run_on_log() -> Result<(), String> {
 }
 
 fn listing(entries: &[(&str, &str, &str)]) -> Vec<u8> {
+    let entries: Vec<_> = entries
+        .iter()
+        .map(|(scope, key, value)| (*scope, *key, Some(*value)))
+        .collect();
+    listing_with_valueless(&entries)
+}
+
+/// `git config --show-scope -z` output; a `None` value is a key written with
+/// no value, which git prints with no line feed after the key.
+fn listing_with_valueless(entries: &[(&str, &str, Option<&str>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (scope, key, value) in entries {
         out.extend_from_slice(scope.as_bytes());
         out.push(0);
         out.extend_from_slice(key.as_bytes());
-        out.push(b'\n');
-        out.extend_from_slice(value.as_bytes());
+        if let Some(value) = value {
+            out.push(b'\n');
+            out.extend_from_slice(value.as_bytes());
+        }
         out.push(0);
     }
     out
@@ -264,4 +279,204 @@ fn listing_edge_shapes_fail_closed() {
             "filter.lfs.required=false".to_string(),
         ])
     );
+}
+
+#[test]
+fn probe_exit_states_fail_closed_when_the_listing_is_unknown() {
+    let empty = RepositoryFilterPins::Overrides(Vec::new());
+    let one = listing(&[("local", "filter.x.clean", "run")]);
+    assert_eq!(
+        filter_pins_for_probe_exit(Some(0), &one, true),
+        Some(RepositoryFilterPins::Overrides(vec![
+            "filter.x.clean=".to_string()
+        ]))
+    );
+    assert_eq!(
+        filter_pins_for_probe_exit(Some(1), b"", true),
+        Some(empty.clone())
+    );
+    // Old git: retry unscoped once; the unscoped answer is final.
+    assert_eq!(filter_pins_for_probe_exit(Some(129), b"", true), None);
+    assert_eq!(
+        filter_pins_for_probe_exit(Some(129), b"", false),
+        Some(empty.clone())
+    );
+    assert_eq!(
+        filter_pins_for_probe_exit(Some(128), b"", true),
+        Some(empty)
+    );
+    // Ended by a signal: no exit code, so nothing is known about the listing.
+    for with_scope in [true, false] {
+        assert_eq!(
+            filter_pins_for_probe_exit(None, &one, with_scope),
+            Some(RepositoryFilterPins::Refused)
+        );
+    }
+}
+
+/// A valueless boolean is true to git and an empty one is false, so a
+/// trusted valueless `required` must come back as `true`.
+#[test]
+fn trusted_valueless_required_stays_required() {
+    let stdout = listing_with_valueless(&[
+        ("global", "filter.x.clean", Some("trusted-clean")),
+        ("global", "filter.x.required", None),
+        ("local", "filter.x.clean", Some("planted-clean")),
+        ("local", "filter.x.required", Some("false")),
+        ("local", "filter.y.required", None),
+        ("local", "filter.y.clean", None),
+    ]);
+    assert_eq!(
+        filter_pins_from_listing(&stdout, true),
+        RepositoryFilterPins::Overrides(vec![
+            "filter.x.clean=trusted-clean".to_string(),
+            "filter.x.required=true".to_string(),
+            "filter.y.clean=".to_string(),
+            "filter.y.required=false".to_string(),
+        ])
+    );
+}
+
+/// Real git: a trusted clean filter that fails and is marked required by a
+/// valueless key must fail ripr's call the way it fails plain git. The pin
+/// the listing used to produce (`required=`) hashes raw content instead.
+#[test]
+fn trusted_valueless_required_filter_still_refuses_raw_content() -> Result<(), String> {
+    let repo = repo("valueless")?;
+    std::fs::create_dir_all(repo.root.join(".git/info")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        repo.root.join(".git/info/attributes"),
+        "lib.rs filter=strict\n",
+    )
+    .map_err(|err| err.to_string())?;
+    // The user's own definition, read through `GIT_CONFIG_GLOBAL`.
+    let global = repo.marker.with_extension("gitconfig");
+    std::fs::write(
+        &global,
+        "[filter \"strict\"]\n\tclean = false\n\trequired\n",
+    )
+    .map_err(|err| err.to_string())?;
+    plain_git(&repo.root, &["config", "filter.strict.required", "false"])?;
+
+    let with_global = |mut command: Command| -> Result<Output, String> {
+        command
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| err.to_string())
+    };
+    let listed = with_global(fixture_git_command(
+        &repo.root,
+        &[
+            "config",
+            "--show-scope",
+            "--includes",
+            "-z",
+            "--get-regexp",
+            FILTER_CONFIG_PATTERN,
+        ],
+    ))?;
+    let pins = filter_pins_from_listing(&listed.stdout, true);
+    let args = ["hash-object", "--path=lib.rs", "--stdin"];
+    let pinned = with_global(git_command_with_filter_pins(&repo.root, &args, &pins))?;
+    let emptied = with_global(git_command_with_filter_pins(
+        &repo.root,
+        &args,
+        &RepositoryFilterPins::Overrides(vec!["filter.strict.required=".to_string()]),
+    ))?;
+    let _ = std::fs::remove_file(&global);
+
+    assert_eq!(
+        pins,
+        RepositoryFilterPins::Overrides(vec!["filter.strict.required=true".to_string()]),
+        "listing: {:?}",
+        String::from_utf8_lossy(&listed.stdout)
+    );
+    assert!(
+        emptied.status.success(),
+        "control: an empty `required` hashes raw content: {emptied:?}"
+    );
+    assert!(
+        !pinned.status.success(),
+        "the trusted required filter was made optional: {pinned:?}"
+    );
+    Ok(())
+}
+
+/// `GIT_CONFIG` redirects only `git config`, so an inherited value would
+/// blind the listing while other calls still read the repository.
+#[test]
+fn inherited_git_config_selector_is_removed_from_every_call() {
+    let command = fixture_git_command(Path::new("."), &["status"]);
+    let removed = command
+        .get_envs()
+        .any(|(key, value)| key == "GIT_CONFIG" && value.is_none());
+    assert!(removed, "GIT_CONFIG must be removed from the child");
+}
+
+/// A filter that arrives through an included file leaves `.git/config`
+/// untouched; the next call must still reset it.
+#[test]
+fn clean_filter_added_to_an_included_file_does_not_run() -> Result<(), String> {
+    let repo = repo("include")?;
+    let included = repo.root.join(".git").join("extra.config");
+    std::fs::write(&included, "").map_err(|err| err.to_string())?;
+    plain_git(&repo.root, &["config", "include.path", "extra.config"])?;
+    run_git(&repo.root, &["status", "--porcelain"])?;
+
+    std::fs::create_dir_all(repo.root.join(".git/info")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        repo.root.join(".git/info/attributes"),
+        "lib.rs filter=inc\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        &included,
+        format!(
+            "[filter \"inc\"]\n\tclean = \"touch '{}'; cat\"\n",
+            repo.marker.display()
+        ),
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(repo.root.join("lib.rs"), "fn d() {}\n").map_err(|err| err.to_string())?;
+
+    plain_git(&repo.root, &["status", "--porcelain"])?;
+    assert!(
+        take_marker(&repo),
+        "control: plain git runs the included filter"
+    );
+    let status = run_git(&repo.root, &["status", "--porcelain"])?;
+    assert!(
+        !take_marker(&repo),
+        "ripr git status ran the included filter"
+    );
+    assert!(status.contains("lib.rs"), "{status}");
+    Ok(())
+}
+
+/// A zero deadline starts no listing; a real deadline starts one inside it.
+#[test]
+fn filter_listing_runs_inside_the_callers_deadline() -> Result<(), String> {
+    let repo = repo("budget")?;
+    let probes = || TEST_FILTER_PROBE_SPAWNS.with(std::cell::Cell::get);
+
+    let before = (probes(), test_process_spawns());
+    let zero = run_git_output_with_deadline(&repo.root, &["status"], Some(Duration::ZERO));
+    assert!(zero.is_err_and(|err| err.is_git_invocation_timeout()));
+    assert_eq!(
+        (probes(), test_process_spawns()),
+        before,
+        "a zero deadline spawned a process"
+    );
+
+    let (_, remaining) = git_command_within(&repo.root, &["status"], Some(Duration::from_secs(30)));
+    assert_eq!(probes(), before.0 + 1, "a real deadline lists once");
+    assert!(remaining.is_some_and(|left| left < Duration::from_secs(30)));
+
+    // A budget too small for any listing is refused, never unpinned.
+    assert_eq!(
+        probe_repository_filter_pins(&repo.root, Some(Duration::from_nanos(1))),
+        RepositoryFilterPins::Refused
+    );
+    Ok(())
 }

@@ -320,8 +320,12 @@ resets each `filter.<driver>.clean`, `.smudge`, `.process` and `.required`
 key that the repository or worktree configuration defines to the value the
 user's own system or global configuration gives it, or to nothing, and sets
 `log.showSignature=false` so `gpg.program` is not run on `git log`. A driver
-the user installed globally keeps working. When the filter listing cannot be
-read, is truncated, or names a driver that cannot be reset on the command
+the user installed globally keeps working, including a `required` key
+written with no value, which stays true. The listing is read before each
+call and is not cached, runs inside the caller's deadline (a zero deadline
+starts no process), and an inherited `GIT_CONFIG` is removed so the listing
+reads the same configuration the call does. When the filter listing cannot be
+read, is ended by a signal, is truncated, or names a driver that cannot be reset on the command
 line, ripr does not run Git in that repository. A populated submodule's own
 repository configuration is outside this guarantee (Unix proof).
 
@@ -436,6 +440,12 @@ repository configuration is outside this guarantee (Unix proof).
 - `crates/ripr/src/git_helper_pin_tests.rs::repository_gpg_program_does_not_run_on_log`
 - `crates/ripr/src/git_helper_pin_tests.rs::user_scope_filter_definitions_survive_and_repository_ones_are_reset`
 - `crates/ripr/src/git_helper_pin_tests.rs::listing_edge_shapes_fail_closed`
+- `crates/ripr/src/git_helper_pin_tests.rs::probe_exit_states_fail_closed_when_the_listing_is_unknown`
+- `crates/ripr/src/git_helper_pin_tests.rs::trusted_valueless_required_stays_required`
+- `crates/ripr/src/git_helper_pin_tests.rs::trusted_valueless_required_filter_still_refuses_raw_content`
+- `crates/ripr/src/git_helper_pin_tests.rs::inherited_git_config_selector_is_removed_from_every_call`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_added_to_an_included_file_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::filter_listing_runs_inside_the_callers_deadline`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 
