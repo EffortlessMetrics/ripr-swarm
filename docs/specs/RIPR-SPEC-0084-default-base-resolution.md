@@ -312,6 +312,19 @@ on it) and is outside this guarantee. Everyday commands (`doctor`, `check`,
 `pilot`, `first-pr`, `cache status`, `help --json`, `init --ci github`)
 complete with the network sealed.
 
+### Repository-defined git helpers do not run (#14242)
+
+A `.git/config` that arrives with an extracted archive or a nested
+repository can name programs for Git to run. Every ripr Git invocation
+resets each `filter.<driver>.clean`, `.smudge`, `.process` and `.required`
+key that the repository or worktree configuration defines to the value the
+user's own system or global configuration gives it, or to nothing, and sets
+`log.showSignature=false` so `gpg.program` is not run on `git log`. A driver
+the user installed globally keeps working. When the filter listing cannot be
+read, is truncated, or names a driver that cannot be reset on the command
+line, ripr does not run Git in that repository. A populated submodule's own
+repository configuration is outside this guarantee (Unix proof).
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -417,6 +430,12 @@ complete with the network sealed.
 - `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
 - `crates/ripr/src/analysis/diff/load.rs::tests::offline_partial_clone_fetch_is_not_object_damage`
 - `crates/ripr/src/git.rs::tests::git_commands_disable_terminal_and_gcm_credential_prompts`
+- `crates/ripr/src/git_helper_pin_tests.rs::repository_clean_filter_program_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_planted_after_the_first_call_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_with_an_unspellable_driver_name_is_refused`
+- `crates/ripr/src/git_helper_pin_tests.rs::repository_gpg_program_does_not_run_on_log`
+- `crates/ripr/src/git_helper_pin_tests.rs::user_scope_filter_definitions_survive_and_repository_ones_are_reset`
+- `crates/ripr/src/git_helper_pin_tests.rs::listing_edge_shapes_fail_closed`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 
