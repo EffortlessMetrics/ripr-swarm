@@ -182,6 +182,16 @@ fn a_copied_file_gets_the_findings_of_the_same_file_added_plainly() -> Result<()
         ),
     )?;
     assert_eq!(edited, reference);
+
+    // A hunkless copy that also changes the file mode, alone in the patch:
+    // its lines were read, so it is not a binary-or-mode-only diff.
+    let reference = check(Some(PRICE), &added_file("src/fee.rs", PRICE))?;
+    assert_eq!(reference.0, "complete_with_findings", "{reference:?}");
+    let mode_changing = check(
+        Some(PRICE),
+        "diff --git a/src/price.rs b/src/fee.rs\nold mode 100644\nnew mode 100755\nsimilarity index 100%\ncopy from src/price.rs\ncopy to src/fee.rs\n",
+    )?;
+    assert_eq!(mode_changing, reference);
     Ok(())
 }
 

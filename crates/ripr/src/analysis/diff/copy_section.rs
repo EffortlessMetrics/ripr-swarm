@@ -10,20 +10,38 @@ use super::parse::{DIFF_CHANGED_LINE_LIMIT_ENV, diff_changed_line_limit_from_env
 use std::path::{Path, PathBuf};
 
 /// Replace the changed lines of every copy destination with the whole file
-/// as added lines. A destination that is not a regular file reached through
-/// real directories below `root`, has no content in the analyzed snapshot, or
-/// is not UTF-8 text, keeps the lines its section carried: the absent-file disclosure, not this reader, owns a
-/// missing file. The parser's changed-line ceiling stays in force over the
-/// expanded total.
+/// as added lines, and report whether any destination was read that way. A
+/// destination that is not a regular file reached through real directories
+/// below `root`, has no content in the analyzed snapshot, or is not UTF-8
+/// text, keeps the lines its section carried: the absent-file disclosure,
+/// not this reader, owns a missing file. The parser's changed-line ceiling
+/// stays in force over the expanded total.
 pub(crate) fn expand_copy_destinations(
     changed_files: &mut [ChangedFile],
     copy_destinations: &[PathBuf],
     root: &Path,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if copy_destinations.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let limit = diff_changed_line_limit_from_env_core().map_err(String::from)?;
+    expand_within(changed_files, copy_destinations, root, limit)
+}
+
+/// [`expand_copy_destinations`] under an explicit changed-line ceiling. The
+/// ceiling bounds the retained `ChangedLine` payloads as it does in the
+/// parser: each destination collects at most the remaining allowance plus
+/// one line, and the first destination past it refuses the run before any
+/// later one is read.
+fn expand_within(
+    changed_files: &mut [ChangedFile],
+    copy_destinations: &[PathBuf],
+    root: &Path,
+    limit: usize,
+) -> Result<bool, String> {
+    let payload = |file: &ChangedFile| file.added_lines.len() + file.removed_lines.len();
+    let mut total = changed_files.iter().map(payload).sum::<usize>();
+    let mut expanded = false;
     for file in changed_files.iter_mut() {
         if !copy_destinations.contains(&file.path) {
             continue;
@@ -40,31 +58,36 @@ pub(crate) fn expand_copy_destinations(
         else {
             continue;
         };
+        let others = total.saturating_sub(payload(file));
+        let allowance = limit.saturating_sub(others);
+        let added = whole_file_as_added(&source, allowance.saturating_add(1));
+        if added.len() > allowance {
+            let count = others.saturating_add(added.len());
+            return Err(format!(
+                "diff_scope_oversized: at least {count} changed lines, counting every line of \
+                 the files the diff creates by copy, exceed the {DIFF_CHANGED_LINE_LIMIT_ENV} \
+                 limit ({limit}); reading stopped before the remaining copied lines and \
+                 analysis was not run. Repair route: reduce the diff scope, run a narrower \
+                 diff, or raise the limit via {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
+            ));
+        }
+        total = others + added.len();
+        expanded |= !added.is_empty();
         file.removed_lines.clear();
-        file.added_lines = whole_file_as_added(&source);
+        file.added_lines = added;
     }
-    let count = changed_files
-        .iter()
-        .map(|file| file.added_lines.len() + file.removed_lines.len())
-        .sum::<usize>();
-    if count > limit {
-        return Err(format!(
-            "diff_scope_oversized: {count} changed lines, counting every line of the files \
-             the diff creates by copy, exceed the {DIFF_CHANGED_LINE_LIMIT_ENV} limit \
-             ({limit}); analysis was not run. Repair route: reduce the diff scope, run a \
-             narrower diff, or raise the limit via {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
-        ));
-    }
-    Ok(())
+    Ok(expanded)
 }
 
-/// Every line of `source` as an added line, numbered and spelled the way the
-/// parser records a new file's hunk: no line ending, no line-1 byte-order mark.
-fn whole_file_as_added(source: &str) -> Vec<ChangedLine> {
+/// The first `max` lines of `source` as added lines, numbered and spelled the
+/// way the parser records a new file's hunk: no line ending, no line-1
+/// byte-order mark.
+fn whole_file_as_added(source: &str, max: usize) -> Vec<ChangedLine> {
     source
         .strip_prefix('\u{feff}')
         .unwrap_or(source)
         .lines()
+        .take(max)
         .enumerate()
         .map(|(index, text)| ChangedLine {
             line: index + 1,
@@ -76,7 +99,7 @@ fn whole_file_as_added(source: &str) -> Vec<ChangedLine> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_copy_destinations, whole_file_as_added};
+    use super::{expand_copy_destinations, expand_within, whole_file_as_added};
     use crate::analysis::diff::{ChangedFile, parse_unified_diff_with_metadata};
     use std::path::PathBuf;
 
@@ -231,13 +254,73 @@ mod tests {
     }
 
     #[test]
+    fn the_changed_line_ceiling_stops_the_first_copy_past_it() -> Result<(), String> {
+        let root = unique_temp_dir("ceiling")?;
+        // Three lines per file.
+        for name in ["a.rs", "b.rs", "c.rs"] {
+            write(root.join("src").join(name), SOURCE)?;
+        }
+        let copies = ["a.rs", "b.rs", "c.rs"]
+            .iter()
+            .map(|name| {
+                format!(
+                    "diff --git a/src/price.rs b/src/{name}\nsimilarity index 100%\ncopy from src/price.rs\ncopy to src/{name}\n"
+                )
+            })
+            .collect::<String>();
+        let parse = || parse_unified_diff_with_metadata(&copies);
+
+        // Nine lines fit a ceiling of nine.
+        let mut parsed = parse();
+        assert!(expand_within(
+            &mut parsed.changed_files,
+            &parsed.copy_destination_paths,
+            &root,
+            9
+        )?);
+        assert_eq!(
+            shape(&parsed.changed_files)
+                .iter()
+                .map(|(_, added, _)| added.len())
+                .collect::<Vec<_>>(),
+            vec![3, 3, 3]
+        );
+
+        // A ceiling of four admits the first file; the second is refused
+        // and the third is never read.
+        let mut parsed = parse();
+        let refusal = expand_within(
+            &mut parsed.changed_files,
+            &parsed.copy_destination_paths,
+            &root,
+            4,
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .is_err_and(|message| message.starts_with("diff_scope_oversized: at least 5 ")),
+            "{refusal:?}"
+        );
+        assert_eq!(
+            shape(&parsed.changed_files)
+                .iter()
+                .map(|(_, added, _)| added.len())
+                .collect::<Vec<_>>(),
+            vec![3, 0, 0]
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
     fn whole_file_lines_are_numbered_from_one_without_endings() {
-        let lines = whole_file_as_added("a\r\n\r\nb");
+        let lines = whole_file_as_added("a\r\n\r\nb", usize::MAX);
         let seen = lines
             .iter()
             .map(|line| (line.line, line.new_side_line, line.text.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(seen, vec![(1, 1, "a"), (2, 2, ""), (3, 3, "b")]);
-        assert!(whole_file_as_added("").is_empty());
+        assert!(whole_file_as_added("", usize::MAX).is_empty());
+        assert_eq!(whole_file_as_added("a\nb\nc\n", 2).len(), 2);
     }
 }
