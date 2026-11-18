@@ -479,7 +479,9 @@ fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Resul
         "{:?}",
         finding.related_tests
     );
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // #14968: the related test's only assertion is `assert!(true)`, which
+    // earns no credit, yet the generated test keeps its named limit.
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(
         finding.static_limit_kind,
         Some(StaticLimitKind::RustMacroReachUnresolved),
@@ -502,6 +504,46 @@ fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Resul
 }
 
 #[test]
+fn a_same_package_generator_limits_reachable_unrevealed_only_for_dropped_literals()
+-> Result<(), String> {
+    // #10127 keeps a same-package witness off a `reachable_unrevealed`
+    // finding; only a finding whose every related test asserts nothing but
+    // dropped literals (#14968) keeps the limit its weak reading named.
+    for (key, replacement) in [
+        ("no-assertion", "let _ = 1;"),
+        (
+            "mixed",
+            "assert!(true);\n    }\n    #[test]\n    fn unrelated_has_none() {\n        let _ = 1;",
+        ),
+    ] {
+        let lib = GENERATED.replacen("assert!(true);", replacement, 1);
+        assert_ne!(lib, GENERATED, "{key}");
+        let fixture = Fixture::new(key, &lib)?;
+        let finding = fixture.rate_finding()?;
+        assert!(
+            all_relations(&finding, crate::analysis::classify::is_proximity_only),
+            "{key}: {:?}",
+            finding.related_tests
+        );
+        // Fixture construction: the mixed variant relates both tests.
+        let expected_rows = if key == "mixed" { 2 } else { 1 };
+        assert_eq!(
+            finding.related_tests.len(),
+            expected_rows,
+            "{key}: {:?}",
+            finding.related_tests
+        );
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{key}");
+        assert_eq!(
+            finding.static_limit_kind, None,
+            "{key}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_generator_without_a_test_attribute_names_no_limit() -> Result<(), String> {
     // The same macro emitting a plain fn generates no test.
     let fixture = Fixture::new(
@@ -513,7 +555,7 @@ fn a_generator_without_a_test_attribute_names_no_limit() -> Result<(), String> {
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
@@ -572,7 +614,7 @@ fn a_generator_invoked_only_inside_a_macro_body_names_no_limit() -> Result<(), S
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
@@ -590,7 +632,7 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }

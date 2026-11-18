@@ -217,6 +217,19 @@ fn a_guarded_literal_assertion_keeps_its_guards_reading() -> Result<(), String> 
             "{\n        if let Err(e) = g(3) {\n            assert!(false, \"expected ok: {e}\");\n        }\n    }",
             WEAK,
         ),
+        // A guarded literal with an unguarded twin of equal squashed text on
+        // the same line: the fact records only line and text, so neither is
+        // dropped and both keep the base reading (#15014 review).
+        (
+            "if_let_ok_assert_false_beside_twin",
+            "{ if let Ok(_) = g(2) { assert!(false); } assert!(false); }",
+            WEAK,
+        ),
+        (
+            "is_err_guard_spaced_twin",
+            "{ if g(2).is_err() { assert_eq!(\"a b\", \"ab\"); } assert_eq!(\"ab\", \"ab\"); }",
+            ("reachable_unrevealed", "weakly_exposed"),
+        ),
         // Control: the same read as a direct assertion.
         ("assert_is_err", "{ assert!(g(2).is_err()); }", WEAK),
     ])

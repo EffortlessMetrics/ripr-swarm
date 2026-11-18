@@ -2124,7 +2124,13 @@ fn apply_rust_proximity_reach_limit(
     // or defining its own function of the owner's name). A test that reaches
     // the owner through a wrapper crate has no helper-transfer chain, so the
     // name-token relation alone must not read as an actionable gap (#10127).
-    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // #14968: a finding whose every related test asserts only literals
+    // (`assert!(true)`) read `weakly_exposed` from that literal alone, and
+    // that reading admitted any witness. Dropping the literal's credit
+    // lowers the class, never the limitation it named, so such a finding
+    // keeps the weak reading's admission.
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed
+        && !related_tests_assert_only_dropped_literals(finding, index);
     // The owner as the index spells it, the same form a witness's test file
     // has (the probe's own path may carry the checkout root).
     let owner = probe
@@ -2182,6 +2188,29 @@ fn apply_rust_proximity_reach_limit(
             &owner_name,
         );
     }
+}
+
+/// Whether every related test of `finding` supplied no oracle row and is an
+/// indexed test whose assertions are all dropped literal-only assertions
+/// (#14968). A row the index cannot match, an oracle row, or a list at the
+/// render cap (which may hide rows) answers `false`.
+fn related_tests_assert_only_dropped_literals(finding: &Finding, index: &RustIndex) -> bool {
+    !finding.related_tests.is_empty()
+        && finding.related_tests.len() < classify::RELATED_TESTS_RENDER_CAP
+        && finding.related_tests.iter().all(|related| {
+            let mut matching = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.name == related.name
+                        && test.start_line == related.line
+                        && (test.file == related.file || related.file.ends_with(&test.file))
+                })
+                .peekable();
+            related.oracle.is_none()
+                && matching.peek().is_some()
+                && matching.all(classify::asserts_only_dropped_literals)
+        })
 }
 
 /// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness

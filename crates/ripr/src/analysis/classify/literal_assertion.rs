@@ -64,24 +64,30 @@ pub(super) fn is_unconditional_literal_only_assertion(
         || list
             .tail_expr()
             .is_some_and(|tail| at_assertion(tail.syntax()));
-    // The fact records only a line and text, so a nested assertion on the
-    // same line with the same squashed text (`if g(2) { assert_eq!("a b",
-    // "ab"); } assert_eq!("ab", "ab");`) may be the fact's subject. Keep it
-    // as before (fail closed).
-    let nested_twin = list
+    // The fact records only a line and text, so any second macro call on the
+    // same line with the same squashed text, nested (`if g(2) {
+    // assert_eq!("a b", "ab"); } assert_eq!("ab", "ab");`, a closure body)
+    // or not, may be the fact's subject. Keep it as before (fail closed).
+    let twins = list
         .syntax()
         .descendants()
         .filter_map(ast::MacroCall::cast)
-        .any(|call| {
-            let node = call.syntax();
-            at_assertion(node)
-                && node
-                    .ancestors()
-                    .filter_map(ast::StmtList::cast)
-                    .next()
-                    .is_some_and(|inner| inner.syntax() != list.syntax())
-        });
-    top_level && !nested_twin
+        .filter(|call| at_assertion(call.syntax()))
+        .count();
+    top_level && twins <= 1
+}
+
+/// Whether `test` holds at least one assertion and every one is an
+/// unconditional literal-only assertion that reveal drops (#14968), so the
+/// test reads nothing. A `reachable_unrevealed` finding whose related tests
+/// are all such tests had its only credit from that literal, and keeps the
+/// reach limitation the credited reading named (RIPR-SPEC-0094).
+pub(in crate::analysis) fn asserts_only_dropped_literals(test: &TestSummary) -> bool {
+    !test.assertions.is_empty()
+        && test
+            .assertions
+            .iter()
+            .all(|assertion| is_unconditional_literal_only_assertion(test, assertion))
 }
 
 fn squash(text: &str) -> String {

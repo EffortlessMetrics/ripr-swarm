@@ -1039,10 +1039,22 @@ constant, a call, a nested macro), a byte or raw string prefix, an unknown
 macro or `assert_matches!`, an unparseable test body, or an assertion that
 does not sit at a top-level statement of the test body at its own line (for
 example one produced by a helper or macro expansion) leaves the assertion as
-it was. So does a literal that has a nested twin with the same text on its
-line (`if g(2) { assert_eq!("a b", "ab"); } assert_eq!("ab", "ab");`), since
-an assertion fact records only its line and text. Dropping the literal never removes credit another assertion in the
+it was. So does a literal with a twin of the same squashed text on its line,
+nested or not (`if let Ok(_) = g(2) { assert!(false); } assert!(false);`
+stays `weakly_exposed`), since an assertion fact records only its line and
+text. Dropping the literal never removes credit another assertion in the
 test supplies (`assert!(true); assert_eq!(f(5), 7)` stays `exposed`).
+
+Dropping the literal lowers a class, never the reach limitation the credited
+reading named. A `weakly_exposed` proximity-only finding names a
+RIPR-SPEC-0114 transitive or RIPR-SPEC-0117 macro witness (for example a test
+a same-file `macro_rules!` generator emits), while a `reachable_unrevealed`
+one admits only a cross-package witness (#10127). A finding that reads
+`reachable_unrevealed` because every related test asserts nothing but
+dropped literals keeps the weak reading's admission: it stays
+`reachable_unrevealed` and names the same limit. A related test with no
+assertion, or with any other assertion, keeps the #10127 rule, as does a
+related-test list at its render cap.
 
 Known limits:
 
@@ -1068,9 +1080,12 @@ Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
 `crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
 `crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
 (bare-call, owner-read, guarded-literal, implicit-observer,
-owner-reading-assertion, scoped-rebinding and unrelated-sibling rows), and
-`owner_result_readers_call_the_owner_or_read_its_binding` in
-`crates/ripr/src/analysis/classify/literal_assertion.rs`.
+owner-reading-assertion, scoped-rebinding, unrelated-sibling and same-line
+twin rows), `owner_result_readers_call_the_owner_or_read_its_binding` in
+`crates/ripr/src/analysis/classify/literal_assertion.rs`, and
+`a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit` with
+`a_same_package_generator_limits_reachable_unrevealed_only_for_dropped_literals`
+in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`.
 
 ## Test Mapping
 

@@ -42,6 +42,7 @@ mod implicit_call;
 mod indirect_owner;
 mod infection;
 mod literal_assertion;
+pub(in crate::analysis) use literal_assertion::asserts_only_dropped_literals;
 mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
