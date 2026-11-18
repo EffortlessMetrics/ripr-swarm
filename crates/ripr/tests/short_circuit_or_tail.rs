@@ -236,32 +236,79 @@ fn a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure() -> Result<(),
     Ok(())
 }
 
+/// A test-local `check` helper that compares two of its own `String`
+/// parameters, so its assertion names no owner. The owner call reaches it
+/// through the two `let` bindings, and the substitution reads the rendered
+/// call from `actual`'s initializer rather than from the assertion text
+/// (#14194 review: the substituted-pin path, not a direct assertion).
+fn helper_test(call: &str, expected: &str) -> String {
+    format!(
+        "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String) {{\n    assert_eq!(actual, expected);\n}}\n\n#[test]\nfn helper() {{\n    let actual = format!(\"{{}}\", {call});\n    let expected = String::from(\"{expected}\");\n    check(actual, expected);\n}}\n"
+    )
+}
+
 #[test]
 fn a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin() -> Result<(), String> {
     // #14194 review: the invariant is parity between the wrapper and direct
     // forms for the same owner edit, not the direct form alone. An agreeing
     // input must keep credit in every form, and a deciding input must
     // withhold it in every form. Before the derived-call-text repair the
-    // wrapper forms silently kept credit in both.
-    let agreeing: [&[&str]; 3] = [
-        &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
-        &[
-            "assert_eq!(vec![is_pow2(4)][0], true);",
-            "assert_eq!(vec![is_pow2(6)][0], false);",
-        ],
-        &[
-            "assert_eq!(format!(\"{}\", is_pow2(4)), \"true\");",
-            "assert_eq!(format!(\"{}\", is_pow2(6)), \"false\");",
-        ],
+    // wrapper forms silently kept credit in both, and the `helper` form is
+    // the one whose assertion text names no owner at all, so it fails on the
+    // old `walk_site = call_text.unwrap_or(assertion.text)` reading even
+    // though the other three already found the call.
+    let agreeing = [
+        (
+            "direct",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
+            ),
+        ),
+        (
+            "indexed",
+            direct_test(
+                "short_circuit_or_tail",
+                &[
+                    "assert_eq!(vec![is_pow2(4)][0], true);",
+                    "assert_eq!(vec![is_pow2(6)][0], false);",
+                ],
+            ),
+        ),
+        (
+            "rendered",
+            direct_test(
+                "short_circuit_or_tail",
+                &[
+                    "assert_eq!(format!(\"{}\", is_pow2(4)), \"true\");",
+                    "assert_eq!(format!(\"{}\", is_pow2(6)), \"false\");",
+                ],
+            ),
+        ),
+        ("helper", helper_test("is_pow2(4)", "true")),
     ];
-    let deciding: [&[&str]; 3] = [
-        &["assert!(is_pow2(0));"],
-        &["assert_eq!(vec![is_pow2(0)][0], false);"],
-        &["assert_eq!(format!(\"{}\", is_pow2(0)), \"false\");"],
+    let deciding = [
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(is_pow2(0));"]),
+        ),
+        (
+            "indexed",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert_eq!(vec![is_pow2(0)][0], false);"],
+            ),
+        ),
+        (
+            "rendered",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert_eq!(format!(\"{}\", is_pow2(0)), \"false\");"],
+            ),
+        ),
+        ("helper", helper_test("is_pow2(0)", "false")),
     ];
-    let names = ["direct", "indexed", "rendered"];
-    for (name, asserts) in names.iter().zip(agreeing) {
-        let test = direct_test("short_circuit_or_tail", asserts);
+    for (name, test) in agreeing {
         let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
             .map_err(|error| format!("{name} agreeing: {error}"))?;
         assert_ne!(
@@ -270,8 +317,7 @@ fn a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin() -> Result<(), Stri
             "{name} agreeing input must keep the agreement, not expose: {test}"
         );
     }
-    for (name, asserts) in names.iter().zip(deciding) {
-        let test = direct_test("short_circuit_or_tail", asserts);
+    for (name, test) in deciding {
         let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
             .map_err(|error| format!("{name} deciding: {error}"))?;
         assert_eq!(
