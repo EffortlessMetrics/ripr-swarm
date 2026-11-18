@@ -193,10 +193,11 @@ pub(super) fn render_record_markdown(record: &GapRecord, out: &mut String) {
     }
     let eligible = eligible_projection_names(record);
     if !eligible.is_empty() {
-        out.push_str(&format!(
-            "- Eligible projections: `{}`\n",
-            eligible.join("`, `")
-        ));
+        let names = eligible
+            .iter()
+            .map(|name| md_code(name))
+            .collect::<Vec<_>>();
+        out.push_str(&format!("- Eligible projections: {}\n", names.join(", ")));
     }
     if command_displays_are_complete(&record.verification_commands) {
         out.push_str("- Verify:\n");
@@ -245,10 +246,11 @@ fn md_code(value: &str) -> String {
 mod tests {
     use super::super::{
         GapAnchor, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord, GapRepairRoute,
-        build_gap_decision_ledger_report,
+        ProjectionEligibility, build_gap_decision_ledger_report,
     };
     use super::{render_gap_decision_ledger_markdown, render_record_markdown};
     use pulldown_cmark::{Event, Parser};
+    use std::collections::BTreeMap;
 
     /// Every code span and all plain text of `markdown` as a CommonMark
     /// renderer shows them. Raw HTML anywhere is an error.
@@ -291,12 +293,20 @@ mod tests {
                 ..GapRepairRoute::default()
             }),
             verification_commands: vec![verify.to_string()],
+            projection_eligibility: BTreeMap::from([(
+                "agent`packet".to_string(),
+                ProjectionEligibility {
+                    eligible: true,
+                    ..ProjectionEligibility::default()
+                },
+            )]),
             ..GapRecord::default()
         };
         let mut out = String::new();
         render_record_markdown(&record, &mut out);
         let (spans, _) = rendered(&out)?;
         for expected in [
+            "agent`packet",
             "gap:`x`|y",
             "app/@modal/__tests__/page.tsx",
             owner,
@@ -324,6 +334,16 @@ mod tests {
                 ..GapAnchor::default()
             }),
             verification_commands: vec!["cargo test -p demo".to_string()],
+            projection_eligibility: ["agent_packet", "pr_comment"]
+                .into_iter()
+                .map(|name| {
+                    let eligibility = ProjectionEligibility {
+                        eligible: true,
+                        ..ProjectionEligibility::default()
+                    };
+                    (name.to_string(), eligibility)
+                })
+                .collect(),
             ..GapRecord::default()
         };
         let mut out = String::new();
@@ -335,6 +355,10 @@ mod tests {
         );
         assert!(
             out.contains("- Verify:\n  - `cargo test -p demo`\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("- Eligible projections: `agent_packet`, `pr_comment`\n"),
             "{out}"
         );
     }
