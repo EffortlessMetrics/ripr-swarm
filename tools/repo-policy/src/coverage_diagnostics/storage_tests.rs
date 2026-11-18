@@ -373,7 +373,7 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
 }
 
 #[test]
-fn live_observer_wires_memory_and_preserves_failure_and_sample_limit() -> Result<()> {
+fn live_observer_wires_memory_and_preserves_failure() -> Result<()> {
     let fixture = Fixture::new()?;
     let source = fixture.0.join("meminfo");
     fs::write(
