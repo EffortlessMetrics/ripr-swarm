@@ -332,6 +332,14 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     // an index write fires the repository's `post-index-change` hook. ripr's
     // analysis is read-only, so no optional lock (and no index write) is taken.
     command.env("GIT_OPTIONAL_LOCKS", "0");
+    // ripr never asks Git to reach a remote, but a partial clone fetches
+    // missing objects on demand. Offline or unauthenticated, that fetch must
+    // fail at once with Git's own message instead of waiting on a terminal
+    // credential prompt or a credential-manager window nobody will answer.
+    // A configured `GIT_ASKPASS`/`core.askPass` helper still runs: CI token
+    // helpers depend on it, so it is left alone (RIPR-SPEC-0084, #14799).
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command.env("GCM_INTERACTIVE", "never");
     let null_device = git_null_device_path();
     command
         .current_dir(root)
@@ -1647,6 +1655,18 @@ mod tests {
     use super::*;
     use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
     use serial_test::serial;
+
+    #[test]
+    fn git_commands_disable_terminal_and_gcm_credential_prompts() {
+        let command = git_command(Path::new("."), &["status"]);
+        let envs: Vec<_> = command.get_envs().collect();
+        for (key, value) in [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never")] {
+            assert!(
+                envs.contains(&(std::ffi::OsStr::new(key), Some(std::ffi::OsStr::new(value)))),
+                "{key}={value} must be set on every ripr git invocation: {envs:?}"
+            );
+        }
+    }
 
     #[test]
     fn bounded_git_output_escapes_controls_and_marks_the_cap() {

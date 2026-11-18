@@ -69,6 +69,9 @@ GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^(?:\*\*/)?Cargo\.lock$"),
     re.compile(r"^fixtures/(?:[A-Za-z0-9_.\-*]+/)*expected/\*\*$"),
     re.compile(r"^metrics/public-proof/\*\*$"),
+    # The canonical report promoted from `cargo xtask dx-scoreboard`.
+    # Other baselines and the handwritten scoreboard configuration stay counted.
+    re.compile(r"^metrics/dx-scoreboard/baseline\.json$"),
     # Fact packets a pinned producer wrote for a verdict-corpus case. Data only
     # (.json), sha256-pinned by the case rows, whose provenance and edits stay
     # in the counted cases/ files.
@@ -406,7 +409,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/**, metrics/dx-scoreboard/baseline.json and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -865,9 +868,37 @@ def fixture_body(
     )
 
 
-def self_test() -> None:
-    max_files = 160
-    max_lines = 3000
+def wired_cap_from_workflow(path: Path) -> int:
+    """The single `max-changed-lines` value the workflow wires, checked.
+
+    The self-test must certify the number the gate actually uses, so both
+    occurrences must agree and sit inside a sane band. A cap the workflow
+    does not wire, or two inputs that disagree, is a control that certifies
+    nothing (#14513 review).
+    """
+    values = re.findall(r"max-changed-lines:\s*'(\d+)'", path.read_text(encoding="utf-8"))
+    if len(values) != 2:
+        raise AssertionError(
+            f"expected two max-changed-lines inputs in {path}, found {len(values)}"
+        )
+    if values[0] != values[1]:
+        raise AssertionError(f"max-changed-lines inputs disagree: {values}")
+    cap = int(values[0])
+    if not 1000 <= cap <= 10000:
+        raise AssertionError(f"max-changed-lines {cap} is outside the sane band 1000..10000")
+    return cap
+
+
+def self_test(
+    max_files: int = 160,
+    max_lines: int = 3000,
+    workflow: Path | None = None,
+) -> None:
+    if workflow is not None and workflow.exists():
+        wired = wired_cap_from_workflow(workflow)
+        assert wired == max_lines, (
+            f"the self-test certifies {max_lines} but the workflow wires {wired}"
+        )
     head = "a" * 40
 
     def run(
@@ -1159,19 +1190,23 @@ def self_test() -> None:
         subprocess.run = real_run
     assert any(f"ref={'c' * 40}" in call for call in calls), "base read at the merge base"
     assert not any(f"ref={'a' * 40}" in call and "contents" in call for call in calls), "never at the base tip"
-    big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
+    # The boundary fixture is derived from the wired cap, so the self-test
+    # certifies the number the gate actually uses instead of a literal that
+    # drifts when the cap moves (#14513 review).
+    boundary = max_lines + 50
+    big = fixture(body=fixture_body(), head=head, additions=boundary, deletions=0, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
-    admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
+    admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 50)
     assert admitted_big["status"] == "admitted"
-    assert admitted_big["changed_files"] == 150 and admitted_big["changed_lines"] == 1350
+    assert admitted_big["changed_files"] == 150 and admitted_big["changed_lines"] == max_lines
     assert (
         decide(big, [big], head, False, max_files, max_lines, 0, 50)["reason"]
         == "qualification_scope_oversized"
     )
-    refused_big = decide(big, [big], head, False, max_files, max_lines, 20, 50)
+    refused_big = decide(big, [big], head, False, max_files, max_lines, 20, 0)
     assert refused_big["reason"] == "qualification_scope_oversized"
-    assert refused_big["changed_files"] == 150 and refused_big["changed_lines"] == 3050
-    assert "150 files / 3050 changed lines" in refused_big["detail"]
+    assert refused_big["changed_files"] == 150 and refused_big["changed_lines"] == boundary
+    assert f"150 files / {boundary} changed lines" in refused_big["detail"]
     huge = fixture(body=fixture_body(), head=head, additions=90000, deletions=0)
     assert (
         decide(huge, [huge], head, False, max_files, max_lines, 2, 90000)["reason"]
@@ -1192,6 +1227,9 @@ def self_test() -> None:
         "**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh", "*.json",
         "**/*.md", ".claude/**", ".github/**", "crates/**", "scripts/*", "package.json",
         "policy/**", "CLAUDE.md", "fixtures/**/input/**",
+        "metrics/**", "metrics/dx-scoreboard/**", "metrics/dx-scoreboard/*.json",
+        "metrics/dx-scoreboard/baseline.json*", "metrics/dx-scoreboard/baselineXjson",
+        "metrics/dx-scoreboard/agent-baseline.json", "xtask/metrics/dx-scoreboard/baseline.json",
         "fixtures/perl-verdict-corpus/**", "fixtures/perl-verdict-corpus/subjects/**",
         "fixtures/perl-verdict-corpus/cases/**", "fixtures/packets/**",
         "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
@@ -1210,6 +1248,35 @@ def self_test() -> None:
         "xtask/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
+    baseline_path = "metrics/dx-scoreboard/baseline.json"
+    baseline_declaration = f"{baseline_path} linguist-generated\n"
+    assert check_generated_declarations(baseline_declaration) == [], "canonical scoreboard baseline is generated"
+    baseline_rules = parse_generated_rules(baseline_declaration)
+    for kept in (
+        "metrics/dx-scoreboard/agent-baseline.json", "metrics/dx-scoreboard/baseline.jsonl",
+        "metrics/dx-scoreboard/baseline.json.bak", "metrics/dx-scoreboard/baselineXjson",
+        "xtask/metrics/dx-scoreboard/baseline.json", "benchmarks/dx_scoreboard/scoreboards.toml",
+    ):
+        assert not is_generated(kept, baseline_rules), kept
+    for generated_lines, counted_lines, reason in (
+        (5166, 580, "candidate_current_unique_bounded"),
+        (5166, max_lines + 1, "qualification_scope_oversized"),
+        (40001, 580, "generated_scope_oversized"),
+    ):
+        baseline_files = [
+            {"filename": baseline_path, "additions": generated_lines, "deletions": 0},
+            {"filename": "metrics/dx-scoreboard/agent-baseline.json", "additions": 1, "deletions": 0},
+            {"filename": "benchmarks/dx_scoreboard/scoreboards.toml", "additions": counted_lines - 1, "deletions": 0},
+        ]
+        generated = generated_totals(baseline_files, baseline_rules, 3)
+        assert generated == (1, generated_lines)
+        baseline_pr = fixture(
+            body=fixture_body(), head=head, changed_files=3,
+            additions=generated_lines + counted_lines, deletions=0,
+        )
+        result = decide(baseline_pr, [baseline_pr], head, False, max_files, max_lines, *generated)
+        assert result["reason"] == reason, (generated_lines, counted_lines, result)
+        assert result["changed_files"] == 2 and result["changed_lines"] == counted_lines
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
     assert is_generated("fixtures/perl-verdict-corpus/packets/a.json", corpus_rules)
     # A data file of another type beside the packets stays counted in the totals.
@@ -1752,10 +1819,15 @@ def main() -> int:
     parser.add_argument("--docs-only", action="store_true")
     parser.add_argument("--max-changed-files", type=int, default=160)
     parser.add_argument("--max-changed-lines", type=int, default=3000)
+    parser.add_argument(
+        "--workflow",
+        type=Path,
+        help="routed-rust.yml whose wired max-changed-lines the self-test certifies",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        self_test()
+        self_test(args.max_changed_files, args.max_changed_lines, args.workflow)
         return 0
     if args.check_attributes:
         if not args.check_attributes.exists():

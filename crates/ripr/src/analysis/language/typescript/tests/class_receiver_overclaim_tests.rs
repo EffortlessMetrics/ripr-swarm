@@ -339,5 +339,21 @@ fn a_getter_replaced_at_the_call_site_withholds_observation_credit() -> Result<(
         &test_source(import, &assign),
         Subject::Origin,
         "prototype assignment",
+    )?;
+    // Removing the accessor is not an assignment, a spy or a `defineProperty`,
+    // so the file-wide replacement scan records nothing for it; only the
+    // body-level member check withholds here (#14083 T6).
+    let delete = format!("  delete Url.prototype.origin;\n{GETTER_BODY}");
+    assert_withheld(
+        &test_source(import, &delete),
+        Subject::Origin,
+        "prototype delete",
+    )?;
+    // Control: deleting another member leaves the getter credited.
+    let delete_other = format!("  delete Url.prototype.other;\n{GETTER_BODY}");
+    assert_credited(
+        &test_source(import, &delete_other),
+        Subject::Origin,
+        "prototype delete of another member",
     )
 }

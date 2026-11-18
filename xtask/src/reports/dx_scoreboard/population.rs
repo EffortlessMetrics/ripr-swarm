@@ -35,6 +35,7 @@ fn projection(rate: &str) -> Result<(Option<PacketProvenance>, &str), String> {
     };
     match leaf {
         "abstention_rate"
+        | "avoidable_abstention_rate"
         | "ideal_rate"
         | "false_verdict_rate"
         | "false_actionable_rate"
@@ -72,7 +73,10 @@ impl Population {
         let (mut numerator, mut denominator) = (0_u64, 0_u64);
         for case in &self.cases {
             let denominator_valid = match leaf {
-                "abstention_rate" | "ideal_rate" | "false_verdict_rate" => {
+                "abstention_rate"
+                | "avoidable_abstention_rate"
+                | "ideal_rate"
+                | "false_verdict_rate" => {
                     case.denominator == 1 || (provenance.is_some() && case.denominator == 0)
                 }
                 "false_actionable_rate"
@@ -187,6 +191,9 @@ impl Records {
             ));
         }
         let report = verdict_corpus::expected_report(dir)?;
+        // `expected_report` re-derives each row's abstention-expected flag from
+        // its case and the specs (RIPR-SPEC-0219), so the avoidable population
+        // below reads a checked flag.
         let report_json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let mut subjects = BTreeMap::new();
         for subject in &corpus.subjects {
@@ -199,13 +206,10 @@ impl Records {
             files.sort_by_key(|file| file["path"].as_str().unwrap_or_default().to_string());
             subjects.insert(
                 subject.subject_id.as_str(),
-                (
-                    subject,
-                    json!({
-                        "origin": subject.origin.as_str(), "upstream": subject.upstream,
-                        "commit": subject.commit, "files": files,
-                    }),
-                ),
+                json!({
+                    "origin": subject.origin.as_str(), "upstream": subject.upstream,
+                    "commit": subject.commit, "files": files,
+                }),
             );
         }
         let cases: BTreeMap<_, _> = corpus
@@ -218,22 +222,11 @@ impl Records {
             let case = cases
                 .get(row.case_id.as_str())
                 .ok_or_else(|| format!("row {} has no case", row.case_id))?;
-            let (subject, identity) = subjects
+            let identity = subjects
                 .get(case.subject_id.as_str())
                 .ok_or_else(|| format!("case {} has no subject", case.case_id))?;
-            if row.subject_id != case.subject_id
-                || row.truth != case.truth.state
-                || row.origin != subject.origin
-                || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
-                || row.ideal_verdict != case.expected.ideal_verdict
-                || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
-                || row.outcome != verdict_corpus::score(case.truth.state, row.observed_verdict)
-            {
-                return Err(format!(
-                    "row {} disagrees with its scoring definition",
-                    row.case_id
-                ));
-            }
+            // expected_report has already checked verdict metadata against
+            // these definitions for every consumer, including public proof.
             let diff_path = dir.join(&case.diff);
             let diff = fs::read(&diff_path)
                 .map_err(|err| format!("read {}: {err}", diff_path.display()))?;
@@ -320,9 +313,25 @@ impl Records {
             let d = single[leaf]["denominator"]
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
+            // The avoidable rate also depends on the derived flag, so its case
+            // identity binds it: a case whose spec citation turns Reject is a
+            // changed definition, not an analyzer improvement.
+            let avoidable_hash;
+            let definition_hash = if oracle_rate {
+                oracle_hash
+            } else if leaf == "avoidable_abstention_rate" && row.abstention_expected {
+                avoidable_hash = verdict_corpus::sha256_hex(
+                    json!({"definition": hash, "abstention_expected": true})
+                        .to_string()
+                        .as_bytes(),
+                );
+                &avoidable_hash
+            } else {
+                hash
+            };
             cases.push(Contribution {
                 case_id: row.case_id.clone(),
-                definition_sha256: if oracle_rate { oracle_hash } else { hash }.clone(),
+                definition_sha256: definition_hash.clone(),
                 numerator: n,
                 denominator: d,
             });

@@ -56,7 +56,10 @@ impl RustAdapter {
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        // An unreadable below-root directory or file is skipped and disclosed
+        // through `partial_reason`; an unreadable root stays an error.
+        let (rust_files, unreadable_paths) =
+            workspace::discover_readable_rust_files(&options.root, &BTreeSet::new())?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
             .iter()
@@ -116,12 +119,7 @@ impl RustAdapter {
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
         }
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
+        rust_index::eprint_index_limit_disclosures(&index);
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         // #13703: keep raw bytes only for files whose indexed text differs;
         // origin capture borrows the rest from the index.
@@ -216,7 +214,7 @@ impl RustAdapter {
             ),
             production_files: production_files.len(),
             skipped_files,
-            partial_reason: None,
+            partial_reason: workspace::unreadable_paths_partial_reason(&unreadable_paths),
             file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,

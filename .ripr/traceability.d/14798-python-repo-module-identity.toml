@@ -1,0 +1,10 @@
+# Registers repo-mode module-identity withholding (#14798) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/repo_module_identity_tests.rs::given_same_named_function_in_unimported_module_when_repo_mode_then_no_relation",
+  "crates/ripr/src/analysis/language/python/repo_module_identity_tests.rs::given_src_short_name_shadowed_by_plain_module_when_repo_mode_then_not_exposed",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/repo/evidence.rs",
+]

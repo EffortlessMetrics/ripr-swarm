@@ -662,7 +662,7 @@ fn artifact_matches_gap_diagnostic(artifact: &ValidatedGapArtifact, data: &Value
     let canonical_gap_id = string_at(data, &["canonical_gap_id"]);
     let seam_id = string_at(data, &["seam_id"]);
     let finding_id = string_at(data, &["finding_id"]);
-    artifact.identities.iter().any(|identity| {
+    artifact.identities().iter().any(|identity| {
         canonical_gap_id.is_some_and(|value| identity.canonical_gap_id.as_deref() == Some(value))
             || seam_id.is_some_and(|value| identity.seam_id.as_deref() == Some(value))
             || finding_id.is_some_and(|value| identity.finding_id.as_deref() == Some(value))
@@ -722,8 +722,9 @@ fn push_seam_actions(
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
-    // availability (a concrete assertion template or related test), not a
-    // readiness predicate.
+    // availability (a concrete assertion template or any related test), not a
+    // readiness predicate. It reads every related test, proximity-only ones
+    // included: #5354 narrows only which test the editor opens.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
@@ -742,7 +743,7 @@ fn push_seam_actions(
             actions.push(action);
         }
     } else if repair_packet_eligibility(context.seam).eligible()
-        && (suggested_assertion.is_some() || related_test.is_some())
+        && (suggested_assertion.is_some() || !context.seam.evidence.related_tests.is_empty())
     {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
@@ -2517,6 +2518,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         diagnostic.code.as_ref(),
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
@@ -2628,18 +2630,31 @@ fn copy_seam_packet_target(
     target
 }
 
+/// The related test the editor opens for a seam. A test linked only by
+/// proximity (same file, same module, a token substring) never runs the
+/// seam, so its oracle belongs to other code, and it is never offered: with
+/// no other related test there is no navigation, matching the witness fix
+/// site (#5354). Tests whose relation runs the owner
+/// (`RelationReason::establishes_reach`) are tried before name, import or
+/// fixture affinities, so a strong name-matched test never wins over a test
+/// that calls the change; within each group a strong oracle comes first, then
+/// the lowest relation-confidence rank.
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
-    seam.evidence
-        .related_tests
-        .iter()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            seam.evidence
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })
-        .map(Arc::as_ref)
+    let tests = &seam.evidence.related_tests;
+    let pick = |reaches: bool| {
+        let group = || {
+            tests.iter().filter(move |test| {
+                !test.relation_reason.is_proximity_only()
+                    && test.relation_reason.establishes_reach(true) == reaches
+            })
+        };
+        group()
+            .find(|test| test.oracle_strength == OracleStrength::Strong)
+            .or_else(|| {
+                group().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            })
+    };
+    pick(true).or_else(|| pick(false)).map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
@@ -2678,7 +2693,7 @@ mod tests {
     use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
     use crate::app::Mode;
     use crate::domain::{LanguageId, LanguageStatus};
-    use crate::lsp::gap_artifacts::{GapArtifactIdentity, GapArtifactKind};
+    use crate::lsp::gap_artifacts::GapArtifactIdentity;
     use crate::lsp::state::RefreshMetadata;
     use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
@@ -2835,6 +2850,26 @@ mod tests {
             vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
             "the client can execute the copy command for an ordinary finding"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_pending_marker_has_no_finding_context_action() -> Result<(), String> {
+        // #14447: the pre-snapshot marker is not a finding, so an "Inspect
+        // finding" action on it would copy a context packet for nothing.
+        let marker = super::super::diagnostics::analysis_pending_diagnostic(
+            super::super::diagnostics::AnalysisPendingRecovery::AnalysisRunning,
+        );
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
         Ok(())
     }
 
@@ -3163,17 +3198,23 @@ mod tests {
 
         let mut multiple = artifact.clone();
         let verify_spec = multiple
-            .verify_command_specs
+            .verify_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?;
         let receipt_spec = multiple
-            .receipt_command_specs
+            .receipt_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?;
-        multiple.verify_command_specs.push(verify_spec);
-        multiple.receipt_command_specs.push(receipt_spec);
+        multiple
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .push(verify_spec);
+        multiple
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .push(receipt_spec);
         let multiple_target = gap_repair_packet_target(&params, &snapshot, &diagnostic, &multiple)
             .ok_or_else(|| "multi-route gap repair target was omitted".to_string())?;
         if !multiple_target
@@ -3186,13 +3227,20 @@ mod tests {
         }
 
         let mut empty = artifact.clone();
-        empty.verify_command_specs.clear();
-        empty.receipt_command_specs.clear();
+        empty
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .clear();
+        empty
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .clear();
         assert_command_specs_omitted(&params, &snapshot, &diagnostic, &empty)?;
 
         let mut invalid = artifact.clone();
         invalid
-            .verify_command_specs
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?
             .program
@@ -3201,7 +3249,8 @@ mod tests {
 
         let mut mismatched = artifact;
         mismatched
-            .receipt_command_specs
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?
             .role = crate::domain::CommandRole::Verify;
@@ -3300,19 +3349,26 @@ mod tests {
     }
 
     fn action_artifact() -> ValidatedGapArtifact {
-        ValidatedGapArtifact {
-            kind: GapArtifactKind::GapDecisionLedger,
-            corpus_currentness: None,
-            root: Some(".".to_string()),
+        use super::super::gap_artifacts::{
+            GapArtifactCorpusCurrentness, ValidatedGapArtifactCommon,
+            ValidatedGapDecisionLedgerArtifact,
+        };
+        ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: Some(".".to_string()),
+                language: Some(LanguageId::Python),
+                language_status: Some(LanguageStatus::Preview),
+                gap_state: Some("actionable".to_string()),
+                related_paths: vec!["tests/test_pricing.py".to_string()],
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),
                 seam_id: Some("seam-a".to_string()),
                 finding_id: None,
             }],
-            language: Some(LanguageId::Python),
-            language_status: Some(LanguageStatus::Preview),
-            gap_state: Some("actionable".to_string()),
-            related_paths: vec!["tests/test_pricing.py".to_string()],
             verify_commands: vec!["ripr agent verify --root . --json".to_string()],
             receipt_commands: vec![
                 "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json"
@@ -3330,9 +3386,7 @@ mod tests {
                 "seam-a",
                 Some("receipt.json"),
             )],
-            static_limit_kinds: Vec::new(),
-            has_text_static_limit: false,
-        }
+        })
     }
 
     fn assert_command_specs_omitted(
@@ -3401,6 +3455,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

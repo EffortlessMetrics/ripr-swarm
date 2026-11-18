@@ -1,0 +1,4 @@
+[package]
+name = "rust_stub_todo_expected_value_fixture"
+version = "0.0.0"
+edition = "2024"

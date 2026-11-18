@@ -76,6 +76,49 @@ fn a_literal_owner_instance_fixture_reads_like_the_inlined_construction() -> Res
 }
 
 #[test]
+fn a_display_of_literals_is_a_literal_fixture_argument() -> Result<(), String> {
+    // `Cart([3, 4])` builds an equal fresh value on every call, like the
+    // inlined construction: a display names no variable and calls nothing.
+    for argument in [
+        "[100]",
+        "(100, 50)",
+        "[]",
+        "{\"start\": 100}",
+        "{1, 2}",
+        "[(1, \"a\"), [-2]]",
+        "balance=[100]",
+    ] {
+        let conftest = CONFTEST.replace("Account(100)", &format!("Account({argument})"));
+        let finding = with_conftest(&conftest)?;
+        assert_eq!(finding.static_limit_kind, None, "{argument}");
+        assert_eq!(finding.class, ExposureClass::Exposed, "{argument}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_display_that_names_or_calls_something_keeps_the_limit() -> Result<(), String> {
+    for argument in [
+        "[START]",
+        "[100, START]",
+        "(START,)",
+        "{\"start\": START}",
+        "{START: 100}",
+        "[*BASE]",
+        "{**BASE}",
+        "[n for n in (100,)]",
+        "list((100,))",
+        "[[START]]",
+        "[make()]",
+        "balance=[START]",
+    ] {
+        let conftest = CONFTEST.replace("Account(100)", &format!("Account({argument})"));
+        assert_fixture_limited(&with_conftest(&conftest)?, argument);
+    }
+    Ok(())
+}
+
+#[test]
 fn a_same_module_literal_fixture_is_resolved_too() -> Result<(), String> {
     let test = format!(
         "import pytest\n\nfrom shop import Account\n\n\n@pytest.fixture\ndef account():\n    return Account(100)\n\n\n{TEST}"

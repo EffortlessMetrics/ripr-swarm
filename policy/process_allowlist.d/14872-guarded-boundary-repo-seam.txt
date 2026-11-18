@@ -1,0 +1,2 @@
+crates/ripr/tests/guarded_boundary_repo_seam.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check --format repo-exposure-json`) against an isolated temp workspace to prove the repo-wide comparison seam under a bool guard needs a guard-holding boundary call. No shell, network, or user-repository mutation.
+crates/ripr/tests/guarded_boundary_repo_seam.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.

@@ -124,6 +124,16 @@ pub(crate) struct CallIdentityMemos {
     /// candidate index, the seam walk, the receiver owner above, the seam
     /// inventory). Keyed by the index state it was computed under.
     pub(super) macro_site_scans: super::owner_pin::SharedMacroScans,
+    /// #13754: every `matches` binding site in the workspace, for the
+    /// `assert!(matches!(..))` argument check. Parsed once per index, not once
+    /// per owner-pin syntax instance, so the diff pass, the seam walk and
+    /// every other instance over this index share one corpus scan.
+    pub(super) matches_binding_sites: std::sync::OnceLock<
+        Vec<(
+            std::path::PathBuf,
+            crate::analysis::syntax::MacroBindingSite,
+        )>,
+    >,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -195,6 +205,10 @@ pub(crate) struct CallIdentityMemos {
     /// sources, so the per-(seam, test) enum-variant check reads it once
     /// instead of masking every file that mentions the name each time.
     sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// Positions in [`RustIndex::functions`] order of every function, keyed by
+    /// its name without a `r#` prefix, built once per index so a per-(seam,
+    /// test) free-function lookup reads one bucket instead of every function.
+    functions_by_unraw_name: std::sync::OnceLock<std::collections::HashMap<String, Vec<usize>>>,
     /// #12886: the cross-file resolver for assertion-forwarding workspace
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
@@ -255,6 +269,27 @@ impl CallIdentityMemos {
             cache.insert(key, answer);
         }
         answer
+    }
+
+    /// Positions (in [`RustIndex::functions`] order) of the functions whose
+    /// name, `r#` prefix removed, is `unraw_name`; ascending.
+    pub(super) fn function_positions_named<'m>(
+        &'m self,
+        index: &RustIndex,
+        unraw_name: &str,
+    ) -> &'m [usize] {
+        self.functions_by_unraw_name
+            .get_or_init(|| {
+                let mut by_name: std::collections::HashMap<String, Vec<usize>> =
+                    std::collections::HashMap::new();
+                for (position, function) in index.functions().iter().enumerate() {
+                    let name = function.name.strip_prefix("r#").unwrap_or(&function.name);
+                    by_name.entry(name.to_string()).or_default().push(position);
+                }
+                by_name
+            })
+            .get(unraw_name)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The memoized std-impl source answer for (`trait_name`, `head`),
@@ -417,6 +452,10 @@ impl std::fmt::Debug for CallIdentityMemos {
 /// off) and how the package splits `src/` between its crates.
 struct PackageCallIdentityShape {
     remaps_module_paths: bool,
+    /// A `tests/` file remaps only modules of its own directory
+    /// ([`path_attributes_stay_in_test_dir`]): that moves no module of an
+    /// owner outside `tests/`, so only owners under `tests/` turn the rule off.
+    remaps_test_modules: bool,
     layout: CrateLayout,
 }
 
@@ -429,17 +468,27 @@ struct PackageCallIdentityShape {
 fn scan_call_identity_shapes(
     index: &RustIndex,
 ) -> BTreeMap<Option<String>, std::sync::Arc<PackageCallIdentityShape>> {
-    let mut remaps: BTreeMap<Option<String>, bool> = BTreeMap::new();
+    // Per package: (a `#[path]` that may move any module, a `#[path]` that
+    // only rearranges an integration-test crate).
+    let mut remaps: BTreeMap<Option<String>, (bool, bool)> = BTreeMap::new();
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
         let package = package_key(path);
-        let remapped = remaps.entry(package.clone()).or_insert(false);
-        if !*remapped
-            && has_path_attribute(&facts.data().source)
+        remaps.entry(package.clone()).or_insert((false, false));
+        if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
         {
-            *remapped = true;
+            // A `tests/` file whose remaps stay in its own directory can only
+            // rearrange that integration-test crate (#12771).
+            let in_tests =
+                under_tests_dir(path) && path_attributes_stay_in_test_dir(&facts.data().source);
+            let flags = remaps.entry(package.clone()).or_insert((false, false));
+            if in_tests {
+                flags.1 = true;
+            } else {
+                flags.0 = true;
+            }
         }
         if under_tests_dir(path) {
             continue;
@@ -460,7 +509,7 @@ fn scan_call_identity_shapes(
     // already holds every package with an indexed file.
     remaps
         .into_iter()
-        .map(|(package, remaps_module_paths)| {
+        .map(|(package, (remaps_module_paths, remaps_test_modules))| {
             let lib = libs.get(&package).cloned().unwrap_or_default();
             let main = mains.get(&package).cloned().unwrap_or_default();
             let declared = |sources: Vec<std::sync::Arc<str>>| match sources.as_slice() {
@@ -472,6 +521,7 @@ fn scan_call_identity_shapes(
                 (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
             let shape = PackageCallIdentityShape {
                 remaps_module_paths,
+                remaps_test_modules,
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -531,6 +581,7 @@ fn call_identity_shape(
             // replaces both answered `false`/no-roots for this case.
             std::sync::Arc::new(PackageCallIdentityShape {
                 remaps_module_paths: false,
+                remaps_test_modules: false,
                 layout: CrateLayout {
                     package: package.map(str::to_string),
                     roots: None,
@@ -789,9 +840,7 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if (rivals.is_empty() && !solo)
-            || package_remaps_module_paths(index, owner_package.as_deref())
-        {
+        if (rivals.is_empty() && !solo) || package_remaps_owner_module_paths(index, owner) {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -1326,7 +1375,16 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// [`file_module_segments`] reads. A raw scan: a match inside a string or
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
-    call_identity_shape(index, package).remaps_module_paths
+    let shape = call_identity_shape(index, package);
+    shape.remaps_module_paths || shape.remaps_test_modules
+}
+
+/// Whether a `#[path]` in `package` may move a module path of `owner`'s
+/// crate: any remap outside `tests/`, or a `tests/` remap when the owner
+/// itself lives under `tests/` (#12771).
+fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    let shape = call_identity_shape(index, package_key(&owner.file).as_deref());
+    shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
 }
 
 /// Whether every `#[path]` in `source` only selects between the two files of
@@ -1422,6 +1480,64 @@ fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
             }
             _ => false,
         })
+}
+
+/// Whether every `#[path]` in a `tests/` file is a plain `#[path = ".."]` on
+/// a module declaration whose literal stays below the declaring directory: no
+/// `..` segment, no absolute or drive path, no backslash (#12771). Such a remap
+/// only mounts files below that directory into its integration-test crate, so
+/// it cannot move the module path of an owner or rival read from `src/`
+/// (a file mounted from a nested `src/` under `tests/` is classified by its
+/// own package key, as it was before this rule). A `#[path]` inside a macro body, a `cfg_attr` carrier, a
+/// parse error or any other shape fails closed (`false`).
+fn path_attributes_stay_in_test_dir(source: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasAttrs},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
+    let mut accepted = 0usize;
+    for module in file.syntax().descendants().filter_map(ast::Module::cast) {
+        for attr in module.attrs() {
+            let text = attr.syntax().text().to_string();
+            if !attribute_sets_path(&text) {
+                continue;
+            }
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let Some(value) = compact
+                .strip_prefix("#[path=\"")
+                .and_then(|rest| rest.strip_suffix("\"]"))
+            else {
+                return false;
+            };
+            if value.is_empty()
+                || value.starts_with('/')
+                || value.contains(['\\', ':', '"'])
+                || value.split('/').any(|segment| segment == "..")
+            {
+                return false;
+            }
+            accepted += 1;
+        }
+    }
+    let total = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| attribute_sets_path(&attr.syntax().text().to_string()))
+        .count();
+    accepted > 0 && total == accepted
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -2793,7 +2909,7 @@ fn own_crate_names_of(
 /// historic admission (#9218) — the import names the owner closely enough
 /// that no rival claims it. Declined calls supply no row; activation retains
 /// the unresolved identity.
-pub(super) fn qualified_owner_calls_resolve(
+pub(in crate::analysis) fn qualified_owner_calls_resolve(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -2923,6 +3039,24 @@ fn closure_param_shadowed(
     })
 }
 
+/// Whether a bare call of the owner's name in `test` settles on the owner
+/// through the shared identity authority, imports included (an integration
+/// test's `use package::owner`). Only a settled `Owner` answers yes; an
+/// unsettled or rival reading does not (#13700).
+pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if let Some(identity) = shared_owner_call_identity(index, owner) {
+        return identity.resolve_call(test, index, &[]) == CallTarget::Owner;
+    }
+    shared_solo_owner_call_identity(index, owner).is_some_and(|identity| {
+        let scope = identity.test_scope(test, index);
+        identity.target_of(&identity.resolve_spelled(&[], &scope)) == CallTarget::Owner
+    })
+}
+
 /// Whether a bare call of the owner's name may supply a boundary input.
 /// With same-named rivals the call must settle on the owner; without rivals
 /// only a settled-away (`Other`) reading declines, while an unsettled
@@ -2951,6 +3085,7 @@ fn bare_owner_call_names_owner(
             CallTarget::Other => false,
             CallTarget::Unsettled => {
                 !name_bound_outside_owner_crate(index, owner, test)
+                    && !bare_name_renames_another_function(index, owner, test)
                     && !super::helper_transfer::test_body_shadows_name(
                         index,
                         test,
@@ -3071,6 +3206,163 @@ pub(super) fn name_bound_outside_owner_crate(
                     .any(|name| name == first || name.replace('-', "_") == *first)
         })
     })
+}
+
+/// Whether the bare spelling of the owner's name around `test` is bound to
+/// another function by a renaming import (`use super::other as discount;`
+/// beside a changed `discount`, #14069). The nearest scope that binds the
+/// name decides, walked as `resolve_bare` walks it: the test body first, then
+/// each enclosing module while it globs its parent. Every binding of the name
+/// in that scope must be a rename whose path places a differently named
+/// module-level function of the owner's package: the module the path spells
+/// holds that `fn`.
+///
+/// Fails open, keeping the prior reading: a rename of the owner itself, a
+/// rename whose path places no such function (a module alias in the type
+/// namespace beside a glob-imported owner, even when some unrelated function
+/// shares the module's name; a dependency's item; a tuple-struct
+/// constructor; a path the scope cannot place), a scope that also declares
+/// the name, a nested-block binding, a function-body glob, and an owner with
+/// no placeable call identity.
+pub(super) fn bare_name_renames_another_function(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let name = owner.name.trim_start_matches("r#");
+    // The relation asks this for every candidate test of every probe; a
+    // renaming import must spell `as <name>` somewhere in the test's file,
+    // so a file without that spelling is answered without reading scopes.
+    let spells_rename = index
+        .files()
+        .get(&test.file)
+        .is_some_and(|facts| source_spells_rename_to(&facts.source, name));
+    if !spells_rename {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(scopes) = test_scope.scopes.as_deref() else {
+        return false;
+    };
+    let raw_name = format!("r#{name}");
+    let owner_package = package_key(&owner.file);
+    for scope in &scopes.scopes {
+        if scope.block_binds(name) || scope.block_binds(&raw_name) {
+            return false;
+        }
+        let imports: Vec<&UseBinding> = scope
+            .imports_of(name)
+            .chain(scope.imports_of(&raw_name))
+            .collect();
+        if !imports.is_empty() {
+            let base = test_scope
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &scope.modules));
+            return !scope.defines.contains(name)
+                && imports.into_iter().all(|binding| {
+                    let UseBinding::Renamed(path) = binding else {
+                        return false;
+                    };
+                    let Some((last, module)) = path.split_last() else {
+                        return false;
+                    };
+                    let target = last.trim_start_matches("r#");
+                    if target == name || module.is_empty() {
+                        return false;
+                    }
+                    // The renamed path must place a function: the module it
+                    // spells holds a module-level `fn` of the target name in
+                    // the owner's package. A same-named function elsewhere
+                    // says nothing about a path that names a module.
+                    let Some(placed) =
+                        use_target(module, base.as_deref(), scope, &test_scope.crate_names)
+                    else {
+                        return false;
+                    };
+                    index.functions().iter().any(|function| {
+                        function.item.container == FunctionContainer::Free
+                            && function.name.trim_start_matches("r#") == target
+                            && package_key(&function.file) == owner_package
+                            && definition_module_path(function).as_ref() == Some(&placed)
+                    })
+                });
+        }
+        if scope.defines.contains(name) {
+            return false;
+        }
+        if scope.fn_body {
+            if !scope.globs.is_empty() {
+                return false;
+            }
+            continue;
+        }
+        let follows_super = scope
+            .globs
+            .iter()
+            .any(|glob| matches!(glob, Some(glob) if glob.len() == 1 && glob[0] == "super"));
+        if !follows_super {
+            return false;
+        }
+    }
+    false
+}
+
+/// Whether `source` spells `as <name>` (or `as r#<name>`) at identifier
+/// boundaries, or the name straight after a comment: the text every renaming
+/// import of `name` contains. A cheap necessary condition only; comments,
+/// strings and casts may also match.
+fn source_spells_rename_to(source: &str, name: &str) -> bool {
+    source.match_indices(name).any(|(start, _)| {
+        if ident_char_at(source, start + name.len()) {
+            return false;
+        }
+        let head = &source[..start];
+        let head = head.strip_suffix("r#").unwrap_or(head);
+        if head.chars().next_back().is_some_and(is_ident_char) {
+            return false;
+        }
+        let before = head.trim_end();
+        // A comment may sit between `as` and the name; answering yes there
+        // only sends the question on to the parsed scopes.
+        let after_comment = before.ends_with("*/")
+            || before
+                .rsplit('\n')
+                .next()
+                .is_some_and(|line| line.contains("//"));
+        after_comment || (before.len() < head.len() && head_word(before) == "as")
+    })
+}
+
+/// Whether every free-call spelling of the owner's name in `test` is bare
+/// and that bare name is a renaming import of another function (#14069):
+/// the test then calls the other function and never the owner. A qualified
+/// spelling (`super::discount(..)`) or a value mention that may still reach
+/// the owner keeps the prior relation.
+pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    // The rename check comes first: its text prefilter answers almost every
+    // test without masking and scanning the body.
+    if !bare_name_renames_another_function(index, owner, test) {
+        return false;
+    }
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    !qualifiers.is_empty()
+        && qualifiers
+            .iter()
+            .all(|qualifier| matches!(qualifier, Some(segments) if segments.is_empty()))
+        && value_mentions(&test.body, &owner.name)
+            .iter()
+            .all(|qualifier| matches!(qualifier, Some(segments) if segments.is_empty()))
 }
 
 /// RIPR-SPEC-0186: a boundary oracle must observe the changed definition,
@@ -3702,16 +3994,35 @@ impl LocalModules {
                         .skip(index + 1)
                         .find(|(_, token)| matches!(token, LexToken::Semi))
                         .map(|(at, _)| *at);
+                    // A `#[cfg(..)]` on the item decides whether it can bind
+                    // the name at all: a definitely-disabled item binds
+                    // nothing, and one whose predicate this reader cannot
+                    // evaluate is not settled, so it keeps the production
+                    // relation (#14744 review).
                     let text = end.and_then(|end| masked.get(offset + 3..end));
-                    if let Some(item) = text.and_then(UseItem::parse) {
-                        let module = stack.iter().map(|(name, _)| name.clone()).collect();
-                        found.file_uses.push((module, item));
-                    } else if let Some(text) = text {
-                        found.unreadable_owner_use |= mentions_word(text, owner);
-                        found.unreadable_uses.push(text.to_string());
-                    } else {
-                        found.unreadable_owner_use = true;
-                        found.nested_blocked = true;
+                    match cfg_state(&masked, *offset) {
+                        CfgState::Disabled => {}
+                        CfgState::Unsettled => {
+                            if let Some(text) = text {
+                                found.unreadable_owner_use |= mentions_word(text, owner);
+                                found.unreadable_uses.push(text.to_string());
+                            } else {
+                                found.unreadable_owner_use = true;
+                            }
+                        }
+                        CfgState::Enabled => {
+                            if let Some(item) = text.and_then(UseItem::parse) {
+                                let module: Vec<String> =
+                                    stack.iter().map(|(name, _)| name.clone()).collect();
+                                found.file_uses.push((module, item));
+                            } else if let Some(text) = text {
+                                found.unreadable_owner_use |= mentions_word(text, owner);
+                                found.unreadable_uses.push(text.to_string());
+                            } else {
+                                found.unreadable_owner_use = true;
+                                found.nested_blocked = true;
+                            }
+                        }
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
@@ -3719,7 +4030,24 @@ impl LocalModules {
         }
         let body_masked = mask_comments_and_strings(body);
         for range in use_item_ranges(&body_masked) {
+            // The same attribute rule as the module-level items: a disabled
+            // body import binds nothing and an unevaluable one is not
+            // settled (#14744 review).
             let text = body_masked.get(range.start + 3..range.end.saturating_sub(1));
+            match cfg_state(&body_masked, range.start) {
+                CfgState::Disabled => continue,
+                CfgState::Unsettled => {
+                    if let Some(text) = text {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    } else {
+                        found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
+                    }
+                    continue;
+                }
+                CfgState::Enabled => {}
+            }
             let top_block = body_masked.get(..range.start).is_some_and(|before| {
                 before.matches('{').count() == before.matches('}').count() + 1
             });
@@ -3806,13 +4134,29 @@ impl LocalModules {
             return Binding::Conflict;
         }
         match resolve(self.body_uses.iter().collect()) {
-            Binding::Unbound => resolve(
-                self.file_uses
-                    .iter()
-                    .filter(|(module, _)| *module == self.scope)
-                    .map(|(_, item)| item)
-                    .collect(),
-            ),
+            Binding::Unbound => {
+                // A body-level glob shadows the test module's explicit
+                // import for every name it provides, and the reader cannot
+                // tell which names a non-rival glob provides, so the
+                // module-level binding is not settled (#14744 review). A
+                // glob of a public rival module is left to
+                // `bare_names_rival`, which names the rival.
+                let body_glob_unsettled = self.body_uses.iter().any(|item| {
+                    item.glob
+                        && !Self::absolute(&self.scope, &item.path, integration_crate)
+                            .is_some_and(|module| self.public_rivals.contains(&module))
+                });
+                if body_glob_unsettled {
+                    return Binding::Conflict;
+                }
+                resolve(
+                    self.file_uses
+                        .iter()
+                        .filter(|(module, _)| *module == self.scope)
+                        .map(|(_, item)| item)
+                        .collect(),
+                )
+            }
             bound => bound,
         }
     }
@@ -3944,6 +4288,74 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         mentions.push(qualifier_before(head));
     }
     mentions
+}
+
+/// The attribute state of the item that starts at `start` in masked `text`.
+enum CfgState {
+    /// A preceding `#[cfg(..)]` is definitely false: the item does not exist.
+    Disabled,
+    /// No preceding `#[cfg(..)]`, or every one is definitely true.
+    Enabled,
+    /// A preceding predicate names a feature or target this reader cannot
+    /// evaluate, so whether the item binds is not settled.
+    Unsettled,
+}
+
+/// Whether a `#[cfg(..)]` attribute immediately preceding the item at `start`
+/// disables it (#14744 review). Only constant predicates are decided: `test`,
+/// `any()`, `all()` and `not(..)` over those. Anything else (`feature = "x"`,
+/// `target_os = ..`) is `Unsettled`, which keeps the production relation.
+fn cfg_state(text: &str, start: usize) -> CfgState {
+    let head = &text[..start];
+    let boundary = head
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| matches!(ch, ';' | '{' | '}'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let head = &head[boundary..];
+    if !head.contains("#[cfg") {
+        return CfgState::Enabled;
+    }
+    let mut state = CfgState::Enabled;
+    let mut rest = head;
+    while let Some(at) = rest.find("#[") {
+        rest = &rest[at + 2..];
+        let Some(end) = rest.find(']') else {
+            return CfgState::Unsettled;
+        };
+        let attribute = &rest[..end];
+        rest = &rest[end + 1..];
+        let Some(predicate) = attribute
+            .trim()
+            .strip_prefix("cfg(")
+            .and_then(|inner| inner.strip_suffix(')'))
+        else {
+            continue;
+        };
+        match cfg_predicate(predicate.trim()) {
+            Some(false) => state = CfgState::Disabled,
+            Some(true) => {}
+            None => {
+                if !matches!(state, CfgState::Disabled) {
+                    state = CfgState::Unsettled;
+                }
+            }
+        }
+    }
+    state
+}
+
+/// A constant `cfg` predicate's value, when the reader can decide it.
+fn cfg_predicate(predicate: &str) -> Option<bool> {
+    match predicate {
+        "test" | "all()" => Some(true),
+        "any()" => Some(false),
+        _ => predicate
+            .strip_prefix("not(")
+            .and_then(|inner| inner.strip_suffix(')'))
+            .and_then(|inner| cfg_predicate(inner.trim()))
+            .map(|value| !value),
+    }
 }
 
 /// Byte ranges of the `use` items in masked `text`, each from its `use`
@@ -4110,6 +4522,88 @@ mod tests {
         assert_eq!(withheld("tests/boundary.rs"), Some(true));
         // `crate::` is the library root elsewhere: the production relation stays.
         assert_eq!(withheld("src/boundary.rs"), Some(false));
+    }
+
+    /// #14744 review: a body-level glob shadows the module's explicit rival
+    /// import, so the production call keeps its relation instead of being
+    /// demoted.
+    #[test]
+    fn a_body_glob_shadows_the_module_rival_import() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let tests = "mod local {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+        assert_eq!(
+            withheld_local_rival(prod, tests, "body_glob"),
+            Some(false),
+            "a body glob of the production module shadows the module-level rival import"
+        );
+    }
+
+    /// #14744 review: a `#[cfg(..)]` on a rival import decides whether it
+    /// binds. A definitely-disabled one binds nothing and an unevaluable one
+    /// is not settled, so either way a genuine production call keeps its
+    /// relation; `#[cfg(test)]` still binds the rival.
+    #[test]
+    fn a_cfg_decides_whether_a_rival_import_binds() {
+        let prod =
+            "pub fn discounted_total(a: i32, t: i32) -> i32 { if a >= t { a - 10 } else { a } }\n";
+        let rival =
+            "mod local {\n    pub fn discounted_total(_a: i32, _t: i32) -> i32 { 777 }\n}\n";
+        let case = |attribute: &str, name: &str| {
+            format!(
+                "{rival}{attribute}\nuse local::discounted_total;\n\n#[test]\nfn {name}() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+            )
+        };
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(any())]", "disabled_rival"),
+                "disabled_rival"
+            ),
+            Some(false),
+            "a `#[cfg(any())]` rival import binds nothing"
+        );
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(feature = \"loud\")]", "feature_rival"),
+                "feature_rival"
+            ),
+            Some(false),
+            "an unevaluable cfg is not settled, so the production relation stays"
+        );
+        assert_eq!(
+            withheld_local_rival(
+                prod,
+                &case("#[cfg(test)]", "cfg_test_rival"),
+                "cfg_test_rival"
+            ),
+            Some(true),
+            "`#[cfg(test)]` is enabled in a test file, so the rival import binds"
+        );
+        // The body-level shape of the same defect: an active production
+        // import at file scope beside a disabled rival import in the test.
+        let body_disabled = format!(
+            "{rival}use discount_lib::discounted_total;\n\n#[test]\nfn body_disabled_rival() {{\n    #[cfg(any())] use local::discounted_total;\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+        );
+        assert_eq!(
+            withheld_local_rival(prod, &body_disabled, "body_disabled_rival"),
+            Some(false),
+            "a disabled body rival import never shadows the production import"
+        );
+    }
+
+    fn withheld_local_rival(prod: &str, test_source: &str, test_name: &str) -> Option<bool> {
+        let files = [("src/lib.rs", prod), ("tests/boundary.rs", test_source)];
+        let idx = index(&files);
+        let owner = idx
+            .functions()
+            .iter()
+            .find(|function| function.file == Path::new("src/lib.rs"))?;
+        let test = idx.tests().iter().find(|test| test.name == test_name)?;
+        Some(test_calls_only_through_local_rival_module(
+            &idx, owner, test,
+        ))
     }
 
     /// #13868: the memo key names the test body, so two same-named tests that
@@ -4455,6 +4949,35 @@ mod blocks {
             assert!(!std::sync::Arc::ptr_eq(&root, &other));
         }
         Ok(())
+    }
+
+    /// A `tests/` remap that stays in its own directory cannot move an
+    /// owner's module path; every other `#[path]` shape keeps the rule off
+    /// (#12771).
+    #[test]
+    fn test_dir_path_attributes_stay_only_below_their_directory() {
+        use super::path_attributes_stay_in_test_dir as stays;
+        assert!(stays("mod rows;\n#[path = \"other/rows.rs\"]\nmod far;\n"));
+        assert!(stays(
+            "#[path = \"a.rs\"] mod a;\nmod b { #[path = \"c/d.rs\"] mod d; }\n"
+        ));
+        // No `#[path]` at all is not this shape.
+        assert!(!stays("mod rows;\n"));
+        for declined in [
+            "#[path = \"../src/lib.rs\"] mod lib;",
+            "#[path = \"other/../../src/x.rs\"] mod x;",
+            "#[path = \"/abs/x.rs\"] mod x;",
+            // A drive path, split so the local-context policy sees no literal one.
+            concat!("#[path = \"C", ":/x.rs\"] mod x;"),
+            "#[path = \"other\\\\x.rs\"] mod x;",
+            "#[path = r\"x.rs\"] mod x;",
+            "#[cfg_attr(unix, path = \"x.rs\")] mod x;",
+            "#[r#path = \"x.rs\"] mod x;",
+            "macro_rules! m { () => { #[path = \"x.rs\"] mod x; } }",
+            "#[path = \"x.rs\"] mod x; fn broken(",
+        ] {
+            assert!(!stays(declined), "{declined}");
+        }
     }
 
     /// Two same-named owners on one source line (inline sibling modules)
@@ -5769,6 +6292,344 @@ mod tests {
             settle(&index, "/a.rs::render", "closure_case"),
             Some(CallTarget::Owner)
         );
+        Ok(())
+    }
+
+    /// #14069 fixture: a changed `discount` beside a differently named
+    /// `other`, with one test module per spelling of the test's bare
+    /// `discount(..)` call.
+    const RENAMED_OTHER_LIB: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod pricing {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod module_rename {
+    use super::other as discount;
+
+    #[test]
+    fn module_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod brace_rename {
+    use super::{other as discount};
+
+    #[test]
+    fn brace_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod body_rename {
+    #[test]
+    fn body_rename_case() {
+        use super::other as discount;
+        assert_eq!(discount(100), 10);
+    }
+}
+
+mod outer {
+    use crate::other as discount;
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parent_rename_through_glob_case() {
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
+
+#[cfg(test)]
+mod real {
+    use super::*;
+
+    #[test]
+    fn real_case() {
+        assert_eq!(discount(100), 0);
+    }
+}
+
+#[cfg(test)]
+mod self_rename {
+    use super::discount as discount;
+
+    #[test]
+    fn self_rename_case() {
+        assert_eq!(discount(100), 0);
+    }
+}
+
+#[cfg(test)]
+mod module_alias {
+    use super::*;
+    use super::pricing as discount;
+
+    #[test]
+    fn module_alias_case() {
+        discount::unrelated();
+        assert_eq!(discount(100), 0);
+    }
+}
+
+pub mod unrelated {
+    pub fn pricing() {}
+}
+
+#[cfg(test)]
+mod commented_rename {
+    use super::other as /* alias */ discount;
+
+    #[test]
+    fn commented_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod line_commented_rename {
+    use super::other as // alias
+        discount;
+
+    #[test]
+    fn line_commented_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod qualified_beside_rename {
+    use super::other as discount;
+
+    #[test]
+    fn qualified_beside_rename_case() {
+        assert_eq!(super::discount(100), 0);
+    }
+
+    #[test]
+    fn qualified_and_bare_case() {
+        assert_eq!(super::discount(100), 0);
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod sibling_without_glob {
+    #[test]
+    fn unbound_case() {
+        assert_eq!(discount(100), 0);
+    }
+}
+";
+
+    const RENAMED_OTHER_INTEGRATION: &str = "\
+use modules::other as discount;
+
+#[test]
+fn integration_rename_case() {
+    assert_eq!(discount(100), 10);
+}
+";
+
+    const RENAMED_CASES: [&str; 7] = [
+        "commented_rename_case",
+        "line_commented_rename_case",
+        "module_rename_case",
+        "brace_rename_case",
+        "body_rename_case",
+        "parent_rename_through_glob_case",
+        "integration_rename_case",
+    ];
+
+    const KEPT_CASES: [&str; 5] = [
+        "real_case",
+        "self_rename_case",
+        "module_alias_case",
+        "qualified_beside_rename_case",
+        "unbound_case",
+    ];
+
+    fn renamed_other_index() -> RustIndex {
+        index(&[
+            ("src/lib.rs", RENAMED_OTHER_LIB),
+            ("tests/it.rs", RENAMED_OTHER_INTEGRATION),
+        ])
+    }
+
+    fn renamed_other_parts<'a>(
+        index: &'a RustIndex,
+        test_name: &str,
+    ) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "discount")
+            .ok_or("owner `discount` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == test_name)
+            .ok_or_else(|| format!("test `{test_name}` must be indexed"))?;
+        Ok((owner, test))
+    }
+
+    /// #14069: a bare call bound by a renaming import of another function
+    /// is not a call of the owner; every other binding keeps the prior
+    /// reading.
+    #[test]
+    fn a_renaming_import_of_another_function_is_not_a_call_of_the_owner() -> Result<(), String> {
+        let index = renamed_other_index();
+        for name in RENAMED_CASES {
+            let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                bare_name_renames_another_function(&index, owner, test),
+                "{name}: the bare name is `other` under a rename"
+            );
+            assert!(
+                test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: every call is the renamed other function"
+            );
+        }
+        for name in KEPT_CASES {
+            let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // A qualified owner call beside the rename keeps the test related,
+        // but the renamed bare call beside it still names the other function.
+        let (owner, mixed) = renamed_other_parts(&index, "qualified_and_bare_case")?;
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, mixed
+        ));
+        assert!(bare_name_renames_another_function(&index, owner, mixed));
+        assert!(
+            !qualified_owner_calls_resolve(&index, owner, mixed, "discount(100)", mixed.start_line),
+            "the renamed bare call lends no owner input"
+        );
+        assert!(
+            qualified_owner_calls_resolve(
+                &index,
+                owner,
+                mixed,
+                "super::discount(100)",
+                mixed.start_line
+            ),
+            "the qualified call still names the owner"
+        );
+        // The text prefilter is a necessary condition only: it reads the
+        // `as <name>` spelling at identifier boundaries, raw or not.
+        for (source, expected) in [
+            ("use super::other as discount;", true),
+            ("use super::{other as\n    discount};", true),
+            ("use super::other as r#discount;", true),
+            ("use super::other as /* alias */ discount;", true),
+            ("use super::other as // alias\n    discount;", true),
+            ("use super::other as discounted;", false),
+            ("use super::other as my_discount;", false),
+            ("use super::has discount;", false),
+            ("let x = alias(discount);", false),
+            ("use super::discount;", false),
+        ] {
+            assert_eq!(
+                source_spells_rename_to(source, "discount"),
+                expected,
+                "{source}"
+            );
+        }
+        // `module_alias_case` renames the module `pricing`; the unrelated
+        // `unrelated::pricing` function must not make that a function rename,
+        // so its bare call still lends owner input.
+        let (owner, alias) = renamed_other_parts(&index, "module_alias_case")?;
+        assert!(
+            index
+                .functions()
+                .iter()
+                .any(|function| function.name == "pricing"),
+            "the unrelated same-named function must be indexed"
+        );
+        assert!(!bare_name_renames_another_function(&index, owner, alias));
+        assert!(
+            qualified_owner_calls_resolve(&index, owner, alias, "discount(100)", alias.start_line),
+            "a module alias does not take the owner's bare call"
+        );
+        // The rule reads the renamed target, not the alias: `other` itself is
+        // never renamed away from its own tests.
+        let other = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "other")
+            .ok_or("`other` must be indexed")?;
+        let (_, renamed) = renamed_other_parts(&index, "module_rename_case")?;
+        assert!(!bare_name_renames_another_function(&index, other, renamed));
+        Ok(())
+    }
+
+    /// #14069 through the related-test relation `ripr check` uses: the
+    /// renamed spellings relate by name only, the kept ones stay a direct
+    /// owner call.
+    #[test]
+    fn a_renamed_other_function_call_relates_by_name_only() -> Result<(), String> {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation,
+        };
+        let index = renamed_other_index();
+        let (owner, _) = renamed_other_parts(&index, "real_case")?;
+        let probe = Probe {
+            id: ProbeId("probe:test".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("amount > 100".to_string()),
+            expression: "amount > 100".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related = super::super::related_tests::find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        let reason_of = |name: &str| {
+            related
+                .iter()
+                .find(|(test, _)| test.name == name)
+                .map(|(_, reason)| *reason)
+        };
+        for name in RENAMED_CASES {
+            assert_ne!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the test calls `other`, never the owner"
+            );
+        }
+        for name in KEPT_CASES.into_iter().chain(["qualified_and_bare_case"]) {
+            assert_eq!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the owner call keeps its direct relation"
+            );
+        }
         Ok(())
     }
 

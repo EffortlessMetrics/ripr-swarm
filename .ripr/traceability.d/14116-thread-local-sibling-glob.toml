@@ -1,0 +1,11 @@
+# std's thread_local!/compile_error! keep a file's own module glob local (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/module_local_glob.rs::a_thread_local_beside_a_sibling_module_glob_keeps_the_test_credited",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/syntax/module_tree.rs",
+]

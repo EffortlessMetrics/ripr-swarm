@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn rate(t: u32) -> u32 {
+-    if t > 500 {
+-        return t / 10;
++    if t > 200 {
++        return t / 5;
+     }
+     t * 2 / 10
+ }
