@@ -509,7 +509,7 @@ mod term_activation;
 mod test_activation;
 mod truthiness_swap;
 use static_limits::{
-    PythonStaticLimit, has_identifier_boundary, line_prefix_before,
+    PrefixScan, PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;

@@ -49,9 +49,9 @@ use super::no_behavior::{
     split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_module_may_be_owners, import_source_module_matches_owner,
-    is_python_identifier_char, owner_module_callees, owner_module_paths, python_text_hides_code,
-    test_body_binds_local,
+    PythonHiddenCode, PythonRelatedCandidate, import_module_may_be_owners,
+    import_source_module_matches_owner, is_python_identifier_char, owner_module_callees,
+    owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::{
@@ -1370,14 +1370,15 @@ fn contains_ungated_identity_or_inequality(text: &str) -> bool {
 }
 
 fn live_token(text: &str, token: &str) -> bool {
-    text.match_indices(token)
-        .any(|(idx, _)| !python_text_hides_code(text, idx))
+    let mut hidden = PythonHiddenCode::new(text);
+    text.match_indices(token).any(|(idx, _)| !hidden.hides(idx))
 }
 
 fn live_keyword(text: &str, keyword: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(keyword).any(|(idx, _)| {
         let end = idx + keyword.len();
-        !python_text_hides_code(text, idx)
+        !hidden.hides(idx)
             && !text[..idx]
                 .chars()
                 .next_back()
