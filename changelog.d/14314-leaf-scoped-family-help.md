@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr help <family> <leaf>` and `ripr <family> <leaf> --help` for `reports`, `policy`, `baseline`, `pr-comments` and `assistant-loop` print only that leaf's summary, usage lines, options section and catalog example plus a pointer to `ripr help <family>`, instead of the whole family body; `ripr help --json` rows for those leaves list only the leaf's own flags with `flags_scope: "leaf_section"` and `schema_version` is now 5 (#14314).

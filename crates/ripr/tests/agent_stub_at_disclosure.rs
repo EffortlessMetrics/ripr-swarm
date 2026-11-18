@@ -479,10 +479,13 @@ fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<()
 }
 
 /// An open-gap seam owns the stub ripr writes; the stub's own seam is then
-/// strongly gripped. #8891: the second `--write` must report the existing
-/// stub ("already written", with the run command) instead of suffixing a
-/// `_2` duplicate, and its disclosure must name the real reason (the seam is
-/// exposed) rather than claiming it is "configured off".
+/// not `strongly_gripped` but `propagation_unknown`, because the stub's
+/// expected value is still an unfilled `todo!()` and pins nothing (#14810).
+/// #8891: the second `--write`
+/// must report the existing stub ("already written", with the run command)
+/// instead of suffixing a `_2` duplicate, and its disclosure must name the
+/// real reason (the seam is exposed) rather than claiming it is "configured
+/// off".
 #[test]
 fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), String> {
     const OPEN_GAP: &str =
@@ -524,12 +527,14 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
             "nothing was configured off; the disclosure must name the real reason: {stdout}"
         ));
     }
-    if !stdout.contains("strongly_gripped") {
+    // #14810: the stub's expected value is an unfilled `todo!()`, so the seam
+    // it writes is not strongly gripped. Reverting the placeholder lowering
+    // flips this class and must turn this test red.
+    if stdout.contains("strongly_gripped") {
         return Err(format!(
-            "the disclosure must still name the grip class: {stdout}"
+            "the stub's own seam pins nothing, so it must not read strongly_gripped: {stdout}"
         ));
     }
-
     let written = std::fs::read_to_string(root.join("src/lib.rs"))
         .map_err(|error| format!("read back the written file: {error}"))?;
     let occurrences = written
@@ -553,19 +558,17 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
             "the second write document must be ready, already present, not rewritten: {document}"
         ));
     }
-    let warnings = document["warnings"]
-        .as_array()
-        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
-    let warning = warnings
-        .first()
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("the disclosure warning must be present: {document}"))?;
-    if !warning.contains("strongly_gripped")
-        || !warning.contains("existing tests already discriminate it")
-        || warning.contains("configured off")
-    {
+    // #14810: the stub's expected value is an unfilled `todo!()`, so the seam
+    // it writes is not strongly gripped. Reverting the placeholder lowering
+    // flips this class and must turn this test red.
+    if document["grip_class"] != "propagation_unknown" {
         return Err(format!(
-            "the disclosure must name the real reason, not 'configured off': {warning}"
+            "the stub's own seam must read propagation_unknown, not a strong grip: {document}"
+        ));
+    }
+    if document["warnings"] != serde_json::json!([]) {
+        return Err(format!(
+            "a propagation_unknown seam omits nothing, so warnings must be empty: {document}"
         ));
     }
     Ok(())

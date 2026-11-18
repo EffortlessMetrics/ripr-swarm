@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Lowering one language's changed-line limit no longer shrinks the partial line budget for a diff with no file in that language. For example, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=500` with Rust and Python enabled used to turn an 800-line Rust-only diff into a `limited_partial_scope` run and advise raising the Python limit. The budget clamp and the widen advice now use only the limits of the enabled languages the diff contains (#14172).

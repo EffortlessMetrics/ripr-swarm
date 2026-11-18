@@ -376,20 +376,6 @@ impl RepoRelative {
         captured(&lines.join("\n"))
     }
 
-    /// `repo_relative < file`: every input line, newline-terminated.
-    pub(super) fn file(&self, bytes: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(bytes.len());
-        let body = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-        if bytes.is_empty() {
-            return out;
-        }
-        for line in body.split(|byte| *byte == b'\n') {
-            out.extend(self.line(line));
-            out.push(b'\n');
-        }
-        out
-    }
-
     fn line(&self, line: &[u8]) -> Vec<u8> {
         rewrite(&rewrite(line, &self.physical), &self.logical)
     }
@@ -695,7 +681,6 @@ mod tests {
     fn repo_relative_leaves_text_alone_when_no_root_applies() {
         let none = RepoRelative::default();
         assert_eq!(none.value("cd /w/repo"), "cd /w/repo");
-        assert_eq!(none.file(b"a\nb"), b"a\nb\n");
         let relative = RepoRelative {
             physical: b"/w/repo".to_vec(),
             logical: Vec::new(),
@@ -711,6 +696,6 @@ mod tests {
         assert_eq!(relative.value("/w/repo-2"), "/w/repo-2");
         assert_eq!(relative.value("/w/repo/a /w/repo/b"), "./a ./b");
         // A rewrite never reads outside the line that holds it.
-        assert_eq!(relative.file(b"/w/repo\n/w/repox\n"), b".\n/w/repox\n");
+        assert_eq!(relative.value("/w/repo\n/w/repox"), ".\n/w/repox");
     }
 }

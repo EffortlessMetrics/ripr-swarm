@@ -14,6 +14,19 @@ restate their contracts.
 All findings use static vocabulary. A baseline checkpoints reviewed static
 findings; it is not a suppression and not runtime mutation evidence.
 
+## Quickest start: the Action
+
+For an advisory check before adopting the generated workflow, two steps are enough:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
+```
+
+It handles the default shallow checkout, caches analysis, prints the report to
+the job log and summary, and fails only when ripr could not complete. Details:
+[CI strategy](CI.md#composite-action-ripr-check).
+
 ## 1. Generate the workflow
 
 ```bash

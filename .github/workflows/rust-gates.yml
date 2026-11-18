@@ -95,8 +95,8 @@ on:
         type: string
       test-shards:
         description: >-
-          1 runs the required nextest step in this job. 4 leaves it to
-          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+          1 runs the required nextest step in this job. 2 leaves it to
+          rust-test-shards.yml, which the caller must also run and require (#10507).
         required: false
         default: 1
         type: number
@@ -199,7 +199,7 @@ jobs:
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
-      # directory age. The same action is the scheduled scratch-gc.yml authority.
+      # directory age. The same action is the scratch-gc.yml sweep authority.
       - name: Acquire scratch lease
         if: inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
@@ -223,6 +223,7 @@ jobs:
         if: inputs.use-scratch
         env:
           CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+          CARGO_INCREMENTAL: "0"
           RUSTC_WRAPPER: sccache
           SCCACHE_DIR: /mnt/ci-cache/sccache
           SCCACHE_CACHE_SIZE: 15G
@@ -231,6 +232,7 @@ jobs:
         run: |
           {
             echo "CARGO_HOME=$CARGO_HOME"
+            echo "CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
             echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
             echo "SCCACHE_DIR=$SCCACHE_DIR"
             echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
@@ -283,11 +285,20 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
+      # Match the existing test profile before any Cargo build or cache key is
+      # evaluated. Scratch execution retains its selected resource environment.
+      - name: Align hosted dev and test debug settings
+        if: ${{ !inputs.use-scratch }}
+        run: echo 'CARGO_PROFILE_DEV_DEBUG=0' >> "$GITHUB_ENV"
+
       - name: Restore hosted Rust cache
+        # Best-effort existing default-branch entries; misses always recompute.
+        # Only an already-selected manual main qualification may refresh these
+        # entries. No ordinary push, recurring warmer, or broadened PR/G saves.
         if: ${{ !inputs.use-scratch }}
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -315,14 +326,39 @@ jobs:
 
       - name: Prepare independent user-text base
         id: user_text_base
-        # Prepares the exact first-parent base before running its policy matcher.
-        # These two short steps preserve the check-workflows per-block line bound.
+        # A queue head's first parent can be an unlanded constituent. Judge the
+        # complete group with its protected event base; PRs use their verified
+        # synthetic merge's first parent, including accepted base movement.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          base_sha="$(git rev-parse HEAD^1)"
+          checkout_sha="$(git rev-parse --verify HEAD^{commit})"
+          [[ "$EVENT_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$checkout_sha" = "$EVENT_SHA" ] || { echo "::error::user-text base: checkout does not match the event"; exit 1; }
+          case "$EVENT_NAME" in
+            merge_group)
+              base_sha="$GROUP_BASE_SHA"
+              [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$GROUP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$GROUP_HEAD_SHA" = "$checkout_sha" ] && [ "$base_sha" != "$checkout_sha" ] || { echo "::error::user-text base: invalid merge-group identities"; exit 1; }
+              git cat-file -e "${base_sha}^{commit}" && git merge-base --is-ancestor "$base_sha" "$checkout_sha" || { echo "::error::user-text base: group base is unavailable or not an ancestor"; exit 1; }
+              ;;
+            pull_request)
+              [[ "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::user-text base: invalid PR identities"; exit 1; }
+              parents="$(git rev-list --parents -n 1 "$checkout_sha")"
+              read -r _commit base_sha candidate_sha extra <<< "$parents"
+              [ -n "${base_sha:-}" ] && [ "${candidate_sha:-}" = "$PR_HEAD_SHA" ] && [ -z "${extra:-}" ] || { echo "::error::user-text base: checkout is not the PR's two-parent merge"; exit 1; }
+              git merge-base --is-ancestor "$PR_BASE_SHA" "$base_sha" || { echo "::error::user-text base: recorded PR base is unavailable or unrelated"; exit 1; }
+              ;;
+            *) echo "::error::user-text base: unsupported event"; exit 1 ;;
+          esac
           base_tree="$RUNNER_TEMP/user-text-base"
           git worktree add --detach "$base_tree" "$base_sha"
+          test "$(git -C "$base_tree" rev-parse HEAD)" = "$base_sha"
 
       - name: Recover pinned base compiler arity if needed
         id: user_text_recovery
@@ -400,30 +436,25 @@ jobs:
             exit 0
           fi
           cd "$base_tree"
-          cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          if test -f tools/repo-policy/src/main.rs && grep -qF 'Some("check-user-text")' tools/repo-policy/src/main.rs; then
+            cargo policy check-user-text --tree "$GITHUB_WORKSPACE"
+          else
+            # Older trusted bases retain their original xtask judge (#8198).
+            cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          fi
           cd "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        # Includes dependency, process (with CLI exit vocabulary), and network
+        # policy. Preserve their original reports without launching them twice.
         run: cargo xtask ci-policy
 
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty
-
-      - name: Dependency policy
-        id: dependencies
-        run: cargo xtask check-dependencies
-
-      - name: Process policy
-        id: process_policy
-        run: cargo xtask check-process-policy
-
-      - name: Network policy
-        id: network_policy
-        run: cargo xtask check-network-policy
 
       # Lint optional-feature code as well as type-checking it (#13152).
       # Keep the default-feature workspace pass below: cfg(not(feature = ...))
@@ -434,6 +465,10 @@ jobs:
 
       - name: Strict workspace Clippy
         id: clippy
+        # #14589: bound simultaneous large lint units on the 16-GiB hosted route.
+        # Keep the scratch runner's configured capacity and every lint target.
+        env:
+          CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # The gates below need only the `ripr` build, not the test run. They run before
@@ -441,16 +476,17 @@ jobs:
       # inventory, verdict corpora) fails the required run within minutes instead of
       # after the tests (#10341). A run that fails here reports no test results; the
       # next run does.
-      - name: Golden output contracts
-        id: goldens
-        run: cargo xtask goldens check
+      # One evaluation writes both reports and fails for either obligation.
+      - name: Golden and fixture contracts
+        id: goldens_fixtures
+        run: cargo xtask goldens check-with-fixtures
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
       # This uses the actual canonical producer outputs; it does not rerun,
       # normalize, bless, or weaken the golden comparison.
       - name: Retain wildcard calibration producer outputs
-        if: always() && (steps.goldens.outcome == 'success' || steps.goldens.outcome == 'failure')
+        if: always() && (steps.goldens_fixtures.outcome == 'success' || steps.goldens_fixtures.outcome == 'failure')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-wildcard-calibration-${{ github.run_attempt }}
@@ -472,10 +508,6 @@ jobs:
             target/ripr/fixtures/guarded_result_match_owner_observation/human*.txt
           if-no-files-found: error
           retention-days: 5
-
-      - name: Fixture contracts
-        id: fixtures
-        run: cargo xtask fixtures
 
       # Hosted wiring for #5531. Both commands build/run `ripr` (the fixture step
       # above just built it, so this reuses the artifacts) and compare the
@@ -525,8 +557,8 @@ jobs:
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
 
-      # Skipped only when the caller passes `test-shards: 4`; it then owns running
-      # the same tests as four partitions in rust-test-shards.yml and must fail
+      # Skipped only when the caller passes `test-shards: 2`; it then owns running
+      # the same tests as two partitions in rust-test-shards.yml and must fail
       # the required result unless that workflow passes (routed-rust.yml `result`).
       - name: Required Rust tests
         id: rust-tests
@@ -715,14 +747,10 @@ jobs:
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
           PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
           AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
-          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
-          PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
-          NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
-          GOLDENS_RESULT: ${{ steps.goldens.outcome }}
-          FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          GOLDENS_FIXTURES_RESULT: ${{ steps.goldens_fixtures.outcome }}
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
@@ -743,14 +771,10 @@ jobs:
             printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
             printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
             printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
-            printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
-            printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
-            printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
-            printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
-            printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| goldens_fixtures | %s |\n' "${GOLDENS_FIXTURES_RESULT:-not_reported}"
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
@@ -760,6 +784,7 @@ jobs:
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."
             echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."
+            echo "Dependency, process and network policies run inside precommit (ci-policy); their leaf reports retain individual diagnostics."
             echo "This summary is diagnostic; Ripr Rust Small Result remains the required check."
           } >> "$GITHUB_STEP_SUMMARY"
 

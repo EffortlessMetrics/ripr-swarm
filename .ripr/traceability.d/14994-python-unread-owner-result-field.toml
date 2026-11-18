@@ -1,0 +1,12 @@
+# Registers the unread owner-result field repair start (#13827, #14994) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/owner_result_field_tests.rs",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::unread_field_of_a_bound_builder_result_starts_repair_and_can_close",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::a_test_that_reads_the_field_gets_no_start",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::two_related_tests_get_no_start",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/owner_result_field.rs",
+]

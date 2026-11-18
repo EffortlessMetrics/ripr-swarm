@@ -86,6 +86,8 @@ pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
+#[cfg(test)]
+mod repo_exposure_limitation_tests;
 pub(crate) mod repo_seams;
 pub(crate) mod report_packet_index;
 pub(crate) mod review_comments;

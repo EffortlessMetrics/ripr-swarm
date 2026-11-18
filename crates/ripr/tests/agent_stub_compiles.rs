@@ -259,9 +259,87 @@ mod more_tests {
 }
 "#;
 
+/// #8361: receivers built from a constructor instead of a `todo!()`.
+const FIXTURE_RECEIVER: &str = r#"pub struct Bucket {
+    tokens: u32,
+}
+
+impl Bucket {
+    pub fn new(capacity: u32) -> Self {
+        Bucket { tokens: capacity }
+    }
+
+    pub fn allow(&mut self, n: u32) -> bool {
+        if self.tokens > n { self.tokens -= n; true } else { false }
+    }
+}
+
+pub struct Ledger {
+    entries: Vec<i64>,
+}
+
+impl Ledger {
+    pub fn empty() -> Ledger {
+        Ledger { entries: Vec::new() }
+    }
+}
+
+impl Ledger {
+    pub fn total(&self, cap: i64) -> i64 {
+        let sum: i64 = self.entries.iter().sum();
+        if sum > cap { cap } else { sum }
+    }
+}
+
+#[derive(Default)]
+pub struct Counter {
+    pub hits: u8,
+}
+
+impl Counter {
+    // An inherent `default` taking an argument must not capture the
+    // derived `Default` call (#14825 review).
+    pub fn default(hits: u8) -> Self {
+        Counter { hits }
+    }
+
+    pub fn over(&self, n: u8) -> u8 {
+        if n > 21 { self.hits } else { 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn panics_first() {
+        let _b = Bucket::new(7);
+        panic!("before");
+    }
+
+    #[test]
+    fn caught() {
+        // A call inside a closure is not copied (#14825 review).
+        let built = std::panic::catch_unwind(|| Bucket::new(0));
+        assert!(built.is_ok());
+    }
+
+    #[test]
+    fn drains() {
+        let mut b = Bucket::new(5);
+        assert!(b.allow(2));
+    }
+}
+"#;
+
 enum Expect {
     /// The stub is written, compiles, and its test stops at a `ripr:` todo.
     StopsAtRiprTodo,
+    /// As `StopsAtRiprTodo`, and the stub text holds this receiver line, so
+    /// the run proves the constructor call compiled and ran before the todo.
+    BuildsReceiver(&'static str),
     /// No stub; the refusal names this kind.
     Refused(&'static str),
 }
@@ -358,10 +436,32 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("n > 11", Expect::Refused("owner_unsupported"), None),
     ]
     .map(|(needle, expect, module)| (FIXTURE_5471, needle, expect, module));
+    let cases_receiver = [
+        // The first literal-argument constructor call in the test module,
+        // skipping a `should_panic` test (#8361).
+        (
+            "self.tokens > n",
+            Expect::BuildsReceiver("let mut subject: Bucket = Bucket::new(5);"),
+        ),
+        // A no-argument constructor in a sibling inherent impl.
+        (
+            "sum > cap",
+            Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
+        ),
+        // `#[derive(Default)]` beside an inherent `default(hits)`.
+        (
+            "n > 21",
+            Expect::BuildsReceiver(
+                "let subject: Counter = <Counter as ::core::default::Default>::default();",
+            ),
+        ),
+    ]
+    .map(|(needle, expect)| (FIXTURE_RECEIVER, needle, expect, Some("tests")));
     for (fixture, needle, expect, module) in cases
         .into_iter()
         .map(|(fixture, needle, expect)| (fixture, needle, expect, None))
         .chain(cases_5471)
+        .chain(cases_receiver)
     {
         let line = fixture
             .lines()
@@ -398,7 +498,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     "{needle}: a refusal must not touch the file"
                 );
             }
-            Expect::StopsAtRiprTodo => {
+            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) => {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
@@ -410,6 +510,14 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     .as_str()
                     .ok_or_else(|| format!("{needle}: test_name"))?
                     .to_string();
+                if let Expect::BuildsReceiver(line) = expect {
+                    let text = document["text"].as_str().unwrap_or_default();
+                    assert!(text.contains(line), "{needle}: receiver `{line}`:\n{text}");
+                    assert!(
+                        !text.contains("that `"),
+                        "{needle}: no receiver todo remains:\n{text}"
+                    );
+                }
                 if fixture == FIXTURE_5471 {
                     // Two inline test modules: one is picked, not refused.
                     assert_eq!(
@@ -831,6 +939,197 @@ fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), 
     assert!(
         !args.iter().any(|arg| arg == "src/lib.rs:2"),
         "return_value must not substitute the tail return line: {args:?}"
+    );
+    scratch.cleanup()
+}
+
+/// #14369: when several field seams share the finding's line, `check` prints
+/// `ripr agent stub --seam-id ID` for the one that yields a stub. A seam id is
+/// repo-wide, and the capped workspace inventory holds only a prefix of a
+/// large repository, so the printed command must still yield its stub when
+/// that prefix (here one seam, from `src/a.rs`) does not hold the seam.
+#[test]
+fn printed_seam_id_route_yields_its_stub_past_the_seam_cap() -> Result<(), String> {
+    const LIB: &str = "pub mod a;\n#[derive(Debug, PartialEq)]\npub struct P {\n    pub x: u32,\n    pub y: u32,\n}\n\npub fn mk() -> P {\n    P { x: 1, y: 4 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn one_field() {\n        assert_eq!(mk().x, 1);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_seam_cap\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/a.rs"),
+        "pub fn small(n: u32) -> bool {\n    n < 3\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("field.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -9 +9 @@\n-    P { x: 1, y: 3 }\n+    P { x: 1, y: 4 }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let capped = |command: &mut Command| {
+        command.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1");
+    };
+
+    let mut check = ripr_command();
+    check
+        .args(["check", "--root"])
+        .arg(&root)
+        .arg("--diff")
+        .arg(&diff);
+    capped(&mut check);
+    let output = run_bounded(check, &root, "check", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "check: {stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("the weakly tested field prints a stub route: {stdout}"))?;
+    let seam_id = args
+        .windows(2)
+        .find(|pair| pair[0] == "--seam-id")
+        .map(|pair| pair[1].clone())
+        .ok_or_else(|| format!("the route names one seam: {args:?}"))?;
+
+    // Precondition: the capped workspace inventory does not hold the seam.
+    let mut inventory = ripr_command();
+    inventory
+        .args(["check", "--format", "repo-exposure-json", "--root"])
+        .arg(&root);
+    capped(&mut inventory);
+    let output = run_bounded(inventory, &root, "inventory", Duration::from_mins(2))?;
+    let listed = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        listed.contains("\"seams\"") && !listed.contains(&seam_id),
+        "precondition: the one-seam cap leaves out {seam_id}: {listed}"
+    );
+
+    let mut stub = ripr_command();
+    stub.args(&args).arg("--json");
+    capped(&mut stub);
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "the printed route must yield a stub: {stub_stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    assert_eq!(document["owner"], "src/lib.rs::mk", "{stub_stdout}");
+    scratch.cleanup()
+}
+
+/// #14369 review: `ripr agent repair --phase before` still reads the capped
+/// workspace inventory, so a seam-id stub for a seam past the cap must not
+/// name a repair start that phase would refuse. Inside the cap the same seam
+/// keeps its pointer, and the pointed-to start runs.
+#[test]
+fn seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it()
+-> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let streams = scratch.directory.clone();
+    let root = streams.join("repo");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    for (file, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"stub_repair_cap\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        (".gitignore", "/target/\n"),
+        ("src/lib.rs", "pub mod a;\npub mod zz;\n"),
+        ("src/a.rs", "pub fn small(n: u32) -> bool {\n    n < 3\n}\n"),
+        (
+            "src/zz.rs",
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n",
+        ),
+        (
+            "tests/zz_tests.rs",
+            "use stub_repair_cap::zz::clamp_to;\n\n#[test]\nfn clamps_small_values() {\n    assert_eq!(clamp_to(5), 5);\n}\n",
+        ),
+    ] {
+        std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
+    }
+    git(&streams, &root, &["init", "-q"])?;
+    git(&streams, &root, &["add", "."])?;
+    git(&streams, &root, &["commit", "-qm", "base"])?;
+    let stub_json = |selector: &[&str], cap: Option<&str>| -> Result<serde_json::Value, String> {
+        let mut stub = ripr_command();
+        isolate_from_outer_repo(&mut stub)
+            .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            .args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(selector)
+            .arg("--json");
+        if let Some(cap) = cap {
+            stub.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap);
+        }
+        let output = run_bounded(stub, &streams, "stub", Duration::from_mins(2))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        if !output.status.success() {
+            return Err(format!(
+                "stub {selector:?}: {stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))
+    };
+    let at = stub_json(&["--at", "src/zz.rs:2"], None)?;
+    let seam_id = at["seam_id"]
+        .as_str()
+        .ok_or_else(|| format!("the boundary seam stubs: {at}"))?
+        .to_string();
+    let repair = |cap: Option<&str>| -> Result<Output, String> {
+        let mut start = ripr_command();
+        isolate_from_outer_repo(&mut start)
+            .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            .args(["agent", "repair", "--root"])
+            .arg(&root)
+            .args(["--seam-id", &seam_id, "--phase", "before"]);
+        if let Some(cap) = cap {
+            start.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap);
+        }
+        run_bounded(start, &streams, "repair", Duration::from_mins(2))
+    };
+
+    // Past the cap: `src/a.rs` holds the one retained seam. The before phase
+    // refuses this seam, so the stub must not point at it.
+    let refused = repair(Some("1"))?;
+    let refusal = String::from_utf8_lossy(&refused.stderr).to_string();
+    assert!(
+        !refused.status.success() && refusal.contains("truncated seam inventory"),
+        "precondition: the capped before phase cannot find {seam_id}: {refusal}"
+    );
+    let capped = stub_json(&["--seam-id", &seam_id], Some("1"))?;
+    assert!(
+        capped["text"].as_str().is_some_and(|text| !text.is_empty()),
+        "the stub itself stands past the cap: {capped}"
+    );
+    assert!(
+        capped["next_repair"].is_null(),
+        "no repair start the capped before phase would refuse: {capped}"
+    );
+
+    // Inside the cap the pointer is printed and its start runs.
+    let uncapped = stub_json(&["--seam-id", &seam_id], None)?;
+    let start = uncapped["next_repair"]["start_command"]
+        .as_str()
+        .ok_or_else(|| format!("an in-cap repair-ready stub names its start: {uncapped}"))?;
+    assert!(
+        start.ends_with(&format!("--seam-id {seam_id} --phase before")),
+        "{start}"
+    );
+    let started = repair(None)?;
+    assert!(
+        started.status.success(),
+        "the pointed-to start runs: {}",
+        String::from_utf8_lossy(&started.stderr)
     );
     scratch.cleanup()
 }
@@ -2545,14 +2844,14 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
             );
         }
     }
-    let wrapper_card = wrapper_guidance["comments"]
-        .as_array()
-        .and_then(|cards| cards.first())
-        .or_else(|| {
-            wrapper_guidance["summary_only"]
-                .as_array()
-                .and_then(|cards| cards.first())
-        })
+    // The wrapper line carries an error_variant card and a return_value card;
+    // the brief ranks error_variant first on a shared line (#14702), so pick
+    // the return_value card by kind rather than by position.
+    let wrapper_card = ["comments", "summary_only"]
+        .iter()
+        .filter_map(|bucket| wrapper_guidance[*bucket].as_array())
+        .flatten()
+        .find(|card| card["kind"] == "return_value")
         .ok_or("producer must retain its genuine non-actionable wrapper card")?;
     assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
     assert_eq!(wrapper_card["kind"], "return_value");
@@ -3023,12 +3322,15 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
         .ok_or_else(|| format!("test_name: {first}"))?
         .to_string();
 
-    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    // Second write: cleanly refused, already present, or a distinct name -
+    // never a duplicate. #14810: the stub's expected value is still an
+    // unfilled `todo!()`, so the seam stays an open gap and the second write
+    // reaches the #8891 "already written" path instead of refusing.
     let second = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
-    if second["refused"] != true {
+    if second["refused"] != true && second["already_present"] != true {
         assert_ne!(second["test_name"], first["test_name"], "{second}");
         let compile = cargo_from_run_command(
             second["run_command"]
@@ -3045,15 +3347,18 @@ fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Resul
     }
 
     // A same-named test already present in the target is not shadowed.
-    std::fs::write(
-        root.join("tests/discount.rs"),
-        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
-    )
-    .map_err(|error| error.to_string())?;
+    let collided = format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n");
+    std::fs::write(root.join("tests/discount.rs"), &collided).map_err(|error| error.to_string())?;
     let third = stub_json(&root, "src/lib.rs:2")?;
     let written = std::fs::read_to_string(root.join("tests/discount.rs"))
         .map_err(|error| error.to_string())?;
     assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
+    // The colliding fn has a different body, so a byte-identical render is
+    // not on disk: `already_present` would be a dishonest answer here, and
+    // the old `&& already_present != true` guard skipped the name check
+    // entirely when it was set. The honest outcomes are a refusal or a
+    // distinct name, and a distinct name must not be the colliding one.
+    assert_ne!(third["already_present"], true, "{third}");
     if third["refused"] != true {
         assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
     }
