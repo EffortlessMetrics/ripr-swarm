@@ -531,35 +531,37 @@ fn usage_line_flags_are_in_the_catalog_inventory() -> Result<(), String> {
     Ok(())
 }
 
-/// Offsets (in whitespace-normalized text) where prose says the plain
-/// before-phase summary prints a `--phase after` command. Since #7879 that
+/// Sentences (in whitespace-normalized text) that name a `--phase after`
+/// command outside the JSON context. Since #7879 the plain before-phase
 /// summary ends with `Next, after the test edit: ripr continue ... --attempt
 /// <id>`; only the `--json` `repair_attempt.next_command` keeps the
-/// `--phase after` spelling, so a sentence that names the JSON field is not a
-/// claim about the plain summary.
+/// `--phase after` spelling. The JSON context has to be in the same sentence:
+/// a neighbouring sentence about `--json` does not excuse a plain-summary one.
 fn printed_phase_after_claims(markdown: &str) -> Vec<String> {
     const SUBJECT: &str = "--phase after` command";
+    const JSON_CONTEXT: [&str; 3] = ["repair_attempt", "next_command", "--json"];
     let text = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut claims = Vec::new();
     let mut from = 0;
     while let Some(found) = text[from..].find(SUBJECT) {
         let at = from + found;
-        let mut start = at.saturating_sub(160);
-        while !text.is_char_boundary(start) {
-            start -= 1;
+        let after = at + SUBJECT.len();
+        // A sentence ends at ". "; the ". " inside an elided "... " does not.
+        let ends_sentence = |(dot, _): &(usize, &str)| !text[..*dot].ends_with('.');
+        let start = text[..at]
+            .rmatch_indices(". ")
+            .find(ends_sentence)
+            .map_or(0, |(dot, _)| dot + 2);
+        let end = text[after..]
+            .match_indices(". ")
+            .map(|(dot, matched)| (after + dot, matched))
+            .find(ends_sentence)
+            .map_or(text.len(), |(dot, _)| dot + 1);
+        let sentence = &text[start..end];
+        if !JSON_CONTEXT.iter().any(|marker| sentence.contains(marker)) {
+            claims.push(sentence.to_string());
         }
-        let mut end = (at + SUBJECT.len() + 60).min(text.len());
-        while !text.is_char_boundary(end) {
-            end += 1;
-        }
-        let window = &text[start..end];
-        let about_json = window.contains("repair_attempt")
-            || window.contains("next_command")
-            || window.contains("--json");
-        if window.contains("print") && !about_json {
-            claims.push(window.to_string());
-        }
-        from = at + SUBJECT.len();
+        from = after;
     }
     claims
 }
@@ -574,6 +576,12 @@ fn docs_name_the_command_the_before_phase_prints() -> Result<(), String> {
     );
     let json = "With `--json` the `repair_attempt` block prints the exact\n`--attempt ... --phase after` command.";
     assert_eq!(printed_phase_after_claims(json), Vec::<String>::new());
+    let neighbour = "By default stdout is a short summary: the seam and the exact\n`--attempt ... --phase after` command. With `--json` stdout is one document.";
+    assert_eq!(
+        printed_phase_after_claims(neighbour).len(),
+        1,
+        "a following `--json` sentence does not excuse a plain-summary claim"
+    );
 
     let mut problems = Vec::new();
     let mut files = 0usize;
