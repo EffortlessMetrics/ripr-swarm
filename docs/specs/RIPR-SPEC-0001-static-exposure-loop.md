@@ -353,7 +353,9 @@ pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
 `github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
 cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
 and the workspace's files written in reverse order. Not covered by this
-contract: `check-findings-json`, whose artifact stamps a per-run time, and
+contract: `check-findings-json`, whose artifact stamps a per-run time unless
+`RIPR_GENERATED_AT=unix_ms:<millis>` pins it (the pinned artifact then
+repeats byte for byte, and a malformed pin refuses the run), and
 the human digest's one-time first-run legend (#10481), which is intended
 state. Rerun commands carry the absolute root, so output also differs by
 checkout location (#14230).

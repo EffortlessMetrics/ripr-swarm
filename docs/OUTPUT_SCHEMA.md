@@ -5400,6 +5400,9 @@ Field contract:
   `unavailable` when the producer cannot resolve Git; the envelope is a
   disclosure, not a verify-contract, and `ripr agent verify` does not
   consume this artifact. The Markdown sibling does not carry the envelope.
+  `generated_at` is the wall-clock time of the run as `unix_ms:<millis>`
+  unless `RIPR_GENERATED_AT` pins it (see `docs/CONFIGURATION.md`); the
+  digest covers it, so only a pinned stamp makes two runs byte-comparable.
 - `scope` — always `"repo"` for this artifact. Distinguishes the repo seam
   inventory from diff-scoped findings.
 - `seam_id` — 16-char lowercase hex. FNV-1a 64-bit hash of
