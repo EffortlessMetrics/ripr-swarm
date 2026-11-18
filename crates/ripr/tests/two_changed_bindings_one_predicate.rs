@@ -1,4 +1,4 @@
-//! #14132 (crossbeam-rs/crossbeam `4e59649`): two changed `let` bindings that
+//! RIPR-SPEC-0157, #14132 (crossbeam-rs/crossbeam `4e59649`): two changed `let` bindings that
 //! are operands of the same predicate each retarget to it (#3294). The
 //! predicate is one changed behavior and must be reported once, not once per
 //! changed binding.
