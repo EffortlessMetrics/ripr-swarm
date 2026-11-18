@@ -746,9 +746,8 @@ struct Reader<'a> {
 
 impl Reader<'_> {
     /// Edition 2015 can resolve an absolute path through the crate root.
-    /// Require all approved roots to be clear, and inspect every ancestor
-    /// for a relative path because its lookup can inherit bindings.
-    fn replace_path_is_unshadowed(&self, absolute: bool) -> bool {
+    /// Relative paths also need their indexed module ancestry checked.
+    fn repo_sources_clear(&self, absolute: bool, check: impl Fn(&str) -> bool) -> bool {
         let Some(index) = self.test_index else {
             return false;
         };
@@ -759,12 +758,38 @@ impl Reader<'_> {
         let clear = |path: &std::path::Path| {
             files
                 .get(path)
-                .is_some_and(|facts| std_path_is_unshadowed(facts.data().source.as_ref(), absolute))
+                .is_some_and(|facts| check(facts.data().source.as_ref()))
         };
         !context.roots.is_empty()
             && context.roots.iter().all(|path| clear(path))
             && (absolute
                 || (clear(&self.test.file) && context.edges.iter().all(|edge| clear(&edge.parent))))
+    }
+
+    fn replace_path_is_unshadowed(&self, absolute: bool) -> bool {
+        self.repo_sources_clear(absolute, |source| std_path_is_unshadowed(source, absolute))
+    }
+
+    // The prelude variants carry a payload without introducing a mutable
+    // place. Reuse the conservative import/macro checks and also refuse a
+    // visible binding of the variant name in any approved enclosing source.
+    fn passive_prelude_variant(&self, name: &str) -> bool {
+        matches!(name, "Some" | "Ok" | "Err")
+            && self.repo_sources_clear(false, |source| {
+                if !std_path_is_unshadowed(source, false) {
+                    return false;
+                }
+                let Some(parse) = parse_clean_source_file_memoized(source) else {
+                    return false;
+                };
+                let tree = parse.tree();
+                let root = tree.syntax();
+                !crate::analysis::syntax::use_rebinds_crate_name(root, name)
+                    && !root
+                        .descendants()
+                        .filter_map(ast::Name::cast)
+                        .any(|bound| bound.text().trim_start_matches("r#") == name)
+            })
     }
 
     /// Whether `text` holds a call of the owner outside strings and
@@ -926,7 +951,14 @@ impl Reader<'_> {
                     _ => self.unfollowed(expr.syntax()),
                 }
             }
-            ast::Expr::MacroExpr(invocation) => self.macro_call(invocation, expr, depth),
+            ast::Expr::MacroExpr(invocation) => {
+                let sink = self.macro_call(invocation, expr, depth);
+                if self.follows_repo_initializer(depth) && sink != Sink::Absent {
+                    Sink::Masked
+                } else {
+                    sink
+                }
+            }
             ast::Expr::PathExpr(path) => self.binding(path, depth),
             _ => self.unfollowed(expr.syntax()),
         }
@@ -1035,6 +1067,20 @@ impl Reader<'_> {
             .iter()
             .map(|argument| self.sink(argument, depth))
             .collect::<Vec<_>>();
+        if self.follows_repo_initializer(depth) {
+            if !parts.iter().any(|part| *part != Sink::Absent) {
+                return self.unfollowed(expr.syntax());
+            }
+            if callee.qualifier().is_none()
+                && arguments.len() == 1
+                && self.passive_prelude_variant(&name)
+            {
+                return self.container(parts);
+            }
+            // Without a return-type/effect proof, a helper or constructor
+            // may return a mutable handle or ignore the owner argument.
+            return Sink::Masked;
+        }
         // `Some(x)`, `Ok(x)`, `Wrapper(x)`: a variant or tuple-struct payload.
         if name.starts_with(|first: char| first.is_ascii_uppercase()) {
             return self.container(parts);
@@ -1044,16 +1090,6 @@ impl Reader<'_> {
             .and_then(|qualifier| qualifier.segment())
             .and_then(|segment| segment.name_ref())
             .map(|name| name.text().to_string());
-        if self.follows_repo_initializer(depth)
-            && name == "new"
-            && matches!(
-                qualifier.as_deref(),
-                Some("Cell" | "RefCell" | "UnsafeCell" | "Mutex" | "RwLock")
-            )
-            && parts.iter().any(|part| part.reaches())
-        {
-            return Sink::Masked;
-        }
         if name == "new"
             && qualifier
                 .as_deref()
@@ -1081,8 +1117,16 @@ impl Reader<'_> {
             return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
-        if self.follows_repo_initializer(depth) && receiver.reaches() && name.ends_with("_mut") {
-            return Sink::Masked;
+        if self.follows_repo_initializer(depth) {
+            let argument_names_owner = call.arg_list().is_some_and(|list| {
+                list.args()
+                    .any(|arg| self.sink(&arg, depth) != Sink::Absent)
+            });
+            return if receiver != Sink::Absent || argument_names_owner {
+                Sink::Masked
+            } else {
+                self.unfollowed(expr.syntax())
+            };
         }
         // `masked.eq(&over(10))`: a comparing method's result depends on its
         // argument whatever the receiver is.
@@ -1240,21 +1284,36 @@ impl Reader<'_> {
 
         let mut initializers: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for statement in root.descendants().filter_map(ast::LetStmt::cast) {
-            let (Some(pattern), Some(initializer)) = (statement.pat(), statement.initializer())
-            else {
+            let Some(pattern) = statement.pat() else {
                 continue;
             };
-            let text = initializer.syntax().text().to_string();
             for pattern in pattern
                 .syntax()
                 .descendants()
                 .filter_map(ast::IdentPat::cast)
             {
                 if let Some(bound) = pattern.name() {
-                    initializers
-                        .entry(bound.text().to_string())
-                        .or_default()
-                        .push(text.clone());
+                    let sources = initializers.entry(bound.text().to_string()).or_default();
+                    if let Some(initializer) = statement.initializer() {
+                        sources.push(initializer.syntax().text().to_string());
+                    }
+                }
+            }
+        }
+        // A late initialization or overwrite is a possible connection,
+        // never a proof that a later assertion still reads the assigned value.
+        for assignment in root.descendants().filter_map(ast::BinExpr::cast) {
+            if !matches!(assignment.op_kind(), Some(ast::BinaryOp::Assignment { .. })) {
+                continue;
+            }
+            let (Some(place), Some(value)) = (assignment.lhs(), assignment.rhs()) else {
+                continue;
+            };
+            let place = place.syntax().text().to_string();
+            let value = value.syntax().text().to_string();
+            for (local, sources) in &mut initializers {
+                if has_identifier(&place, local) {
+                    sources.push(value.clone());
                 }
             }
         }
@@ -1308,7 +1367,7 @@ impl Reader<'_> {
         } else {
             Sink::Absent
         };
-        if lets == 0 || (self.test_index.is_none() && (depth >= LET_DEPTH || lets != 1)) {
+        if self.test_index.is_none() && (depth >= LET_DEPTH || lets != 1) {
             return default_unfollowed;
         }
         let Some(parse) = parse_body(&self.test.body) else {
@@ -1412,8 +1471,13 @@ impl Reader<'_> {
         // A mutable local can also be written by an implicit mutable
         // receiver (e.g. clone_from), with no assignment or borrow node.
         // Without receiver resolution, only follow immutable locals here.
-        if self.test_index.is_some() && initial.reaches() && (mutable_binding || write_possible()) {
-            return Sink::Masked;
+        if self.test_index.is_some() {
+            if initial.reaches() && (mutable_binding || write_possible()) {
+                return Sink::Masked;
+            }
+            if initial == Sink::Absent && write_possible() {
+                return unfollowed_local();
+            }
         }
         initial
     }

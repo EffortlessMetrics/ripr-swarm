@@ -364,6 +364,22 @@ fn repo_unresolved_owner_binding_does_not_preserve_strong_credit() -> Result<(),
 }
 
 #[test]
+fn repo_owner_binding_requires_a_passive_initializer() -> Result<(), String> {
+    for body in [
+        "let got = std::cell::Cell::from(over(10)); got.set(true); assert_eq!(got.get(), true);",
+        "use std::sync::atomic::{AtomicBool, Ordering}; let got = AtomicBool::new(over(10)); got.store(true, Ordering::SeqCst); assert_eq!(got.load(Ordering::SeqCst), true);",
+        "let mut got; got = over(10); got = true; assert_eq!(got, true);",
+        "let got = Some(over(10)).unwrap(); assert_eq!(got, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips(
+        "let got = Some(over(10)); assert_eq!(got, Some(true));",
+        "strongly_gripped",
+    )
+}
+
+#[test]
 fn repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams() -> Result<(), String> {
     assert_repo_grips(
         "let got = std::mem::replace(&mut over(10), false); let ref alias = got; assert_eq!(got, true); let _ = alias;",
