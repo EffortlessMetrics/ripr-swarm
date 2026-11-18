@@ -61,15 +61,7 @@ jobs:
       # build still runs. The image already has an active 4 GB /mnt/swapfile,
       # so use another path.
       - name: Add swap headroom for the instrumented build
-        run: |
-          swapfile=/mnt/ci-swapfile-8g
-          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
-          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
-            echo "swap enabled:"; swapon --show
-          else
-            echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
-          fi
-          free -m
+        run: sudo fallocate -l 8G /mnt/ci-swapfile-8g && sudo chmod 600 /mnt/ci-swapfile-8g && sudo mkswap /mnt/ci-swapfile-8g > /dev/null && sudo swapon /mnt/ci-swapfile-8g && swapon --show || echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
 
       - name: Clean coverage state
         run: cargo llvm-cov clean --workspace
