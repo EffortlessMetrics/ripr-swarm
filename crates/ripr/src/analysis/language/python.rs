@@ -414,6 +414,7 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
 mod package_aliases;
 mod param_fixtures;
@@ -2676,6 +2677,8 @@ mod dunder_helper_reach_tests;
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod owner_result_field_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]
