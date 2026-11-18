@@ -11101,7 +11101,7 @@ Field contract:
   working-set card whose seam passes the fail-closed repair-packet flip
   (`repair_packet_eligibility`, #3906): `ripr agent repair --root . --seam-id
   <id> --phase before`, the start of the repair transaction. Its before phase
-  prints the `--attempt ... --phase after` command. Absent on limitation,
+  prints the `ripr continue ... --attempt` command that runs the after phase. Absent on limitation,
   ineligible, and gap-ledger cards; consumers must not derive it from
   `seam_id`. Inline publish planning closes the comment body with it in place
   of the bare `ripr agent verify` line.
