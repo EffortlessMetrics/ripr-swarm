@@ -877,8 +877,13 @@ mod parser_state {
             let respelled = self
                 .section_mnemonic_sides
                 .as_ref()
-                .map(|sides| sides.canonical_marker(raw));
+                .map(|sides| sides.canonical_marker(raw).into_owned());
             let raw = respelled.as_deref().unwrap_or(raw);
+            // The section's new-path marker ends its marker pair: a later
+            // plain section in the same stream names its own paths.
+            if raw.starts_with("+++ ") {
+                self.section_mnemonic_sides = None;
+            }
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);

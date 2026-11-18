@@ -32,6 +32,9 @@ const PAIRS: [(u8, u8); 8] = [
 pub(super) struct MnemonicSides {
     old: u8,
     new: u8,
+    /// The shared path as the header spells it, with the closing quote of a
+    /// quoted token.
+    path: String,
     raw_header: String,
     canonical_header: String,
 }
@@ -67,6 +70,7 @@ impl MnemonicSides {
         Some(Self {
             old,
             new,
+            path: old_path.to_owned(),
             raw_header: raw.to_owned(),
             canonical_header: format!("diff --git {quote}a/{old_path} {quote}b/{new_path}{ending}"),
         })
@@ -84,7 +88,10 @@ impl MnemonicSides {
     }
 
     /// A `--- ` or `+++ ` marker of this section with its mnemonic prefix
-    /// respelled as `a/` or `b/`; any other line is returned unchanged.
+    /// respelled as `a/` or `b/`; any other line is returned unchanged. The
+    /// marker must name the header's own path (git may add a tab and a
+    /// timestamp, or a carriage return, behind it), so a later plain section
+    /// for a real `w/` directory is not this section's marker.
     pub(super) fn canonical_marker<'a>(&self, raw: &'a str) -> Cow<'a, str> {
         for (marker, side, canonical) in [("--- ", self.old, 'a'), ("+++ ", self.new, 'b')] {
             let Some(token) = raw.strip_prefix(marker) else {
@@ -92,7 +99,16 @@ impl MnemonicSides {
             };
             let lead = usize::from(token.starts_with('"'));
             let bytes = token.as_bytes();
-            if bytes.get(lead) == Some(&side) && bytes.get(lead + 1) == Some(&b'/') {
+            let names_this_path = token
+                .get(lead + 2..)
+                .and_then(|rest| rest.strip_prefix(self.path.as_str()))
+                .is_some_and(|tail| {
+                    tail.is_empty() || tail.starts_with('\t') || tail.starts_with('\r')
+                });
+            if bytes.get(lead) == Some(&side)
+                && bytes.get(lead + 1) == Some(&b'/')
+                && names_this_path
+            {
                 return Cow::Owned(format!(
                     "{marker}{}{canonical}{}",
                     &token[..lead],
@@ -107,6 +123,40 @@ impl MnemonicSides {
 #[cfg(test)]
 mod tests {
     use super::MnemonicSides;
+    use crate::analysis::diff::{parse_unified_diff, parse_unified_diff_bounded_with_metadata};
+
+    /// A plain section (no `diff --git` header) after a mnemonic section
+    /// names a real `w/` directory; it must not inherit the earlier section's
+    /// prefix reading.
+    #[test]
+    fn a_later_plain_section_keeps_its_real_directory() -> Result<(), String> {
+        let input = "diff --git i/src/first.rs w/src/first.rs\n--- i/src/first.rs\n+++ w/src/first.rs\n@@ -1 +1 @@\n-old\n+new\n--- w/lib.rs\n+++ w/lib.rs\n@@ -2 +2 @@\n-before\n+after\n--- w/src/first.rs\n+++ w/src/first.rs\n@@ -3 +3 @@\n-x\n+y\n";
+        let bounded = parse_unified_diff_bounded_with_metadata(input)?;
+        for (route, files) in [
+            ("unbounded", parse_unified_diff(input)),
+            ("bounded", bounded.changed_files),
+        ] {
+            let seen: Vec<(String, Vec<usize>)> = files
+                .iter()
+                .map(|file| {
+                    (
+                        file.path.to_string_lossy().replace('\\', "/"),
+                        file.added_lines.iter().map(|line| line.line).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                seen,
+                [
+                    ("src/first.rs".to_string(), vec![1]),
+                    ("w/lib.rs".to_string(), vec![2]),
+                    ("w/src/first.rs".to_string(), vec![3]),
+                ],
+                "{route}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn mnemonic_pairs_over_one_path_are_respelled() {
@@ -172,7 +222,6 @@ mod tests {
         for (raw, canonical) in [
             ("--- i/src/lib.rs", "--- a/src/lib.rs"),
             ("+++ w/src/lib.rs", "+++ b/src/lib.rs"),
-            ("--- \"i/src/lib.rs\"", "--- \"a/src/lib.rs\""),
             (
                 "+++ w/src/lib.rs\t2026-01-01",
                 "+++ b/src/lib.rs\t2026-01-01",
@@ -181,11 +230,27 @@ mod tests {
             ("--- w/src/lib.rs", "--- w/src/lib.rs"),
             ("+++ i/src/lib.rs", "+++ i/src/lib.rs"),
             ("--- /dev/null", "--- /dev/null"),
+            // Another path under the same letter is not this section's.
+            ("--- i/lib.rs", "--- i/lib.rs"),
+            ("+++ w/src/lib.rs.orig", "+++ w/src/lib.rs.orig"),
+            ("+++ w/src/lib.rs\r", "+++ b/src/lib.rs\r"),
             ("+++ b/src/lib.rs", "+++ b/src/lib.rs"),
             ("rename from i/src/lib.rs", "rename from i/src/lib.rs"),
         ] {
             assert_eq!(sides.canonical_marker(raw), canonical, "{raw}");
         }
+        // Git quotes a path the same way in the header and its markers.
+        let quoted =
+            MnemonicSides::of_header("diff --git \"i/s\\303\\251.rs\" \"w/s\\303\\251.rs\"")
+                .ok_or("quoted header not recognized")?;
+        assert_eq!(
+            quoted.canonical_marker("+++ \"w/s\\303\\251.rs\""),
+            "+++ \"b/s\\303\\251.rs\""
+        );
+        assert_eq!(
+            quoted.canonical_marker("+++ w/s\\303\\251.rs"),
+            "+++ w/s\\303\\251.rs"
+        );
         Ok(())
     }
 }
