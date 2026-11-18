@@ -822,7 +822,7 @@ mod tests {
     #[test]
     fn a_cell_is_never_borrowed_from_another_language_or_framework() {
         // Python has only framework-specific repair cells, and Perl's cells
-        // are registered as not proven, while Rust establishes both families.
+        // establish nothing, while Rust establishes both families.
         assert_eq!(
             cell_state(LanguageId::Rust, Diff, RepairRouting),
             SupportState::SupportedWithRequiredFallback
