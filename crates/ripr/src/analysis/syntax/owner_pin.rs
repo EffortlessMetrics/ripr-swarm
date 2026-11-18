@@ -968,6 +968,25 @@ pub(crate) fn trusted_macro_binding_site_sets(
     )
 }
 
+/// Whether a per-name query rescans a file whose union scan found no site.
+/// Production never does; a test turns it on to compare the two readings.
+fn rescan_siteless_files() -> bool {
+    #[cfg(test)]
+    {
+        RESCAN_SITELESS_FILES.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESCAN_SITELESS_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static BINDING_SITE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn macro_binding_ambiguity_sets(
     source: &str,
     packages: &BTreeSet<String>,
@@ -1025,12 +1044,24 @@ fn macro_binding_ambiguity_sets(
     // would be named as a wrapper that may define `assert_eq`, a site the
     // admission scan never reports.
     let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
+    // #13703: a per-name query for a trusted name reads the file as the
+    // union scan did, with the same `known` names, and reports a subset of
+    // names. With no union site `known_bound` is empty too, so the query can
+    // only repeat a scan that found nothing: every branch that reports a
+    // site tests the name against the reported set, and narrowing that set
+    // never adds one. Most files have no site, and the workspace scan asks
+    // about every assertion macro in each, so the repeats were 9% of a
+    // `check` run's allocations.
+    let union_is_empty = union.is_empty();
     let singletons = singleton_names
         .into_iter()
         .flatten()
         .filter(|name| macro_binding_scan_needed(source, &[name]))
         .flat_map(|name| {
             if trusted.contains(name) {
+                if union_is_empty && !rescan_siteless_files() {
+                    return Vec::new();
+                }
                 scan(&[name], trusted, &union_bound)
             } else {
                 scan(&[name], &[name], &BTreeSet::new())
@@ -1060,6 +1091,8 @@ fn macro_binding_sites_in_tree(
     drop_in_verified: &dyn Fn(&str) -> bool,
     binding_free: &BindingFreeFileIndex,
 ) -> NamedMacroSites {
+    #[cfg(test)]
+    BINDING_SITE_SCANS.with(|scans| scans.set(scans.get() + 1));
     let (trusted, known, known_bound) = (names.trusted, names.known, names.known_bound);
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
@@ -7964,6 +7997,9 @@ mod skipping_table_tests {
         assert_ne!(BodyFingerprint::of("é"), BodyFingerprint::of("ab"));
     }
 }
+
+#[cfg(test)]
+mod siteless_rescan_tests;
 
 #[cfg(test)]
 mod process_names_scan_tests {
