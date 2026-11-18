@@ -788,7 +788,88 @@ fn commonjs_default_class(
         !compact.contains("exports.")
             && !compact.contains("exports[")
             && !super::tests_extract::identifier_written_strictly(text, name)
+            && !class_binding_gains_member(text, &compact, name)
     })
+}
+
+/// `true` when the file may add a property to the class binding `name`: a
+/// member assignment (`Cart.Cart = Cart`, `Cart['x'] ??= y`, `Cart.n++`) or
+/// an `Object.assign` / `defineProperty` / `defineProperties` /
+/// `setPrototypeOf` call whose first argument is the name. A static property
+/// is a named export of the whole-export class (`const { Cart } =
+/// require(...)` reads `Cart.Cart`), so the class keeps its named reading. A
+/// false hit only leaves the class unmarked.
+fn class_binding_gains_member(text: &str, compact: &str, name: &str) -> bool {
+    let object_call = [
+        "assign(",
+        "defineProperty(",
+        "defineProperties(",
+        "setPrototypeOf(",
+    ]
+    .iter()
+    .any(|call| {
+        compact.match_indices(call).any(|(at, call)| {
+            compact[at + call.len()..]
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with(',') || rest.starts_with(')'))
+        })
+    });
+    object_call
+        || super::tests_extract::identifier_occurrences(text, name)
+            .any(|at| member_chain_is_assigned(&text[at + name.len()..]))
+}
+
+/// `rest` is the text after an identifier: `true` when a member chain
+/// (`.a`, `?.a`, `[...]`) opens there and the chain is the target of an
+/// assignment or an update (`=`, `+=`, `??=`, `++`, `--`; not `==` or `=>`).
+fn member_chain_is_assigned(rest: &str) -> bool {
+    let mut depth = 0usize;
+    let mut saw_member = false;
+    let mut end = rest.len();
+    for (at, ch) in rest.char_indices() {
+        if depth > 0 {
+            match ch {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '[' => {
+                depth = 1;
+                saw_member = true;
+            }
+            '.' => saw_member = true,
+            '?' if rest[at..].starts_with("?.") => {}
+            ch if ch.is_whitespace() || ch.is_alphanumeric() || ch == '_' || ch == '$' => {}
+            _ => {
+                end = at;
+                break;
+            }
+        }
+    }
+    if !saw_member || depth > 0 {
+        return false;
+    }
+    let tail = &rest[end..];
+    if tail.starts_with("++") || tail.starts_with("--") {
+        return true;
+    }
+    let operator_len = tail
+        .char_indices()
+        .find(|(_, ch)| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '<' | '>' | '&' | '|' | '^' | '?'
+            )
+        })
+        .map_or(tail.len(), |(at, _)| at);
+    let after = &tail[operator_len..];
+    after.starts_with('=')
+        && !after.starts_with("==")
+        && !after.starts_with("=>")
+        && !(operator_len > 0 && matches!(&tail[..operator_len], "<" | ">"))
 }
 
 /// The module-object checks of [`commonjs_default_gate`] on text where only

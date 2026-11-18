@@ -3700,6 +3700,9 @@ pub(crate) fn constructor_names_for_method_owner(
             .iter()
             .any(|binding| binding.name == local && !(imported_class && binding.file_level))
             && !local_identifier_declared_in_test_body(&test.body_text, local)
+            // The lexical scan reads `const|let|var|function` declarators; a
+            // `class Cart {}` in the test body binds the name as well.
+            && !body_declares_class_named(&test.body_text, local)
     });
     names
 }

@@ -241,6 +241,41 @@ fn a_class_with_a_named_export_too_keeps_its_named_require_reading() -> Result<(
 }
 
 #[test]
+fn a_static_property_naming_the_class_keeps_its_named_require_reading() -> Result<(), String> {
+    for export_lines in [
+        "Cart.Cart = Cart;\nmodule.exports = Cart;",
+        "module.exports = Cart;\nCart.Cart = Cart;",
+        "Cart['Cart'] = Cart;\nmodule.exports = Cart;",
+        "Object.assign(Cart, { Cart });\nmodule.exports = Cart;",
+        "Object.defineProperty(Cart, 'Cart', { value: Cart });\nmodule.exports = Cart;",
+    ] {
+        if marked_whole_export(export_lines)? {
+            return Err(format!(
+                "{export_lines:?}: marker would drop the named require"
+            ));
+        }
+        assert_credited(
+            export_lines,
+            "const { Cart } = require('../src/cart');",
+            "Cart",
+        )?;
+    }
+    // Reading a member of the class is not an export: the class stays marked.
+    for export_lines in [
+        "const limit = Cart.length === 0 ? 1 : 2;\nmodule.exports = Cart;",
+        "if (Cart.name == 'Cart') console.log(limit => limit);\nmodule.exports = Cart;",
+    ] {
+        if !marked_whole_export(export_lines)? {
+            return Err(format!(
+                "{export_lines:?}: a member read unmarked the class"
+            ));
+        }
+        assert_credited(export_lines, REQUIRE, "Cart")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn a_rewritten_or_ambiguous_whole_export_is_not_marked() -> Result<(), String> {
     for export_lines in [
         // The class binding is assignable.
@@ -287,6 +322,34 @@ fn a_describe_level_class_of_the_same_name_shadows_the_require() -> Result<(), S
             return Err(format!(
                 "describe-level shadow / {subject:?}: expected no relation, got {related:?}"
             ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_class_declared_in_the_test_body_shadows_the_require() -> Result<(), String> {
+    for (preamble, local) in [
+        (REQUIRE, "Cart"),
+        ("const Basket = require('../src/cart');", "Basket"),
+    ] {
+        assert_credited(WHOLE_EXPORT, preamble, local)?;
+        let source = test_source(preamble, local).replace(
+            &format!("    const cart = new {local}();\n"),
+            &format!(
+                "    class {local} {{ add() {{}} total() {{ return 110; }} }}\n    const cart = new {local}();\n"
+            ),
+        );
+        if !source.contains(&format!("    class {local} {{ add()")) {
+            return Err("fixture lost the body-local class".to_string());
+        }
+        for subject in BOTH {
+            let related = relation(&owner_source(WHOLE_EXPORT), &source, subject)?;
+            if related.is_some() {
+                return Err(format!(
+                    "body-local class {local} / {subject:?}: expected no relation, got {related:?}"
+                ));
+            }
         }
     }
     Ok(())

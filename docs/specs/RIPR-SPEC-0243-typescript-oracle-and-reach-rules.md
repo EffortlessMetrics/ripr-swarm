@@ -1474,15 +1474,17 @@ receiver reading). The class is read as the whole export only when the file
 gate above holds and the name provably still holds the class: exactly one
 file-level declaration of the name, no write to it anywhere in the file, and
 no named export beside it (`module.exports.Name = ...`, `exports.Name = ...`,
-any `exports.` or `exports[` spelling). A class exported both ways keeps its
-named-`require` reading. A named `require` of a whole-export class
+any `exports.` or `exports[` spelling) and no property added to the class
+binding (`Name.Name = Name`, `Name['x'] = ...`, `Object.assign(Name, ...)`,
+`Object.defineProperty(Name, ...)`), which a named `require` would read. A
+class exported both ways keeps its named-`require` reading. A named `require` of a whole-export class
 (`const { Name } = require(...)`) reads a property the class does not have and
 is not related. A default-named binding (`const { default: Name } =
 require(...)`, ES `import Name from` of the CommonJS module) is refused as for
 a function export, and a `require()` of an ES default class stays a namespace
 object. A `let`/`var` local the test file writes again, a re-declared `var`,
-and a binding of the local in a `describe` body, a hook or the test body are
-not the class. `module.exports = class Name {}` inline is not read.
+and a binding of the local in a `describe` body, a hook or the test body
+(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
