@@ -6884,4 +6884,89 @@ fn integration_rename_case() {
             "{source}"
         );
     }
+
+    /// #14087 shape B: a `use` leaf spelled as a raw identifier binds the
+    /// plain name. Read as `r#render` it bound nothing a bare `render(..)`
+    /// could find, so a glob of the other module supplied the name instead.
+    #[test]
+    fn a_raw_identifier_import_leaf_binds_the_plain_name() {
+        let source = "\
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+#[cfg(test)]
+mod raw_beats_glob {
+    use crate::a::*;
+    use crate::b::r#render;
+
+    #[test]
+    fn raw_leaf_of_b_beside_a_glob_of_a() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_alone {
+    use crate::a::r#render;
+
+    #[test]
+    fn raw_leaf_of_a() {
+        assert_eq!(render(1), 2);
+    }
+}
+
+#[cfg(test)]
+mod raw_group {
+    use crate::{r#b::{r#render}};
+
+    #[test]
+    fn raw_segments_in_a_group() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_rename {
+    use crate::b::render as r#render;
+
+    #[test]
+    fn raw_rename_to_the_same_name() {
+        assert_eq!(render(2), 4);
+    }
+}
+";
+        let index = index(&[("src/lib.rs", source)]);
+        let a = "lib.rs::a::render";
+        let b = "lib.rs::b::render";
+        for (test, on_a, on_b) in [
+            (
+                "raw_leaf_of_b_beside_a_glob_of_a",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            ("raw_leaf_of_a", CallTarget::Owner, CallTarget::Other),
+            (
+                "raw_segments_in_a_group",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            (
+                "raw_rename_to_the_same_name",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+        ] {
+            assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
+            assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
+        }
+    }
 }

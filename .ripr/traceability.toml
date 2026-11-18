@@ -13860,6 +13860,7 @@ tests = [
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_local_value_item_withholds_only_the_bare_calls_it_binds",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_local_value_item_beats_a_glob_of_the_owners_module",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::related_tests_drop_a_test_whose_bare_call_a_local_value_item_binds",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_raw_identifier_import_leaf_binds_the_plain_name",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_use_import_settles_a_bare_call",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_bare_call_binds_its_own_files_definition_through_use_super_glob",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::integration_test_paths_through_the_crate_name_settle",
