@@ -297,41 +297,51 @@ impl GuardOperandChange {
         }
         let before = before.trim().trim_end_matches(';').trim();
         let before = before.strip_prefix("return ").map_or(before, str::trim);
-        let (longer, shorter) = if before.len() > changed.len() {
-            (before, changed)
-        } else {
-            (changed, before)
-        };
-        let masked = mask_comments_and_strings(longer);
-        if masked.len() != longer.len() || masked.contains("//") || masked.contains("/*") {
-            return None;
-        }
-        let operator = match (masked.contains("&&"), masked.contains("||")) {
-            (true, false) => "&&",
-            (false, true) => "||",
-            _ => return None,
-        };
-        let longer_operands = top_level_operands(longer, operator)?;
-        let shorter_operands = top_level_operands(shorter, operator)?;
-        if shorter_operands.len() >= longer_operands.len() {
-            return None;
-        }
-        // The shorter version's operands must be the longer one's, in
-        // order, with nothing rewritten; what is left over differs.
-        // Whitespace is layout only outside a string literal: inside one it
-        // is content, so `check(n, "a  b")` and `check(n, "a b")` are
-        // different operands (#14194 review).
-        let compact = |text: &str| compact_operand(text);
-        let mut kept = shorter_operands.iter().map(|text| compact(text)).peekable();
-        let mut differing = Vec::new();
-        for operand in &longer_operands {
-            if kept.peek().is_some_and(|next| *next == compact(operand)) {
-                kept.next();
-            } else {
-                differing.push(parse_operand(operand, &parameters)?);
+        // #14194 review: the direction is chosen by operand structure, not by
+        // byte length. Layout whitespace in the retained operand can make the
+        // shorter chain the longer string, which inverted the direction and
+        // silently skipped the rule (fail-open). Trying both orders and keeping
+        // the one that reads removes the byte-length guess entirely.
+        let attempt = |longer: &str, shorter: &str| -> Option<(&'static str, Vec<Operand>)> {
+            let masked = mask_comments_and_strings(longer);
+            if masked.len() != longer.len() || masked.contains("//") || masked.contains("/*") {
+                return None;
             }
-        }
-        (kept.next().is_none() && !differing.is_empty()).then_some(Self {
+            let operator = match (masked.contains("&&"), masked.contains("||")) {
+                (true, false) => "&&",
+                (false, true) => "||",
+                _ => return None,
+            };
+            let longer_operands = top_level_operands(longer, operator)?;
+            let shorter_operands = top_level_operands(shorter, operator)?;
+            if shorter_operands.len() >= longer_operands.len() {
+                return None;
+            }
+            // The shorter version's operands must be the longer one's, in
+            // order, with nothing rewritten; what is left over differs.
+            // Whitespace is layout only outside a string literal: inside one
+            // it is content, so `check(n, "a  b")` and `check(n, "a b")` are
+            // different operands (#14194 review).
+            let mut kept = shorter_operands
+                .iter()
+                .map(|text| compact_operand(text))
+                .peekable();
+            let mut differing = Vec::new();
+            for operand in &longer_operands {
+                if kept
+                    .peek()
+                    .is_some_and(|next| *next == compact_operand(operand))
+                {
+                    kept.next();
+                } else {
+                    differing.push(parse_operand(operand, &parameters)?);
+                }
+            }
+            (kept.next().is_none() && !differing.is_empty()).then_some((operator, differing))
+        };
+        let (operator, differing) =
+            attempt(before, changed).or_else(|| attempt(changed, before))?;
+        Some(Self {
             operator,
             parameters,
             differing,
@@ -1040,23 +1050,29 @@ mod tests {
 
     #[test]
     fn a_wrapper_assertion_text_still_names_the_pinned_call() {
-        // #14194 review: a rendered or indexed comparison (`vec![call][0]`,
-        // `format!("{}", call)`) carries no call text, so the guard gate
-        // reads the assertion's own text. The call must still be found
-        // there, or the gate silently skips every wrapper pin.
+        // #14194 review: the guard gate reads the module's own reader, not
+        // `activation::call_arguments`. Asserting the other reader can pass
+        // while production rejects both wrappers, which is how the earlier
+        // repair looked covered. The wrapper text here is the call text the
+        // owner-pin arms derive, which is the plain call the reader must find.
         assert_eq!(
-            crate::analysis::classify::activation::call_arguments(
-                "assert_eq!(vec![is_pow2(4)][0], true)",
-                "is_pow2"
-            ),
+            super::call_arguments("is_pow2(4)", "is_pow2"),
             Some(vec!["4".to_string()])
         );
         assert_eq!(
-            crate::analysis::classify::activation::call_arguments(
-                "assert_eq!(format!(\"{}\", is_pow2(6)), \"true\")",
-                "is_pow2"
-            ),
+            super::call_arguments("is_pow2(6)", "is_pow2"),
             Some(vec!["6".to_string()])
+        );
+        // The helper assertion a substituted pin reads from carries no call of
+        // the owner, so it must not be mistaken for one.
+        assert_eq!(
+            super::call_arguments("assert_eq!(actual, true)", "is_pow2"),
+            None
+        );
+        // And a text holding the owner twice is refused rather than guessed.
+        assert_eq!(
+            super::call_arguments("is_pow2(4) != is_pow2(6)", "is_pow2"),
+            None
         );
     }
 

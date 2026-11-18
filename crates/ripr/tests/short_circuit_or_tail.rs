@@ -237,6 +237,53 @@ fn a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure() -> Result<(),
 }
 
 #[test]
+fn a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin() -> Result<(), String> {
+    // #14194 review: the invariant is parity between the wrapper and direct
+    // forms for the same owner edit, not the direct form alone. An agreeing
+    // input must keep credit in every form, and a deciding input must
+    // withhold it in every form. Before the derived-call-text repair the
+    // wrapper forms silently kept credit in both.
+    let agreeing: [&[&str]; 3] = [
+        &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
+        &[
+            "assert_eq!(vec![is_pow2(4)][0], true);",
+            "assert_eq!(vec![is_pow2(6)][0], false);",
+        ],
+        &[
+            "assert_eq!(format!(\"{}\", is_pow2(4)), \"true\");",
+            "assert_eq!(format!(\"{}\", is_pow2(6)), \"false\");",
+        ],
+    ];
+    let deciding: [&[&str]; 3] = [
+        &["assert!(is_pow2(0));"],
+        &["assert_eq!(vec![is_pow2(0)][0], false);"],
+        &["assert_eq!(format!(\"{}\", is_pow2(0)), \"false\");"],
+    ];
+    let names = ["direct", "indexed", "rendered"];
+    for (name, asserts) in names.iter().zip(agreeing) {
+        let test = direct_test("short_circuit_or_tail", asserts);
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
+            .map_err(|error| format!("{name} agreeing: {error}"))?;
+        assert_ne!(
+            class,
+            ExposureClass::Exposed,
+            "{name} agreeing input must keep the agreement, not expose: {test}"
+        );
+    }
+    for (name, asserts) in names.iter().zip(deciding) {
+        let test = direct_test("short_circuit_or_tail", asserts);
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
+            .map_err(|error| format!("{name} deciding: {error}"))?;
+        assert_eq!(
+            class,
+            ExposureClass::Exposed,
+            "{name} deciding input must withhold credit: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_added_guard_follows_the_same_agreement_rule() -> Result<(), String> {
     let agreeing = direct_test(
         "short_circuit_or_tail",

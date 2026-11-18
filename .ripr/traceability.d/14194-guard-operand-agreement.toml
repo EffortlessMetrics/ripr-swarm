@@ -1,0 +1,13 @@
+# Pin the guard-operand agreement reading on its own fragment rather than in
+# the shared RIPR-SPEC-0197 array (#14194); docs/SPEC_FORMAT.md requires a PR to
+# register its tests here.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/short_circuit_or_tail.rs::a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed",
+  "crates/ripr/tests/short_circuit_or_tail.rs::a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure",
+  "crates/ripr/tests/short_circuit_or_tail.rs::an_added_guard_follows_the_same_agreement_rule",
+  "crates/ripr/tests/short_circuit_or_tail.rs::a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_string_literal_edit_is_not_a_retained_operand",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_wrapper_assertion_text_still_names_the_pinned_call",
+]

@@ -6365,18 +6365,22 @@ impl OwnerReturnPin {
         &self,
         operands: &'a [String; 2],
         index: &RustIndex,
-    ) -> Option<(CallShape<'a>, String, Option<&'a str>)> {
+    ) -> Option<(CallShape<'a>, String, Option<&'a str>, Option<&'a str>)> {
         [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
             let expected = helper_arguments::expected_literal(&operands[other], index)?;
             if let Some(call) = self.awaited_call_shape(None, &operands[at], &self.name) {
-                return Some((call, expected, Some(operands[at].as_str())));
+                return Some((call, expected, Some(operands[at].as_str()), None));
             }
             let rendered = self
                 .returns_scalar
                 .then(|| helper_arguments::rendered_template_call(&operands[at], &expected))
                 .flatten()?;
+            // #14194 review: a rendered call is still text this owner appears
+            // in exactly once, so the guard-operand agreement check can read
+            // its arguments. It is kept out of the `call_text` slot because
+            // the adaptor gates must keep refusing a rendered operand.
             self.awaited_call_shape(None, rendered, &self.name)
-                .map(|call| (call, expected, None))
+                .map(|call| (call, expected, None, Some(rendered)))
         })
     }
 
@@ -6772,13 +6776,20 @@ impl OwnerReturnPin {
         }
         probe.selected.set(substituted.is_some());
         let substituted_expected;
+        // #14194 review: a rendered, indexed or unwrapped twin supplies the
+        // call text the guard-operand check reads, while `call_text` stays
+        // `None` so the adaptor gates keep refusing those forms.
+        let derived_call: Cell<Option<&str>> = Cell::new(None);
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
         let (call, expected, call_text): (_, _, Option<&str>) = if let Some(operands) = &substituted
         {
-            let Some((call, expected, call_text)) = self.substituted_pin(operands, index) else {
+            let Some((call, expected, call_text, derived_call_text)) =
+                self.substituted_pin(operands, index)
+            else {
                 return false;
             };
+            derived_call.set(derived_call_text);
             substituted_expected = expected;
             (call, substituted_expected.as_str(), call_text)
         } else if let Some([first, second]) = claims_operands {
@@ -6919,7 +6930,10 @@ impl OwnerReturnPin {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                         helper_arguments::rendered_template_call(operands[at], operands[other])
                             .and_then(|call| {
-                                self.awaited_call_shape(poll_context, call, &self.name)
+                                let shape =
+                                    self.awaited_call_shape(poll_context, call, &self.name)?;
+                                derived_call.set(Some(call));
+                                Some(shape)
                             })
                             .map(|call| (call, operands[other], None))
                     })
@@ -6935,7 +6949,13 @@ impl OwnerReturnPin {
                                 exact_integer_projection(operands[at], operands[other])
                                     .filter(|_| !ord_method_rebindable(operands[at], test, index))
                                     .and_then(|call| {
-                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                        let shape = self.awaited_call_shape(
+                                            poll_context,
+                                            call,
+                                            &self.name,
+                                        )?;
+                                        derived_call.set(Some(call));
+                                        Some(shape)
                                     })
                                     .map(|call| (call, operands[other], None))
                             })
@@ -6950,7 +6970,13 @@ impl OwnerReturnPin {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 single_element_index(operands[at])
                                     .and_then(|call| {
-                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                        let shape = self.awaited_call_shape(
+                                            poll_context,
+                                            call,
+                                            &self.name,
+                                        )?;
+                                        derived_call.set(Some(call));
+                                        Some(shape)
                                     })
                                     .map(|call| (call, operands[other], None))
                             })
@@ -7543,16 +7569,20 @@ impl OwnerReturnPin {
                 }
                 // #8361: a dropped or added guard operand that every run of
                 // this call leaves at its chain's identity value gives both
-                // versions the same result here. A rendered or indexed
-                // comparison carries no call text, so the assertion's own
-                // text is read for the call, as the walk gate above does
-                // (#14194 review): otherwise an agreeing wrapper pin keeps
-                // the credit the equivalent direct assertion loses.
+                // versions the same result here. The wrapper forms carry no
+                // `call_text`, so the call text this arm derived is used: the
+                // assertion's own text is a helper assertion like
+                // `assert_eq!(actual, expected)` and does not name the owner,
+                // which is why reading `walk_site` here left every wrapper
+                // pin open (#14194 review).
+                let guard_site = call_text
+                    .or_else(|| derived_call.get())
+                    .unwrap_or(assertion.text.as_str());
                 if let Some(guards) = &self.guard_operands
                     && guards.pinned_call_agrees(
                         test,
                         loan.as_ref(),
-                        walk_site,
+                        guard_site,
                         assertion.line,
                         &self.name,
                     )
