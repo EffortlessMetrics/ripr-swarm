@@ -1249,6 +1249,10 @@ impl Reader<'_> {
         // immutable binding change the record before the read, and any
         // assignment through the name (`o.big = true`, `*o = ..`) replaces
         // the value the owner returned.
+        let write_possible = || {
+            let root = parse.tree();
+            assigns_through(root.syntax(), &name) || borrows_mutably(root.syntax(), &name)
+        };
         if self.credit
             && (statement.initializer().is_some_and(|initializer| {
                 let text: String =
@@ -1264,15 +1268,21 @@ impl Reader<'_> {
                         .descendants()
                         .filter_map(ast::RefExpr::cast)
                         .any(|borrow| borrow.mut_token().is_some())
-            }) || assigns_through(parse.tree().syntax(), &name)
-                || borrows_mutably(parse.tree().syntax(), &name))
+            }) || write_possible())
         {
             return Sink::Absent;
         }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
-        self.inner(statement.initializer(), depth + 1)
+        let initial = self.inner(statement.initializer(), depth + 1);
+        // Repo grading already relates this test to the owner. Losing the
+        // initial value must therefore withhold credit, rather than return
+        // Absent and leave the original oracle grade in place.
+        if self.test_index.is_some() && initial.reaches() && write_possible() {
+            return Sink::Masked;
+        }
+        initial
     }
 }
 

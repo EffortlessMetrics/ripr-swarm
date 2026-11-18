@@ -2,6 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0094"
 tests = [
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_binding_keeps_credit_until_a_possible_write",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_checks_legacy_root_for_out_of_line_tests",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_distinguishes_statement_macro_shadow_from_absolute_path",
   "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_distinguishes_glob_shadow_from_absolute_path",

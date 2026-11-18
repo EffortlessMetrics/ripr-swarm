@@ -304,6 +304,21 @@ fn repo_mem_replace_observes_only_the_old_temporary_on_both_seams() -> Result<()
 }
 
 #[test]
+fn repo_mem_replace_binding_keeps_credit_until_a_possible_write() -> Result<(), String> {
+    assert_repo_grips(
+        "let got = std::mem::replace(&mut over(10), false); assert_eq!(got, true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "let mut got = std::mem::replace(&mut over(10), false); got = true; assert_eq!(got, true);",
+        "let mut got = std::mem::replace(&mut over(10), false); let alias = &mut got; *alias = true; assert_eq!(got, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
 fn repo_mem_replace_distinguishes_glob_shadow_from_absolute_path() -> Result<(), String> {
     let scratch = subject("")?;
     let root = &scratch.0;
