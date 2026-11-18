@@ -1014,6 +1014,11 @@ never matches. A `function` entry covers every seam in that function,
 including seams added later, so set `expires` and review it when the function
 changes.
 
+When an id-keyed entry matches no current finding, its warning names this
+`path` + `function` form as the selector that survives edits. `ripr policy
+suppression-health` lists a `path` + `function` entry under the identity
+`<path>::<function>` (for example `src/retry.rs::retry_allowed`).
+
 In `ripr review-comments`, a `finding_id` entry applies only when the id names
 exactly one seam of the whole diff-scoped inventory; an id shared with another
 seam (even one outside the brief cap), or carrying a collision ordinal, is

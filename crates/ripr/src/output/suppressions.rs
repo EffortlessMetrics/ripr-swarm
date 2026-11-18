@@ -1162,6 +1162,13 @@ pub fn apply_check_suppressions(
                     candidate.finding_id,
                     candidate.finding_id
                 )),
+                // #14129: an id-keyed entry lapses on any edit to the
+                // suppressed expression, so the warning names the selector
+                // that does not.
+                None if entry.finding_id.is_some() => warnings.push(format!(
+                    "{} suppression for `{selector}` did not match any current finding; {STALE_FINDING_ID_HINT}",
+                    entry.kind.as_str()
+                )),
                 None => warnings.push(format!(
                     "{} suppression for `{selector}` did not match any current finding",
                     entry.kind.as_str()
@@ -1171,6 +1178,10 @@ pub fn apply_check_suppressions(
     }
     (matched, warnings)
 }
+
+/// Appended to the unmatched-`finding_id` warning (#14129): the owner
+/// selector is the edit-stable alternative to an id that hashes the expression.
+const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing the owning function across edits, select it with `path` + `function` instead of `finding_id`";
 
 /// The selector label reported for a `path` + `function` entry: the exact
 /// root-relative file and the owner function, joined as the owner symbol is.
