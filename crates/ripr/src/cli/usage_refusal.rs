@@ -75,6 +75,7 @@ pub(crate) fn note_unknown_argument(token: &str, message: &str, pointer: &str) {
             command: pointer.to_string(),
         }),
         disposition: None,
+        choices: None,
     });
 }
 
@@ -90,6 +91,7 @@ pub(crate) fn note_unknown_value(token: &str, message: &str, pointer: Option<&st
             command: command.to_string(),
         }),
         disposition: None,
+        choices: None,
     });
 }
 
@@ -104,6 +106,7 @@ pub(crate) fn note_unknown_command(token: &str, message: &str) {
             command: "ripr --help".to_string(),
         }),
         disposition: None,
+        choices: None,
     });
 }
 
@@ -116,6 +119,7 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
         token: Some(flag.to_string()),
         next: None,
         disposition: None,
+        choices: None,
     });
 }
 
@@ -135,6 +139,7 @@ pub(crate) fn missing_required(flag: &str, message: &str) -> String {
         token: Some(flag.to_string()),
         next: None,
         disposition: None,
+        choices: None,
     });
     message.to_string()
 }
@@ -149,6 +154,7 @@ pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
         token: Some(flag.to_string()),
         next: None,
         disposition: None,
+        choices: None,
     });
     message.to_string()
 }
@@ -162,6 +168,7 @@ pub(crate) fn note_invalid_value(value: &str, message: &str) {
         token: (!value.is_empty()).then(|| value.to_string()),
         next: None,
         disposition: None,
+        choices: None,
     });
 }
 
@@ -175,6 +182,7 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
         token: Some(selector.to_string()),
         next: None,
         disposition: None,
+        choices: None,
     });
 }
 
@@ -183,11 +191,24 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
 /// stderr `refusal code=` line already names, the disposition derived from
 /// the code; `next` is always null.
 pub(crate) fn note_typed_refusal(code: crate::app::task_first::RepairRefusalCode, message: &str) {
+    note_typed_refusal_with_choices(code, message, None);
+}
+
+/// [`note_typed_refusal`] for a selection refusal that also offers the
+/// commands its owner composed from typed seam or attempt ids (#14980). The
+/// owner passes exactly the listing it printed on stderr; nothing here is
+/// lifted from prose.
+pub(crate) fn note_typed_refusal_with_choices(
+    code: crate::app::task_first::RepairRefusalCode,
+    message: &str,
+    choices: Option<crate::output::refusal::RefusalChoices>,
+) {
     let mut block = RefusalBlock::from_prose(code.as_str(), message);
     // These steps can quote a user-supplied item or selector, so a typed
     // refusal never offers its step as a runnable `next` (#14931).
     block.next = None;
     block.disposition = Some(code.disposition().as_str());
+    block.choices = choices;
     record(block);
 }
 

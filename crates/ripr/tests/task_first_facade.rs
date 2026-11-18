@@ -3936,6 +3936,55 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("ripr continue --attempt"),
         "must name the explicit-selection retry:\n{stderr}"
     );
+    // #14980: under `--json` the same selection is one `cli_refusal`
+    // document whose choices are the per-attempt continue commands.
+    let continued_json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &continued_json,
+        3,
+        "continue --json with two current attempts",
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&continued_json.stdout).map_err(|error| {
+            format!(
+                "one JSON document: {error}\n{}",
+                stdout_text(&continued_json)
+            )
+        })?;
+    assert_eq!(
+        document["error"]["code"], "ambiguous_attempts",
+        "{document:#}"
+    );
+    let items = document["error"]["choices"]["items"]
+        .as_array()
+        .ok_or_else(|| format!("ambiguity lacks choices: {document:#}"))?;
+    assert_eq!(document["error"]["choices"]["total"], 2, "{document:#}");
+    assert_eq!(items.len(), 2, "{document:#}");
+    assert_eq!(
+        document["error"]["disposition"], "needs_selection",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"].get("next"),
+        Some(&serde_json::Value::Null),
+        "{document:#}"
+    );
+    // The root each choice binds is the one the stderr retry line prints.
+    const RETRY: &str = "ripr continue --attempt <attempt-id> --root ";
+    let json_stderr = stderr_text(&continued_json);
+    let root_token = json_stderr
+        .lines()
+        .find_map(|line| line.split_once(RETRY).map(|(_, root)| root.trim_end()))
+        .ok_or_else(|| format!("stderr must print the retry line:\n{json_stderr}"))?;
+    for id in &ids {
+        let expected = format!("ripr continue --attempt {id} --root {root_token}");
+        assert!(
+            items
+                .iter()
+                .any(|item| item["command"] == expected.as_str()),
+            "a choice must be exactly `{expected}`: {document:#}"
+        );
+    }
     for id in &ids {
         assert_eq!(
             read_manifest(root, id)?["state"],
@@ -7464,6 +7513,35 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             )),
             "{stderr}"
         );
+        // #14980: only a selection refusal carries its choices, and each
+        // listed command is the one stderr prints, composed from a seam id.
+        let choices = document["error"].get("choices");
+        if code == "several_eligible_seams" {
+            let choices =
+                choices.ok_or_else(|| format!("selection lacks choices: {document:#}"))?;
+            let items = choices["items"]
+                .as_array()
+                .ok_or_else(|| format!("choices.items must be an array: {document:#}"))?;
+            assert!(items.len() >= 2, "{document:#}");
+            assert_eq!(
+                choices["total"].as_u64(),
+                Some(items.len() as u64),
+                "{document:#}"
+            );
+            for item in items {
+                let command = item["command"].as_str().unwrap_or_default();
+                assert!(command.starts_with("ripr repair "), "{item:#}");
+                assert!(command.contains(" --root "), "{item:#}");
+                assert!(
+                    stderr.contains(command),
+                    "stderr must print {command}:\n{stderr}"
+                );
+                let label = item["label"].as_str().unwrap_or_default();
+                assert!(!label.trim().is_empty(), "{item:#}");
+            }
+        } else {
+            assert_eq!(choices, None, "{code} carries no choices: {document:#}");
+        }
         let plain = run_ripr(cwd, &args)?;
         assert_exit(&plain, 3, &format!("{args:?}"));
         assert!(

@@ -31,10 +31,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Why an owner's findings are withheld.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// Serialized (as the same stable token [`Self::as_str`] returns) because a
+/// repo seam carries its owner's opt-out through the classified seam caches
+/// (#14139).
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub(crate) enum OwnerOptOutReason {
     /// The owner, or a scope enclosing it, carries `#[mutants::skip]`,
     /// directly or through `cfg_attr`.
+    #[serde(rename = "owner_mutants_skip")]
     MutantsSkip,
 }
 
@@ -99,6 +106,15 @@ pub(crate) struct OwnerOptOut {
     /// module's name, the impl's `Type` or `Trait for Type`; empty for the
     /// owner function itself and for the file.
     pub(crate) scope_label: String,
+}
+
+/// The opt-out one parser-indexed owner function carries, if any: the single
+/// owner decision both the diff-scope findings ([`rust_owner_opt_outs`]) and
+/// the repo-scope seam inventory (#14139) consume. A lexically read function
+/// has empty `attrs`, so it is never opted out.
+pub(crate) fn function_owner_opt_out(function: &FunctionFact) -> Option<OwnerOptOutReason> {
+    attributes_define_mutants_skip(function.attrs.iter().map(String::as_str))
+        .then_some(OwnerOptOutReason::MutantsSkip)
 }
 
 /// The opt-out decided for one owner function: its scope and that scope's
@@ -195,4 +211,134 @@ fn decide(index: &RustIndex, owners: &[&FunctionFact]) -> Vec<Decision> {
         }
     }
     decisions
+}
+
+/// Seams a repo-scope format withheld because their owner opted out
+/// (#14139). The count and the withheld seam ids are disclosed beside the
+/// format's own counts, which no longer include those seams; the ids let a
+/// snapshot comparison tell a withheld seam from a removed one. Nothing
+/// withheld renders nothing, so a workspace without the attribute keeps
+/// byte-identical repo output.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RepoOwnerOptOuts {
+    /// Ids of the seams removed from the inventory the format renders,
+    /// sorted and unique.
+    pub(crate) seam_ids: Vec<String>,
+    /// The withheld seams' owners (`RepoSeam::owner`, `file::name`), sorted
+    /// and unique. A seam id hashes its byte offset, so adding the attribute
+    /// line moves the owner's ids; a snapshot comparison matches the owner
+    /// instead.
+    pub(crate) owners: Vec<String>,
+}
+
+impl RepoOwnerOptOuts {
+    /// How many seams were withheld.
+    pub(crate) fn withheld(&self) -> usize {
+        self.seam_ids.len()
+    }
+
+    /// Whether nothing was withheld (the format renders no disclosure).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.seam_ids.is_empty()
+    }
+
+    /// The withholding reason. `MutantsSkip` is the only reason a seam
+    /// carries today.
+    pub(crate) fn reason(&self) -> OwnerOptOutReason {
+        OwnerOptOutReason::MutantsSkip
+    }
+}
+
+/// Remove the entries whose seam owner opted out (the decision recorded on
+/// the seam at extraction from [`function_owner_opt_out`]) and count them.
+/// The one repo-scope withholding call: every `repo-*` format runs its
+/// owned inventory through it before rendering, so their counts agree.
+pub(crate) fn withhold_repo_owner_opt_outs<T>(
+    entries: &mut Vec<T>,
+    seam_of: impl Fn(&T) -> &crate::analysis::seams::RepoSeam,
+) -> RepoOwnerOptOuts {
+    let mut seam_ids = std::collections::BTreeSet::new();
+    let mut owners = std::collections::BTreeSet::new();
+    entries.retain(|entry| {
+        let seam = seam_of(entry);
+        if seam.owner_opt_out().is_none() {
+            return true;
+        }
+        seam_ids.insert(seam.id().as_str().to_string());
+        owners.insert(seam.owner().to_string());
+        false
+    });
+    RepoOwnerOptOuts {
+        seam_ids: seam_ids.into_iter().collect(),
+        owners: owners.into_iter().collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OwnerOptOutReason, function_owner_opt_out};
+    use crate::analysis::facts::FileFacts;
+    use crate::analysis::syntax::{
+        LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
+    };
+    use std::path::Path;
+
+    const SOURCE: &str = "#[mutants::skip]
+pub fn fn_level(level: u32) -> bool {
+    level > 3
+}
+
+#[doc = \"mutants::skip\"]
+pub fn documented(level: u32) -> bool {
+    level > 3
+}
+
+#[cfg_attr(test, mutants::skip)]
+pub fn gated(level: u32) -> bool {
+    level > 3
+}
+
+pub fn control(level: u32) -> bool {
+    level > 3
+}
+";
+
+    fn decision(facts: &FileFacts, name: &str) -> Result<Option<OwnerOptOutReason>, String> {
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .map(function_owner_opt_out)
+            .ok_or_else(|| format!("fixture must index `{name}`"))
+    }
+
+    /// #14139: the one owner decision the repo-scope seam extraction reads.
+    /// Parser-backed attributes opt out `fn_level` and the `cfg_attr` form;
+    /// a doc string naming the path and an unattributed owner do not.
+    #[test]
+    fn parser_backed_owner_decision_reads_only_a_real_mutants_skip() -> Result<(), String> {
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), SOURCE)?;
+        assert!(!facts.used_lexical_fallback, "fixture must parse cleanly");
+        let skip = Some(OwnerOptOutReason::MutantsSkip);
+        assert_eq!(decision(&facts, "fn_level")?, skip);
+        assert_eq!(decision(&facts, "gated")?, skip);
+        assert_eq!(decision(&facts, "documented")?, None);
+        assert_eq!(decision(&facts, "control")?, None);
+        Ok(())
+    }
+
+    /// A lexically read owner carries no parser-backed attributes, so the
+    /// same source never opts it out.
+    #[test]
+    fn lexically_read_owner_is_never_opted_out() -> Result<(), String> {
+        let facts = LexicalRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), SOURCE)?;
+        assert!(
+            facts.used_lexical_fallback,
+            "fixture must exercise the lexical fallback"
+        );
+        for name in ["fn_level", "gated", "documented", "control"] {
+            assert_eq!(decision(&facts, name)?, None, "{name}");
+        }
+        Ok(())
+    }
 }

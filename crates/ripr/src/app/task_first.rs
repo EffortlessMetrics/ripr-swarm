@@ -1962,6 +1962,34 @@ pub(crate) fn render_repair_choice(
     out
 }
 
+/// The same selection as [`render_repair_choice`], as the typed `choices`
+/// of the `cli_refusal` document (#14980): each listed candidate's start
+/// command (composed from its seam id and the bound root) with the words
+/// that tell it apart, and the selection's full count.
+pub(crate) fn repair_choice_items(
+    candidates: &[RepairCandidateNote],
+    total: usize,
+) -> crate::output::refusal::RefusalChoices {
+    crate::output::refusal::RefusalChoices {
+        total: total.max(candidates.len()),
+        items: candidates
+            .iter()
+            .map(|candidate| {
+                crate::output::refusal::RefusalChoice::new(
+                    format!(
+                        "{} `{}`: {}{}",
+                        candidate.location,
+                        candidate.code,
+                        candidate.test_need,
+                        column_suffix(candidates, candidate)
+                    ),
+                    candidate.command.clone(),
+                )
+            })
+            .collect(),
+    }
+}
+
 /// One candidate's start command, then its PowerShell spelling only when
 /// PowerShell needs a different one (or has none), from the shared translator.
 fn push_candidate_command(out: &mut String, command: &str) {
