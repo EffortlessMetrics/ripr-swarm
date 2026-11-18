@@ -792,6 +792,26 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
   follows it.
 
+Integer and char arms read the same way (#15027): `n == 1 || n == 2` with
+`n` declared as a primitive integer (`u8` to `u128`, `usize`, `i8` to
+`i128`, `isize`), and `c == ',' || c == ';'` with `c: char`. Every arm
+uses one literal kind. Integer literals are plain decimal, with no sign,
+suffix, underscore, radix prefix or leading zero, and at most 18 digits, so
+two distinct spellings are two distinct values (`5` and `05`, `5_u32` or
+`0x5` decline). A longer literal declines too, which costs only recall. A char
+literal is one unescaped character that cannot read as an operator, so
+`'|'`, `'!'`, `'('` and any escape decline. A newtype, a float, a reference
+or a `u8` compared with a char literal declines. The infection summary names
+the kind: "every original integer-equality arm is false".
+
+When such a chain (string, integer or char) is the owner's returned tail on
+the changed line, propagation reads `yes` through the return sink. Any input
+equal to the new literal flips the whole chain, so the chain's change is the
+returned change. Any other `||` or `&&` tail keeps no sink, because a changed
+operand of `x > 1 || y` may be masked by `y`. The sink establishes
+propagation only. A test that passes only an original arm's literal still
+leaves infection short of `yes`.
+
 Guarded boundary rule (#13037): a changed comparison joined by top-level
 `&&` to guards that are each a bare owner parameter or its negation
 (`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with

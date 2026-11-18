@@ -821,7 +821,16 @@ fn predicate_as_owner_tail(
     let ast::Expr::BinExpr(binary) = &comparison else {
         return None;
     };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    // #15027: an `||` chain carries the predicate's value to the return only
+    // when the edit appends one equality arm on the same parameter
+    // (`n == 1` to `n == 1 || n == 2`). Any input equal to the new literal
+    // then flips the whole chain, so the chain's change is the returned
+    // change. Every other connective tail keeps no sink: a changed operand
+    // of `x > 1 || y` may be masked by `y`.
+    let op = binary.op_kind();
+    let appended_arm = matches!(op, Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or)))
+        && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(op, Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
@@ -2378,6 +2387,81 @@ mod tests {
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
         probe.owner = Some(owner.id.clone());
         probe.location.file = std::path::PathBuf::from("src/other.rs");
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    /// #15027: a returned `||` tail reaches the return sink only when it is
+    /// an appended equality arm on the same parameter; other connective tails
+    /// keep no sink because an operand may be masked.
+    #[test]
+    fn appended_equality_arm_tail_reaches_return_sink_and_other_or_tails_do_not() {
+        for (body, before, after) in [
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(c: char) -> bool { c == ',' || c == ';' }",
+                "c == ','",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn gate(flag: &str) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue && sink.line == 1),
+                "{body}: {sinks:?}"
+            );
+        }
+        for (body, before, after) in [
+            (
+                "pub fn gate(x: u32, y: bool) -> bool { x >= 1 || y }",
+                "x >= 1",
+                "x >= 1 || y",
+            ),
+            (
+                "pub fn gate(n: u32, m: u32) -> bool { n == 1 || m == 2 }",
+                "n == 1",
+                "n == 1 || m == 2",
+            ),
+            (
+                "pub fn gate(flag: Flag) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "pub fn gate(n: f64) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 || n == 3 }",
+                "n == 1",
+                "n == 1 || n == 2 || n == 3",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            assert_eq!(
+                predicate_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
+        // Without a recorded pre-edit text the chain is not an appended arm.
+        let owner = tail_owner("pub fn gate(n: u32) -> bool { n == 1 || n == 2 }");
+        let probe = probe(ProbeFamily::Predicate, "n == 1 || n == 2", 1);
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
     }
 
