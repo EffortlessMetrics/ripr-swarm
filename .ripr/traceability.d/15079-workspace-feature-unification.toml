@@ -1,0 +1,15 @@
+# Workspace feature unification for `required-features` (#15079) under
+# RIPR-SPEC-0356.
+[[extend]]
+id = "RIPR-SPEC-0356"
+tests = [
+  "crates/ripr/tests/workspace_feature_unification.rs::a_bin_whose_required_feature_only_a_member_dependency_enables_keeps_credit",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_bin_whose_required_feature_no_member_enables_stays_withheld",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_dependency_requesting_a_different_feature_keeps_the_skip",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_feature_chain_counts_only_when_the_dependent_enables_it",
+  "crates/ripr/tests/workspace_feature_unification.rs::an_optional_dependency_counts_only_when_enabled",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_build_dependency_request_keeps_the_skip",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_request_through_an_intermediate_member_keeps_credit",
+  "crates/ripr/tests/workspace_feature_unification.rs::an_integration_target_whose_required_feature_a_member_enables_keeps_credit",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::harness_verdict::workspace_features_unify_member_requests_and_record_doubt",
+]

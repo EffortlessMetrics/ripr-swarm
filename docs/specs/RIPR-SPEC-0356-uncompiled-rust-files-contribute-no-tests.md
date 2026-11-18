@@ -24,6 +24,8 @@ Linked issues:
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
+- #15079 (`required-features` met only through another workspace member's
+  dependency on the package)
 
 Linked PRs:
 
@@ -96,7 +98,8 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
 2. Every execution root is the `src_path` of at least one cargo metadata
    target, and `cargo test` runs none of them: each is a `lib`-family or
    `bin` target whose metadata `test` flag is false or whose
-   `required-features` are unmet under cargo defaults. The query is
+   `required-features` are unmet under the analyzed feature set (cargo
+   defaults unified across the workspace, below). The query is
    `ManifestInventory::crate_root_unit_tests_skipped`, the same metadata
    owner that already decides `[[test]] test = false` (#7265) and
    `required-features` (#7266). A skipped `[[test]]` target keeps those
@@ -162,6 +165,41 @@ keeps its tests. Unavailable metadata, a root cargo does not list, and an
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
 
+### Workspace feature unification (#15079)
+
+Scope decision: ripr reads the tests of every workspace member as run, so its
+analysis scope is a workspace-wide `cargo test` (a virtual workspace root, or
+`cargo test --workspace`), not `cargo test -p <member>`. That build selects
+every member with its default features and unifies each package's features
+across them. The `required-features` check (for a `[[bin]]` here and a
+`[[test]]` under #7266) therefore compares against a member's unified set,
+computed from the same `cargo metadata --no-deps --offline` document:
+
+1. Each member starts from its own `default` closure.
+2. A normal or dev dependency of any member whose metadata `path` is a member
+   directory requests, on that member, its `features`, `default` unless
+   `default-features = false`, and every `key/feature` or `key?/feature`
+   enable among the dependent's enabled features, where `key` is the rename
+   or package name. An optional dependency counts only when the dependent's
+   enabled features name `dep:key`, the implicit `key` feature, or a
+   `key/feature` enable. Requests expand through the receiving member's
+   feature table, and the pass repeats until no set grows, so a chain
+   through several members resolves.
+3. A build dependency does not count: under resolver 2 its features are
+   built apart from the target build that runs the tests. A platform-specific
+   (`[target.'cfg(..)'.dependencies]`) edge counts, since ripr does not pick
+   the platform.
+4. A dependency entry whose `path` names a member but whose other fields
+   cannot be read puts that member in doubt, and its targets establish no
+   `required-features` skip. The doubt carries over an edge whose request
+   depends on the doubtful member's features: an optional edge, or one its
+   feature table chains through (`dep:key`, `key/feature`, `key?/feature`).
+
+This only re-admits a target Cargo builds in that workspace build: a request
+for another feature, an inactive optional edge, a chain the dependent leaves
+off, and a build dependency keep the skip. The query and its owner do not
+change.
+
 ## Required Evidence
 
 - Positive: a haystack `#[test]` is not a related test of the changed owner,
@@ -193,6 +231,14 @@ running test; no named stop reason is added on this issue.
   `#[path = "m.txt"]` mount of a non-`.rs` file, and a macro mount
   `mod /* c */ $n` after a `"http://x"` string, read in every mode what
   their tests-on controls read (`exposed`).
+
+- Feature unification (#15079): a `[[bin]]` whose required feature only a
+  member's renamed dev dependency, a normal dependency, a default-enabled
+  `a/special` chain, an enabled optional dependency or a chain through a
+  third member requests reads `exposed` with its test related, as does a
+  `[[test]]` target under the same request; a request for another feature,
+  no request, a chain behind a feature left off, an inactive optional or
+  weak `a?/special` edge and a build dependency keep the skip.
 
 ## Known Limits
 
@@ -233,6 +279,16 @@ running test; no named stop reason is added on this issue.
   token the scan recognizes, and the file's tests are then withheld
   although `cargo test` of that target runs them.
 
+- Feature unification (#15079), under-credit kept from #7266: a resolver 1
+  workspace also unifies build-dependency features, and a non-member path
+  dependency or a `[patch]` entry can request a member's features where
+  `--no-deps` metadata does not show it; those targets stay skipped. A
+  `.cargo/config.toml` that narrows unification (`resolver.feature-unification
+  = "package"`) is not read, nor is a per-package run (`cargo test -p a`),
+  where Cargo would skip a target this rule re-admits; both are outside the
+  workspace-wide scope above. A platform-specific edge for another platform
+  re-admits a target that platform's `cargo test` does not build.
+
 ## Non-Goals
 
 - Runtime mutation proof or sufficiency claims.
@@ -264,6 +320,9 @@ running test; no named stop reason is added on this issue.
   `mount_operand_doubt_needs_a_dynamic_mount_operand` (#14962 review).
 - `crates/ripr/src/analysis/seam_inventory.rs`:
   `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
+- `crates/ripr/tests/workspace_feature_unification.rs` (#15079).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `workspace_features_unify_member_requests_and_record_doubt` (#15079).
 
 ## Implementation Mapping
 
@@ -273,7 +332,8 @@ running test; no named stop reason is added on this issue.
   `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
   `files_in_skipped_unit_test_targets` (#14962).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
-  `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
+  `ManifestInventory::crate_root_unit_tests_skipped` (#14962),
+  `workspace_enabled_features` (#15079).
 
 ## Metrics
 
