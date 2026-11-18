@@ -2147,64 +2147,37 @@ const BACKSLASH: char = '\\';
 /// reachable/unknown/unreachable verdicts.
 mod reachability;
 
-/// Names a callback at `invocation` can capture from `fn_node`: the function's
-/// parameters and every name a `let` binds outside the invocation, unless the
-/// `let` sits in a closure that does not also hold the invocation (a sibling
-/// trial's callback, whose locals the callback cannot see). Over-collecting
-/// only keeps credit (#15063 review).
+/// Names a callback at `invocation` can capture from `fn_node`: every name a
+/// pattern binds outside the invocation — a function or enclosing-closure
+/// parameter, a `let`, an `if let`/`while let`, a `match` arm or a `for`
+/// pattern — unless the pattern sits in a closure that does not also hold the
+/// invocation (a sibling trial's callback, whose locals the callback cannot
+/// see). Over-collecting only keeps credit (#15063 review). Bindings inside
+/// another macro's token tree are not parsed, so they are not seen here.
 fn capturable_binding_names(
     fn_node: &ast::Fn,
     invocation: ra_ap_syntax::TextRange,
 ) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    let add_pattern = |pattern: Option<ast::Pat>, names: &mut BTreeSet<String>| {
-        if let Some(pattern) = pattern {
-            names.extend(
-                pattern
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::IdentPat::cast)
-                    .filter_map(|ident| ident.name())
-                    .map(|name| name.text().to_string()),
-            );
-        }
-    };
-    if let Some(params) = fn_node.param_list() {
-        for param in params.params() {
-            add_pattern(param.pat(), &mut names);
-        }
-    }
-    for node in fn_node.syntax().descendants() {
-        let range = node.text_range();
-        if range.start() >= invocation.start() && range.end() <= invocation.end() {
-            continue;
-        }
-        let pattern = if let Some(let_stmt) = ast::LetStmt::cast(node.clone()) {
-            let_stmt.pat()
-        } else if let Some(closure) = ast::ClosureExpr::cast(node.clone()) {
-            // Parameters of a closure that holds the invocation are in scope.
-            if closure.syntax().text_range().contains_range(invocation)
-                && let Some(params) = closure.param_list()
-            {
-                for param in params.params() {
-                    add_pattern(param.pat(), &mut names);
-                }
-            }
-            continue;
-        } else {
-            continue;
-        };
-        let in_foreign_closure = node
-            .ancestors()
-            .skip(1)
-            .take_while(|ancestor| ancestor != fn_node.syntax())
-            .filter_map(ast::ClosureExpr::cast)
-            .any(|closure| !closure.syntax().text_range().contains_range(invocation));
-        if !in_foreign_closure {
-            add_pattern(pattern, &mut names);
-        }
-    }
-    names
+    fn_node
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|ident| {
+            let range = ident.syntax().text_range();
+            !(range.start() >= invocation.start() && range.end() <= invocation.end())
+        })
+        .filter(|ident| {
+            !ident
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| ancestor != fn_node.syntax())
+                .filter_map(ast::ClosureExpr::cast)
+                .any(|closure| !closure.syntax().text_range().contains_range(invocation))
+        })
+        .filter_map(|ident| ident.name())
+        .map(|name| name.text().to_string())
+        .collect()
 }
 
 #[cfg(test)]

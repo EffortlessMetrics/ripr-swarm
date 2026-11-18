@@ -5207,37 +5207,51 @@ fn sibling_trials_scope_the_unfilled_expected_value_per_trial()
 }
 
 /// #15063 review: the callback captures a filled `expected` from the
-/// enclosing function, and an unused nested closure binds its own
-/// `expected` to `todo!()`. The assertion reads the captured value, so it
-/// keeps its reading. The control binds the placeholder in the callback
-/// itself with nothing to capture, and stays lowered.
+/// enclosing function (a `let`, an `if let` or a `match` arm), and an unused
+/// nested closure binds its own `expected` to `todo!()`. The assertion reads
+/// the captured value, so it keeps its reading. The control binds the
+/// placeholder in the callback itself with nothing to capture, and stays
+/// lowered.
 #[test]
 fn a_captured_filled_expected_value_is_not_lowered_by_a_nested_placeholder()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (outer, inner, lowered) in [
+    let nested = "let _unused = || { let expected: i32 = todo!(\"x\"); expected };\n";
+    let own = "let expected: i32 = todo!(\"x\");\n";
+    for (case, (open, close, inner, lowered)) in [
+        ("let expected: i32 = 2;\n", "", nested, false),
         (
-            "let expected: i32 = 2;\n",
-            "let _unused = || { let expected: i32 = todo!(\"x\"); expected };\n",
+            "if let Some(expected) = Some(2i32) {\n",
+            "} else { vec![] }\n",
+            nested,
             false,
         ),
-        ("", "let expected: i32 = todo!(\"x\");\n", true),
-    ] {
+        (
+            "match Some(2i32) { Some(expected) => ",
+            ", None => vec![] }\n",
+            nested,
+            false,
+        ),
+        ("", "", own, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let source = with_harness_main(
             &format!(
                 "fn score() -> i32 {{ 2 }}\n\
                  fn trials() -> Vec<libtest_mimic::Trial> {{\n\
-                 {outer}\
+                 {open}\
                  vec![\n\
                  libtest_mimic::Trial::test(\"captured\", move || {{\n\
                  {inner}\
                  assert!(score() == expected);\n\
                  Ok(())\n\
                  }}),\n\
-                 ]\n}}\n"
+                 ]{close}\n}}\n"
             ),
             "trials()",
         );
-        let root = temp_dir(&format!("unfilled-expected-captured-{lowered}"))?;
+        let root = temp_dir(&format!("unfilled-expected-captured-{case}"))?;
         write_workspace(&root, &[("tests/matcher.rs", &source)])?;
         declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
         let files = [PathBuf::from("tests/matcher.rs")];
@@ -5254,7 +5268,7 @@ fn a_captured_filled_expected_value_is_not_lowered_by_a_nested_placeholder()
         let unknown =
             oracle.kind == OracleKind::Unknown && oracle.strength == OracleStrength::Unknown;
         if unknown != lowered {
-            return Err(format!("{outer:?}{inner:?}: lowered={lowered}, got {oracle:?}").into());
+            return Err(format!("case {case}: lowered={lowered}, got {oracle:?}").into());
         }
     }
     Ok(())
