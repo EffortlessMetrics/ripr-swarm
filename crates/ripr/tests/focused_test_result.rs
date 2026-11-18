@@ -2228,18 +2228,14 @@ fn a_proposal_attempt_cannot_finish_without_a_focused_result() -> Result<(), Str
     Ok(())
 }
 
-/// The after-phase gate leaves a proposal whose file it does not see to the
-/// cage. `Path::is_file` looks with a symlink-following `statx`; the cage
-/// captures paths with `AT_SYMLINK_NOFOLLOW` and reads them with `open`. Hide
-/// the created proposal file from symlink-following `statx` only, so the gate
-/// sees it absent (as if it appeared just after the gate looked) while the
-/// finish authority evaluates a compliant cage with no focused result. That
-/// authority must refuse from its own evaluated state instead of finishing.
+/// Runs the after phase with the proposed file hidden from the gate's
+/// symlink-following existence check only (see the test below).
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-#[test]
-fn a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded() -> Result<(), String> {
-    let (fixture, attempt) = edited_attempt("focused-gate-window")?;
-    let root = &fixture.root;
+fn after_with_gate_blind_to_the_proposal(
+    root: &Path,
+    attempt: &Attempt,
+    result: Option<&Path>,
+) -> Result<std::process::Output, String> {
     let dir = root.join(".git/ripr-gate-window-hook");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let source = dir.join("hook.c");
@@ -2294,6 +2290,11 @@ int statx(int dirfd, const char *path, int flags, unsigned int mask, struct stat
             "--phase",
             "after",
         ])
+        .args(
+            result
+                .map(|path| vec!["--test-result".to_string(), path.display().to_string()])
+                .unwrap_or_default(),
+        )
         .output()
         .map_err(|error| error.to_string())?;
     if !marker.exists() {
@@ -2302,6 +2303,22 @@ int statx(int dirfd, const char *path, int flags, unsigned int mask, struct stat
             combined(&output)
         ));
     }
+    Ok(output)
+}
+
+/// The after-phase gate leaves a proposal whose file it does not see to the
+/// cage. `Path::is_file` looks with a symlink-following `statx`; the cage
+/// captures paths with `AT_SYMLINK_NOFOLLOW` and reads them with `open`. Hide
+/// the created proposal file from symlink-following `statx` only, so the gate
+/// sees it absent (as if it appeared just after the gate looked) while the
+/// finish authority evaluates a compliant cage with no focused result. That
+/// authority must refuse from its own evaluated state instead of finishing.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-gate-window")?;
+    let root = &fixture.root;
+    let output = after_with_gate_blind_to_the_proposal(root, &attempt, None)?;
     let text = combined(&output);
     // The finish authority's refusal, not the gate's: the gate never saw the
     // file, so only the re-check from the evaluated cage can produce it.
@@ -2318,6 +2335,36 @@ int statx(int dirfd, const char *path, int flags, unsigned int mask, struct stat
         &output,
         "cannot finish without a focused test result",
     )?;
+    let manifest = manifest(root, &attempt)?;
+    assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    Ok(())
+}
+
+/// A failing focused result skips the gate's passing-run check the same way
+/// when the gate does not see the proposed file. The finish authority must
+/// re-apply that check to the record it would retain (#15033).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_failing_result_the_gate_did_not_check_cannot_finish() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-gate-window-failed")?;
+    let root = &fixture.root;
+    let failing = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
+        ]),
+    );
+    let result = write_result(root, "gate-window-failed", &failing)?;
+    let output = after_with_gate_blind_to_the_proposal(root, &attempt, Some(&result))?;
+    let text = combined(&output);
+    // The finish authority's wording, not the gate's ("1 failed test(s)").
+    assert!(
+        text.contains("the retained focused result is not a counted passing run"),
+        "{text}"
+    );
+    assert_refused_and_unrecorded(root, &attempt, &output, "not a counted passing run")?;
     let manifest = manifest(root, &attempt)?;
     assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
     Ok(())

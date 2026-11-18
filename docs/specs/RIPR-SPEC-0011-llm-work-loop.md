@@ -990,6 +990,8 @@ whose file was never created is left to the cage verdict
 re-checks this from its own evaluated cage state: a proposal attempt whose cage
 evaluates compliant without a focused result is refused there too, so a
 proposed file created after the gate looked cannot finish compliant unrecorded.
+It also re-applies the passing-run check to the result it would retain, so a
+failing or zero-count run that the gate did not check is refused there (#15033).
 Attempts that follow an
 existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
 pass `--test-result`; for a proposal attempt they reach this refusal, whose text
@@ -1224,6 +1226,7 @@ is not decided here.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failing_result_the_gate_did_not_check_cannot_finish` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_needs_a_passing_test_absent_from_the_baseline` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_in_a_module_file_refuses_a_test_it_began_with` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_finish_without_a_retained_focused_claim` (#13203)

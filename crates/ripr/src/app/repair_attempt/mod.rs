@@ -4102,14 +4102,46 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // proposal whose file is absent, leaving it to the cage. If the file
     // appears after that check, the cage evaluated here can be compliant
     // with no focused run, so refuse from this same evaluated state.
+    // The same holds for a result whose file the gate did not see: the
+    // gate's passing-run check is skipped with it, so the finish re-applies
+    // that check to the record it would retain (#15033).
     if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
-        && baseline.policy().new_test_proposal.is_some()
-        && focused.is_none()
+        && let Some(proposal) = &baseline.policy().new_test_proposal
     {
-        return Err(format!(
-            "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL}",
-            attempt_id.as_str()
-        ));
+        let Some(focused) = focused else {
+            return Err(format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL}",
+                attempt_id.as_str()
+            ));
+        };
+        let inline_baseline = if proposal.kind
+            == crate::analysis::new_test_target::NewTestKind::InlineUnit
+        {
+            let source = baseline.inline_test_region_source().ok_or_else(|| {
+                    format!(
+                        "attempt `{}` follows an inline proposal but retains no baseline text of `{}`; start a new attempt",
+                        attempt_id.as_str(),
+                        proposal.file
+                    )
+                })?;
+            Some(crate::app::focused_run::baseline_test_names(
+                &proposal.file,
+                source,
+            )?)
+        } else {
+            None
+        };
+        crate::app::focused_run::require_passing_recorded_run(
+            &focused.record,
+            attempt_id.as_str(),
+            inline_baseline.as_ref(),
+        )
+        .map_err(|error| {
+            format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX}{error}",
+                attempt_id.as_str()
+            )
+        })?;
     }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
@@ -4891,6 +4923,12 @@ pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test resu
 /// No after verdict has been committed.
 pub(crate) const REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL: &str = "follows a new-test proposal, so it cannot finish without a focused test result; rerun the after phase with `--test-result FILE`";
 
+/// The finish authority's refusal of a proposal attempt's focused result that
+/// is not a counted passing run of a new test (#15033). The checked reason
+/// follows this prefix. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX: &str =
+    "cannot finish its new-test proposal: ";
+
 pub(crate) fn repair_attempt_proposal_focused_required_is_refusal(error: &str) -> bool {
     let Some((id, tail)) = error
         .strip_prefix("repair attempt ")
@@ -4898,7 +4936,11 @@ pub(crate) fn repair_attempt_proposal_focused_required_is_refusal(error: &str) -
     else {
         return false;
     };
-    RepairAttemptId::parse(id).is_ok() && tail == REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL
+    RepairAttemptId::parse(id).is_ok()
+        && (tail == REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL
+            || tail
+                .strip_prefix(REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX)
+                .is_some_and(|reason| !reason.is_empty()))
 }
 
 pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
