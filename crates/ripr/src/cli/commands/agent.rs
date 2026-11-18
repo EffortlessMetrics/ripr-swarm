@@ -5503,7 +5503,13 @@ fn recovered_focused_after_output(
     let status_doc: serde_json::Value = serde_json::from_str(&app::agent_status::render_agent_status_json(&status)?)
         .map_err(|error| format!("decode agent status failed: {error}; rerun the command and report a repeat as a ripr bug"))?;
     let mut summary = gap_closure_summary_lines(&verify_doc);
-    summary.extend(repair_after_summary_lines(&receipt_path));
+    // #14079: a recovered finish reports the same retained caller run the
+    // original finish printed, never `none recorded`.
+    let reported_run = crate::app::repair_attempt::retained_run::retained_focused_run(manifest);
+    summary.extend(repair_after_summary_lines(
+        &receipt_path,
+        reported_run.as_ref(),
+    ));
     let document = if json {
         let envelope = serde_json::json!({"schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
             "kind": "repair_after_result", "verify": verify_doc, "agent_status": status_doc});

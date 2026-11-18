@@ -1920,6 +1920,19 @@ fn interrupted_focused_finish_recovers_the_full_evidence_set() -> Result<(), Str
     let recovery = after_with(root, &attempt, &result)?;
     assert!(recovery.status.success(), "{}", combined(&recovery));
     assert_eq!(stdout_json(&recovery)?["kind"], "repair_after_result");
+    // #14079: the recovered finish reads the retained caller run back, as the
+    // original finish would have, instead of saying none was recorded.
+    let recovered_text = combined(&recovery);
+    assert!(
+        recovered_text.contains(
+            "test run: reported by the caller, not run by ripr: 1 test(s) ran in `tests/"
+        ),
+        "{recovered_text}"
+    );
+    assert!(
+        !recovered_text.contains("test run: none recorded"),
+        "{recovered_text}"
+    );
     let state = manifest(root, &attempt)?;
     let roles = terminal_roles(&state);
     for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
