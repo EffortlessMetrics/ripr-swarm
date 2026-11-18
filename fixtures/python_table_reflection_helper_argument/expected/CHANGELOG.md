@@ -115,3 +115,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_table_reflection_helper_argument (10)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_table_reflection_helper_argument --reason "..."`
+
+Updated:
+- `expected/human.txt`

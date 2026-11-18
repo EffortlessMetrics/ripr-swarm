@@ -39,6 +39,10 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// Top-level status for a completed non-blocking run that is not a clean
+/// enforcing `pass`: advisory evidence was recorded, or the mode is
+/// visible-only (which never blocks on findings and so never reads `pass`).
+const GATE_STATUS_ADVISORY: &str = "advisory";
 /// The warning that marks a calibrated-gate block caused by a changed file the
 /// parser declined (#14485). The inline CLI detail looks for it.
 pub(crate) const UNPARSED_BLOCK_WARNING: &str = "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes";
@@ -1594,16 +1598,35 @@ fn top_level_status(
         GATE_STATUS_BLOCKED
     } else if summary.acknowledged > 0 {
         "acknowledged"
-    } else if mode == GateMode::VisibleOnly
-        || summary.advisory > 0
-        || summary.suppressed > 0
-        || summary.unknown_confidence > 0
-        || !warnings.is_empty()
-    {
-        "advisory"
+    } else if mode == GateMode::VisibleOnly || has_advisory_evidence(summary, warnings) {
+        GATE_STATUS_ADVISORY
     } else {
         "pass"
     }
+}
+
+/// Evidence that reads `advisory` in every mode: an advisory, suppressed or
+/// unknown-confidence candidate, or a warning.
+fn has_advisory_evidence(summary: &GateSummary, warnings: &[String]) -> bool {
+    summary.advisory > 0
+        || summary.suppressed > 0
+        || summary.unknown_confidence > 0
+        || !warnings.is_empty()
+}
+
+/// Whether a report reads `advisory` only because visible-only mode never
+/// blocks on findings: the run recorded no advisory evidence and no
+/// exception-policy violation. `top_level_status` owns the status; this names
+/// the one case where the token says nothing about findings, so the renderer
+/// can disclose it (#7445) without changing the status vocabulary.
+pub(super) fn advisory_from_visible_only_posture_alone(report: &GateDecisionReport) -> bool {
+    report.status == GATE_STATUS_ADVISORY
+        && report.mode == GateMode::VisibleOnly
+        && !has_advisory_evidence(&report.summary, &report.warnings)
+        && report
+            .exception_policy
+            .as_ref()
+            .is_none_or(|policy| policy.violations.is_empty())
 }
 
 fn acknowledgement_labels(input: &GateEvaluateInput) -> Vec<String> {

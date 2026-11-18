@@ -41,6 +41,8 @@ mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
 mod infection;
+mod literal_assertion;
+pub(in crate::analysis) use literal_assertion::asserts_only_dropped_literals;
 mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
@@ -75,15 +77,15 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
-    assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
-    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
-    comparison_operands, computed_input_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_gap_is_placed,
+    assigned_field_of, assigned_field_read_confirms, assigned_field_seed_is_visible,
+    assigned_field_weak_read_start, call_parameter_names, chain_row_transfer_stop,
+    changed_comparison_conjunct, comparison_operands, computed_input_parameters,
     function_parameters as whole_signature_parameters, guarded_boundary_row_reaches,
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
     owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
-    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
-    test_binds_owner_type,
+    pushed_collection_compared_whole, pushed_literal_path, repo_seam_unselected_arm,
+    signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -104,7 +106,8 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
     bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
-    test_calls_only_through_local_rival_module, text_calls_owner,
+    test_calls_only_a_local_value_item, test_calls_only_through_local_rival_module,
+    text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
@@ -115,8 +118,9 @@ pub(in crate::analysis) use const_flow::{
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
-    missing_evidence, recommended_next_step, recommended_next_step_with_boundary, stop_reasons,
+    WRAPPER_ERROR_BINDING_NEXT_STEP, classify, confidence_score, ensure_unknown_stop_reason,
+    exact_oracle_gap_next_step, missing_evidence, recommended_next_step,
+    recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
@@ -230,9 +234,9 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
-    owner_call_is_direct, owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed,
-    owner_trait_name, package_prefix, requires_inherent_receiver_identity,
-    resolves_method_in_prefix, test_calls_free_function,
+    owner_call_is_direct, owner_call_selects_generic_sibling, owner_call_text,
+    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;

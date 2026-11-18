@@ -190,6 +190,11 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+The block ends with one blank line. A trailing `Note:` after it (an empty
+range caveat, a working-tree or preview-language disclosure) opens directly
+after that blank line, so exactly one blank line separates them; a report
+with no trailing note keeps its final blank line (#14318).
+
 Hidden finding locations use the same shared location renderer as selected
 and full findings: paths under the analysis root carry `./` and a
 workspace-relative path. Outside-root paths, parent-traversal remainders and
@@ -604,7 +609,10 @@ an entry, edition-2015 packages whose explicit entries disable discovery,
 `harness = false`, a name-only entry whose `tests/<n>.rs` and
 `tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
 `required-features`, which is omitted conservatively without default-feature
-resolution) the command is `null` and the human output says so.
+resolution) the command is `null` and the human output says so. A
+`tests/*.rs` file left undeclared under `autotests = false` is not a Cargo
+target at all, so its tests are not related tests (RIPR-SPEC-0356, #14972)
+and the stub is placed as if the file were absent.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method

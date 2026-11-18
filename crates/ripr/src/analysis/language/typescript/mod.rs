@@ -78,6 +78,7 @@ mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;

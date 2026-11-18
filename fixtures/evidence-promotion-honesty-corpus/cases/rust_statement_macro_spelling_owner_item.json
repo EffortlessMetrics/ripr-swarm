@@ -1,0 +1,20 @@
+{
+  "id": "rust_statement_macro_spelling_owner_item",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_statement_macro_spelling_owner_item",
+  "vector": "statement_macro_defined_out_of_file_spelling_an_item_of_the_owner_name_credited_as_the_imported_owner",
+  "probe_family": "match_arm",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    }
+  ]
+}

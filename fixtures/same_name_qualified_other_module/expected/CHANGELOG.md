@@ -312,3 +312,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — same_name_qualified_other_module (25)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless same_name_qualified_other_module --reason "..."`
+
+Updated:
+- `expected/human.txt`
