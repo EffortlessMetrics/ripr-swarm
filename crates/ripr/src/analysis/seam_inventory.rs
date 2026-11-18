@@ -8195,6 +8195,69 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #14962: a `[lib] test = false` library withholds its module tree's
+    /// unit tests, and a `src/main.rs` written later that declares the same
+    /// module compiles it into a bin `cargo test` runs. The core is built
+    /// before the bin exists on disk (the mount scan reads the disk); reusing
+    /// it once the bin is written must revive the tests exactly as a fresh
+    /// build does, as #12947 requires for a revived outside-tree file.
+    #[test]
+    fn reuse_reviving_cargo_test_skipped_tests_matches_fresh() -> Result<(), String> {
+        let util = "pub fn f(a: i32) -> i32 { a + 2 }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn t() { assert_eq!(f(5), 7); }\n}\n";
+        let core_src = [("src/lib.rs", "pub mod util;\n"), ("src/util.rs", util)];
+        let main = ("src/main.rs", "mod util;\nfn main() {}\n");
+        let target_src = [core_src[0], core_src[1], main];
+        let root = reuse_fixture_root("reuse-cargo-test-skipped", &core_src)?;
+        let util_tests = |index: &RustIndex| {
+            index
+                .files()
+                .get(Path::new("src/util.rs"))
+                .map_or(0, |facts| facts.tests.len())
+        };
+        // (core tests, core withheld), (reused tests, fresh tests)
+        type Observed = ((usize, bool), (usize, usize));
+        let run = || -> Result<Observed, String> {
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"reusefix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[lib]\ntest = false\n",
+            )?;
+            let core = bytes_of(&core_src);
+            let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+            let premise = (
+                util_tests(&core_index.index),
+                core_index
+                    .index
+                    .cargo_test_skipped_files
+                    .contains(Path::new("src/util.rs")),
+            );
+            write_file(&root.join(main.0), main.1)?;
+            let target = bytes_of(&target_src);
+            let reused =
+                rust_index::reuse_cached_index_with_loaded_files(core_index, &root, &target, &[])?;
+            let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            let reused_json =
+                serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+            let fresh_json = serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+            if reused_json != fresh_json {
+                return Err("reused index must serialize identically to a fresh build".into());
+            }
+            Ok((
+                premise,
+                (util_tests(&reused.index), util_tests(&fresh.index)),
+            ))
+        };
+        let result = run();
+        let _ = std::fs::remove_dir_all(&root);
+        let (premise, revived) = result?;
+        if premise != (0, true) {
+            return Err("fixture must start with the library's unit tests withheld".into());
+        }
+        if revived != (1, 1) {
+            return Err("a tested bin compiling the module must revive its test".into());
+        }
+        Ok(())
+    }
+
     /// #12947: same-run reuse keeps the extension path for an added file
     /// with an `include!` directive or text whenever the retained files'
     /// include view (parents and target membership) is unchanged, and the

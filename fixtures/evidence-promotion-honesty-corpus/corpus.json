@@ -19951,6 +19951,30 @@
       ]
     },
     {
+      "id": "rust_stub_todo_guard_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_todo_guard_expected_value",
+      "vector": "an_unfilled_expected_value_pins_nothing_through_a_guard_or_weak_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_computed_return_tail_reached_promoted",
       "language": "rust",
       "tier": "pure",
@@ -20047,12 +20071,12 @@
       ]
     },
     {
-      "id": "rust_stub_todo_guard_expected_value",
+      "id": "rust_predicate_added_disjunct_sibling_field",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/rust_stub_todo_guard_expected_value",
-      "vector": "an_unfilled_expected_value_pins_nothing_through_a_guard_or_weak_equality",
-      "probe_family": "return_value",
+      "source_fixture": "fixtures/rust_predicate_added_disjunct_sibling_field",
+      "vector": "a_sibling_field_read_of_the_boundary_call_does_not_pair",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
