@@ -12,5 +12,9 @@ tests = [
   "crates/ripr/tests/workspace_feature_unification.rs::a_request_through_an_intermediate_member_keeps_credit",
   "crates/ripr/tests/workspace_feature_unification.rs::an_integration_target_whose_required_feature_a_member_enables_keeps_credit",
   "crates/ripr/tests/workspace_feature_unification.rs::a_tested_example_whose_required_feature_a_member_enables_keeps_credit",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_platform_specific_edge_requests_nothing",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_workspace_inherited_edge_keeps_credit",
+  "crates/ripr/tests/workspace_feature_unification.rs::a_self_dev_dependency_request_keeps_credit",
+  "crates/ripr/tests/workspace_feature_unification.rs::only_the_implicit_dependency_feature_activates_an_optional_edge",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::harness_verdict::workspace_features_unify_member_requests_and_record_doubt",
 ]

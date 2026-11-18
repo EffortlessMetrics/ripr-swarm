@@ -203,10 +203,12 @@ running test; no named stop reason is added on this issue.
 ### Workspace feature unification (#15079)
 
 Scope decision: ripr reads the tests of every workspace member as run, so its
-analysis scope is a workspace-wide `cargo test` (a virtual workspace root, or
-`cargo test --workspace`), not `cargo test -p <member>`. That build selects
-every member with its default features and unifies each package's features
-across them. The `required-features` check (for a `[[bin]]` or a `test =
+assumed build is `cargo test --workspace`, or a plain `cargo test` at a
+virtual workspace root without `workspace.default-members`. That build
+selects every member with its default features and unifies each package's
+features across them. A narrower build (`cargo test -p <member>`, a virtual
+root with `default-members`, or a plain `cargo test` at a non-virtual root,
+which tests only the root package) is outside this scope; see Known Limits. The `required-features` check (for a `[[bin]]` or a `test =
 true` `[[example]]` here, and a `[[test]]` under #7266) therefore compares
 against a member's unified set, computed from the same `cargo metadata
 --no-deps --offline` document:
@@ -217,23 +219,30 @@ against a member's unified set, computed from the same `cargo metadata
    `default-features = false`, and every `key/feature` or `key?/feature`
    enable among the dependent's enabled features, where `key` is the rename
    or package name. An optional dependency counts only when the dependent's
-   enabled features name `dep:key`, the implicit `key` feature, or a
-   `key/feature` enable. Requests expand through the receiving member's
+   enabled features name `dep:key` (metadata lists the implicit `key =
+   ["dep:key"]` feature when no `dep:` syntax hides it) or a `key/feature`
+   enable; an explicit feature that only shares the dependency's name does
+   not activate it. Requests expand through the receiving member's
    feature table, and the pass repeats until no set grows, so a chain
    through several members resolves.
 3. A build dependency does not count: under resolver 2 its features are
    built apart from the target build that runs the tests. A platform-specific
-   (`[target.'cfg(..)'.dependencies]`) edge counts, since ripr does not pick
-   the platform.
-4. A dependency entry whose `path` names a member but whose other fields
-   cannot be read puts that member in doubt, and its targets establish no
-   `required-features` skip. The doubt carries over an edge whose request
+   (`[target.'cfg(..)'.dependencies]`) edge does not count either: ripr does
+   not evaluate the cfg, so the edge keeps the base reading.
+4. Doubt fails toward no skip. A dependency entry whose `path` names a
+   member but whose other fields cannot be read, or a member's unreadable
+   `features` table, puts that member in doubt; a `dependencies` field that
+   is not an array, or an entry whose `path` is present but not a string,
+   puts every member in doubt, since the entry's member is unknown. A target
+   of a member in doubt establishes no `required-features` skip, unless its
+   own `required-features` value is malformed, which still fails closed as
+   before. The doubt carries over an edge whose request
    depends on the doubtful member's features: an optional edge, or one its
    feature table chains through (`dep:key`, `key/feature`, `key?/feature`).
 
 This only re-admits a target Cargo builds in that workspace build: a request
 for another feature, an inactive optional edge, a chain the dependent leaves
-off, and a build dependency keep the skip. The query and its owner do not
+off, a build dependency and a platform-specific edge keep the skip. The query and its owner do not
 change.
 
 ## Required Evidence
@@ -289,9 +298,13 @@ change.
   member's renamed dev dependency, a normal dependency, a default-enabled
   `a/special` chain, an enabled optional dependency or a chain through a
   third member requests reads `exposed` with its test related, as do a
-  `[[test]]` target and a `test = true` example under the same request; a request for another feature,
-  no request, a chain behind a feature left off, an inactive optional or
-  weak `a?/special` edge and a build dependency keep the skip.
+  `[[test]]` target and a `test = true` example under the same request. A
+  `workspace = true` inherited edge, a self dev dependency and an old-style
+  `x = ["a"]` enable of an optional dependency also read `exposed`. A
+  request for another feature, no request, a chain behind a feature left
+  off, an inactive optional or weak `a?/special` edge, an explicit feature
+  that only shares the optional dependency's name, a build dependency and
+  a `cfg(windows)` edge keep the skip.
 
 ## Known Limits
 
@@ -359,14 +372,18 @@ change.
   and its `#[test]` functions keep their credit on base and here alike,
   although the harness-less binary runs none of them.
 - Feature unification (#15079), under-credit kept from #7266: a resolver 1
-  workspace also unifies build-dependency features, and a non-member path
+  workspace also unifies build-dependency features; a non-member path
   dependency or a `[patch]` entry can request a member's features where
-  `--no-deps` metadata does not show it; those targets stay skipped. A
-  `.cargo/config.toml` that narrows unification (`resolver.feature-unification
-  = "package"`) is not read, nor is a per-package run (`cargo test -p a`),
-  where Cargo would skip a target this rule re-admits; both are outside the
-  workspace-wide scope above. A platform-specific edge for another platform
-  re-admits a target that platform's `cargo test` does not build.
+  `--no-deps` metadata does not show it; and a platform-specific edge whose
+  cfg matches the host (`cfg(unix)` on Linux) does request its features.
+  Those targets stay skipped, as on base.
+- Feature unification (#15079), over-credit outside the assumed scope: a
+  narrower build skips a target this rule re-admits. That covers a
+  per-package run (`cargo test -p a`), a virtual root with
+  `workspace.default-members` that leaves the requesting member out, a
+  plain `cargo test` at a non-virtual root (only the root package is
+  tested), and a `.cargo/config.toml` that narrows unification
+  (`resolver.feature-unification = "package"`), which is not read.
 
 ## Non-Goals
 

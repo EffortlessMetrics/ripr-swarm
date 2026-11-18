@@ -829,19 +829,23 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
     parsed
 }
 
-/// One package's `features` table from metadata, as name to enables.
-fn package_feature_table(package: &serde_json::Value) -> BTreeMap<String, Vec<String>> {
+/// One package's metadata `features` table (name to enables), and whether
+/// any part of it could not be read: a present non-object table, a
+/// non-array entry, or a non-string item. Unreadable parts are left out.
+fn feature_table_with_doubt(package: &serde_json::Value) -> (BTreeMap<String, Vec<String>>, bool) {
     let mut map = BTreeMap::new();
-    let Some(features) = package
-        .get("features")
-        .and_then(serde_json::Value::as_object)
-    else {
-        return map;
+    let features = match package.get("features") {
+        None | Some(serde_json::Value::Null) => return (map, false),
+        Some(serde_json::Value::Object(features)) => features,
+        Some(_) => return (map, true),
     };
+    let mut doubt = false;
     for (name, enables) in features {
         let Some(items) = enables.as_array() else {
+            doubt = true;
             continue;
         };
+        doubt |= items.iter().any(|item| !item.is_string());
         map.insert(
             name.clone(),
             items
@@ -851,7 +855,7 @@ fn package_feature_table(package: &serde_json::Value) -> BTreeMap<String, Vec<St
                 .collect(),
         );
     }
-    map
+    (map, doubt)
 }
 
 /// The features a workspace member has under a workspace-wide `cargo test`,
@@ -889,54 +893,65 @@ struct MemberDependency {
 /// edge sets `default-features = false`, and `key/feature` or
 /// `key?/feature` enables from the dependent's own enabled features. An
 /// optional edge is active only when the dependent enables it (`dep:key`,
-/// the implicit `key` feature, or a `key/feature` enable). Requests expand
+/// which metadata lists as the implicit `key = ["dep:key"]` feature when no
+/// `dep:` syntax hides it, or a `key/feature` enable). An explicit feature
+/// that merely shares the dependency's name does not activate it. Requests expand
 /// through the receiving member's feature table, and the pass repeats until
 /// no set grows, so chains through several members resolve.
 ///
 /// Build dependencies are left out: under resolver 2 a build dependency's
 /// features do not unify with the target build that runs the tests (a
 /// resolver 1 workspace keeps the under-credit #7266 already had). A
-/// platform-specific (`[target.'cfg(..)'.dependencies]`) edge counts,
-/// because ripr does not pick the platform and the edge does apply on some
-/// platform. A dependency entry whose `path` names a member but whose other
-/// fields cannot be read marks that member as doubt, and the doubt carries
-/// over an edge whose request depends on the doubtful member's features (an
-/// optional edge, or one its feature table chains through).
+/// platform-specific (`[target.'cfg(..)'.dependencies]`) edge is left out
+/// too, because ripr does not evaluate the cfg: a matching platform keeps
+/// the base under-credit, and a non-matching one is not re-admitted.
+///
+/// Doubt fails toward no skip. A dependency entry whose `path` names a
+/// member but whose other fields cannot be read, or an unreadable `features`
+/// table, marks that member as doubt; an unreadable `dependencies` list or
+/// a non-string `path` marks every member, since its target is unknown. The
+/// doubt carries over an edge whose request depends on the doubtful
+/// member's features (an optional edge, or one its feature table chains
+/// through).
 fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBuf, MemberFeatures> {
     let mut tables: BTreeMap<PathBuf, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    let mut members: BTreeMap<PathBuf, MemberFeatures> = BTreeMap::new();
     for package in packages {
         if let Some(dir) = package_manifest_dir(package) {
-            tables.insert(lexical(&dir), package_feature_table(package));
+            let (table, doubt) = feature_table_with_doubt(package);
+            let features = MemberFeatures {
+                enabled: expand_default_features(&table),
+                doubt,
+            };
+            members.insert(lexical(&dir), features);
+            tables.insert(lexical(&dir), table);
         }
     }
-    let mut members: BTreeMap<PathBuf, MemberFeatures> = tables
-        .iter()
-        .map(|(dir, table)| {
-            let features = MemberFeatures {
-                enabled: expand_default_features(table),
-                doubt: false,
-            };
-            (dir.clone(), features)
-        })
-        .collect();
+    // Set when a dependency list or entry cannot say which member it names.
+    let mut unknown_targets = false;
     let mut edges: Vec<(PathBuf, MemberDependency)> = Vec::new();
     for package in packages {
         let Some(dependent) = package_manifest_dir(package).map(|dir| lexical(&dir)) else {
             continue;
         };
-        let Some(dependencies) = package
-            .get("dependencies")
-            .and_then(serde_json::Value::as_array)
-        else {
-            continue;
+        let dependencies = match package.get("dependencies") {
+            None | Some(serde_json::Value::Null) => continue,
+            Some(serde_json::Value::Array(dependencies)) => dependencies,
+            // Any member could be on the other end of an unreadable list.
+            Some(_) => {
+                unknown_targets = true;
+                continue;
+            }
         };
         for dependency in dependencies {
-            let Some(target_dir) = dependency
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .map(|path| lexical(&normalize(Path::new(path))))
-            else {
-                continue;
+            let target_dir = match dependency.get("path") {
+                // A registry or git dependency: no member edge.
+                None | Some(serde_json::Value::Null) => continue,
+                Some(serde_json::Value::String(path)) => lexical(&normalize(Path::new(path))),
+                Some(_) => {
+                    unknown_targets = true;
+                    continue;
+                }
             };
             let Some(target) = members.get_mut(&target_dir) else {
                 continue;
@@ -946,6 +961,11 @@ fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBu
                 Some(None) => {}
                 None => target.doubt = true,
             }
+        }
+    }
+    if unknown_targets {
+        for features in members.values_mut() {
+            features.doubt = true;
         }
     }
     loop {
@@ -1009,7 +1029,7 @@ fn package_manifest_dir(package: &serde_json::Value) -> Option<PathBuf> {
 
 /// Parse one metadata dependency entry whose `path` is a member. `None` is
 /// an unreadable entry (doubt); `Some(None)` is a build dependency, which
-/// does not unify into the tested build.
+/// does not unify into the tested build, or a platform-specific edge.
 fn member_dependency(
     dependency: &serde_json::Value,
     target_dir: PathBuf,
@@ -1019,6 +1039,12 @@ fn member_dependency(
         Some(serde_json::Value::String(kind)) if kind == "dev" => {}
         Some(serde_json::Value::String(kind)) if kind == "build" => return Some(None),
         Some(_) => return None,
+    }
+    // A platform-specific edge applies only where its cfg holds, which ripr
+    // does not evaluate: it requests nothing (the base reading).
+    match dependency.get("target") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(_) => return Some(None),
     }
     let name = dependency.get("name")?.as_str()?;
     let key = match dependency.get("rename") {
@@ -1141,15 +1167,21 @@ fn local_feature_enable(item: &str) -> Option<String> {
 /// A missing field is no requirement, and a member in doubt establishes no
 /// skip. A malformed field fails closed.
 fn required_features_satisfied(target: &serde_json::Value, features: &MemberFeatures) -> bool {
-    match target.get("required-features") {
-        None => true,
-        Some(_) if features.doubt => true,
-        Some(serde_json::Value::Array(items)) => items.iter().all(|item| {
-            item.as_str()
-                .is_some_and(|name| features.enabled.contains(name))
-        }),
-        Some(_) => false,
-    }
+    let names: Vec<&str> = match target.get("required-features") {
+        None => return true,
+        Some(serde_json::Value::Array(items)) => {
+            let Some(names) = items
+                .iter()
+                .map(serde_json::Value::as_str)
+                .collect::<Option<Vec<_>>>()
+            else {
+                return false;
+            };
+            names
+        }
+        Some(_) => return false,
+    };
+    features.doubt || names.iter().all(|name| features.enabled.contains(*name))
 }
 
 /// The workspace test-target inventory from parsed `cargo metadata`
@@ -2497,6 +2529,37 @@ test = true
         assert!(members.get(Path::new("/ws/a")).is_some_and(|a| a.doubt));
         let members = workspace_enabled_features(&[a.clone(), b]);
         assert!(members.get(Path::new("/ws/a")).is_some_and(|a| !a.doubt));
+        // A platform-specific edge requests nothing (the cfg is not
+        // evaluated).
+        let mut platform = edge(
+            "/ws/a",
+            serde_json::json!(["special"]),
+            serde_json::Value::Null,
+        );
+        platform["target"] = serde_json::json!("cfg(windows)");
+        assert_eq!(
+            requests(serde_json::json!([platform])),
+            MemberFeatures::default()
+        );
+        // An entry or list that cannot name its member puts every member in
+        // doubt; an unreadable feature table puts its own member in doubt.
+        let unnamed = requests(serde_json::json!([{"name": "a", "path": 7}]));
+        assert!(unnamed.doubt);
+        assert!(requests(serde_json::json!({"a": 1})).doubt);
+        assert!(!requests(serde_json::json!([{"name": "serde", "path": null}])).doubt);
+        let malformed = package(
+            "a",
+            serde_json::json!({"special": 3}),
+            serde_json::json!([]),
+        );
+        let members = workspace_enabled_features(&[malformed]);
+        assert!(members.get(Path::new("/ws/a")).is_some_and(|a| a.doubt));
+        // A malformed `required-features` value stays fail-closed even when
+        // the member is in doubt.
+        for value in [serde_json::json!("special"), serde_json::json!([1])] {
+            let target = serde_json::json!({ "required-features": value });
+            assert!(!required_features_satisfied(&target, &unnamed));
+        }
     }
 
     /// #3608: a virtual workspace manifest (no `[package]` table) declares no

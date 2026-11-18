@@ -6,8 +6,8 @@
 //! with `features = ["special"]`, an `a` target that requires `special`
 //! builds and its tests run, so ripr keeps their credit. A request for a
 //! different feature, an inactive optional edge, a feature chain the
-//! dependent does not enable and a build dependency (resolver 2) leave the
-//! target skipped. The skip is read from cargo metadata, so these controls
+//! dependent does not enable, a build dependency (resolver 2) and a
+//! platform-specific edge leave the target skipped. The skip is read from cargo metadata, so these controls
 //! need the `cargo` that runs them.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
@@ -49,8 +49,11 @@ fn diff(file: &str) -> String {
     )
 }
 
+/// A fixture directory that is removed only after its expectation held:
+/// a setup error, a finding error or a failed assertion keeps it.
 struct TempWorkspace {
     root: PathBuf,
+    keep: bool,
 }
 
 impl TempWorkspace {
@@ -61,7 +64,7 @@ impl TempWorkspace {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        let this = Self { root };
+        let this = Self { root, keep: true };
         let write = |relative: &str, text: &str| -> Result<(), String> {
             let path = this.root.join(relative);
             if let Some(parent) = path.parent() {
@@ -101,8 +104,28 @@ impl TempWorkspace {
     }
 }
 
+impl TempWorkspace {
+    /// Assert the finding credits `test`, then remove the fixture.
+    fn expect_credited(mut self, test: &str, label: &str) -> Result<(), String> {
+        assert_credited(&self.finding()?, test, label);
+        self.keep = false;
+        Ok(())
+    }
+
+    /// Assert the finding withholds `test`, then remove the fixture.
+    fn expect_withheld(mut self, test: &str, label: &str) -> Result<(), String> {
+        assert_withheld(&self.finding()?, test, label);
+        self.keep = false;
+        Ok(())
+    }
+}
+
 impl Drop for TempWorkspace {
     fn drop(&mut self) {
+        if self.keep {
+            eprintln!("kept fixture {}", self.root.display());
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -169,72 +192,60 @@ fn assert_withheld(finding: &Finding, test: &str, label: &str) {
 fn a_bin_whose_required_feature_only_a_member_dependency_enables_keeps_credit() -> Result<(), String>
 {
     // Premise: the fixture reads `exposed` when `a` enables `special` itself.
-    let control = bin_workspace_with(BIN_MEMBER_A_DEFAULT, &member_b(""))?.finding()?;
-    assert_credited(&control, "t", "own default");
+    bin_workspace_with(BIN_MEMBER_A_DEFAULT, &member_b(""))?.expect_credited("t", "own default")?;
     // A renamed dev-dependency is how the request reached `a` in #15079's
     // review; cargo test --workspace then builds and runs `tool`'s tests.
-    let unified = bin_workspace(
+    bin_workspace(
         "\n[dev-dependencies]\naa = { package = \"a\", path = \"../a\", features = [\"special\"] }\n",
     )?
-    .finding()?;
-    assert_credited(&unified, "t", "renamed dev-dependency request");
-    let normal =
-        bin_workspace("\n[dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
-            .finding()?;
-    assert_credited(&normal, "t", "normal dependency request");
+    .expect_credited("t", "renamed dev-dependency request")?;
+    bin_workspace("\n[dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
+        .expect_credited("t", "normal dependency request")?;
     Ok(())
 }
 
 #[test]
 fn a_bin_whose_required_feature_no_member_enables_stays_withheld() -> Result<(), String> {
-    let alone = bin_workspace("")?.finding()?;
-    assert_withheld(&alone, "t", "no dependency");
-    let plain = bin_workspace("\n[dependencies]\na = { path = \"../a\" }\n")?.finding()?;
-    assert_withheld(&plain, "t", "dependency without features");
+    bin_workspace("")?.expect_withheld("t", "no dependency")?;
+    bin_workspace("\n[dependencies]\na = { path = \"../a\" }\n")?
+        .expect_withheld("t", "dependency without features")?;
     Ok(())
 }
 
 #[test]
 fn a_dependency_requesting_a_different_feature_keeps_the_skip() -> Result<(), String> {
-    let other =
-        bin_workspace("\n[dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
-            .finding()?;
-    assert_withheld(&other, "t", "request for `other`");
+    bin_workspace("\n[dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
+        .expect_withheld("t", "request for `other`")?;
     Ok(())
 }
 
 #[test]
 fn a_feature_chain_counts_only_when_the_dependent_enables_it() -> Result<(), String> {
-    let on = bin_workspace(
+    bin_workspace(
         "\n[dependencies]\na = { path = \"../a\" }\n\n[features]\ndefault = [\"x\"]\nx = [\"a/special\"]\n",
     )?
-    .finding()?;
-    assert_credited(&on, "t", "default-enabled `a/special` chain");
-    let off = bin_workspace(
+    .expect_credited("t", "default-enabled `a/special` chain")?;
+    bin_workspace(
         "\n[dependencies]\na = { path = \"../a\" }\n\n[features]\nx = [\"a/special\"]\n",
     )?
-    .finding()?;
-    assert_withheld(&off, "t", "`a/special` behind a feature `b` leaves off");
+    .expect_withheld("t", "`a/special` behind a feature `b` leaves off")?;
     Ok(())
 }
 
 #[test]
 fn an_optional_dependency_counts_only_when_enabled() -> Result<(), String> {
-    let off = bin_workspace(
+    bin_workspace(
         "\n[dependencies]\na = { path = \"../a\", optional = true, features = [\"special\"] }\n",
     )?
-    .finding()?;
-    assert_withheld(&off, "t", "inactive optional dependency");
-    let weak = bin_workspace(
+    .expect_withheld("t", "inactive optional dependency")?;
+    bin_workspace(
         "\n[dependencies]\na = { path = \"../a\", optional = true }\n\n[features]\ndefault = [\"x\"]\nx = [\"a?/special\"]\n",
     )?
-    .finding()?;
-    assert_withheld(&weak, "t", "weak `a?/special` on an inactive dependency");
-    let on = bin_workspace(
+    .expect_withheld("t", "weak `a?/special` on an inactive dependency")?;
+    bin_workspace(
         "\n[dependencies]\na = { path = \"../a\", optional = true, features = [\"special\"] }\n\n[features]\ndefault = [\"a\"]\n",
     )?
-    .finding()?;
-    assert_credited(&on, "t", "optional dependency enabled by default");
+    .expect_credited("t", "optional dependency enabled by default")?;
     Ok(())
 }
 
@@ -242,11 +253,8 @@ fn an_optional_dependency_counts_only_when_enabled() -> Result<(), String> {
 fn a_build_dependency_request_keeps_the_skip() -> Result<(), String> {
     // Resolver 2 builds a build dependency's features separately from the
     // target build that runs `tool`'s tests.
-    let build = bin_workspace(
-        "\n[build-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n",
-    )?
-    .finding()?;
-    assert_withheld(&build, "t", "build-dependency request");
+    bin_workspace("\n[build-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
+        .expect_withheld("t", "build-dependency request")?;
     Ok(())
 }
 
@@ -257,7 +265,7 @@ fn a_request_through_an_intermediate_member_keeps_credit() -> Result<(), String>
     let b =
         member_b("\n[dependencies]\na = { path = \"../a\" }\n\n[features]\nx = [\"a/special\"]\n");
     let c = "[package]\nname = \"c\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n";
-    let finding = TempWorkspace::create(
+    TempWorkspace::create(
         WORKSPACE_ABC,
         &[
             ("a/Cargo.toml", BIN_MEMBER_A),
@@ -269,8 +277,7 @@ fn a_request_through_an_intermediate_member_keeps_credit() -> Result<(), String>
         ],
         "a/src/main.rs",
     )?
-    .finding()?;
-    assert_credited(&finding, "t", "c -> b/x -> a/special");
+    .expect_credited("t", "c -> b/x -> a/special")?;
     Ok(())
 }
 
@@ -292,14 +299,10 @@ fn an_integration_target_whose_required_feature_a_member_enables_keeps_credit() 
             "a/src/lib.rs",
         )
     };
-    let unified =
-        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
-            .finding()?;
-    assert_credited(&unified, "gate", "member request for `special`");
-    let other =
-        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
-            .finding()?;
-    assert_withheld(&other, "gate", "member request for `other`");
+    workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
+        .expect_credited("gate", "member request for `special`")?;
+    workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
+        .expect_withheld("gate", "member request for `other`")?;
     Ok(())
 }
 
@@ -326,15 +329,69 @@ fn a_tested_example_whose_required_feature_a_member_enables_keeps_credit() -> Re
             "a/src/lib.rs",
         )
     };
-    let unified =
-        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
-            .finding()?;
-    assert_credited(&unified, "t", "member request for `special`");
-    let other =
-        workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
-            .finding()?;
-    assert_withheld(&other, "t", "member request for `other`");
-    let alone = workspace("")?.finding()?;
-    assert_withheld(&alone, "t", "no member request");
+    workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"special\"] }\n")?
+        .expect_credited("t", "member request for `special`")?;
+    workspace("\n[dev-dependencies]\na = { path = \"../a\", features = [\"other\"] }\n")?
+        .expect_withheld("t", "member request for `other`")?;
+    workspace("")?.expect_withheld("t", "no member request")?;
+    Ok(())
+}
+
+#[test]
+fn a_platform_specific_edge_requests_nothing() -> Result<(), String> {
+    // ripr does not evaluate cfgs, so a `[target.'cfg(..)'.dependencies]`
+    // request keeps the base reading: on a non-windows host cargo skips
+    // `tool` here, and a matching cfg keeps the base under-credit.
+    bin_workspace(
+        "\n[target.'cfg(windows)'.dependencies]\na = { path = \"../a\", features = [\"special\"] }\n",
+    )?
+    .expect_withheld("t", "cfg(windows) edge")?;
+    Ok(())
+}
+
+#[test]
+fn a_workspace_inherited_edge_keeps_credit() -> Result<(), String> {
+    // `b` inherits `a = { workspace = true }` from `[workspace.dependencies]`,
+    // whose `features` metadata reports on `b`'s entry.
+    let main = bin_source();
+    let b = member_b("\n[dependencies]\na = { workspace = true }\n");
+    TempWorkspace::create(
+        "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\na = { path = \"a\", features = [\"special\"] }\n",
+        &[
+            ("a/Cargo.toml", BIN_MEMBER_A),
+            ("a/src/main.rs", &main),
+            ("b/Cargo.toml", &b),
+            ("b/src/lib.rs", ""),
+        ],
+        "a/src/main.rs",
+    )?
+    .expect_credited("t", "workspace-inherited edge")?;
+    Ok(())
+}
+
+#[test]
+fn a_self_dev_dependency_request_keeps_credit() -> Result<(), String> {
+    let a = format!(
+        "{BIN_MEMBER_A}\n[dev-dependencies]\na = {{ path = \".\", features = [\"special\"] }}\n"
+    );
+    bin_workspace_with(&a, &member_b(""))?.expect_credited("t", "self dev-dependency")?;
+    Ok(())
+}
+
+#[test]
+fn only_the_implicit_dependency_feature_activates_an_optional_edge() -> Result<(), String> {
+    // Old style: `x = ["a"]` names the implicit feature metadata lists as
+    // `a = ["dep:a"]`, so the optional edge is active.
+    bin_workspace(
+        "\n[dependencies]\na = { path = \"../a\", optional = true, features = [\"special\"] }\n\n[features]\ndefault = [\"x\"]\nx = [\"a\"]\n",
+    )?
+    .expect_credited("t", "old-style implicit feature")?;
+    // With `dep:a` elsewhere there is no implicit feature, and an explicit
+    // feature named `a` does not activate the dependency (cargo skips
+    // `tool`).
+    bin_workspace(
+        "\n[dependencies]\na = { path = \"../a\", optional = true, features = [\"special\"] }\n\n[features]\ndefault = [\"a\"]\na = []\ny = [\"dep:a\"]\n",
+    )?
+    .expect_withheld("t", "explicit feature sharing the name")?;
     Ok(())
 }
