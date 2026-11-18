@@ -144,6 +144,51 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     index: &'a RustIndex,
     graph: OnceLock<ReachGraph<'a>>,
     pub(in crate::analysis) effect_method_names: super::effect_carrier::EffectMethodNames<'a>,
+    /// Answers of [`Self::transitive_witness`] and
+    /// [`Self::deep_transitive_witness`] by owner name (#13754). Both read
+    /// only the immutable index and graph, so an owner's answer never
+    /// changes within a run, but every probe of one changed function asks
+    /// again, and the walk dominated a warm diff check on ripr-swarm.
+    witnesses: WitnessMemo,
+}
+
+/// Per-owner-name answers of the two transitive witness searches.
+#[derive(Default)]
+struct WitnessMemo {
+    bounded: Mutex<HashMap<String, Option<TransitiveWitness>>>,
+    deep: Mutex<HashMap<String, Option<TransitiveWitness>>>,
+    /// Searches actually run, across both memos (test builds only).
+    #[cfg(test)]
+    computed: std::sync::atomic::AtomicUsize,
+}
+
+impl WitnessMemo {
+    /// The memoized answer for `owner_name`, computed without holding the
+    /// lock: the search is pure, so a racing worker can only insert the same
+    /// value, and a nested search never waits on this memo.
+    fn get_or_compute(
+        &self,
+        memo: &Mutex<HashMap<String, Option<TransitiveWitness>>>,
+        owner_name: &str,
+        compute: impl FnOnce() -> Option<TransitiveWitness>,
+    ) -> Option<TransitiveWitness> {
+        if let Some(answer) = memo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(owner_name)
+        {
+            return answer.clone();
+        }
+        #[cfg(test)]
+        self.computed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let answer = compute();
+        memo.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(owner_name.to_string())
+            .or_insert(answer)
+            .clone()
+    }
 }
 
 struct ReachGraph<'a> {
@@ -1078,6 +1123,17 @@ impl OwnerReach<'_, '_> {
             })
     }
 
+    /// The implicit-dispatch method names in this owner's reaching set, other
+    /// than the owner's own name. Probes the short method list against the
+    /// set instead of scanning the whole reaching set, which ran once per
+    /// related test and assertion (#12947).
+    fn reaching_implicit_dispatch_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        IMPLICIT_DISPATCH_METHODS
+            .iter()
+            .copied()
+            .filter(|name| *name != self.owner_name && self.reaching.contains(name))
+    }
+
     /// Indexed implicit dispatch witnessed by this test, rather than a trait
     /// declaration elsewhere on the reverse owner path. Unknown calls retain
     /// reach uncertainty but cannot supply effect-observation authority.
@@ -1091,17 +1147,12 @@ impl OwnerReach<'_, '_> {
                 && super::related_tests::test_dispatches_trait_impl(test, function)
         };
         dispatches(owner)
-            || self
-                .reaching
-                .iter()
-                .copied()
-                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
-                .any(|name| {
-                    self.graph
-                        .by_name
-                        .get(name)
-                        .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
-                })
+            || self.reaching_implicit_dispatch_names().any(|name| {
+                self.graph
+                    .by_name
+                    .get(name)
+                    .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
+            })
     }
 
     /// Assertion-local shared-sink authority; declaration/reach alone is
@@ -1124,17 +1175,12 @@ impl OwnerReach<'_, '_> {
                 )
         };
         observes(owner)
-            || self
-                .reaching
-                .iter()
-                .copied()
-                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
-                .any(|name| {
-                    self.graph
-                        .by_name
-                        .get(name)
-                        .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
-                })
+            || self.reaching_implicit_dispatch_names().any(|name| {
+                self.graph
+                    .by_name
+                    .get(name)
+                    .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
+            })
     }
 
     /// Whether `assertion_text` calls an indexed function that has no name
@@ -1506,6 +1552,7 @@ impl<'a> TransitiveReachIndex<'a> {
             index,
             graph: OnceLock::new(),
             effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
+            witnesses: WitnessMemo::default(),
         }
     }
 
@@ -1521,11 +1568,14 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        let reaching = self.graph().names_reaching(owner_name);
-        if reaching.is_empty() {
-            return None;
-        }
-        self.witness_through(owner_name, &reaching)
+        self.witnesses
+            .get_or_compute(&self.witnesses.bounded, owner_name, || {
+                let reaching = self.graph().names_reaching(owner_name);
+                if reaching.is_empty() {
+                    return None;
+                }
+                self.witness_through(owner_name, &reaching)
+            })
     }
 
     /// Like [`Self::transitive_witness`], but when same-package rivals share
@@ -1635,9 +1685,12 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        self.graph().walk_past_bound(owner_name, |deeper| {
-            self.witness_through(owner_name, deeper)
-        })
+        self.witnesses
+            .get_or_compute(&self.witnesses.deep, owner_name, || {
+                self.graph().walk_past_bound(owner_name, |deeper| {
+                    self.witness_through(owner_name, deeper)
+                })
+            })
     }
 
     /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
@@ -4103,6 +4156,7 @@ mod tests {
                 source: source.into(),
                 item_scopes: None,
                 macro_candidates: None,
+                external_docs: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -4214,6 +4268,64 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    // #13754: every probe of one changed function asks for the same owner's
+    // witness, so the searches answer from a per-owner memo. A memoized
+    // answer must equal a fresh index's answer for a bounded witness, a
+    // witness past the bound and an owner with none, and the second ask must
+    // be served from the memo rather than adding an entry.
+    #[test]
+    fn repeated_witness_queries_answer_from_the_memo_and_match_a_fresh_index() {
+        // test -> f7 -> f6 -> ... -> f0: `f0` is past the five-hop bound,
+        // `f5` is within it, and `lonely` has no caller at all.
+        let mut functions: Vec<FunctionSummary> = (1..=7)
+            .map(|hop| make_fn(&format!("f{hop}"), vec![format!("f{}", hop - 1).as_str()]))
+            .collect();
+        functions.push(make_fn("f0", vec![]));
+        functions.push(make_fn("lonely", vec![]));
+        let index = index_with(functions, vec![make_test("test_top", vec!["f7"])]);
+        let fresh = |owner: &str| {
+            let reach = TransitiveReachIndex::new(&index);
+            (
+                reach.transitive_witness(owner),
+                reach.deep_transitive_witness(owner),
+            )
+        };
+        let reach = TransitiveReachIndex::new(&index);
+        let owners = ["f5", "f0", "lonely"];
+        for _ in 0..2 {
+            for owner in owners {
+                assert_eq!(
+                    (
+                        reach.transitive_witness(owner),
+                        reach.deep_transitive_witness(owner)
+                    ),
+                    fresh(owner),
+                    "{owner}"
+                );
+            }
+        }
+        // Fixture premise: one owner of each kind.
+        assert!(fresh("f5").0.is_some(), "f5 must have a bounded witness");
+        assert!(
+            fresh("f0").0.is_none() && fresh("f0").1.is_some(),
+            "f0 must be reached only past the bound"
+        );
+        assert_eq!(fresh("lonely"), (None, None), "lonely must have no witness");
+        let entries = |memo: &Mutex<HashMap<String, Option<TransitiveWitness>>>| {
+            memo.lock().unwrap_or_else(PoisonError::into_inner).len()
+        };
+        assert_eq!(entries(&reach.witnesses.bounded), owners.len());
+        assert_eq!(entries(&reach.witnesses.deep), owners.len());
+        // One search per (owner, kind): the second round ran none.
+        assert_eq!(
+            reach
+                .witnesses
+                .computed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2 * owners.len()
+        );
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.
@@ -5973,6 +6085,7 @@ mod tests {
                     source: source.into(),
                     item_scopes: None,
                     macro_candidates: None,
+                    external_docs: None,
                 },
             )
         };

@@ -15,7 +15,7 @@ const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const { RegistryError, readTarball, startRegistry } = require("../lib/registry.cjs");
-const { Journey, buildReceipt, main, npmCliPath, parseArgs, splitCommand, stagedIdentities } = require("../lib/journey.cjs");
+const { Journey, buildReceipt, main, npmCliPath, parseArgs, splitCommand, stagedIdentities, which } = require("../lib/journey.cjs");
 
 // Test-only staging: packs the launcher with real `npm pack` and wraps an
 // executable in a native package tarball with the same manifest shape the
@@ -335,6 +335,32 @@ test("continuation commands split exactly as ripr quotes them on both hosts", ()
   assert.throws(() => splitCommand("ripr x 'open"), /unterminated/);
 });
 
+test("the consumer PATH keeps git but not a toolchain that shares its directory", (t) => {
+  if (!POSIX) {
+    t.skip("the linked tools directory is POSIX");
+    return;
+  }
+  // Homebrew-style layout: git, rustup, cargo and rustc in one directory.
+  const shared = tempDir("shared-bin");
+  for (const name of ["git", "rustup", "cargo", "rustc"]) {
+    fs.writeFileSync(path.join(shared, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
+  const saved = process.env.PATH;
+  const journey = new Journey({});
+  try {
+    process.env.PATH = `${shared}:${saved}`;
+    const scrubbed = journey.scrubbedPath();
+    for (const tool of ["rustup", "cargo", "rustc"]) {
+      assert.equal(which(tool, scrubbed), null, `${tool} leaked into ${scrubbed}`);
+    }
+    assert.equal(fs.realpathSync(which("git", scrubbed)), fs.realpathSync(path.join(shared, "git")));
+    assert.ok(which("node", scrubbed), "node must stay reachable for npm scripts");
+  } finally {
+    process.env.PATH = saved;
+    journey.cleanup();
+  }
+});
+
 test("a step timeout takes down the whole process group", (t) => {
   if (!POSIX) {
     t.skip("process-group teardown is POSIX");
@@ -360,6 +386,31 @@ test("a step timeout takes down the whole process group", (t) => {
   } finally {
     journey.cleanup();
   }
+});
+
+test("cleanup reaps a descendant that outlived a step that exited normally", (t) => {
+  if (!POSIX) {
+    t.skip("process-group reaping is POSIX");
+    return;
+  }
+  const journey = new Journey({});
+  journey.childPath = "/usr/bin:/bin";
+  const result = journey.run("leaves a child", "/bin/sh", ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"], journey.root);
+  assert.equal(result.status, 0);
+  const grandchild = Number.parseInt(String(result.stdout).trim(), 10);
+  assert.ok(grandchild > 0, `expected a grandchild pid, got ${JSON.stringify(result.stdout)}`);
+  assert.doesNotThrow(() => process.kill(grandchild, 0), "the grandchild should still be running before cleanup");
+  assert.equal(journey.cleanup(), "passed");
+  let alive = true;
+  for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+    try {
+      process.kill(grandchild, 0);
+      spawnSync("/bin/sleep", ["0.1"]);
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false, "cleanup left the step's descendant running");
 });
 
 test("a Windows step timeout fails cleanup closed because descendant teardown is not owned there", () => {

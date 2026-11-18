@@ -229,6 +229,8 @@ pub struct FileData {
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// See [`FileFacts::external_docs`].
+    pub(crate) external_docs: Option<bool>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -404,7 +406,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 13)?;
+        let mut state = serializer.serialize_struct("FileFacts", 14)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -421,6 +423,7 @@ impl serde::Serialize for FileFactsView<'_> {
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
+        state.serialize_field("external_docs", &self.external_docs)?;
         state.end()
     }
 }
@@ -676,6 +679,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -718,6 +722,7 @@ impl RustIndex {
                     source,
                     item_scopes,
                     macro_candidates,
+                    external_docs,
                 },
                 functions,
                 tests,
@@ -1075,6 +1080,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -1091,6 +1097,7 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
         })
     }
     #[cfg(test)]

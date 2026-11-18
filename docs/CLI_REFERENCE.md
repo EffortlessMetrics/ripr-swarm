@@ -708,8 +708,11 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
+fills a boundary input when the changed comparison names one, builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
@@ -1915,10 +1918,12 @@ Options:
                    verify document) beside the stderr prose and the same
                    exit code. Refusals that stop before the check (no
                    current attempt, several attempts, an ended attempt, a
-                   blocked baseline, an unanchored root) and operational
-                   errors before the verify step keep stdout empty. An
-                   unknown flag or stray argument prints the `cli_refusal`
-                   JSON document on stdout beside its exit 2 stderr prose.
+                   blocked baseline, an unanchored root) print the
+                   `cli_refusal` JSON document with their reason `code`
+                   and `disposition`; operational errors before the verify
+                   step keep stdout empty. An unknown flag or stray
+                   argument prints the `cli_refusal` JSON document on
+                   stdout beside its exit 2 stderr prose.
   --quiet          Drop progress lines and `wrote <path>` lines from stderr.
                    Refusals and the result stay. `RIPR_QUIET` does the same.
 
@@ -3837,9 +3842,10 @@ Options:
   --json           Print the repair packet JSON, including
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
-                   status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes. An unknown flag prints the
-                   `cli_refusal` JSON document on stdout beside its exit 2
+                   status JSON. A refusal keeps its stderr prose and exit
+                   code and prints the `cli_refusal` JSON document on
+                   stdout with its reason `code` and `disposition`. An
+                   unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the

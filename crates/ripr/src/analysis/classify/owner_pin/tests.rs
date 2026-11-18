@@ -214,8 +214,10 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
         .ok_or("clone")?;
     assert!(!Arc::ptr_eq(&old, &cloned));
     assert_eq!(cloned.shadow_computations(), 0);
+    // The replacement still spells `Widget` (without declaring it), so the
+    // answer is computed on the new snapshot rather than short-circuited.
     index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
-        "mod tests { #[test] fn subject() {} }".into();
+        "mod tests { use super::Widget; #[test] fn subject() {} }".into();
     let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
     assert!(!test_module_shadows_type(
         &test, source, "Widget", None, &index
@@ -227,6 +229,37 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
     assert!(!Arc::ptr_eq(&old, &new));
     assert_eq!(old.shadow_computations(), 1);
     assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_check_skips_the_snapshot_when_the_file_never_spells_the_name() -> Result<(), String>
+{
+    // #12947: a file that spells neither the name nor `r#name` cannot shadow
+    // it, so the answer comes without consulting (or parsing) its snapshot.
+    let source = "mod tests { struct Gadget; trait Render {} #[test] fn subject() {} }";
+    let index = index(&[(LIB, source)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_trait(
+        &test, source, "Paint", None, &index
+    ));
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    assert_eq!(snapshot.shadow_computations(), 0);
+    // A spelled name still takes the full check: both answers are positive.
+    assert!(test_module_shadows_type(
+        &test, source, "Gadget", None, &index
+    ));
+    assert!(test_module_shadows_trait(
+        &test, source, "Render", None, &index
+    ));
+    assert_eq!(snapshot.shadow_computations(), 2);
     Ok(())
 }
 
@@ -6689,6 +6722,7 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let located = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7200,6 +7234,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7238,6 +7273,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     assert_eq!(
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index
@@ -7460,15 +7496,17 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         "{} full-index passes for 96 lookups",
         syntax.workspace_scan_passes()
     );
-    // The production refusal path pays the same bound: a predicate probe's
-    // refused disclosures across both test roots add no third pass.
+    // The production refusal path pays the same bound: a return-value probe's
+    // refused disclosures across both test roots add no third pass. A
+    // predicate `assert_eq!` is admitted ungated (#14537), so it exercises no
+    // refusal site; the return family still takes the gate.
     let owner = index
         .functions()
         .iter()
         .find(|function| function.name == "gate" && function.file == Path::new(LIB));
     assert!(owner.is_some(), "the owner must be indexed from {LIB}");
     let owner = owner.unwrap_or(index.functions().at(0));
-    let probe = predicate_probe(owner, "10 <= value");
+    let probe = return_probe(owner, "10 <= value");
     for tests_path in [TESTS, CONVERGENCE_OTHER_TESTS] {
         let test = index
             .tests()
@@ -7476,7 +7514,13 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
             .find(|test| test.file == Path::new(tests_path));
         assert!(test.is_some(), "{tests_path} must be indexed");
         let Some(test) = test else { continue };
-        let refusal = syntax.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let refusal = syntax.equality_assertion_refusal(
+            &probe,
+            Some(owner),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         assert!(
             matches!(
                 &refusal,
@@ -9163,6 +9207,7 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         match OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9239,6 +9284,7 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9322,9 +9368,16 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
     let mut lines = Vec::new();
     for at in 0..2 {
         let test = index.tests().at(at);
-        let memoized = shared.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let memoized = shared.equality_assertion_refusal(
+            &probe,
+            Some(owner(&index, "weight")),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         let fresh = OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index,
@@ -14533,6 +14586,89 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         }
     }
     Ok(())
+}
+
+/// #13754: the workspace `matches` binding-site scan skips files whose
+/// stored candidates rule `matches` out, still scans a file without stored
+/// candidates, finds exactly the sites an unfiltered scan finds, and is
+/// shared by every syntax instance over one index.
+#[test]
+fn the_matches_site_scan_skips_ruled_out_files_and_is_shared_per_index() {
+    let files = [
+        (
+            "src/lib.rs",
+            "pub fn parse(n: u8) -> Option<u8> { (n > 0).then_some(n) }\n",
+        ),
+        (
+            "src/rebind.rs",
+            "macro_rules! matches { ($e:expr) => { true }; }\n",
+        ),
+        ("src/glob.rs", "use other::*;\npub fn f() {}\n"),
+        (
+            "tests/it.rs",
+            "#[test]\nfn parses() { assert!(matches!(demo::parse(1), Some(1))); }\n",
+        ),
+    ];
+    let mut index = index(&files);
+    // A file with no stored candidates (as a lexical fallback leaves it)
+    // must still be scanned: its glob import may bind every name.
+    let unparsed = PathBuf::from("src/unparsed.rs");
+    let mut facts = summarize_file(unparsed.clone(), "use another::*;\n".to_string());
+    facts.macro_candidates = None;
+    index.insert_file_only(unparsed.clone(), facts);
+    let candidates = |path: &str| {
+        index
+            .files()
+            .get(Path::new(path))
+            .and_then(|facts| facts.macro_candidates.as_deref().cloned())
+    };
+    assert!(
+        candidates("src/lib.rs").is_some_and(|c| !c.may_bind("matches")),
+        "fixture premise: src/lib.rs is ruled out by its candidates"
+    );
+    assert!(
+        candidates("src/rebind.rs").is_some_and(|c| c.may_bind("matches")),
+        "fixture premise: the local definition may bind matches"
+    );
+
+    let unfiltered: Vec<(PathBuf, MacroBindingSite)> = index
+        .files()
+        .iter()
+        .flat_map(|(file, facts)| {
+            trusted_macro_binding_sites(
+                &facts.source,
+                index.macro_scope_crates(),
+                &assertion_context_macros(),
+                &|_, _| false,
+                &|_| false,
+            )
+            .into_iter()
+            .filter(|(name, _)| name == "matches")
+            .map(|(_, site)| (file.clone(), site))
+            .collect::<Vec<_>>()
+        })
+        .collect();
+    let sites = OwnerPinSyntax::matches_binding_sites(&index).to_vec();
+    assert_eq!(sites, unfiltered, "the prefilter drops no site");
+    for file in ["src/rebind.rs", "src/glob.rs", "src/unparsed.rs"] {
+        assert!(
+            sites.iter().any(|(path, _)| path == Path::new(file)),
+            "{file} must report a matches site: {sites:?}"
+        );
+    }
+
+    // Shared per index: the memo is the index's, and a second instance
+    // reads the same slice instead of scanning again.
+    let shared = index
+        .call_identity_memos
+        .matches_binding_sites
+        .get()
+        .map(Vec::as_ptr);
+    assert_eq!(
+        shared,
+        Some(OwnerPinSyntax::matches_binding_sites(&index).as_ptr()),
+        "the scan is memoized on the index"
+    );
 }
 
 #[test]

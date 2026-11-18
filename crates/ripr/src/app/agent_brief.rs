@@ -1,7 +1,7 @@
 mod bounded;
 pub(crate) use bounded::BoundedAgentBrief;
 
-use crate::analysis::seams::SeamGripClass;
+use crate::analysis::seams::{SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::config::{ConfigSeverity, RiprConfig};
@@ -295,6 +295,91 @@ pub(crate) struct AgentBriefSelection<'a> {
     /// framework oracle). These are changed seams ripr could not judge, so a
     /// consumer must not read their absence as a clean result (#14082).
     pub(crate) omitted_static_limited: usize,
+    /// The gap-class seams among `omitted_by_policy` that sit on a changed
+    /// line or in a changed owner and were withheld as static limitations,
+    /// itemized so PR guidance discloses each one by name (#13892).
+    pub(crate) withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
+}
+
+/// Reason PR guidance names for an [`AgentBriefWithheldChangedGap`].
+pub(crate) const WITHHELD_CHANGED_GAP_REASON: &str = "static_limitation";
+
+/// A gap-class seam on a changed line or in a changed owner that selection
+/// withheld as a static limitation (#13892).
+///
+/// `ripr check` can still list the changed behavior (for example an owner no
+/// test calls whose boundary operand is computed), so PR guidance must not
+/// drop it silently. This does not reclassify the seam or grant a repair
+/// route: the omission decision stays [`AgentBriefOmission::for_entry`], and
+/// this record only carries fixed-size identity plus the named limitation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentBriefWithheldChangedGap {
+    pub(crate) seam_id: String,
+    pub(crate) file: PathBuf,
+    pub(crate) line: usize,
+    /// The seam's grip class (`ungripped`, `weakly_gripped`, ...), the
+    /// vocabulary the gate's policy eligibility reads. User-facing text maps
+    /// it to exposure words through `gap_vocabulary::present_exposure_class`.
+    pub(crate) class: String,
+    pub(crate) message: String,
+}
+
+impl AgentBriefWithheldChangedGap {
+    fn for_omission(
+        entry: &ClassifiedSeam,
+        working_set: &NormalizedAgentBriefWorkingSet<'_>,
+        omission: AgentBriefOmission,
+    ) -> Option<Self> {
+        // Membership is checked directly, not through the ranked why-now
+        // reason: a changed related-test line outranks a changed owner there,
+        // and must not hide a changed owner's withheld gap.
+        if matching_changed_line(&entry.seam, working_set).is_none()
+            && matching_changed_owner(&entry.seam, working_set).is_none()
+        {
+            return None;
+        }
+        let class = match omission {
+            AgentBriefOmission::EvidenceLimited(class)
+            | AgentBriefOmission::PanicOutcomeUnresolved(class)
+            | AgentBriefOmission::FrameworkOracleUnresolved(class) => class,
+            AgentBriefOmission::ConfiguredOff(_) | AgentBriefOmission::NotActionable(_) => {
+                return None;
+            }
+        };
+        let mut categories = crate::output::evidence_record::static_limitations_for(entry)
+            .into_iter()
+            .map(|limitation| limitation.category)
+            .collect::<Vec<_>>();
+        categories.dedup();
+        let categories = if categories.is_empty() {
+            "opaque or unknown stage evidence".to_string()
+        } else {
+            categories.join(", ")
+        };
+        Some(Self {
+            seam_id: entry.seam.id().as_str().to_string(),
+            file: entry.seam.file().to_path_buf(),
+            line: entry.seam.display_line(),
+            class: class.as_str().to_string(),
+            message: format!(
+                "Changed {} seam in {} is withheld from repair guidance as a static \
+                 limitation ({categories}). Its absence from comments is not evidence the gap \
+                 is resolved; `ripr check` can still list this changed behavior.",
+                crate::output::gap_vocabulary::present_exposure_class(class.as_str()),
+                entry.seam.owner()
+            ),
+        })
+    }
+}
+
+fn sort_withheld_changed_gaps(gaps: &mut [AgentBriefWithheldChangedGap]) {
+    gaps.sort_by(|left, right| {
+        (left.file.as_path(), left.line, left.seam_id.as_str()).cmp(&(
+            right.file.as_path(),
+            right.line,
+            right.seam_id.as_str(),
+        ))
+    });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -376,6 +461,10 @@ pub(crate) fn select_agent_brief_seams<'a>(
     direct
         .candidates
         .sort_by(|left, right| compare_selected(left, right, policy));
+    let folded = fold_return_value_twins(&mut direct.candidates);
+    if let Some(warning) = folded_twin_warning(folded) {
+        warnings.push(warning);
+    }
     let omitted_by_cap = direct.candidates.len().saturating_sub(max_seams);
     if omitted_by_cap > 0 {
         warnings.push(format!(
@@ -394,8 +483,94 @@ pub(crate) fn select_agent_brief_seams<'a>(
         warnings,
         omitted_by_cap,
         omitted_by_policy: direct.omitted_by_policy,
+        withheld_changed_gaps: direct.withheld_changed_gaps,
         omitted_static_limited: direct.omitted_static_limited,
     }
+}
+
+/// #14702: on a changed `return Err(..)` line the analyzer emits a
+/// `return_value` seam and an `error_variant` seam over the same expression.
+/// The brief shows the error-variant seam and folds its return-value twin, so
+/// the twin neither spends a brief slot nor counts as a seam omitted by the cap.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum TwinRole {
+    ErrorVariant,
+    ReturnValue,
+}
+
+/// The fold identity of a seam: its role and a key naming file, line, owner
+/// and `Err(..)` text. A `return_value` seam keys only over a
+/// `return Err(..)` statement; an `error_variant` seam keys over its
+/// `Err(..)` constructor, which the producer stores bare, with or without a
+/// leading `return` (both go through [`err_constructor`]). Seams of other
+/// kinds, and seams over any other expression shape, never fold.
+pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
+    let (role, expression) = match seam.kind() {
+        SeamKind::ErrorVariant => (
+            TwinRole::ErrorVariant,
+            err_constructor(seam.expression())?.1,
+        ),
+        SeamKind::ReturnValue => match err_constructor(seam.expression())? {
+            (true, expression) => (TwinRole::ReturnValue, expression),
+            (false, _) => return None,
+        },
+        _ => return None,
+    };
+    Some((
+        role,
+        format!(
+            "{}\n{}\n{}\n{}",
+            normalized_path(seam.file()),
+            seam.display_line(),
+            seam.owner(),
+            expression
+        ),
+    ))
+}
+
+/// The `Err(..)` text of an expression with its trailing `;` and an optional
+/// leading `return` keyword removed, and whether that keyword was present;
+/// `None` when what remains is not an `Err(..)` call.
+fn err_constructor(expression: &str) -> Option<(bool, &str)> {
+    let expression = expression.trim();
+    let expression = expression
+        .strip_suffix(';')
+        .unwrap_or(expression)
+        .trim_end();
+    let (returned, expression) = match expression.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => (true, rest.trim_start()),
+        _ => (false, expression),
+    };
+    (expression.starts_with("Err(") && expression.ends_with(')')).then_some((returned, expression))
+}
+
+fn fold_return_value_twins(candidates: &mut Vec<AgentBriefSelectedSeam<'_>>) -> usize {
+    let error_variants: std::collections::BTreeSet<String> = candidates
+        .iter()
+        .filter_map(|candidate| match twin_key(&candidate.seam.seam) {
+            Some((TwinRole::ErrorVariant, key)) => Some(key),
+            _ => None,
+        })
+        .collect();
+    let before = candidates.len();
+    candidates.retain(|candidate| {
+        !matches!(
+            twin_key(&candidate.seam.seam),
+            Some((TwinRole::ReturnValue, key)) if error_variants.contains(&key)
+        )
+    });
+    before - candidates.len()
+}
+
+pub(super) fn folded_twin_warning(folded: usize) -> Option<String> {
+    (folded > 0).then(|| {
+        let noun = if folded == 1 {
+            "seam was"
+        } else {
+            "seams were"
+        };
+        format!("{folded} return_value {noun} folded into the error_variant seam on the same line")
+    })
 }
 
 /// #14683: name each selected head-only match-arm seam's arm result, the
@@ -434,6 +609,7 @@ struct AgentBriefCandidateSelection<'a> {
     candidates: Vec<AgentBriefSelectedSeam<'a>>,
     allow_fallback: bool,
     omitted_by_policy: usize,
+    withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
     omitted_static_limited: usize,
 }
 
@@ -448,6 +624,7 @@ fn direct_candidates<'a>(
             candidates: explicit_seam_candidate(classified, seam_id, policy, warnings),
             allow_fallback: false,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
             omitted_static_limited: 0,
         };
     }
@@ -456,6 +633,7 @@ fn direct_candidates<'a>(
     let mut matched_working_set = false;
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
+    let mut withheld_changed_gaps = Vec::new();
     let mut omitted_static_limited = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
     let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
@@ -467,6 +645,11 @@ fn direct_candidates<'a>(
         matched_working_set = true;
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
             omitted_by_policy += 1;
+            withheld_changed_gaps.extend(AgentBriefWithheldChangedGap::for_omission(
+                entry,
+                &normalized_working_set,
+                omission,
+            ));
             omitted_static_limited += usize::from(omission.is_static_limited());
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
@@ -500,10 +683,12 @@ fn direct_candidates<'a>(
             .map(|(omission, count)| omission.more(count)),
     );
 
+    sort_withheld_changed_gaps(&mut withheld_changed_gaps);
     AgentBriefCandidateSelection {
         candidates,
         allow_fallback: !matched_working_set,
         omitted_by_policy,
+        withheld_changed_gaps,
         omitted_static_limited,
     }
 }
@@ -937,7 +1122,23 @@ fn compare_selected_parts(
         })
         .then_with(|| normalized_path(left.seam.file()).cmp(&normalized_path(right.seam.file())))
         .then_with(|| left.seam.display_line().cmp(&right.seam.display_line()))
+        .then_with(|| {
+            same_line_kind_priority(left.seam.kind())
+                .cmp(&same_line_kind_priority(right.seam.kind()))
+        })
         .then_with(|| left.seam.id().as_str().cmp(right.seam.id().as_str()))
+}
+
+/// #14702: on one changed `return Err(..)` line the analyzer emits both an
+/// `error_variant` seam and a `return_value` seam. The error-variant seam names
+/// the exact variant a test must pin, so it leads; without this tie-break the
+/// seam-id hash decided, and an unresolved `return_value` seam could take the
+/// top slot and push a concrete error-variant seam past the brief cap.
+fn same_line_kind_priority(kind: SeamKind) -> u8 {
+    match kind {
+        SeamKind::ErrorVariant => 0,
+        _ => 1,
+    }
 }
 
 fn why_now_sort_priority(why_now: &AgentBriefWhyNow) -> u8 {
@@ -1303,6 +1504,490 @@ mod tests {
                 statically_contradicted_related_tests: 0,
             },
         }
+    }
+
+    #[test]
+    fn same_line_error_variant_seam_leads_its_return_value_twin() -> Result<(), String> {
+        // #14702: one changed `return Err(..)` line yields both seam kinds.
+        // Before the tie-break the seam-id hash ordered them, so the
+        // unresolved return-value seam could lead the brief.
+        let with_kind = |kind: SeamKind, expression: &str| {
+            let mut entry = classified(
+                "src/lib.rs",
+                12,
+                "names::parse_name",
+                expression,
+                SeamGripClass::WeaklyGripped,
+            );
+            entry.seam = RepoSeam::new(
+                "src/lib.rs",
+                "names::parse_name",
+                kind,
+                120,
+                12,
+                expression,
+                RequiredDiscriminator::BoundaryValue {
+                    description: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            entry
+        };
+        let error_variant = with_kind(SeamKind::ErrorVariant, "Err(NameError::Empty)");
+        let return_value = with_kind(SeamKind::ReturnValue, "return Err(NameError::Empty)");
+        let why_now = AgentBriefWhyNow {
+            reason: AgentBriefWhyNowReason::ChangedLineIntersectsSeam,
+            confidence: AgentBriefWhyNowConfidence::High,
+            evidence: "changed line 12 intersects the seam origin".to_string(),
+        };
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        for (left, right, expected) in [
+            (&error_variant, &return_value, Ordering::Less),
+            (&return_value, &error_variant, Ordering::Greater),
+        ] {
+            let order = compare_selected_parts(left, &why_now, right, &why_now, policy);
+            if order != expected {
+                return Err(format!(
+                    "error_variant must lead return_value on the same line: {} vs {} gave {order:?}",
+                    left.seam.id().as_str(),
+                    right.seam.id().as_str()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn twin_seam(
+        line: usize,
+        kind: SeamKind,
+        expression: &str,
+        class: SeamGripClass,
+    ) -> ClassifiedSeam {
+        owned_twin_seam("names::parse_name", line, kind, expression, class)
+    }
+
+    fn owned_twin_seam(
+        owner: &str,
+        line: usize,
+        kind: SeamKind,
+        expression: &str,
+        class: SeamGripClass,
+    ) -> ClassifiedSeam {
+        let mut entry = classified("src/lib.rs", line, owner, expression, class);
+        entry.seam = RepoSeam::new(
+            "src/lib.rs",
+            owner,
+            kind,
+            line * 10,
+            line,
+            expression,
+            RequiredDiscriminator::BoundaryValue {
+                description: expression.to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry
+    }
+
+    fn permutations(len: usize) -> Vec<Vec<usize>> {
+        if len == 0 {
+            return vec![Vec::new()];
+        }
+        let mut all = Vec::new();
+        for rest in permutations(len - 1) {
+            for at in 0..=rest.len() {
+                let mut order = rest.clone();
+                order.insert(at, len - 1);
+                all.push(order);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn complete_brief_folds_return_value_twin_into_same_line_error_variant() -> Result<(), String> {
+        // #14702: the error_variant scenario's shape. Two changed `return
+        // Err(..)` lines each yield both seam kinds; the twins must not spend
+        // the cap of 3 and push the other changed seam out.
+        let entries = vec![
+            twin_seam(
+                12,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                12,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                9,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty);",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                9,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            // Not a twin: a different expression on the same line stays.
+            twin_seam(
+                9,
+                SeamKind::ReturnValue,
+                "return Err(NameError::TooLong)",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let selected = select(&entries, &working_set, 3);
+        let shown = selected
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.kind(), entry.seam.seam.display_line()))
+            .collect::<Vec<_>>();
+        if shown
+            != [
+                (SeamKind::ErrorVariant, 9),
+                (SeamKind::ReturnValue, 9),
+                (SeamKind::ErrorVariant, 12),
+            ]
+        {
+            return Err(format!("folded brief shows {shown:?}"));
+        }
+        let kept_other = selected
+            .top_seams
+            .iter()
+            .any(|entry| entry.seam.seam.expression() == "return Err(NameError::TooLong)");
+        if !kept_other || selected.omitted_by_cap != 0 {
+            return Err(format!(
+                "a non-twin seam must stay visible and folds must not count as capped: {:?}",
+                selected.warnings
+            ));
+        }
+        if !selected.warnings.iter().any(|warning| {
+            warning
+                == "2 return_value seams were folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!("missing fold warning: {:?}", selected.warnings));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn return_value_twin_folds_only_into_an_error_variant_of_the_same_owner() -> Result<(), String>
+    {
+        // Two one-line functions on the same source line can share the
+        // `Err(..)` text; a seam of one owner must not fold into the other's.
+        let entries = vec![
+            owned_twin_seam(
+                "names::parse_name",
+                7,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            owned_twin_seam(
+                "names::parse_alias",
+                7,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            owned_twin_seam(
+                "names::parse_alias",
+                7,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let selected = select(&entries, &working_set, 3);
+        let shown = selected
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.owner(), entry.seam.seam.kind()))
+            .collect::<Vec<_>>();
+        if shown.len() != 2
+            || !shown.contains(&("names::parse_name", SeamKind::ReturnValue))
+            || !shown.contains(&("names::parse_alias", SeamKind::ErrorVariant))
+        {
+            return Err(format!("owner-scoped fold shows {shown:?}"));
+        }
+        if !selected.warnings.iter().any(|warning| {
+            warning == "1 return_value seam was folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!(
+                "missing singular fold warning: {:?}",
+                selected.warnings
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streamed_brief_folds_twins_like_complete_brief_in_every_arrival_order() -> Result<(), String>
+    {
+        // #14702: the streamed path must match the complete path whichever
+        // twin arrives first, including when the return-value twin ranks
+        // above the cap and its error-variant twin ranks below another seam:
+        // the seam between them must survive retention.
+        use crate::analysis::ScopedEvidenceConsumer;
+        let config = RiprConfig::default();
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let entries = vec![
+            twin_seam(
+                12,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            classified(
+                "src/lib.rs",
+                5,
+                "names::parse_name",
+                "len > 10",
+                SeamGripClass::Ungripped,
+            ),
+            twin_seam(
+                12,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::ReachableUnrevealed,
+            ),
+            twin_seam(
+                20,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Lone)",
+                SeamGripClass::ReachableUnrevealed,
+            ),
+        ];
+        for limit in [1, 2, 3, 10] {
+            let expected = select(&entries, &working_set, limit);
+            if limit == 1 && selected_ids(&expected) != [entries[1].seam.id().as_str().to_string()]
+            {
+                return Err(format!(
+                    "complete brief at cap 1 shows {:?}",
+                    selected_ids(&expected)
+                ));
+            }
+            for order in permutations(entries.len()) {
+                let mut actual = BoundedAgentBrief::new(
+                    &working_set,
+                    limit,
+                    AgentBriefPolicy::from_config(&config),
+                )?;
+                for &ordinal in &order {
+                    actual.observe(ordinal, entries[ordinal].clone())?;
+                    if actual.retained_payloads() > 2 * limit {
+                        return Err(format!(
+                            "cap {limit} retained {}",
+                            actual.retained_payloads()
+                        ));
+                    }
+                }
+                let selected = actual.selection()?;
+                if selected_ids(&selected) != selected_ids(&expected)
+                    || selected.warnings != expected.warnings
+                    || selected.omitted_by_cap != expected.omitted_by_cap
+                    || selected.returned != expected.returned
+                {
+                    return Err(format!(
+                        "cap {limit} order {order:?}: streamed {:?} {:?} vs complete {:?} {:?}",
+                        selected_ids(&selected),
+                        selected.warnings,
+                        selected_ids(&expected),
+                        expected.warnings
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Seams the real producer emits for `src/lib.rs`, each wrapped as a
+    /// classified seam of `class`.
+    fn produced_seams(source: &str, class: SeamGripClass) -> Result<Vec<ClassifiedSeam>, String> {
+        use crate::analysis::{RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path.clone(), facts);
+        Ok(crate::analysis::inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .map(|seam| {
+                let mut entry = classified(
+                    "src/lib.rs",
+                    seam.display_line(),
+                    seam.owner(),
+                    seam.expression(),
+                    class,
+                );
+                entry.seam = seam;
+                entry
+            })
+            .collect())
+    }
+
+    #[test]
+    fn producer_return_err_twins_fold_in_both_selection_paths() -> Result<(), String> {
+        // #14708 review: build the twins through the producer, not by hand,
+        // and check that the fold fires on the shapes it actually stores.
+        let source = "pub enum NameError {\n    Empty,\n    TooLong,\n}\n\npub fn parse_name(raw: &str) -> Result<String, NameError> {\n    if raw.is_empty() {\n        return Err(NameError::Empty);\n    }\n    if raw.len() > 10 {\n        return Err(NameError::TooLong);\n    }\n    Ok(raw.to_string())\n}\n";
+        let entries: Vec<ClassifiedSeam> = produced_seams(source, SeamGripClass::WeaklyGripped)?
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    entry.seam.kind(),
+                    SeamKind::ReturnValue | SeamKind::ErrorVariant
+                ) && matches!(entry.seam.display_line(), 8 | 11)
+            })
+            .collect();
+        // Fixture check: both kinds on both lines. The producer stores the
+        // return_value seam as the `return Err(..)` statement and the
+        // error_variant seam as its bare `Err(..)` constructor.
+        for line in [8, 11] {
+            for (kind, prefix) in [
+                (SeamKind::ReturnValue, "return Err(NameError::"),
+                (SeamKind::ErrorVariant, "Err(NameError::"),
+            ] {
+                let seam = entries
+                    .iter()
+                    .find(|entry| entry.seam.kind() == kind && entry.seam.display_line() == line)
+                    .ok_or_else(|| format!("producer emitted no {kind:?} seam on line {line}"))?;
+                if !seam.seam.expression().starts_with(prefix) {
+                    return Err(format!(
+                        "unexpected producer expression {:?} for {kind:?}",
+                        seam.seam.expression()
+                    ));
+                }
+            }
+        }
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let complete = select(&entries, &working_set, 3);
+        let shown = complete
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.kind(), entry.seam.seam.display_line()))
+            .collect::<Vec<_>>();
+        if shown != [(SeamKind::ErrorVariant, 8), (SeamKind::ErrorVariant, 11)]
+            || complete.omitted_by_cap != 0
+        {
+            return Err(format!(
+                "producer twins did not fold: {shown:?} omitted {}",
+                complete.omitted_by_cap
+            ));
+        }
+        if !complete.warnings.iter().any(|warning| {
+            warning
+                == "2 return_value seams were folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!("missing fold warning: {:?}", complete.warnings));
+        }
+        let config = RiprConfig::default();
+        for limit in [1, 2, 3] {
+            let expected = select(&entries, &working_set, limit);
+            for order in permutations(entries.len()) {
+                let mut streamed = BoundedAgentBrief::new(
+                    &working_set,
+                    limit,
+                    AgentBriefPolicy::from_config(&config),
+                )?;
+                for &ordinal in &order {
+                    streamed.observe(ordinal, entries[ordinal].clone())?;
+                }
+                let selected = streamed.selection()?;
+                if selected_ids(&selected) != selected_ids(&expected)
+                    || selected.warnings != expected.warnings
+                    || selected.omitted_by_cap != expected.omitted_by_cap
+                {
+                    return Err(format!(
+                        "cap {limit} order {order:?}: streamed {:?} {:?} vs complete {:?} {:?}",
+                        selected_ids(&selected),
+                        selected.warnings,
+                        selected_ids(&expected),
+                        expected.warnings
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streamed_brief_bounds_twin_retention_and_says_when_it_overflowed() -> Result<(), String> {
+        // #14702 review: unmatched return-value twins must not grow payload
+        // retention without bound. Past twice the cap the streamed selection
+        // drops seams and must say a lower-ranked seam may be missing.
+        use crate::analysis::ScopedEvidenceConsumer;
+        let config = RiprConfig::default();
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let mut entries = (0..3)
+            .map(|i| {
+                twin_seam(
+                    10 + i,
+                    SeamKind::ReturnValue,
+                    &format!("return Err(NameError::Case{i})"),
+                    SeamGripClass::WeaklyGripped,
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.push(classified(
+            "src/lib.rs",
+            5,
+            "names::parse_name",
+            "len > 10",
+            SeamGripClass::Ungripped,
+        ));
+        entries.extend((0..3).map(|i| {
+            twin_seam(
+                10 + i,
+                SeamKind::ErrorVariant,
+                &format!("Err(NameError::Case{i})"),
+                SeamGripClass::ReachableUnrevealed,
+            )
+        }));
+        let overflow_warning = "streamed selection dropped seams past its retention bound before \
+             return_value twins folded; lower-ranked visible seams may be missing from this brief";
+        let expected = select(&entries, &working_set, 1);
+        let mut actual =
+            BoundedAgentBrief::new(&working_set, 1, AgentBriefPolicy::from_config(&config))?;
+        for (ordinal, entry) in entries.iter().enumerate() {
+            actual.observe(ordinal, entry.clone())?;
+            if actual.retained_payloads() > 2 {
+                return Err(format!(
+                    "retained {} payloads at cap 1",
+                    actual.retained_payloads()
+                ));
+            }
+        }
+        let selected = actual.selection()?;
+        if selected_ids(&expected) != [entries[3].seam.id().as_str().to_string()]
+            || selected_ids(&selected) == selected_ids(&expected)
+            || !selected
+                .warnings
+                .iter()
+                .any(|warning| warning == overflow_warning)
+            || expected
+                .warnings
+                .iter()
+                .any(|warning| warning == overflow_warning)
+        {
+            return Err(format!(
+                "streamed {:?} {:?} vs complete {:?} {:?}",
+                selected_ids(&selected),
+                selected.warnings,
+                selected_ids(&expected),
+                expected.warnings
+            ));
+        }
+        Ok(())
     }
 
     #[test]
@@ -2790,6 +3475,142 @@ weakly_gripped = "off"
         );
     }
 
+    #[test]
+    fn changed_scope_static_limited_gap_seams_are_itemized_in_both_selection_paths()
+    -> Result<(), String> {
+        // #13892: an owner no test calls, whose boundary operand is computed,
+        // is withheld as a static limitation. On a changed line it must be
+        // itemized for PR guidance, not only counted.
+        let mut withheld = classified(
+            "src/pricing.rs",
+            3,
+            "pricing::untested_rounding",
+            "cents % 100 > 49",
+            SeamGripClass::Ungripped,
+        );
+        withheld.evidence.reach = stage(StageState::No);
+        withheld.evidence.activate = stage(StageState::Unknown);
+        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        // Same file, off the changed lines: not changed behavior.
+        let mut same_file = classified(
+            "src/pricing.rs",
+            40,
+            "pricing::other",
+            "n > 1",
+            SeamGripClass::WeaklyGripped,
+        );
+        same_file.evidence.propagate = stage(StageState::Unknown);
+        // On a changed line but configured off (strongly gripped by default)
+        // or not a gap class: neither is a withheld gap.
+        let configured_off = classified(
+            "src/pricing.rs",
+            7,
+            "pricing::tested",
+            "n >= 2",
+            SeamGripClass::StronglyGripped,
+        );
+        let not_gap = classified(
+            "src/pricing.rs",
+            8,
+            "pricing::unknown",
+            "n >= 3",
+            SeamGripClass::ActivationUnknown,
+        );
+        let seams = vec![same_file, configured_off, not_gap, withheld];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            [3, 7, 8]
+                .into_iter()
+                .map(|line| AgentBriefLine::new("src/pricing.rs", line))
+                .collect(),
+        );
+        let expected_id = seams[3].seam.id().as_str().to_string();
+
+        let direct = select(&seams, &working_set, 3);
+        assert_eq!(direct.omitted_by_policy, 4);
+        assert_eq!(direct.withheld_changed_gaps.len(), 1, "{direct:?}");
+        let gap = &direct.withheld_changed_gaps[0];
+        assert_eq!(gap.seam_id, expected_id);
+        assert_eq!(gap.file, PathBuf::from("src/pricing.rs"));
+        assert_eq!(gap.line, 3);
+        assert!(
+            gap.message.contains("activation_boundary_input_unresolved")
+                && gap.class == "ungripped"
+                && gap.message.contains("Changed no_static_path seam")
+                && gap.message.contains("pricing::untested_rounding")
+                && gap.message.contains("not evidence the gap is resolved"),
+            "{}",
+            gap.message
+        );
+
+        let config = RiprConfig::default();
+        let mut bounded =
+            BoundedAgentBrief::new(&working_set, 3, AgentBriefPolicy::from_config(&config))?;
+        for (ordinal, entry) in seams.iter().enumerate().rev() {
+            bounded.observe(ordinal, entry.clone())?;
+        }
+        let streamed = bounded.selection()?;
+        assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_owner_gap_is_itemized_even_when_a_related_test_line_also_changed()
+    -> Result<(), String> {
+        // Devin on #13924: the PR edits another line inside the owner and the
+        // related test's own line. The ranked why-now reason is then the
+        // related-test reason, but the owner still changed, so the withheld
+        // gap must still be itemized on both selection paths.
+        let mut withheld = classified(
+            "src/pricing.rs",
+            3,
+            "pricing::untested_rounding",
+            "cents % 100 > 49",
+            SeamGripClass::Ungripped,
+        );
+        withheld.evidence.reach = stage(StageState::No);
+        withheld.evidence.activate = stage(StageState::Unknown);
+        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        let related = withheld
+            .evidence
+            .related_tests
+            .first()
+            .map(|test| (test.file.clone(), test.line))
+            .ok_or("fixture seam has no related test")?;
+        let seams = vec![withheld];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 2),
+                AgentBriefLine::new(related.0.clone(), related.1),
+            ],
+        )
+        .with_changed_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            2,
+            "pricing::untested_rounding",
+        )]);
+        let normalized = NormalizedAgentBriefWorkingSet::new(&working_set);
+        let why_now = why_now_for(&seams[0], &normalized).ok_or("seam must be in scope")?;
+        assert_eq!(
+            why_now.reason,
+            AgentBriefWhyNowReason::ChangedTestForRelatedSeam,
+            "fixture must exercise the ranked related-test reason"
+        );
+
+        let direct = select(&seams, &working_set, 3);
+        assert_eq!(direct.withheld_changed_gaps.len(), 1, "{direct:?}");
+        assert_eq!(direct.withheld_changed_gaps[0].line, 3);
+
+        let config = RiprConfig::default();
+        let mut bounded =
+            BoundedAgentBrief::new(&working_set, 3, AgentBriefPolicy::from_config(&config))?;
+        bounded.observe(0, seams[0].clone())?;
+        let streamed = bounded.selection()?;
+        assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
+        Ok(())
+    }
+
     fn arm_seam(line: usize, expression: &str) -> ClassifiedSeam {
         let mut entry = classified(
             "src/lib.rs",
@@ -2871,6 +3692,7 @@ weakly_gripped = "off"
             omitted_by_cap: 0,
             omitted_by_policy: 0,
             omitted_static_limited: 0,
+            withheld_changed_gaps: Vec::new(),
         };
         attach_agent_brief_arm_results(&root, &mut selection);
         let results = selection

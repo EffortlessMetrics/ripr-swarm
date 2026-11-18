@@ -1313,10 +1313,169 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
     )
 }
 
+#[test]
+fn verdict_fields_use_a_closed_positive_grammar() -> Result<(), String> {
+    let head = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_verdicts/refuse-pr13896-5892179853.md");
+    let recorded = std::fs::read_to_string(&fixture).map_err(|e| format!("{fixture:?}: {e}"))?;
+    let cases = [
+        (recorded.as_str(), false),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            false,
+        ),
+        ("SOURCE_REVIEW_READY\nVERDICT: ABSTAIN", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: MAYBE", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE", true),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY", true),
+        ("REVIEW_READY\nREPAIR_REQUIRED", false),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review(
+            "reviewer",
+            "COMMENTED",
+            head,
+            "2026-11-13T15:00:00Z",
+            body,
+        )]);
+        expect_outcome(&check_reviews(&reviews, head)?, admit, body)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
+    let head = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let exact_block = "SOURCE_REVIEW_READY\n| Field | Value |\n| --- | --- |\n| Verdict | BLOCK |";
+    let controls = [
+        (exact_block, false),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | MAYBE |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict |  |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE / BLOCK |", false),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 |",
+            true,
+        ),
+        // #14592: a GFM row may omit the trailing pipe, so losing it must not change
+        // the disposition, and an extra non-empty value cell is ambiguous.
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN", false),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 | BLOCK |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 | BLOCK",
+            false,
+        ),
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", false),
+        // An unrecognised value is a real verdict, not a column label.
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Needs work |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Denied |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Unsafe |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | NO |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Result |\n| --- | --- |",
+            true,
+        ),
+        // GFM permits an omitted leading pipe, so the same row without it must
+        // keep the same disposition.
+        ("SOURCE_REVIEW_READY\nVerdict | BLOCK", false),
+        ("SOURCE_REVIEW_READY\nVerdict | REPAIR_REQUIRED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | CHANGES_REQUESTED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | Value\n--- | ---", true),
+    ];
+    for (body, admit) in controls {
+        let reviews = serde_json::json!([review(
+            "reviewer",
+            "COMMENTED",
+            head,
+            "2026-11-14T07:51:00Z",
+            body,
+        )]);
+        expect_outcome(&check_reviews(&reviews, head)?, admit, body)?;
+    }
+
+    let described = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\n| Verdict | BLOCK |"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(&serde_json::json!([]), &described, head, "table-verdict")?,
+        false,
+        "table verdict is a competing PR-description field",
+    )?;
+    // #14592: the same competing row without the optional trailing pipe.
+    let described_no_pipe = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\n| Verdict | BLOCK"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(
+            &serde_json::json!([]),
+            &described_no_pipe,
+            head,
+            "table-verdict-no-pipe",
+        )?,
+        false,
+        "table verdict without a trailing pipe is a competing PR-description field",
+    )?;
+    // GFM also permits an omitted leading pipe.
+    let described_no_leading = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\nVerdict | BLOCK"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(
+            &serde_json::json!([]),
+            &described_no_leading,
+            head,
+            "table-verdict-no-leading-pipe",
+        )?,
+        false,
+        "table verdict without a leading pipe is a competing PR-description field",
+    )
+}
 /// #14592: the review convention's verdict line. A ready marker followed by
 /// `VERDICT: BLOCK <sha>` refuses through the real CLI, whether the body is the
 /// full recorded review of #13896 or the two-line minimum; `VERDICT: APPROVE`
 /// after the same marker still admits.
+///
+/// #14603 supersedes #14592's approving-prose allowance: on a verdict line the
+/// whole value must be APPROVE with an optional head annotation to attest, so
+/// "approve, no block remains" and "no blocking findings" no longer carry a
+/// positive disposition. An APPROVE-led value that is not exactly that form is
+/// neutral rather than a refusal, so the house marker review's explanation cannot
+/// veto the marker; a value that also names a blocking word still refuses.
 #[test]
 fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> {
     let head = "a".repeat(40);
@@ -1372,7 +1531,7 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
         (
             "SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.",
             true,
-            "negated block in an approving verdict",
+            "approving prose is neutral, not a refusal",
         ),
         (
             "SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.",
@@ -1387,7 +1546,27 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
         (
             "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
             true,
-            "negated block with extra spacing",
+            "approving prose with extra spacing is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "the house marker review's verdict line is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE - tests fail.",
+            false,
+            "an APPROVE-led value that names a blocker still refuses",
+        ),
+        (
+            "REVIEW_READY\n> VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "a quoted approving verdict line is not a negative",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |",
+            true,
+            "a Verdict header row names a column, not a disposition",
         ),
         (
             "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
@@ -1401,8 +1580,8 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
         ),
         (
             "REVIEW_READY\nVerdict: no blocking findings on this head.",
-            true,
-            "no blocking findings",
+            false,
+            "approving prose is not a whole verdict value",
         ),
     ];
     for (body, admit, what) in cases {

@@ -12,8 +12,9 @@ use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, body_exercises_dunder_protocol,
-    dunder_method_class, import_source_module_matches_owner, is_python_identifier_char,
+    HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
+    body_calls_owner, body_exercises_dunder_protocol, dunder_method_class,
+    import_source_module_matches_owner, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class, test_references_owner_class,
 };
@@ -519,63 +520,135 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
 /// a comment or an open string. A tripled quote opens a string that only the
 /// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
 /// code after it is visible (#9992); a triple string left open at the end of
-/// the prefix hides what follows. F-string fields are not read here.
+/// the prefix hides what follows. The replacement field of an f-string is code
+/// (#14754 review): `f"{parse('')}"` ends the prefix inside a field, so the
+/// call there stays visible.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
+    /// One open string literal on the prefix scanner's stack.
+    struct Literal {
+        quote: char,
+        triple: bool,
+        formatted: bool,
+        /// The scanner is inside this f-string's replacement field: its text
+        /// is code, not string text.
+        in_field: bool,
+        /// Open braces of that field (a dict or set literal nests).
+        field_depth: usize,
+    }
     let chars: Vec<char> = prefix.chars().collect();
-    // The active delimiter and its width (1 or 3).
-    let mut open: Option<(char, usize)> = None;
+    let mut stack: Vec<Literal> = Vec::new();
     let mut index = 0;
     while index < chars.len() {
         let ch = chars[index];
-        if let Some((quote, width)) = open {
-            let closes = ch == quote
-                && chars.len() - index >= width
-                && chars[index..index + width].iter().all(|c| *c == quote);
-            if ch == '\\' {
-                index += 2;
-            } else if closes {
-                open = None;
-                index += width;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if ch == '#' {
-            return true;
-        }
-        if ch == '\'' || ch == '"' {
-            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
-            let width = if triple { 3 } else { 1 };
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides what follows: a miss, never an invented call (#9230).
-            if !triple
-                && chars_end_with_f_prefix(&chars[..index])
-                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
-            {
+        let in_code = stack.last().is_none_or(|literal| literal.in_field);
+        if in_code {
+            if ch == '#' {
                 return true;
             }
-            open = Some((ch, width));
-            index += width;
+            if ch == '\'' || ch == '"' {
+                let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+                let formatted = chars_end_with_f_prefix(&chars[..index]);
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides what follows: a miss, never an invented call (#9230).
+                if !triple
+                    && formatted
+                    && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+                {
+                    return true;
+                }
+                stack.push(Literal {
+                    quote: ch,
+                    triple,
+                    formatted,
+                    in_field: false,
+                    field_depth: 0,
+                });
+                index += if triple { 3 } else { 1 };
+                continue;
+            }
+            if let Some(literal) = stack.last_mut()
+                && literal.in_field
+            {
+                if ch == '{' {
+                    literal.field_depth += 1;
+                } else if ch == '}' {
+                    literal.field_depth = literal.field_depth.saturating_sub(1);
+                    if literal.field_depth == 0 {
+                        literal.in_field = false;
+                    }
+                }
+            }
+            index += 1;
             continue;
+        }
+        let Some((quote, triple, formatted)) = stack
+            .last()
+            .map(|literal| (literal.quote, literal.triple, literal.formatted))
+        else {
+            index += 1;
+            continue;
+        };
+        if ch == '\\' {
+            index += 2;
+            continue;
+        }
+        if triple {
+            if chars.len() - index >= 3 && chars[index..index + 3].iter().all(|c| *c == quote) {
+                stack.pop();
+                index += 3;
+                continue;
+            }
+        } else if ch == quote {
+            stack.pop();
+            index += 1;
+            continue;
+        }
+        if formatted {
+            if ch == '{' {
+                if chars.get(index + 1) == Some(&'{') {
+                    index += 2;
+                    continue;
+                }
+                if let Some(literal) = stack.last_mut() {
+                    literal.in_field = true;
+                    literal.field_depth = 1;
+                }
+                index += 1;
+                continue;
+            }
+            if ch == '}' && chars.get(index + 1) == Some(&'}') {
+                index += 2;
+                continue;
+            }
         }
         index += 1;
     }
-    open.is_some()
+    stack.last().is_some_and(|literal| !literal.in_field)
 }
 
 /// Whether the identifier run that ends `before` is an `f` string prefix
 /// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
 /// longer name such as `perf`.
 fn chars_end_with_f_prefix(before: &[char]) -> bool {
-    let run = before
-        .iter()
-        .rev()
-        .take_while(|ch| is_python_identifier_char(**ch))
-        .count();
+    // Stop at the third identifier character: the answer is already `false`,
+    // and the caller pays this per quote, so walking (and allocating) the whole
+    // identifier run of a long line is unbounded work for a bounded answer.
+    let mut run = 0usize;
+    for ch in before.iter().rev() {
+        if !is_python_identifier_char(*ch) {
+            break;
+        }
+        run += 1;
+        if run > 2 {
+            return false;
+        }
+    }
+    if run == 0 {
+        return false;
+    }
     let prefix: String = before[before.len() - run..].iter().collect();
-    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+    matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
 }
 
 /// Whether the single-line f-string literal that starts at the first character
@@ -1695,6 +1768,75 @@ fn contains_identifier(text: &str, identifier: &str) -> bool {
         .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
+/// Reach into a changed helper that enters its module only from another
+/// module (#12955). Every related test reaches `owner` through a function of
+/// another module that imports and calls it (`cross_module_caller_call`), or
+/// no test relates at all while more functions of other modules call it than
+/// the relation follows. The adapter does not evaluate values across that
+/// module boundary, so the edit is read as unresolved: never graded as a gap,
+/// and never `no_static_path`.
+///
+/// `cross_module_over_cap` is [`cross_module_callers_exceed_cap`] for the
+/// owner, computed by the caller only when no test relates to it.
+pub(super) fn cross_module_reach_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    helper_callers: &[HelperOwnerCallCandidate<'_>],
+    cross_module_over_cap: bool,
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty() {
+        return cross_module_over_cap.then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules call `{}`",
+                owner.name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules import and call `{}`; the Python preview adapter does not follow that many cross-module callers, so it does not read this edit as having no test path.",
+                owner.name
+            ),
+        });
+    }
+    // Helpers are only gathered when no test relates to the owner directly,
+    // so equal lengths mean every related candidate is a helper candidate;
+    // the check keeps the limit off if candidates are ever appended later.
+    if helper_callers.is_empty()
+        || related_candidates.len() != helper_callers.len()
+        || !helper_callers.iter().all(|helper| helper.cross_module)
+    {
+        return None;
+    }
+    let mut callers: Vec<&str> = helper_callers
+        .iter()
+        .map(|helper| helper.caller.as_str())
+        .collect();
+    callers.sort_unstable();
+    callers.dedup();
+    let shown = callers
+        .iter()
+        .take(3)
+        .map(|caller| format!("`{caller}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = callers.len().saturating_sub(3);
+    let shown = if more == 0 {
+        shown
+    } else {
+        format!("{shown} and {more} more")
+    };
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::MissingImportGraph,
+        evidence: format!(
+            "static_limit missing_import_graph: related tests reach `{}` only through callers in other modules ({shown})",
+            owner.name
+        ),
+        missing: format!(
+            "Static limit `missing_import_graph`: related tests reach `{}` only through functions of other modules that import it ({shown}); the Python preview adapter does not evaluate values across the module boundary, so it does not grade this edit as a gap.",
+            owner.name
+        ),
+    })
+}
+
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
 ///
 /// - A dunder method owner whose related tests all relate only through
@@ -1849,6 +1991,7 @@ pub(super) mod tests {
             nested_called_by_parent: false,
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
+            route_returns_body: false,
         }
     }
 

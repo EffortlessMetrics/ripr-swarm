@@ -41,11 +41,17 @@ The expected class is pinned per finding (`expected/check.json`, checked by
 probe:src_config.ts:typescript_preview:0bfbca8c -> weakly_exposed
 ```
 
-This fixture ships no `expected/human.txt`. The default human output prints the state token
-`propagation_unknown` on its missing-check line, and the user-text gate refuses a banned term
-on a new golden path (`check-user-text`, per-file delta against the merge base). The verdict
-is pinned by `expected/check.json` and by the honesty corpus case
+This fixture ships `expected/human.txt` (RIPR-SPEC-0122, #11619). The default human digest
+drops a leading state-token label from the missing-check line, so that line opens with the
+classifier wording - `changed value sinks to the owner return value or constructed object` -
+and the `propagation unknown` phrase follows on the wrapped continuation instead of leading
+it. That is why the user-text gate (`check-user-text`, per-file delta against the merge base)
+no longer refuses a banned snake_case state token on this new golden path. The verdict is
+pinned by `expected/check.json` and by the honesty corpus case
 `ts_field_construction_sibling_field_read_does_not_pin_changed_field`; the full human surface
-stays in `expected/human-full.txt`, where the glossary allowlists state tokens. Do not
-re-bless this fixture: `cargo xtask goldens bless` always rewrites `human.txt` and would
-re-add it.
+stays in `expected/human-full.txt`, where the glossary allowlists state tokens and the
+missing-check line still leads with `propagation_unknown`.
+
+Re-bless this fixture on Linux when the classifier wording or the digest changes:
+`cargo xtask goldens bless ts_field_construction_sibling_field --reason "RIPR-SPEC-0243:
+<reviewed change>"`, which records the reason in this fixture's `expected/CHANGELOG.md`.

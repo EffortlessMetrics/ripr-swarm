@@ -613,6 +613,204 @@ fn a_symlinked_directory_without_sources_does_not_restore_credit() -> Result<(),
     assert_withheld_in_every_mode(&fixture)
 }
 
+/// `b` mounts `a/src/shared.rs` through `b_files`, read beside a tests-on
+/// control: the skip may not move the class in any mode.
+fn assert_b_mount_keeps_credit(b_files: &[(&str, &str)], label: &str) -> Result<(), String> {
+    let fixture = mounted_from_b(b_files)?;
+    let control = mounted_from_b_with(MEMBER_A_TESTED, b_files)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, label)
+}
+
+/// The text of a non-`.rs` file in `b/src` that mounts the shared file.
+const B_SRC_MOUNT: &str = "#[path = \"../../a/src/shared.rs\"]\npub mod shared;\n";
+
+#[test]
+fn an_include_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n5: the scan reads only `.rs` sources, so a mount
+    // spelled in an included `gen.inc` is doubt.
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/src/lib.rs", "include!(\"gen.inc\");\n"),
+            ("b/src/gen.inc", B_SRC_MOUNT),
+        ],
+        "an `include!` of `gen.inc`",
+    )
+}
+
+#[test]
+fn an_aliased_generated_include_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n7: `inc!` is `include!` under another name, so the
+    // generated mount must still be doubt.
+    let manifest = format!("{MEMBER_B}build = \"build.rs\"\n");
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/Cargo.toml", manifest.as_str()),
+            ("b/build.rs", NAMELESS_MOUNT_BUILD),
+            (
+                "b/src/lib.rs",
+                "use std::include as inc;\ninc!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));\n",
+            ),
+        ],
+        "an aliased `include!`",
+    )
+}
+
+#[test]
+fn an_escaped_include_operand_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review (Devin): `\u{73}hared.rs` decodes to `shared.rs`, which
+    // no substring scan sees, and a comment splits `include` from `!`.
+    assert_b_mount_keeps_credit(
+        &[(
+            "b/src/lib.rs",
+            "include /* c */ !(\"../../a/src/\\u{73}hared.rs\");\n",
+        )],
+        "an escaped `include!` operand",
+    )
+}
+
+/// A `[[test]]` target rooted at `src/container.rs`, which the library also
+/// declares as a module.
+const CONTAINER_TEST_TARGET: &str =
+    "\n[[test]]\nname = \"container\"\npath = \"src/container.rs\"\n";
+
+#[test]
+fn a_running_test_target_in_the_ancestry_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review (Devin): the leaf's only ancestry ends at the skipped
+    // library, but its parent `src/container.rs` is also a `[[test]]` root,
+    // so `cargo test --test container` runs the leaf's test.
+    let leaf = lib_source(UNIT_TESTS);
+    let files = [
+        ("src/lib.rs", "pub mod container;\n"),
+        (
+            "src/container.rs",
+            "#[path = \"container/leaf.rs\"]\npub mod leaf;\n",
+        ),
+        ("src/container/leaf.rs", leaf.as_str()),
+    ];
+    let fixture = TempCrate::create_changing(
+        &format!("{LIB_TEST_FALSE}{CONTAINER_TEST_TARGET}"),
+        &files,
+        "src/container/leaf.rs",
+        1,
+    )?;
+    let control =
+        TempCrate::create_changing(CONTAINER_TEST_TARGET, &files, "src/container/leaf.rs", 1)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a `[[test]]` parent module")
+}
+
+#[test]
+fn a_path_mount_of_a_non_rust_file_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n5p: `#[path = "m.txt"]` mounts a file the scan does
+    // not read.
+    assert_b_mount_keeps_credit(
+        &[
+            ("b/src/lib.rs", "#[path = \"m.txt\"]\npub mod m;\n"),
+            ("b/src/m.txt", B_SRC_MOUNT),
+        ],
+        "a `#[path]` mount of `m.txt`",
+    )
+}
+
+#[test]
+fn a_macro_mount_after_a_url_string_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review n2_urlcmt: a `//` inside a string must not hide the
+    // commented `mod /* c */ $n` the macro expands into the tested bin.
+    let shared = lib_source(UNIT_TESTS);
+    let main = "macro_rules! m {\n    ($n:ident) => {\n        const U: &str = \"http://x\"; mod /* c */ $n;\n    };\n}\nm!(shared);\nfn main() {}\n";
+    let files = [
+        ("src/lib.rs", "pub mod shared;\n"),
+        ("src/shared.rs", shared.as_str()),
+        ("src/main.rs", main),
+    ];
+    let fixture = TempCrate::create_changing(LIB_TEST_FALSE, &files, "src/shared.rs", 1)?;
+    let control = TempCrate::create_changing("", &files, "src/shared.rs", 1)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a macro mount after a URL")
+}
+
+/// Each mode reads the tests-on `control` `exposed` and `fixture` with no
+/// credited discriminator.
+fn assert_withheld_against_control_in_every_mode(
+    fixture: &TempCrate,
+    control: &TempCrate,
+    label: &str,
+) -> Result<(), String> {
+    for mode in MODES {
+        let tested = control.finding_in(mode.clone())?;
+        assert_eq!(
+            tested.class,
+            ExposureClass::Exposed,
+            "premise: tests-on {label} in {mode:?}: {tested:?}"
+        );
+        let skipped = fixture.finding_in(mode.clone())?;
+        assert!(
+            !credits_a_discriminator(&skipped.class),
+            "{label} in {mode:?}: {skipped:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_skipped_library_with_a_mod_rs_layout_is_withheld_in_every_mode() -> Result<(), String> {
+    // #14962 review round 8: an unmounted `src/foo/mod.rs`, as the holder's
+    // parent or as the holder itself, is keyed on `foo` and is no doubt.
+    let tests = lib_source(UNIT_TESTS);
+    let layouts: [(&[(&str, &str)], &str); 2] = [
+        (
+            &[
+                ("src/lib.rs", "pub mod foo;\n"),
+                ("src/foo/mod.rs", "pub mod bar;\n"),
+                ("src/foo/bar.rs", tests.as_str()),
+            ],
+            "src/foo/bar.rs",
+        ),
+        (
+            &[
+                ("src/lib.rs", "pub mod foo;\n"),
+                ("src/foo/mod.rs", tests.as_str()),
+            ],
+            "src/foo/mod.rs",
+        ),
+    ];
+    for (files, holder) in layouts {
+        let fixture = TempCrate::create_changing(LIB_TEST_FALSE, files, holder, 1)?;
+        let control = TempCrate::create_changing("", files, holder, 1)?;
+        assert_withheld_against_control_in_every_mode(&fixture, &control, holder)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_path_mount_of_a_skipped_mod_rs_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14962 review round 8: `b` mounts `a/src/foo/mod.rs`, which declares
+    // the holder `bar`, so `cargo test -p b` runs its test.
+    let tests = lib_source(UNIT_TESTS);
+    let files = |member_a: &'static str| -> Vec<(&'static str, String)> {
+        vec![
+            ("a/Cargo.toml", member_a.to_string()),
+            ("a/src/lib.rs", "pub mod foo;\n".to_string()),
+            ("a/src/foo/mod.rs", "pub mod bar;\n".to_string()),
+            ("a/src/foo/bar.rs", tests.clone()),
+            ("b/Cargo.toml", MEMBER_B.to_string()),
+            (
+                "b/src/lib.rs",
+                "#[path = \"../../a/src/foo/mod.rs\"]\nmod foo;\n".to_string(),
+            ),
+        ]
+    };
+    let create = |member_a: &'static str| {
+        let owned = files(member_a);
+        let borrowed: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(path, text)| (*path, text.as_str()))
+            .collect();
+        TempCrate::create_in(WORKSPACE, &borrowed, "a/src/foo/bar.rs", 1)
+    };
+    let fixture = create(MEMBER_A)?;
+    let control = create(MEMBER_A_TESTED)?;
+    assert_exposed_like_control_in_every_mode(&fixture, &control, "a `#[path]` mount of `mod.rs`")
+}
+
 /// A single-package manifest with `package_keys` in `[package]` and `tail`
 /// after `[workspace]` (#14972).
 fn package_manifest(package_keys: &str, tail: &str) -> String {
@@ -724,4 +922,33 @@ fn example_unit_tests_are_not_a_discriminator_unless_the_example_is_tested() -> 
         );
     }
     Ok(())
+}
+
+#[test]
+fn a_member_path_mount_of_an_undiscovered_root_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14972 merge with #14962 round 7/8: `a` turns `autobins` off, so
+    // cargo builds nothing from `a/src/main.rs`, but `b` compiles it through
+    // `#[path]` and `cargo test -p b` runs `t`. An undiscovered root is no
+    // listed target, so the mount scan asks about it like any other
+    // ancestry member; a run whose index omits `b` must not withhold it.
+    let main = main_source();
+    let fixture = TempCrate::create_in(
+        WORKSPACE,
+        &[
+            (
+                "a/Cargo.toml",
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\nautobins = false\n",
+            ),
+            ("a/src/lib.rs", "pub fn g() {}\n"),
+            ("a/src/main.rs", &main),
+            ("b/Cargo.toml", MEMBER_B),
+            (
+                "b/src/lib.rs",
+                "#[path = \"../../a/src/main.rs\"]\npub mod cli;\n",
+            ),
+        ],
+        "a/src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&fixture, "a `#[path]` mount of an undiscovered root")
 }

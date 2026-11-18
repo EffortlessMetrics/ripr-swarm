@@ -512,9 +512,9 @@ impl ManifestInventory {
 
     /// True when cargo metadata lists `path` as the `src_path` of a target
     /// that is not an established skip (#14962 review): a live or unmodeled
-    /// target (a `[[test]] path`, a `build` script, an example) may compile
-    /// the file's tests. Unavailable metadata is doubt; a path cargo does not
-    /// list is no target.
+    /// target (a `[[test]] path`, a `build` script, a bench, a `test = true`
+    /// example) may compile the file's tests. Unavailable metadata is
+    /// doubt; a path cargo does not list is no target.
     pub(crate) fn crate_root_may_run(&mut self, workspace_root: &Path, path: &Path) -> bool {
         match self
             .lookup_in(workspace_root, path, |inventory| &inventory.crate_roots)

@@ -125,16 +125,31 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    is doubt; a directory link without Rust sources is not. The
    file keeps its tests when any source outside its own skipped ancestry
    spells its file name (a `#[path]`, a static `include!`, a build script that
-   writes a mount) or declares a `mod` of its stem; when any source builds a
-   `mod`/`include!` operand dynamically (an `include!` whose `(`, `{` or `[`
-   delimiter is not followed by a plain string literal, such as
-   `include!(concat!(env!("OUT_DIR"), ..))`, or a macro metavariable as a
-   `mod` name or `path` value: `mod $name`, `path = $p`, read with whitespace
-   ignored and again with comments stripped, so `mod /* m */ $n` counts) or
-   spells such an operand with escapes; an ordinary
-   `macro_rules!` (`($e:expr) => { $e * 2 }`) is no doubt; when
-   the file is a `mod.rs`; when cargo metadata lists the file itself as a
-   live or unmodeled target (`[[test]] path`, `build`, an example); or when
+   writes a mount) or declares a `mod` of its stem; when any source may mount
+   through a file the scan cannot name or read, judged on Rust tokens (a
+   small lexer that drops comments and keeps string, raw-string and char
+   literals whole, so neither a comment nor a `"http://x"` string can hide or
+   fake a mount): a `macro_rules!` or `macro` body holding a `mod`, `include`
+   or non-`::` `path` token (`mod /* c */ $n`); any `include` token other
+   than an `include!` (any delimiter) whose operand is a string literal
+   naming a `.rs` file (`include!(concat!(env!("OUT_DIR"), ..))`,
+   `include!("gen.inc")`, and an alias such as `use std::include as inc;`
+   whose `inc!` no rule could follow); a
+   `path` attribute whose value is a metavariable or a non-`.rs` string
+   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
+   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
+   is no doubt; when a source spells a mount operand with escapes (an
+   `include!` operand or `path` value holding a backslash names no `.rs`
+   file the scan can match, however the tokens are spaced); when any file of
+   the holder's ancestry other than its skipped roots is mounted from
+   outside the ancestry by the same name-or-stem test (a `.../<dir>/mod.rs`
+   is keyed on its directory: a `mod <dir>` declaration, or any spelling of
+   `mod.rs`, since a relative operand such as `"../mod.rs"` need not spell
+   `<dir>`; an unmounted `mod.rs` layout keeps the skip), or any ancestry
+   file, the holder
+   included, is listed by cargo metadata as a live or unmodeled target
+   (`[[test]] path`, `build`, an example), so a `[[test]]` rooted at an
+   intermediate module keeps the leaf's tests; or when
    the walk cannot finish (an unreadable file, more than 20,000 entries).
    So the verdict does not change with `--mode`.
 
@@ -166,8 +181,13 @@ establish a skip.
 
 Rule 3's probe premise widens accordingly: a false `auto*` key, an
 `[[example]]` table, or a holder or root under the package's `examples/`
-directory also spends the probe. Rule 5's mount scan applies unchanged, so a
-file a running target mounts keeps its tests.
+directory also spends the probe. Rule 5's mount scan and ancestry check
+apply to both shapes, so a file a running target mounts keeps its tests. An
+undiscovered root is no listed target, so unlike a metadata-listed skipped
+root it is not exempt from rule 5's name-or-stem test: a source outside the
+ancestry that spells its file name or declares a `mod` of its stem (a
+`#[path = "../../a/src/main.rs"]` in another member) keeps its tests even
+when the run's index does not hold that source.
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
@@ -199,7 +219,10 @@ running test; no named stop reason is added on this issue.
   mount `mod /* m */ $n` into a tested bin read in every mode what their
   tests-on controls read (`exposed`); the plain skip reads the same in every
   mode, also beside an ordinary `macro_rules!` and a symlinked directory
-  without Rust sources.
+  without Rust sources. Round 5: an `include!("gen.inc")` and a
+  `#[path = "m.txt"]` mount of a non-`.rs` file, and a macro mount
+  `mod /* c */ $n` after a `"http://x"` string, read in every mode what
+  their tests-on controls read (`exposed`).
 - Undiscovered and example targets (#14972): `#[test]` in `src/main.rs`
   under `autobins = false`, in `src/lib.rs` under `autolib = false`, and in
   `examples/demo.rs` (default `test = false`) does not credit a
@@ -207,7 +230,8 @@ running test; no named stop reason is added on this issue.
   root declared explicitly under `auto* = false` read `exposed` in every
   mode. `[[example]] test = true` reads `exposed` in every mode except
   `instant`, which does not index `examples/` and reads `no_static_path` on
-  base too.
+  base too. An `autobins = false` `src/main.rs` that another member mounts
+  through `#[path]` reads `exposed` in every mode.
 
 ## Known Limits
 
@@ -239,6 +263,14 @@ running test; no named stop reason is added on this issue.
   withheld although `cargo test` of the mounting crate runs them. Sources
   under a build directory are unusual and Cargo may delete them on
   `cargo clean`.
+- Skipped targets, under-credit (#14962 review n8): macros defined outside
+  the scanned sources are not modelled. A proc-macro (for example a
+  workspace proc-macro member), or a macro or `include` re-export from a
+  non-member path dependency (`ext::inc!(concat!(env!("OUT_DIR"), ..))`),
+  that emits a `mod` declaration or a `#[path = ...] pub mod m;` built by
+  string formatting can mount the file into a tested target without any
+  token the scan recognizes, and the file's tests are then withheld
+  although `cargo test` of that target runs them.
 
 - Undiscovered and example targets (#14972): a file in another package
   compiled only through `#[path]` by a skipped target is still judged by its

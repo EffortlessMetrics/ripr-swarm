@@ -727,6 +727,15 @@ struct PythonOwner {
     /// click-alias decorators require this; reassigned aliases stay fail-closed.
     #[serde(default)]
     trusted_stdlib_click_alias: bool,
+    /// The owner is a route handler whose response body is its returned dict
+    /// (#13869): every static route decorator takes only keywords that leave
+    /// the body alone (no `response_model` or `response_class`), the return
+    /// annotation is absent, and the function has exactly one
+    /// `return`, of a dict literal with distinct string-literal keys, and no
+    /// `yield` or `raise`. A workspace post-pass may withdraw it.
+    /// `false` by default, which grants no response-read credit.
+    #[serde(default)]
+    route_returns_body: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -941,6 +950,11 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// Byte offset in `gate_text` where the exception body ends, before the
+    /// rule 14 comparison is appended (#14754 review). `None` for a
+    /// non-exception assertion or a cached fact written before this field.
+    #[serde(default)]
+    exception_body_end: Option<usize>,
     /// The call a callable-form exception assertion makes
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
@@ -1776,6 +1790,31 @@ impl PythonAdapter {
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
+        // A rival route in an unread file cannot be ruled out, so a partial
+        // walk or read refuses the route-response credit, as does any source
+        // that reshapes responses or registers unrecorded routes (#13869).
+        // Every route decorator line of every read source (test files
+        // included, whose owners are not collected) is counted against the
+        // routes the owners record; a file that failed to parse records none.
+        related_tests::apply_route_overlaps(
+            &mut all_owners,
+            refused_files != 0
+                || !workspace_read.limits.is_empty()
+                || !workspace_read.io_failures.is_empty()
+                || !parse_failure_paths.is_empty()
+                || workspace_read
+                    .sources
+                    .values()
+                    .any(|source| related_tests::workspace_reshapes_responses(source))
+                || related_tests::workspace_registers_routes_indirectly(
+                    workspace_read.sources.values().map(String::as_str),
+                ),
+            workspace_read
+                .sources
+                .values()
+                .map(|source| related_tests::route_decorator_lines(source))
+                .sum(),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -2593,6 +2632,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
@@ -2611,6 +2653,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod cross_module_caller_tests;
 #[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]

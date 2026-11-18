@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: No field-value assertion observes the constructed field: missing_duration_count: total - known. propagation_unknown static exposure for field_construction probe: missing_duration_count: total - known. Next step: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            "text": "Missing check: No field-value assertion observes the constructed field: missing_duration_count: total - known. propagation_unknown static exposure for field_construction probe: missing_duration_count: total - known. Next step: Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.propagation_unknown|probe:src_lib.rs:field_construction:42ec5018|probe:src_lib.rs:field_construction:42ec5018|fixtures/one_hop_field_projection_discarded/input/src/lib.rs"
@@ -160,7 +160,7 @@
             "stop_reasons": [
               "propagation_evidence_unknown"
             ],
-            "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+            "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
             "tool": "ripr"
           },
           "ruleId": "ripr.finding.propagation_unknown"

@@ -1252,13 +1252,19 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
+        // A flat prelude may rebind the flag or a constant the initializer
+        // reads (`let si = !si;`, a function-local `const KB`); read exactly,
+        // those rebindings are applied below instead of declining (#12771).
+        let prelude = super::owner_prelude::owner_prelude(owner, operand, &initializer, parameters);
+        let accounted = |name: &str| prelude.as_ref().is_some_and(|found| found.binds(name));
         // A flag-selected initializer reads its flag from the caller's row
         // and its arms from the file's constants, so neither may be rebound
-        // in the owner (`let si = !si;`, a local `KB`).
+        // in the owner (`let si = !si;`, a local `KB`) beyond the prelude.
         if initializer.trim_start().starts_with("if ")
             && free_identifiers(&initializer)
                 .iter()
                 .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .filter(|name| !accounted(name))
                 .any(|name| {
                     name_rebound_in_owner(owner, name)
                         || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
@@ -1279,11 +1285,24 @@ fn resolve_boundary_operand(
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
+                && !accounted(name)
                 && parameter_rebound_before(owner, name, declared_line, &initializer)
         }) {
             return None;
         }
-        let constants = initializer_constants(owner, &initializer, parameters, index);
+        let (initializer, constants) = match &prelude {
+            Some(found) => {
+                let rewritten = found.rewrite_initializer(&initializer)?;
+                let mut constants = initializer_constants(owner, &rewritten, parameters, index);
+                constants.retain(|(name, _)| !found.binds(name));
+                constants.extend(found.constants.iter().cloned());
+                (rewritten, constants)
+            }
+            None => {
+                let constants = initializer_constants(owner, &initializer, parameters, index);
+                (initializer, constants)
+            }
+        };
         let names = free_identifiers(&initializer);
         let mut parameters_read: Vec<&String> = names
             .iter()
@@ -2390,6 +2409,22 @@ fn missing_discriminator_facts(
 /// the probe line itself carries a binding form beside it, or when `name` is
 /// ever assigned or bound `mut`. A true result only declines the
 /// intermediate-input reading and keeps the gap (#9147).
+/// Whether a call's boundary row reaches the guarded comparison on `line`
+/// as the caller passed it, as `check`'s guarded reading requires: the
+/// compared parameter is never rebound first, and no earlier branch, early
+/// return or loop can take the row away from the line (#14873).
+pub(in crate::analysis) fn guarded_boundary_row_reaches(
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    parameter: &str,
+    line: usize,
+) -> bool {
+    !parameter_may_be_rebound(owner, parameter, line)
+        && owner_source.is_none_or(|source| {
+            changed_line_is_first_decision(owner.start_line, source, line, false)
+        })
+}
+
 fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -3146,13 +3181,39 @@ pub(in crate::analysis) fn guarded_comparison(
     probe: &Probe,
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
-    let (comparison, guards, rebound_guard) =
-        split_guarded(&probe.expression, owner, probe.location.line)?;
+    let continuation = wrapped_guard_continuation(owner, probe.location.line);
+    let with_continuation = |text: &str| match &continuation {
+        Some(rest) => format!(
+            "{} {rest}",
+            crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+        ),
+        None => text.to_string(),
+    };
+    let (comparison, guards, rebound_guard) = split_guarded(
+        &with_continuation(&probe.expression),
+        owner,
+        probe.location.line,
+    )?;
     let before = match probe.before.as_deref() {
         None => None,
         Some(before) => {
-            let (old_comparison, old_guards, _) =
-                split_guarded(before, owner, probe.location.line)?;
+            let Some((old_comparison, old_guards, _)) =
+                split_guarded(&with_continuation(before), owner, probe.location.line)
+            else {
+                // A wrapped guard the old line cannot be read with (`if a > T {`
+                // becoming `if a >= T` over `&& !x`) is a guard-touching edit:
+                // decline it rather than fall back to reading the comparison
+                // without its guards.
+                if continuation.is_some() {
+                    return Some(GuardedComparison {
+                        comparison,
+                        guards,
+                        rebound_guard: true,
+                        before: None,
+                    });
+                }
+                return None;
+            };
             let sorted = |guards: &[(String, bool)]| {
                 let mut guards = guards.to_vec();
                 guards.sort();
@@ -3189,6 +3250,89 @@ fn comparison_operator(comparison: &str) -> Option<&'static str> {
 /// The comparison, each guard with the value it must hold, and whether a
 /// guard may be rebound before the changed line.
 type GuardedSplit = (String, Vec<(String, bool)>, bool);
+
+/// The bare bool parameter guards of the predicate on one source line
+/// (`if order_cents >= FREE_OVER_CENTS && !express {`) whose comparison is
+/// `comparison`, each with the value it must hold, and whether a guard may
+/// be rebound before that line. `None` when the line is not exactly one
+/// comparison joined by top-level `&&` to bare owner parameters, or its
+/// comparison is a different one. The repo-wide seam view reads the same
+/// guards the diff reading does (#13037), so a row that misses a guard
+/// never lends the comparison a boundary row there either.
+pub(in crate::analysis) fn predicate_line_bool_guards(
+    line_text: &str,
+    comparison: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(Vec<(String, bool)>, bool)> {
+    let text = line_text.trim();
+    let text = text
+        .strip_prefix("} else if ")
+        .or_else(|| text.strip_prefix("else if "))
+        .or_else(|| text.strip_prefix("while "))
+        .unwrap_or(text);
+    let joined;
+    let text = match wrapped_guard_continuation(owner, line) {
+        // The head's own trailing comment masked, so it cannot swallow the
+        // wrapped guards joined after it (`if a >= T // note` / `&& g`).
+        Some(rest) => {
+            joined = format!(
+                "{} {rest}",
+                crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+            );
+            joined.as_str()
+        }
+        None => text,
+    };
+    let (found, guards, rebound) = split_guarded(text, owner, line)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
+/// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
+/// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
+/// read a wrapped guard as they read a one-line one (#14873). The head may
+/// already carry guards (`if a >= T && member`); its continuation adds the
+/// rest. Only lines that each open with `&&` count, up to the opening
+/// brace, with comments masked; a `||` or any other continuation is not
+/// read, which leaves the comparison as its one-line spelling reads.
+fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
+    let offset = line.checked_sub(owner.start_line)?;
+    // Comments masked to spaces, so `&& !express // note` reads its guard
+    // instead of dropping the line and the comparison's guard with it.
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    if masked.len() != owner.body.len() {
+        return None;
+    }
+    let mut lines = masked.lines().skip(offset);
+    let head = lines.next()?.trim();
+    let opens_condition = ["if ", "} else if ", "else if ", "while "]
+        .iter()
+        .any(|prefix| head.starts_with(prefix));
+    if !opens_condition || head.ends_with('{') || head.contains("||") {
+        return None;
+    }
+    let mut guards = Vec::new();
+    for next in lines {
+        let next = next.trim();
+        if next == "{" {
+            break;
+        }
+        let rest = next.strip_prefix("&&")?;
+        let (rest, done) = match rest.trim_end().strip_suffix('{') {
+            Some(rest) => (rest, true),
+            None => (rest, false),
+        };
+        if rest.contains("||") {
+            return None;
+        }
+        guards.push(format!("&& {}", rest.trim()));
+        if done {
+            break;
+        }
+    }
+    (!guards.is_empty()).then(|| guards.join(" "))
+}
 
 fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {
     let expression = clean_operand(expression);
@@ -4034,7 +4178,7 @@ fn adaptor_element_runs(
     // No direct call: bind the parameter up the resolved helper chain, each
     // hop passing exactly its caller's own, never rebound, parameter.
     let chain = helper_chain?;
-    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut position = tail.position;
@@ -7118,7 +7262,7 @@ pub(in crate::analysis) fn computed_input_parameters(
     };
     // #6614: a macro-argument hop binds no argument, so no parameter
     // value crosses it.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let Some(entry) = chain.hops.last() else {
@@ -7194,7 +7338,7 @@ fn helper_transferred_rows(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     // #6614: a macro-argument hop binds no argument rows.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let rows = chain_entry_rows(chain, related_tests, index);
@@ -7373,7 +7517,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
     chain: &super::helper_transfer::HelperChain,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut rows = chain_entry_rows(chain, related_tests, index);
@@ -14885,6 +15029,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -14896,6 +15041,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -14973,6 +15119,7 @@ assert_eq!(input.amount, 100);"#
                 .collect(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,

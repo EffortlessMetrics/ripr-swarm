@@ -753,7 +753,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
 /// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
 /// `None`) seam it cannot reach (#12757).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
+/// `1.182`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay
+/// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.182";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -975,7 +984,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.184";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1199,7 +1209,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.184";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1419,7 +1430,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.61`: entries are framed as `<digest>\n<compact body>` and verified over
 /// the stored body bytes (#9216); `1.60` entries embed the digest in the body
 /// and need a re-serialization of every entry to verify, so they are not read.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.61";
+/// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
+/// `fn`) are not stored (#13703); `1.61` entries still carry them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5486,7 +5499,7 @@ mod tests {
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.61");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5695,7 +5708,8 @@ mod tests {
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
         // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.181");
+        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.182");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5857,8 +5871,9 @@ mod tests {
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
         // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
+        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.184");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.184");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

@@ -792,7 +792,7 @@ fn owner_parameter_literals(
         .collect()
 }
 
-fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
     matches!(assertion.strength, OracleStrength::Strong)
         || matches!(
             assertion.kind,
@@ -3406,6 +3406,7 @@ mod tests {
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,

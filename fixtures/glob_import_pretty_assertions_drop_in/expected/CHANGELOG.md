@@ -33,3 +33,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — glob_import_pretty_assertions_drop_in (4)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless glob_import_pretty_assertions_drop_in --reason "..."`
+
+Updated:
+- `expected/check.json`

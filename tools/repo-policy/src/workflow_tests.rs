@@ -1133,7 +1133,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -1283,6 +1288,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         (
             "constituent from its own changed paths",
             "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "keep agent-contract markdown on the full-proof lane for merge-group constituents",
+            ".agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;",
         ),
         (
             "tip with its own docs-only classification",
@@ -1563,6 +1572,26 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "job {job} must be guarded against nonrequest labels: {violations:?}"
         );
     }
+}
+
+#[test]
+fn routed_rust_main_replay_retirement_uses_the_actual_event_declaration() {
+    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+    assert_eq!(
+        routed_rust_event_route(workflow, "push", None, None),
+        RoutedRustEventRoute::WorkflowNotTriggered
+    );
+    let restored = workflow.replacen("on:\n", "on:\n  push:\n    branches: [main, master]\n", 1);
+    assert_ne!(restored, workflow);
+    assert_eq!(
+        routed_rust_event_route(&restored, "push", None, None),
+        RoutedRustEventRoute::LaunchFullGate
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&restored)
+            .iter()
+            .any(|finding| finding.contains("must not replay ordinary main-push"))
+    );
 }
 
 #[test]

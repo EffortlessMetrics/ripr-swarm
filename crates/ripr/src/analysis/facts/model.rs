@@ -932,6 +932,11 @@ pub struct FileFacts {
     /// from the lexical fallback and from hand-built facts; the scans then
     /// parse `source` as before.
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// Whether this file pulls documentation in from outside its own text
+    /// (`#![doc = include_str!(..)]`), answered from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the unseen-reach scan then parses `source` itself.
+    pub(crate) external_docs: Option<bool>,
 }
 
 impl FileFacts {
@@ -1955,6 +1960,8 @@ pub(crate) struct FileFactsWire {
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     #[serde(default)]
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    #[serde(default)]
+    pub(crate) external_docs: Option<bool>,
 }
 
 impl FunctionFactWire {
@@ -2114,6 +2121,7 @@ impl From<&FileFacts> for FileFactsWire {
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
+            external_docs: facts.external_docs,
         }
     }
 }
@@ -2208,6 +2216,7 @@ impl FileFactsWire {
             source,
             item_scopes: self.item_scopes,
             macro_candidates: self.macro_candidates,
+            external_docs: self.external_docs,
         })
     }
 }
@@ -2397,6 +2406,7 @@ struct FileFactsWireRef<'a> {
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
+    external_docs: Option<bool>,
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2466,6 +2476,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
+            external_docs: facts.external_docs,
         }
     }
 }
@@ -2701,6 +2712,7 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2847,6 +2859,7 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -3057,6 +3070,7 @@ fn checks_helper() {
             source: Arc::clone(&home),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;

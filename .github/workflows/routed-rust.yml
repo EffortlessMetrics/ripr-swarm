@@ -15,8 +15,8 @@ on:
     # the exact queued merge commit. Both requests coexist while the repository
     # cuts over to the queue; the label request is then retired.
     types: [checks_requested]
-  push:
-    branches: [main, master]
+  # Ordinary landed commits consume their native G qualification; no replay.
+  # Existing H qualification and actual G remain required during App bootstrap.
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ concurrency:
   # A repeated merge-ready request means the prior admission transaction was
   # revoked. Nonrequest label events use a unique group so an ordinary label
   # can never cancel an in-flight qualification. Preserve independent
-  # main/manual work.
+  # queue/manual work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -212,6 +212,9 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                # Rust tests assert the exact prose of the agent-contract markdown
+                # (#14986); classifying it docs-only skips the lanes that read it.
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) reason=agent_contract_markdown; return 0 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
@@ -266,13 +269,21 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) sha="$PR_BASE_SHA" ;;
+            pull_request)
+              # The judged tree is the merge ref, whose first parent is the
+              # base it was built on. Fetch the merge commit and its parents
+              # so the anchor is local and immutable for this run.
+              git fetch --depth=2 origin "$EVENT_SHA" >/dev/null 2>&1 || { echo "::error::trusted admission source could not fetch the merge ref $EVENT_SHA"; exit 1; }
+              parents="$(git rev-list --parents -n 1 "$EVENT_SHA")"
+              read -r _self p1 p2 extra <<<"$parents"
+              [ -n "${p1:-}" ] && [ -n "${p2:-}" ] && [ -z "${extra:-}" ] || { echo "::error::trusted admission source is not a two-parent merge commit: $EVENT_SHA"; exit 1; }
+              sha="$p1"
+              ;;
             merge_group) sha="$GROUP_BASE_SHA" ;;
             push|workflow_dispatch) sha="$EVENT_SHA" ;;
             *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
@@ -337,6 +348,8 @@ jobs:
               [ -n "$path" ] || continue
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                # Same non-docs set as the detect-docs-only job (#14986).
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 1 ;;
               esac
@@ -406,6 +419,10 @@ jobs:
           docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3700'
+          # #14932: the bundle is checked out at steps.trusted.outputs.sha on every
+          # arm, so the enforcement packet, the generated-path declaration and the
+          # base commit are read from that same commit. One identity per run.
+          trusted-sha: ${{ steps.trusted.outputs.sha }}
       - name: Admit additional merge-group constituents
         if: github.event_name == 'merge_group' && steps.candidate.outputs.status == 'admitted'
         shell: bash
@@ -414,10 +431,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TIP_PR: ${{ steps.entry.outputs.pr }}
           CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
+          # #14932: the group chain is built on this commit, so every constituent
+          # is judged against the packet and declaration it was built on.
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
           count="$(jq -r 'length' <<<"$CONSTITUENTS")"
           [ "$count" -le 1 ] && exit 0
+          [[ "$GROUP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::merge group base sha is missing or invalid"; exit 1; }
           action_root="$GITHUB_WORKSPACE/.admission-trusted/.github/actions/pr-candidate-admission"
           packet_path="policy/release-hard-cut-admission.json"
           tmp="$(mktemp -d)"
@@ -448,16 +469,19 @@ jobs:
             base_ref="$(jq -r '.base.ref // empty' "$current")"
             base_sha="$(gh api "repos/${REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
             [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::constituent PR #${c_pr} base sha unresolved"; exit 1; }
-            gh api "repos/${REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+            # #14932: pin the packet, declaration and base commit to the group
+            # base the chain was built on; base_sha above stays the live subject
+            # for --base-sha and the during-run movement check only.
+            gh api "repos/${REPOSITORY}/git/commits/${GROUP_BASE_SHA}" > "$base_commit"
             packet_err="$tmp/packet-err-${c_pr}"
-            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${GROUP_BASE_SHA}" > "$packet_meta" 2>"$packet_err"; then
               jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$packet"
               packet_from_base=1
             elif grep -q 'HTTP 404' "$packet_err"; then
               cp "${GITHUB_WORKSPACE}/${packet_path}" "$packet"
               packet_from_base=0
             else
-              echo "::error::constituent PR #${c_pr} hard-cut packet read from the live base failed for a reason other than absence"
+              echo "::error::constituent PR #${c_pr} hard-cut packet read from the group base failed for a reason other than absence"
               exit 1
             fi
             cut_args=()
@@ -470,10 +494,10 @@ jobs:
               jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$proposed_packet" && proposed_args=(--proposed-packet "$proposed_packet") || rm -f "$proposed_packet"
             fi
             attrs_args=()
-            if gh api -H "Accept: application/vnd.github.raw" "repos/${REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>"$packet_err"; then
+            if gh api -H "Accept: application/vnd.github.raw" "repos/${REPOSITORY}/contents/.gitattributes?ref=${GROUP_BASE_SHA}" > "$attrs" 2>"$packet_err"; then
               attrs_args=(--generated-attributes "$attrs")
             elif ! grep -q 'HTTP 404' "$packet_err"; then
-              echo "::error::constituent PR #${c_pr} generated-path declaration read from the live base failed for a reason other than absence"
+              echo "::error::constituent PR #${c_pr} generated-path declaration read from the group base failed for a reason other than absence"
               exit 1
             fi
             set +e
@@ -723,7 +747,7 @@ jobs:
       disk-guard-threshold: 0
       use-scratch: false
       # The hosted gates leave the nextest step to rust-github-tests (#10507).
-      test-shards: 4
+      test-shards: 2
       pr-labels: ${{ needs.admission.outputs.labels }}
       admission-reason: ${{ needs.admission.outputs.reason }}
       admission-head: ${{ needs.admission.outputs.head }}
@@ -736,7 +760,7 @@ jobs:
       run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
       upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
-  # The hosted required test phase as four nextest partitions (#10507). It starts
+  # The hosted required test phase as two nextest partitions (#10507). It starts
   # with the hosted gates job, not after it: the merge queue ejects an entry
   # whose required context is still pending at its status-check timeout, and
   # gates-then-shards (about 44 + 32 minutes) outlived it on every code entry
@@ -763,12 +787,13 @@ jobs:
 
   # #12252: the extension e2e is a job of this run, so the Result reads it as a
   # `needs` result bound to this run id and request, with no cross-workflow
-  # correlation. Selection is the diff of the admitted PR against its base plus
-  # the `full-ci`/`vscode` labels; anything unclassifiable selects (#12122).
+  # correlation. PR selection uses the admitted head; queue selection uses the
+  # complete event base-to-group diff, including earlier constituents. Admission
+  # supplies the union of constituent labels. Anything unclassifiable selects.
   vscode-select:
     name: vscode surface
     needs: [admission]
-    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -787,7 +812,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ needs.admission.outputs.head }}
           LABELS: ${{ needs.admission.outputs.labels }}
+          EVENT_NAME: ${{ github.event_name }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
+          if [ "$EVENT_NAME" = merge_group ]; then
+            # Never fall back to the tip PR: its diff can omit earlier queued
+            # constituents. Missing group identities conservatively select.
+            BASE_SHA="$GROUP_BASE_SHA" HEAD_SHA="$GROUP_HEAD_SHA"
+          fi
           selected=true reason=unclassified
           classify() {
             reason=label
@@ -831,6 +864,10 @@ jobs:
     needs: [vscode-select]
     if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}
     uses: ./.github/workflows/vscode-e2e.yml
+    with:
+      # On merge_group this is G, the composition already bound by admission.
+      # Preserve the existing synthetic merge checkout for PR qualification.
+      ref: ${{ github.sha }}
 
   docs-gate:
     name: Ripr Docs Gate
@@ -899,7 +936,7 @@ jobs:
           retention-days: 5
 
   result:
-    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
+    # Static `Ripr Rust Small Result` only for queue/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
@@ -1094,7 +1131,7 @@ jobs:
           done
       - name: Require the extension e2e result for the admitted head
         id: vscode
-        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         env:
           SELECT_RESULT: ${{ needs.vscode-select.result }}
           SELECTED: ${{ needs.vscode-select.outputs.selected }}
@@ -1205,7 +1242,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
-          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
+          elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
