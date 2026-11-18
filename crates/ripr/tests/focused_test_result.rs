@@ -2228,6 +2228,101 @@ fn a_proposal_attempt_cannot_finish_without_a_focused_result() -> Result<(), Str
     Ok(())
 }
 
+/// The after-phase gate leaves a proposal whose file it does not see to the
+/// cage. `Path::is_file` looks with a symlink-following `statx`; the cage
+/// captures paths with `AT_SYMLINK_NOFOLLOW` and reads them with `open`. Hide
+/// the created proposal file from symlink-following `statx` only, so the gate
+/// sees it absent (as if it appeared just after the gate looked) while the
+/// finish authority evaluates a compliant cage with no focused result. That
+/// authority must refuse from its own evaluated state instead of finishing.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-gate-window")?;
+    let root = &fixture.root;
+    let dir = root.join(".git/ripr-gate-window-hook");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let source = dir.join("hook.c");
+    let library = dir.join("hook.so");
+    fs::write(
+        &source,
+        r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+int statx(int dirfd, const char *path, int flags, unsigned int mask, struct statx *out) {
+    int (*next)(int, const char *, int, unsigned int, struct statx *) = dlsym(RTLD_NEXT, "statx");
+    const char *target = getenv("RIPR_HOOK_TARGET");
+    if (target && path && !strcmp(path, target) && !(flags & AT_SYMLINK_NOFOLLOW)) {
+        FILE *mark = fopen(getenv("RIPR_HOOK_MARKER"), "w"); if (mark) fclose(mark);
+        errno = ENOENT;
+        return -1;
+    }
+    return next(dirfd, path, flags, mask, out);
+}
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let compiled = Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&library)
+        .arg(&source)
+        .arg("-ldl")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !compiled.status.success() {
+        return Err(format!("compile gate-window hook: {}", combined(&compiled)));
+    }
+    let marker = dir.join("marker");
+    let output = ripr_command(root)
+        .env("LD_PRELOAD", &library)
+        .env("RIPR_HOOK_TARGET", root.join(PROPOSED_FILE))
+        .env("RIPR_HOOK_MARKER", &marker)
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !marker.exists() {
+        return Err(format!(
+            "the gate's existence check was not interposed: {}",
+            combined(&output)
+        ));
+    }
+    let text = combined(&output);
+    // The finish authority's refusal, not the gate's: the gate never saw the
+    // file, so only the re-check from the evaluated cage can produce it.
+    assert!(
+        text.contains(
+            "follows a new-test proposal, so it cannot finish without a focused test result"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("--test-result FILE"), "{text}");
+    assert_refused_and_unrecorded(
+        root,
+        &attempt,
+        &output,
+        "cannot finish without a focused test result",
+    )?;
+    let manifest = manifest(root, &attempt)?;
+    assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    Ok(())
+}
+
 #[test]
 fn review_continue_refusal_recovers_on_the_same_attempt() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("review-continue")?;

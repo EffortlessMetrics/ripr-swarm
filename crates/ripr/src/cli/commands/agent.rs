@@ -3945,6 +3945,28 @@ fn run_agent_repair_phase(
                         if crate::app::repair_attempt::repair_attempt_focused_identity_is_retry_refusal(&error) {
                             refusal.narrate(error.clone());
                             refusal.typed = true;
+                        } else if crate::app::repair_attempt::repair_attempt_proposal_focused_required_is_refusal(&error) {
+                            // #13203 slice C at the finish authority: the
+                            // proposal file appeared after the gate above
+                            // looked. Narrate and type it like that gate.
+                            refusal.narrate(format!("focused test result required: {error}"));
+                            for line in focused_result_recovery_lines(
+                                &caller_root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                                prior_refusals,
+                            ) {
+                                refusal.narrate(line);
+                            }
+                            refusal.typed = true;
+                            if prior_refusals.saturating_add(1)
+                                >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                            {
+                                refusal.code = Some(
+                                    crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted,
+                                );
+                            }
                         } else if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
                             &error,
                         ) {

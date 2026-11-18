@@ -4098,6 +4098,19 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
             attempt_id.as_str()
         ));
     }
+    // #13203 slice C at the finish authority: the after-phase gate skips a
+    // proposal whose file is absent, leaving it to the cage. If the file
+    // appears after that check, the cage evaluated here can be compliant
+    // with no focused run, so refuse from this same evaluated state.
+    if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && baseline.policy().new_test_proposal.is_some()
+        && focused.is_none()
+    {
+        return Err(format!(
+            "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL}",
+            attempt_id.as_str()
+        ));
+    }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -4872,6 +4885,21 @@ pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
 /// The result was checked against another HEAD or test-file snapshot than the
 /// one the cage captured. No after verdict has been committed.
 pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test result no longer matches the captured HEAD or test file; rerun the focused test and retry the after phase with --test-result FILE";
+
+/// The finish authority's own refusal for an attempt that follows a new-test
+/// proposal but reached the finish without a focused result (#13203 slice C).
+/// No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL: &str = "follows a new-test proposal, so it cannot finish without a focused test result; rerun the after phase with `--test-result FILE`";
+
+pub(crate) fn repair_attempt_proposal_focused_required_is_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok() && tail == REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL
+}
 
 pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
     let Some((id, tail)) = error

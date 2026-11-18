@@ -2208,6 +2208,7 @@ tests = [
   "crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over",
   "crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable",
   "crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result",
+  "crates/ripr/tests/focused_test_result.rs::a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded",
   "crates/ripr/tests/focused_test_result.rs::an_inline_proposal_needs_a_passing_test_absent_from_the_baseline",
   "crates/ripr/tests/focused_test_result.rs::an_inline_proposal_in_a_module_file_refuses_a_test_it_began_with",
   "crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_finish_without_a_retained_focused_claim",
