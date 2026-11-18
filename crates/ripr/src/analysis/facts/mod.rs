@@ -403,11 +403,17 @@ fn reuse_cached_index(
     // test fact a fresh build keeps. So a file the core withheld that the
     // merge links again (an include limitation, a new module edge) falls
     // back when it then has tests (checked below).
+    // #14962: tests withheld because `cargo test` skips every root of the
+    // file's module tree revive the same way when the merge adds a live
+    // root (a `src/main.rs` that declares the shared module).
     let withheld: Vec<PathBuf> = cached
         .index
         .files()
         .iter()
-        .filter(|(_, facts)| facts.role_provenance.outside_module_tree)
+        .filter(|(path, facts)| {
+            facts.role_provenance.outside_module_tree
+                || cached.index.cargo_test_skipped_files.contains(*path)
+        })
         .map(|(path, _)| path.clone())
         .collect();
     if !extras.is_empty() {
@@ -456,7 +462,9 @@ fn reuse_cached_index(
     // A revived file without tests differs in nothing a fresh build keeps.
     let revived = withheld.iter().any(|path| {
         processed.index.files().get(path).is_some_and(|facts| {
-            !facts.role_provenance.outside_module_tree && !facts.tests.is_empty()
+            !facts.role_provenance.outside_module_tree
+                && !processed.index.cargo_test_skipped_files.contains(path)
+                && !facts.tests.is_empty()
         })
     });
     if revived {
