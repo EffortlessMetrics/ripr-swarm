@@ -3411,7 +3411,9 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
             .filter(|import| import.path.ends_with('*'))
             .collect::<Vec<_>>()
     };
-    let all_globs = [globs(&facts.source), globs(&test.body)].concat();
+    // The test file's text already holds the test body, so its globs are
+    // counted once from the file.
+    let all_globs = globs(&facts.source);
     let root_glob_delivers_entry = matches!(all_globs.as_slice(), [only] if {
         let segments: Vec<String> = only
             .path
@@ -3427,7 +3429,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     }) && entry_module
         .as_deref()
         .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)))
-        && !test_file_declares_item_named(&facts.source, &caller.name);
+        && !test_file_declares_item_named(&facts.source, &caller.name)
+        && glob_and_test_share_the_file_scope(&facts.source, &test.name);
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
@@ -3445,6 +3448,37 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the test file's one glob import is a top-level item of the file
+/// and the test `test_name` is a top-level function of the same file, so the
+/// glob is in scope at the test's calls. A glob in a sibling module, a nested
+/// block or the test's own body, or a test inside a module, declines (#15073).
+fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut top_level_globs = 0usize;
+    let mut top_level_test = false;
+    for item in parse.tree().items() {
+        match &item {
+            ast::Item::Use(use_item) => {
+                top_level_globs +=
+                    super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
+                        .iter()
+                        .filter(|import| import.path.ends_with('*'))
+                        .count();
+            }
+            ast::Item::Fn(function) => {
+                top_level_test |= function
+                    .name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == test_name);
+            }
+            _ => {}
+        }
+    }
+    top_level_globs == 1 && top_level_test
 }
 
 /// Whether the test file declares any item named `name` at any depth (a `fn`,

@@ -211,3 +211,25 @@ fn a_glob_in_a_sibling_module_of_the_test_file_does_not_link() -> Result<(), Str
     assert!(!outcome.related);
     Ok(())
 }
+
+#[test]
+fn a_lone_glob_in_a_sibling_module_does_not_reach_a_top_level_test() -> Result<(), String> {
+    // The only glob is out of scope at `rounds_up`, so `cash_total` there is
+    // not the library's (Devin review on #15152).
+    let outcome = at_root("mod other {\n    use money::*;\n}\n")?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
+
+#[test]
+fn a_root_glob_does_not_reach_a_test_inside_a_module() -> Result<(), String> {
+    let tests = "use money::*;\n\nmod inner {\n    #[test]\n    fn rounds_up() {\n        assert_eq!(cash_total(103), 105);\n    }\n}\n";
+    let outcome = outcome_of(
+        "src/lib.rs",
+        &[("src/lib.rs", ENTRY), ("tests/total.rs", tests)],
+    )?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
