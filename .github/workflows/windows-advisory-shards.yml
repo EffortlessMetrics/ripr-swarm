@@ -295,7 +295,7 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       REQUESTED_CANDIDATE: ${{ inputs.candidate_sha }}
       RIPR_BLESS_PROOF_SHA: ${{ github.sha }}
-      RIPR_BLESS_PROOF_DIR: target/bless-parity-transfer
+      RIPR_BLESS_PROOF_DIR: ${{ github.workspace }}/target/bless-parity-transfer
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -328,7 +328,7 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       REQUESTED_CANDIDATE: ${{ inputs.candidate_sha }}
       RIPR_BLESS_PROOF_SHA: ${{ github.sha }}
-      RIPR_BLESS_PROOF_DIR: target/bless-parity-transfer
+      RIPR_BLESS_PROOF_DIR: ${{ github.workspace }}/target/bless-parity-transfer
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
