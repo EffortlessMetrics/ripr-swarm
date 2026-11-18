@@ -228,8 +228,17 @@ suite('Server resolver compatibility fallback', () => {
     for (const allowed of ['ripr', 'ripr-nightly', '/usr/local/bin/ripr']) {
       assert.strictEqual(relativeConfiguredPathFailure(allowed, 'linux'), undefined, allowed);
     }
-    assert.strictEqual(relativeConfiguredPathFailure('C:\\tools\\ripr.exe', 'win32'), undefined);
-    assert.strictEqual(relativeConfiguredPathFailure('ripr.exe', 'win32'), undefined);
+    // Windows: only a drive plus root, or a UNC root, names one stable file.
+    // A drive-relative name follows that drive's current directory and a
+    // rooted path without a drive follows the current drive.
+    for (const unstable of ['C:ripr.exe', 'C:bin\\ripr.exe', '\\tools\\ripr.exe', '/tools/ripr.exe', 'bin/ripr.exe']) {
+      const failure = relativeConfiguredPathFailure(unstable, 'win32');
+      assert.ok(failure, unstable);
+      assert.ok(failure.detail.includes(JSON.stringify(unstable)), failure.detail);
+    }
+    for (const allowed of ['C:\\tools\\ripr.exe', 'c:/tools/ripr.exe', '\\\\server\\share\\ripr.exe', 'ripr.exe', 'ripr.cmd']) {
+      assert.strictEqual(relativeConfiguredPathFailure(allowed, 'win32'), undefined, allowed);
+    }
   });
 
   test('resolveServer probes the expanded home path and never probes a relative one (#15075)', async () => {

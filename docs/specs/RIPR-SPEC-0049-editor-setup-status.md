@@ -183,6 +183,9 @@ Configured server path:
 - Given `ripr.server.path` is a relative path with a directory part, no server
   is probed and the unavailable-server message names the setting and asks for
   the full path. A bare command name is still looked up on `PATH`.
+- On Windows, a drive-relative value (`C:ripr.exe`) and a rooted value
+  without a drive (`\tools\ripr.exe`) are refused the same way; a drive plus
+  separator or a UNC root is accepted.
 
 Preview disabled:
 

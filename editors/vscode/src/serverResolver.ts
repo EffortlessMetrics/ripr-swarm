@@ -75,15 +75,23 @@ export function relativeConfiguredPathFailure(
   configuredPath: string,
   platform: NodeJS.Platform = process.platform
 ): ResolveFailure | undefined {
-  const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  const hasDirectoryPart = platform === 'win32' ? /[\\/]/.test(configuredPath) : configuredPath.includes('/');
-  if (pathApi.isAbsolute(configuredPath) || !hasDirectoryPart) {
+  if (platform === 'win32') {
+    // Fully qualified means a drive plus a root (`C:\x`) or a UNC root
+    // (`\\server\share\x`). `C:ripr.exe` depends on the drive's current
+    // directory and `\tools\ripr.exe` on the current drive, so neither names
+    // one stable file even though the second is "absolute" to path.win32.
+    const fullyQualified = /^[A-Za-z]:[\\/]/.test(configuredPath) || /^[\\/]{2}[^\\/]/.test(configuredPath);
+    const bareCommand = !/[\\/:]/.test(configuredPath);
+    if (fullyQualified || bareCommand) {
+      return undefined;
+    }
+  } else if (path.posix.isAbsolute(configuredPath) || !configuredPath.includes('/')) {
     return undefined;
   }
   return {
     message: `configured ripr.server.path ${configuredPath} is not an absolute path.`,
     detail:
-      `ripr.server.path is ${JSON.stringify(configuredPath)}, a relative path. ` +
+      `ripr.server.path is ${JSON.stringify(configuredPath)}, which depends on the current directory or drive. ` +
       'It is not resolved against the workspace folder, so it cannot name one stable file.',
     kind: 'other',
     remedy: 'Set ripr.server.path to the full path of the ripr executable (a leading ~ means your home directory), or clear it.'
