@@ -2697,9 +2697,9 @@ fn analyze_related_assertions(
         // #14968: an unconditional literal-only assertion (`assert!(true)`
         // as a top-level statement) reads nothing, so it is never credited.
         // It still counts toward the single-assertion fallback (below), except
-        // for an implicit observer of the owner's own call, so it neither
-        // hands that fallback to an unrelated sibling nor displaces the
-        // `unwrap` / `unwrap_err` reading the test has without it.
+        // for an assertion or observer that reads the owner's result, so it
+        // neither hands that fallback to an unrelated sibling nor lowers a
+        // reading of the owner the test has without it.
         let literal_only = test
             .assertions
             .iter()
@@ -2788,14 +2788,16 @@ fn analyze_related_assertions(
         // Refusing credit must not manufacture the singleton-test fallback
         // for an otherwise unrelated surviving oracle. A dropped unconditional
         // literal-only assertion (#14968) still counts, so it never hands the
-        // fallback to an unrelated sibling assertion; only an implicit
-        // observer of the owner's own call (`g(2).unwrap_err()`) gets the
-        // count the test has without the literal.
+        // fallback to an unrelated sibling assertion; only an assertion or
+        // observer that reads the owner's result (`assert!(g(2).is_err())`,
+        // `g(2).unwrap_err()`, or a read of `let r = g(2)`) gets the count the
+        // test has without the literal.
         let full_assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
             let assertion_count = if literal_only > 0
-                && super::literal_assertion::is_implicit_owner_call_observer(
+                && super::literal_assertion::reads_owner_result(
+                    &test.body,
                     assertion,
                     match_context.owner_callee,
                 ) {

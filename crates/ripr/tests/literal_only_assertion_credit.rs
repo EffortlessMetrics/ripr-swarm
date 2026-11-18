@@ -383,3 +383,61 @@ fn a_dropped_literal_never_hands_the_fallback_to_an_unrelated_sibling() -> Resul
     assert_eq!(credited, Vec::<String>::new());
     Ok(())
 }
+
+#[test]
+fn a_dropped_literal_never_lowers_an_assertion_that_reads_the_owner() -> Result<(), String> {
+    let mut lowered = Vec::new();
+    for (key, function, (error_path, predicate)) in [
+        // Controls: the same reads without the literal.
+        ("is_err_alone", "{ assert!(g(2).is_err()); }", WEAK),
+        (
+            "bound_is_err_alone",
+            "{ let r = g(2); assert!(r.is_err()); }",
+            WEAK,
+        ),
+        (
+            "expect_err_format_alone",
+            "{ g(2).expect_err(&format!(\"x\")); }",
+            WEAK,
+        ),
+        // A macro assertion on the owner call keeps its reading beside a
+        // dropped literal, on either side of it.
+        (
+            "is_err_then_assert_true",
+            "{ assert!(g(2).is_err()); assert!(true); }",
+            WEAK,
+        ),
+        (
+            "assert_true_then_is_err",
+            "{ assert!(true); assert!(g(2).is_err()); }",
+            WEAK,
+        ),
+        (
+            "assert_eq_literals_then_is_err",
+            "{ assert_eq!(1, 1); assert!(g(2).is_err()); }",
+            WEAK,
+        ),
+        // A read of a binding bound from an owner call.
+        (
+            "bound_assert_true_then_is_err",
+            "{ let r = g(2); assert!(true); assert!(r.is_err()); }",
+            WEAK,
+        ),
+        // An implicit observer whose text holds a macro call.
+        (
+            "expect_err_format_assert_true",
+            "{ g(2).expect_err(&format!(\"x\")); assert!(true); }",
+            WEAK,
+        ),
+    ] {
+        let (actual_error_path, actual_predicate) = result_owner_classes(key, function)?;
+        if (actual_error_path.as_str(), actual_predicate.as_str()) != (error_path, predicate) {
+            lowered.push(format!(
+                "{key}: (error_path, predicate) reads ({actual_error_path}, {actual_predicate})"
+            ));
+        }
+    }
+    // Each row reads as the same test without the literal.
+    assert_eq!(lowered, Vec::<String>::new());
+    Ok(())
+}

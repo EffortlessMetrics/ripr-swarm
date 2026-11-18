@@ -10,12 +10,14 @@
 //! (`if let Ok(_) = g(2) { assert!(false) }`), so it can still observe the
 //! owner through its guard.
 //!
-//! The dropped literal still counts toward the single-assertion fallback for
-//! every assertion macro, so dropping it never hands that fallback to an
-//! unrelated sibling (`assert!(true); assert_eq!(other(), 4)`). Only an
-//! implicit observer that calls the owner itself (`g(2).unwrap_err()`,
-//! `g(3).unwrap()`) gets the count the test has without the literal.
+//! The dropped literal still counts toward the single-assertion fallback, so
+//! dropping it never hands that fallback to an unrelated sibling
+//! (`assert!(true); assert_eq!(other(), 4)`). Only an assertion or implicit
+//! observer that reads the owner's result (calls the owner, as in
+//! `assert!(g(2).is_err())` or `g(2).unwrap_err()`, or reads a binding bound
+//! from an owner call) gets the count the test has without the literal.
 
+use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::analysis::extract::{assertion_compares_only_literals, mask_comments_and_strings};
 use crate::analysis::facts::{OracleFact, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -69,24 +71,27 @@ fn squash(text: &str) -> String {
         .to_string()
 }
 
-/// Whether `assertion` is an implicit observer (no macro: an `unwrap()`,
-/// `unwrap_err()` or similar read extracted from a plain statement) whose own
-/// text calls the owner `owner` by name. Without a known owner name, or for
-/// any macro assertion, this answers `false`.
-pub(super) fn is_implicit_owner_call_observer(assertion: &OracleFact, owner: Option<&str>) -> bool {
+/// Whether `assertion` reads the owner's result: its masked text calls the
+/// owner `owner` by name (`assert!(g(2).is_err())`, `g(2).unwrap_err()`,
+/// `g(2).expect_err(&format!("x"))`), or names a test `let` bound from an
+/// owner call (`let r = g(2); .. assert!(r.is_err())`). Macro or not, the
+/// decision is the shared sink-identity binding
+/// (`oracle_binds_sink_identity`) over the assertion and test body with
+/// comments and strings masked, so an owner name inside a string literal
+/// binds nothing. Without a known owner name this answers `false`.
+pub(super) fn reads_owner_result(
+    test_body: &str,
+    assertion: &OracleFact,
+    owner: Option<&str>,
+) -> bool {
     let Some(owner) = owner.filter(|owner| !owner.is_empty()) else {
         return false;
     };
-    let masked = mask_comments_and_strings(&assertion.text);
-    if masked.contains('!') {
-        return false;
-    }
-    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    masked.match_indices(owner).any(|(at, _)| {
-        let before = masked.get(..at).and_then(|text| text.chars().next_back());
-        let after = masked.get(at + owner.len()..).unwrap_or_default();
-        before.is_none_or(|ch| !is_ident(ch)) && after.trim_start().starts_with('(')
-    })
+    oracle_binds_sink_identity(
+        &mask_comments_and_strings(&assertion.text),
+        &mask_comments_and_strings(test_body),
+        Some(owner),
+    )
 }
 
 #[cfg(test)]
@@ -106,28 +111,45 @@ mod tests {
     }
 
     #[test]
-    fn implicit_owner_call_observers_are_plain_reads_of_the_owner_call() {
+    fn owner_result_readers_call_the_owner_or_read_its_binding() {
+        let unbound = "fn t() {}";
         for text in [
             "g(2).unwrap_err()",
             "g(3).unwrap()",
             "let _e = g (2).expect_err(\"x\");",
+            "assert!(g(2).is_err())",
+            "g(2).expect_err(&format!(\"x\"))",
         ] {
             assert!(
-                is_implicit_owner_call_observer(&fact(text), Some("g")),
+                reads_owner_result(unbound, &fact(text), Some("g")),
                 "{text}"
             );
         }
+        let bound = "fn t() { let r = g(2); assert!(true); assert!(r.is_err()); }";
+        assert!(reads_owner_result(
+            bound,
+            &fact("assert!(r.is_err())"),
+            Some("g")
+        ));
         for (text, owner) in [
             ("other().unwrap()", Some("g")),
             ("gg(2).unwrap()", Some("g")),
-            ("assert!(g(2).is_err())", Some("g")),
             ("assert_eq!(other(), 4);", Some("g")),
             ("g.unwrap()", Some("g")),
             ("g(2).unwrap()", None),
             ("\"g(2)\".len()", Some("g")),
+            ("assert!(!o.is_empty())", Some("add")),
+        ] {
+            assert!(!reads_owner_result(unbound, &fact(text), owner), "{text}");
+        }
+        let unrelated = "fn t() { let _ = g(2); let o = other(); let s = \"let q = g(2);\"; }";
+        for text in [
+            "assert_eq!(other(), 4);",
+            "assert!(o > 0)",
+            "assert!(q.is_err())",
         ] {
             assert!(
-                !is_implicit_owner_call_observer(&fact(text), owner),
+                !reads_owner_result(unrelated, &fact(text), Some("g")),
                 "{text}"
             );
         }

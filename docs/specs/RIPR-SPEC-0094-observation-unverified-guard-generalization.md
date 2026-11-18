@@ -981,23 +981,32 @@ assert!(true); assert!(!o.is_empty());      // side_effect stays reachable_unrev
 let _ = g(2); assert!(true); assert_eq!(other(), 4);  // error_path stays reachable_unrevealed
 ```
 
-Only an implicit observer that is not an assertion macro and calls the owner
-by name itself (`g(2).unwrap_err()`, `g(3).unwrap()`) is counted as in the
-test without the literal, so the literal does not displace that reading.
+Only a surviving assertion or implicit observer that reads the owner's
+result is counted as in the test without the literal, so the literal does not
+displace that reading. It reads the owner's result when its text, with
+comments and strings masked, calls the owner by name, or names a test `let`
+bound from an owner call (the shared sink-identity binding,
+`oracle_binds_sink_identity`). Whether it is an assertion macro does not
+matter.
 
 Invariant: an unconditional literal-only assertion never raises a test's
 class, and never lowers it below the same test without it, except where that
 no-literal reading was itself single-assertion fallback credit on a sibling
-that does not call the owner (`assert!(!o.is_empty())` or
-`assert_eq!(other(), 4)` above, which read `weakly_exposed` without the
-literal). There the test keeps the `reachable_unrevealed` it had before this
-rule.
+that neither calls the owner nor reads a binding bound from an owner call
+(`assert!(!o.is_empty())` or `assert_eq!(other(), 4)` above, which read
+`weakly_exposed` without the literal). There the test keeps the
+`reachable_unrevealed` it had before this rule.
 
 ```rust
-g(2).unwrap_err(); assert!(true);              // weakly_exposed, as without assert!(true)
-let _e = g(2).unwrap_err(); assert_eq!(1, 1);  // weakly_exposed
-g(3).unwrap(); assert!(true);                  // weakly_exposed
-g(3)?; assert!(true); Ok(())                   // reachable_unrevealed, as `g(3)?; Ok(())`
+g(2).unwrap_err(); assert!(true);                   // weakly_exposed, as without assert!(true)
+let _e = g(2).unwrap_err(); assert_eq!(1, 1);       // weakly_exposed
+g(3).unwrap(); assert!(true);                       // weakly_exposed
+g(2).expect_err(&format!("x")); assert!(true);      // weakly_exposed
+assert!(true); assert!(g(2).is_err());              // weakly_exposed (predicate and error_path)
+assert!(g(2).is_err()); assert!(true);              // weakly_exposed
+assert_eq!(1, 1); assert!(g(2).is_err());           // weakly_exposed
+let r = g(2); assert!(true); assert!(r.is_err());   // weakly_exposed
+g(3)?; assert!(true); Ok(())                        // reachable_unrevealed, as `g(3)?; Ok(())`
 ```
 
 A literal inside an `if`, `if let`, `match` arm, loop or closure is not
@@ -1033,9 +1042,9 @@ Known limits:
 Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
 `crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
 `crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
-(bare-call, owner-read, guarded-literal, implicit-observer and
-unrelated-sibling rows), and
-`implicit_owner_call_observers_are_plain_reads_of_the_owner_call` in
+(bare-call, owner-read, guarded-literal, implicit-observer,
+owner-reading-assertion and unrelated-sibling rows), and
+`owner_result_readers_call_the_owner_or_read_its_binding` in
 `crates/ripr/src/analysis/classify/literal_assertion.rs`.
 
 ## Test Mapping
