@@ -98,6 +98,13 @@ sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
 
+A `diff --git` section whose header names one path under two different
+mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
+`diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
+A header repeating one token on both sides, a header whose two paths differ,
+and a section carrying rename or copy metadata keep their literal paths; other
+custom side prefixes are not guessed (#15103).
+
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse
 distinct filesystem names. The same path identity survives construction,
