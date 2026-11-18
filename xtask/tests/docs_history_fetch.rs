@@ -34,6 +34,11 @@ impl Scratch {
 
 fn command(dir: &Path, program: &str) -> Command {
     let mut value = Command::new(program);
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            value.env_remove(name);
+        }
+    }
     value
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -186,6 +191,21 @@ fn exact_blobless_and_full_paths_classify_the_same_real_git_histories() -> Resul
                 git(Path::new(bare), &["rev-parse", "--is-shallow-repository"])?,
                 "false"
             );
+            let objects = git(
+                Path::new(bare),
+                &[
+                    "cat-file",
+                    "--batch-all-objects",
+                    "--batch-check=%(objecttype)",
+                ],
+            )?;
+            assert!(objects.lines().any(|kind| kind == "commit"));
+            assert!(objects.lines().any(|kind| kind == "tree"));
+            assert!(
+                objects
+                    .lines()
+                    .all(|kind| matches!(kind, "commit" | "tree"))
+            );
             assert_eq!(classify(&scratch.0, &subject, bare)?, expected);
             assert_eq!(classify(&origin, &subject, "")?, expected);
         }
@@ -210,23 +230,25 @@ fn exact_blobless_and_full_paths_classify_the_same_real_git_histories() -> Resul
     assert_eq!(classify(&origin, &absent, "")?, "docs_only=false\n");
 
     let shallow = scratch.0.join("shallow");
+    git(&origin, &["checkout", "--detach", &docs])?;
     let url = format!("file://{}", origin.display());
     git(
         &scratch.0,
-        &["clone", "-q", "--depth", "1", &url, "shallow"],
+        &["clone", "-q", "--depth", "2", &url, "shallow"],
     )?;
-    let shallow_subject = Subject {
-        head: &non_docs,
-        ..absent
-    };
     assert_eq!(
         git(&shallow, &["rev-parse", "--is-shallow-repository"])?,
         "true"
     );
-    assert_eq!(
-        classify(&shallow, &shallow_subject, "")?,
-        "docs_only=false\n"
+    assert_eq!(git(&shallow, &["cat-file", "-t", &base])?, "commit");
+    assert_eq!(git(&shallow, &["cat-file", "-t", &docs])?, "commit");
+    assert_eq!(classify(&shallow, &subject, "")?, "docs_only=false\n");
+    assert!(
+        fs::read_to_string(scratch.0.join("scope-summary"))
+            .map_err(|error| error.to_string())?
+            .contains("- reason: `unavailable_history`")
     );
+    assert_eq!(classify(&origin, &subject, "")?, "docs_only=true\n");
     scratch.clean_after_pass()
 }
 
@@ -237,6 +259,7 @@ fn fallback_and_event_scope_are_wired_in_the_actual_job() -> Result<(), String> 
         "if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && !steps.docs_history.outputs.git_dir"
     ));
     assert!(job.contains("fetch-depth: 0"));
+    assert!(job.contains("timeout --kill-after=5s 120s git "));
     assert!(job.contains("DOCS_GIT_DIR: ${{ steps.docs_history.outputs.git_dir }}"));
     assert!(!job.contains("GITHUB_TOKEN:"));
     assert!(!job.contains("GH_TOKEN:"));

@@ -186,7 +186,7 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 0
           history="$(mktemp -d "$RUNNER_TEMP/ripr-docs-history.XXXXXX")" || exit 0
           if git init --bare --quiet "$history" &&
-             git -C "$history" -c protocol.version=2 fetch --quiet --no-tags --filter=blob:none "$SERVER_URL/$REPOSITORY.git" "$BASE_SHA" "$HEAD_SHA" &&
+             timeout --kill-after=5s 120s git -C "$history" -c protocol.version=2 fetch --quiet --no-tags --filter=blob:none "$SERVER_URL/$REPOSITORY.git" "$BASE_SHA" "$HEAD_SHA" &&
              [ "$(git -C "$history" rev-parse --is-shallow-repository)" = false ] &&
              [ "$(git -C "$history" cat-file -t "$BASE_SHA" 2>/dev/null)" = commit ] &&
              [ "$(git -C "$history" cat-file -t "$HEAD_SHA" 2>/dev/null)" = commit ] &&
