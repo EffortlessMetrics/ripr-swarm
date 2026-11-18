@@ -2096,6 +2096,18 @@ impl WorkspaceKeyContext<'_> {
             "{workspace_manifests_hash}:rust-snapshot-files:{}",
             super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
         ));
+        // #15040 (also before the Cargo identity): a workspace member outside
+        // the root is read by classification (its crate name and the trait
+        // names it declares) but is never walked by discovery, so the corpus
+        // content hash does not see it. Fold what is read into the key. A
+        // workspace with every member below the root keeps its key.
+        let workspace_manifests_hash =
+            match super::classify::out_of_root_member_identity(self.workspace_root) {
+                Some(identity) => hash_str(&format!(
+                    "{workspace_manifests_hash}:out-of-root-members:{identity}"
+                )),
+                None => workspace_manifests_hash,
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
