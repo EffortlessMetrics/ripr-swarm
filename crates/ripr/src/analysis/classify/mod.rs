@@ -9,6 +9,10 @@ mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
 mod const_flow;
+mod constant_tail_change;
+pub(in crate::analysis) use constant_tail_change::{
+    ConstantTailChange, base_side_may_rebind_trusted_macros, constant_tail_change,
+};
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
 #[cfg(feature = "lang-rust")]
@@ -185,7 +189,9 @@ pub(in crate::analysis) use owner_pin::{
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
-pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
+pub(in crate::analysis) use owner_value_sink::{
+    bool_field_assertion, owner_record_read_masked_anywhere, use_may_rebind_owner,
+};
 pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };
@@ -199,8 +205,8 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, early_return_literal_witness, fallible_literal_witness,
-    format_tail_witness, result_map_witness,
+    constant_tail_change_witness, constant_tail_witness, early_return_literal_witness,
+    fallible_literal_witness, format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;

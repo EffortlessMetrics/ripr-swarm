@@ -18055,6 +18055,15 @@ fn test_module_shadows_item(
     kind: ShadowKind,
     index: &RustIndex,
 ) -> bool {
+    // Every shadow below needs `base` spelled in `source`: a declaration
+    // (`declares_type`/`declares_trait` over the masked copy, which keeps the
+    // code bytes in place), a `type` alias, or the raw `r#base` spelling all
+    // contain it. A file that never spells it is answered without fetching
+    // (and possibly re-parsing) the file's snapshot, which dominated probe
+    // classification on large test files (#12947).
+    if !source.contains(base) {
+        return false;
+    }
     // A caller supplying different source bytes must never borrow the indexed
     // snapshot. Standalone/macro-shaped inputs retain the same fallback logic.
     let snapshot = index

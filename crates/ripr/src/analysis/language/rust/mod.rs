@@ -2142,10 +2142,15 @@ fn apply_rust_proximity_reach_limit(
                 )
             })
     };
-    if let Some(witness) = transitive_reach
-        .transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    // With an admission rule, rank only admitted witnesses: filtering the
+    // single best one would let a nearer ineligible witness hide an
+    // eligible one and drop the limit (#14970).
+    let transitive = if cross_package_only {
+        transitive_reach.transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.transitive_witness(&owner_name)
+    };
+    if let Some(witness) = transitive {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2164,10 +2169,11 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach
-        .deep_transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    } else if let Some(witness) = if cross_package_only {
+        transitive_reach.deep_transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.deep_transitive_witness(&owner_name)
+    } {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -3261,6 +3267,12 @@ impl RustAdapter {
                 .with_diff_touched(diff_touched.clone())
                 .with_changed_consts(classify::ChangedConsts::from_changed_files(
                     &analyzable_changed_files,
+                ))
+                // #14852: every changed file, generated ones included, since
+                // a removed binding anywhere may have rebound `vec`.
+                .with_base_may_rebind_trusted_macros(classify::base_side_may_rebind_trusted_macros(
+                    changed_files,
+                    &index,
                 ))
                 // #14852: every `mod` declaration the index holds, and every
                 // changed file's declarations on both sides, for the shared

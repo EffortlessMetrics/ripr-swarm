@@ -313,6 +313,18 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.const_readers = const_readers;
     context.const_flow = const_flow;
     context.binding_return_flow = binding_return_flow;
+    // #14852: a returned constant replaced by a different constant, read
+    // from the owner's base-side body in the diff (never `probe.before`).
+    context.constant_tail_change = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::constant_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
+        )
+    });
     context.compile_time_guarded = owner_fn.is_none()
         && candidate_index
             .probe_index_file(probe, index)

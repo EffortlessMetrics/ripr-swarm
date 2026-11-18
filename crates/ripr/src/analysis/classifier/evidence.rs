@@ -16,13 +16,13 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_returns_record,
-    owner_touches_field_only_at, package_prefix, parameter_rebound, predicate_initialized_field,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, returned_array_construction_plain, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
-    wrapper_return_boundary_pinned,
+    oracle_crediting_relations, outer_imported_names, owner_record_read_masked_anywhere,
+    owner_returns_record, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    predicate_initialized_field, propagation_evidence_with_witness,
+    pushed_collection_compared_whole, pushed_literal_path, reach_evidence,
+    returned_array_construction_plain, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
     extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
@@ -339,6 +339,16 @@ impl ClassifiedProbeEvidence {
                 owner: context.owner_fn.map(|owner| owner.id.clone()),
             }];
         }
+        // #14852: a returned constant replaced by a different constant
+        // reaches the owner's return; its sink carries the raw tail text.
+        if flow_sinks
+            .iter()
+            .all(|sink| sink.kind == FlowSinkKind::Unknown)
+            && let (Some(owner), Some(change)) =
+                (context.owner_fn, context.constant_tail_change.as_ref())
+        {
+            flow_sinks = vec![change.return_sink(owner)];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -370,6 +380,19 @@ impl ClassifiedProbeEvidence {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
+        })
+        .or_else(|| {
+            context
+                .owner_fn
+                .zip(context.constant_tail_change.as_ref())
+                .and_then(|(owner, change)| {
+                    crate::analysis::classify::constant_tail_change_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                        change,
+                    )
+                })
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
@@ -1804,7 +1827,26 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
-                &assertion_admitted,
+                // #14726: a predicate that sets one record field pairs only
+                // with an assertion every owner-record read of which is
+                // that field or the whole record (#14562).
+                // `assert_eq!(opts("--verbose").retries, 3)` feeds the
+                // boundary input but reads another field, and
+                // `assert_eq!((boundary.retries, opts("-v").verbose), ..)`
+                // reads the field only from a call on another input.
+                &|test, assertion| {
+                    assertion_admitted(test, assertion)
+                        && !pairing_bool_field.zip(context.owner_fn).is_some_and(
+                            |(field, owner)| {
+                                owner_record_read_masked_anywhere(
+                                    test,
+                                    &assertion.text,
+                                    &owner.name,
+                                    field,
+                                )
+                            },
+                        )
+                },
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
                 &|test, assertion| {

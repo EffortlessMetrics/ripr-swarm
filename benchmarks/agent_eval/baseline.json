@@ -5,9 +5,9 @@
     {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3195,"total_tokens":6800},
     {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2006,"total_tokens":2171},
     {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9776,"total_tokens":10886},
-    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34783,"total_tokens":34783},
+    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34921,"total_tokens":34921},
     {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
-    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89579},
+    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89690},
     {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58127}
   ],
   "scenarios": [
@@ -346,7 +346,7 @@
         "gaps_header": 1,
         "missed_gaps": 0,
         "reference_key_valid": true,
-        "reference_test_closes_loop": false,
+        "reference_test_closes_loop": true,
         "reported_gap_lines": [10],
         "silent_on_control": null,
         "weak_key_valid": true,
@@ -391,11 +391,11 @@
           "failed_steps": 0,
           "route": "cli-json-terse",
           "steps": [
-            {"bytes":9742,"exit":0,"step":"check","tokens":4285}
+            {"bytes":10034,"exit":0,"step":"check","tokens":4423}
           ],
-          "tokens_to_answer": 4285,
-          "total_bytes": 9742,
-          "total_tokens": 4285
+          "tokens_to_answer": 4423,
+          "total_bytes": 10034,
+          "total_tokens": 4423
         },
         {
           "answer_reached": true,
@@ -419,11 +419,11 @@
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4884,"exit":0,"step":"ripr_list_gaps","tokens":924},
             {"bytes":8839,"exit":0,"step":"ripr_get_gap#1","tokens":1729},
-            {"bytes":8035,"exit":0,"step":"ripr_get_gap#2","tokens":1528}
+            {"bytes":8511,"exit":0,"step":"ripr_get_gap#2","tokens":1639}
           ],
           "tokens_to_answer": 8964,
-          "total_bytes": 43965,
-          "total_tokens": 10492
+          "total_bytes": 44441,
+          "total_tokens": 10603
         },
         {
           "answer_reached": true,
@@ -436,10 +436,10 @@
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":3205,"exit":0,"step":"ripr_list_gaps","tokens":266},
             {"bytes":5595,"exit":0,"step":"ripr_get_gap#1","tokens":441},
-            {"bytes":5077,"exit":0,"step":"ripr_get_gap#2","tokens":387}
+            {"bytes":5298,"exit":0,"step":"ripr_get_gap#2","tokens":387}
           ],
           "tokens_to_answer": 5838,
-          "total_bytes": 32992,
+          "total_bytes": 33213,
           "total_tokens": 6225
         }
       ],

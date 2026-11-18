@@ -522,3 +522,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_predicate_positions (38)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/human.txt`

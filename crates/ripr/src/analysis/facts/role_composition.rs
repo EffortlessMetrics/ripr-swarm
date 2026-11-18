@@ -159,6 +159,9 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
         }
     }
     withhold_tests_outside_module_tree(index, &outside_module_tree);
+    let skipped_unit_tests = files_in_skipped_unit_test_targets(index, workspace_root);
+    withhold_tests_outside_module_tree(index, &skipped_unit_tests);
+    index.cargo_test_skipped_files = skipped_unit_tests;
     if granted.is_empty() {
         return;
     }
@@ -187,6 +190,596 @@ fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<
     index
         .test_order
         .retain(|&id| !outside.contains(&test_facts[id].file));
+}
+
+/// The test-holding files whose every execution root is a crate root that
+/// `cargo test` does not build as a libtest binary (#14962): `[lib] test =
+/// false`, `[[bin]] test = false`, or a bin's unmet default-feature
+/// `required-features`, as cargo metadata reports them through
+/// [`ManifestInventory`]. The `#[test]` functions such a module tree
+/// compiles print `running 0 tests`, so they are not discriminators.
+/// Doctests are a separate rustdoc run (`[lib] doctest`) and register after
+/// this pass, so they keep their credit. A skipped `[[test]]` target keeps
+/// its existing owners (#7265 harness verdict, #8016 file drop).
+///
+/// Fail closed toward credit. A file whose module ancestry is unknown
+/// (include edge, lexical fallback, unresolved or cyclic edge) keeps its
+/// tests; so does a file reached from any root cargo runs, a root cargo
+/// metadata does not list or cannot report, and any root an `example`,
+/// `bench` or build-script target owns. The metadata probe runs only when an
+/// execution root's package manifest spells `test = false` on its `[lib]`
+/// or a `[[bin]]` table or a bin names `required-features`, and the pass
+/// stands down while a `Cargo.toml` is dirty in a committed-history check,
+/// because the probe reads the working tree rather than the `HEAD` bytes the
+/// files were loaded from (the #8016 rule).
+///
+/// The index is only part of the workspace: a draft or instant run indexes
+/// less, and a build-script `include!` never enters it. So a skip also needs
+/// [`WorkspaceMountScan`] over every workspace source on disk: no source
+/// outside the file's own skipped ancestry may spell its file name or
+/// declare a `mod` of its stem, no source may build a `mod`/`include!`
+/// operand dynamically, and cargo metadata may list the file as no live or
+/// unmodeled target (#14962 review). The verdict then does not depend on how
+/// much of the workspace the run indexed. A holder whose own package
+/// manifest switches nothing off is never asked, even when `#[path]` places
+/// it under another package's skipped root (it keeps its credit).
+///
+/// Cost: one `cargo metadata --no-deps --offline` probe per composition pass
+/// that has a premise (a check builds up to two indexes), plus one walk of
+/// the workspace sources once a candidate passes the metadata checks.
+fn files_in_skipped_unit_test_targets(
+    index: &RustIndex,
+    workspace_root: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut skipped = BTreeSet::new();
+    let holders: Vec<&PathBuf> = index
+        .files
+        .iter()
+        .filter(|(_, facts)| !facts.tests.is_empty() && !facts.role_provenance.outside_module_tree)
+        .map(|(file, _)| file)
+        .collect();
+    if holders.is_empty() {
+        return skipped;
+    }
+    if crate::analysis::committed_source::current_overlay().is_some_and(|overlay| {
+        overlay
+            .dirty_paths()
+            .any(|path| path.rsplit('/').next() == Some("Cargo.toml"))
+    }) {
+        return skipped;
+    }
+    let mut crate_roots = CrateRoots::default();
+    let mut may_skip: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut inventory = crate::analysis::workspace::ManifestInventory::default();
+    let mut verdicts: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut mounts: Option<Option<WorkspaceMountScan>> = None;
+    for file in holders {
+        // The cheap manifest premise first: a holder whose own package
+        // switches no target off skips no ancestry walk.
+        let holder_premise = crate_roots
+            .package_manifest_dir(workspace_root, file)
+            .is_some_and(|package_dir| {
+                *may_skip
+                    .entry(package_dir.clone())
+                    .or_insert_with(|| manifest_may_skip_unit_tests(workspace_root, &package_dir))
+            });
+        if !holder_premise {
+            continue;
+        }
+        let Some(context) = index.execution_context(file) else {
+            continue;
+        };
+        if context.roots.is_empty() {
+            continue;
+        }
+        let all_skipped = context.roots.iter().all(|root| {
+            if let Some(verdict) = verdicts.get(root) {
+                return *verdict;
+            }
+            let verdict = crate_roots
+                .package_manifest_dir(workspace_root, root)
+                .is_some_and(|package_dir| {
+                    *may_skip.entry(package_dir.clone()).or_insert_with(|| {
+                        manifest_may_skip_unit_tests(workspace_root, &package_dir)
+                    })
+                })
+                && inventory.crate_root_unit_tests_skipped(workspace_root, root);
+            verdicts.insert(root.clone(), verdict);
+            verdict
+        });
+        if !all_skipped {
+            continue;
+        }
+        // #14962 review: the index is a subset of the workspace (a draft or
+        // instant run indexes less, and a generated `include!` never enters
+        // it), so a running target may mount the file where no indexed edge
+        // shows it. Every workspace source on disk is asked instead.
+        let scan = mounts.get_or_insert_with(|| {
+            inventory
+                .workspace_package_dirs(workspace_root)
+                .and_then(|package_dirs| WorkspaceMountScan::read(workspace_root, &package_dirs))
+        });
+        let Some(scan) = scan.as_ref() else {
+            return BTreeSet::new();
+        };
+        let mut chain: BTreeSet<&Path> = context.roots.iter().map(PathBuf::as_path).collect();
+        for edge in &context.edges {
+            chain.insert(&edge.parent);
+            chain.insert(&edge.child);
+        }
+        chain.insert(file);
+        // Every file of the ancestry, not only the holder: an intermediate
+        // module that is itself a running target root (`[[test]] path =
+        // "src/container.rs"`) or that another source mounts compiles the
+        // holder into a target `cargo test` runs (#14962 review, Devin).
+        let ancestry_may_run = chain.iter().any(|member| {
+            inventory.crate_root_may_run(workspace_root, member)
+                || (!context.roots.iter().any(|root| root == member)
+                    && scan.may_mount(member, &chain))
+        });
+        if !ancestry_may_run {
+            skipped.insert(file.clone());
+        }
+    }
+    skipped
+}
+
+/// True when `source` may mount a module through a file the scan cannot
+/// name or read, judged on Rust tokens so comments, whitespace and string
+/// contents cannot hide or fake a mount (#14962 review):
+///
+/// - a `macro_rules!` or `macro` body holding a `mod`, `include` or
+///   attribute-position `path` token, since its expansion can mount any
+///   file (`mod /* c */ $n;`); a macro without them, such as `($e:expr) =>
+///   { $e * 2 }`, is no doubt;
+/// - any `include` token other than an `include!` (any delimiter) whose
+///   operand is a string literal naming a `.rs` file: a generated
+///   `include!(concat!(env!("OUT_DIR"), ..))`, an `include!("gen.inc")` the
+///   scan does not read (it reads only `.rs` sources), and an alias such as
+///   `use std::include as inc;` whose `inc!` no rule could follow;
+/// - a `path` attribute whose value is a metavariable or a string literal
+///   that does not name a `.rs` file (`#[path = "m.txt"]`);
+/// - `mod $name` anywhere.
+fn may_build_mount_operands(source: &str) -> bool {
+    let tokens = mount_tokens(source);
+    let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
+    let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
+    // A literal with an escape (`"\u{73}hared.rs"`) decodes to a name the
+    // substring scan cannot match, so it names no source the scan can tie
+    // back (#14962 review, Devin).
+    let names_rust_source = |at: usize| {
+        matches!(tokens.get(at), Some(MountToken::Str(text))
+            if text.ends_with(".rs") && !text.contains('\\'))
+    };
+    for at in 0..tokens.len() {
+        if ident(at, "macro_rules") && punct(at + 1, '!') {
+            if macro_body_may_mount(&tokens, at + 2, true) {
+                return true;
+            }
+        } else if ident(at, "macro")
+            && matches!(tokens.get(at + 1), Some(MountToken::Ident(_)))
+            && macro_body_may_mount(&tokens, at + 2, false)
+        {
+            return true;
+        }
+        if ident(at, "include")
+            && !(punct(at + 1, '!')
+                && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
+                && names_rust_source(at + 3))
+        {
+            return true;
+        }
+        if ident(at, "path")
+            && punct(at + 1, '=')
+            && (punct(at + 2, '$')
+                || (at > 0
+                    && (punct(at - 1, '[') || punct(at - 1, ','))
+                    && matches!(tokens.get(at + 2), Some(MountToken::Str(_)))
+                    && !names_rust_source(at + 2)))
+        {
+            return true;
+        }
+        if ident(at, "mod") && punct(at + 1, '$') {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when the macro definition whose name or body starts at `from` holds
+/// a `mod`, `include` or non-`::` `path` token. A `macro_rules!` body is its
+/// first delimited group; a `macro` 2.0 definition runs through its first
+/// `{ .. }` group, covering an argument list before it.
+fn macro_body_may_mount(tokens: &[MountToken], from: usize, first_group_only: bool) -> bool {
+    let mut at = from;
+    if matches!(tokens.get(at), Some(MountToken::Ident(_))) {
+        at += 1;
+    }
+    let mut depth = 0usize;
+    while let Some(token) = tokens.get(at) {
+        match token {
+            MountToken::Punct('(' | '[' | '{') => depth += 1,
+            MountToken::Punct(close @ (')' | ']' | '}')) => {
+                if depth <= 1 && (first_group_only || *close == '}') {
+                    return false;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            MountToken::Ident(word) if depth > 0 => {
+                let in_path = |offset: Option<usize>| {
+                    offset.is_some_and(|near| {
+                        matches!(tokens.get(near), Some(MountToken::Punct(':')))
+                    })
+                };
+                let mounts = match word.as_str() {
+                    "mod" | "include" => true,
+                    "path" => !in_path(at.checked_sub(1)) && !in_path(Some(at + 1)),
+                    _ => false,
+                };
+                if mounts {
+                    return true;
+                }
+            }
+            _ if depth == 0 => return false,
+            _ => {}
+        }
+        at += 1;
+    }
+    false
+}
+
+/// One Rust token as the mount check needs it: comments and whitespace are
+/// dropped, and a string literal keeps its raw contents.
+#[derive(Debug, PartialEq)]
+enum MountToken {
+    Ident(String),
+    Str(String),
+    Punct(char),
+    Other,
+}
+
+/// A small Rust lexer: identifiers, string literals (plain, byte, C and raw
+/// with any `#` count), char and byte literals, lifetimes, numbers, nested
+/// block comments and line comments. An unterminated literal or comment runs
+/// to the end of the text.
+fn mount_tokens(source: &str) -> Vec<MountToken> {
+    let chars: Vec<char> = source.chars().collect();
+    let len = chars.len();
+    let at_is = |at: usize, mark: char| chars.get(at) == Some(&mark);
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < len {
+        let ch = chars[i];
+        if ch.is_whitespace() {
+            i += 1;
+        } else if ch == '/' && at_is(i + 1, '/') {
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if ch == '/' && at_is(i + 1, '*') {
+            let mut depth = 0usize;
+            while i < len {
+                if chars[i] == '/' && at_is(i + 1, '*') {
+                    depth += 1;
+                    i += 2;
+                } else if chars[i] == '*' && at_is(i + 1, '/') {
+                    depth = depth.saturating_sub(1);
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        } else if ch == '"' {
+            let (text, next) = quoted_literal(&chars, i + 1);
+            tokens.push(MountToken::Str(text));
+            i = next;
+        } else if ch == '\'' {
+            i = char_or_lifetime_end(&chars, i);
+            tokens.push(MountToken::Other);
+        } else if ch.is_alphabetic() || ch == '_' {
+            let start = i;
+            while i < len && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if matches!(word.as_str(), "r" | "br" | "cr")
+                && let Some((text, next)) = raw_literal(&chars, i)
+            {
+                tokens.push(MountToken::Str(text));
+                i = next;
+            } else if matches!(word.as_str(), "b" | "c") && at_is(i, '"') {
+                let (text, next) = quoted_literal(&chars, i + 1);
+                tokens.push(MountToken::Str(text));
+                i = next;
+            } else if word == "b" && at_is(i, '\'') {
+                i = char_or_lifetime_end(&chars, i);
+                tokens.push(MountToken::Other);
+            } else {
+                tokens.push(MountToken::Ident(word));
+            }
+        } else if ch.is_ascii_digit() {
+            while i < len && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            tokens.push(MountToken::Other);
+        } else {
+            tokens.push(MountToken::Punct(ch));
+            i += 1;
+        }
+    }
+    tokens
+}
+
+/// The contents of a `"`-quoted literal whose body starts at `start`, and
+/// the index after its closing quote; an escaped quote does not close it.
+fn quoted_literal(chars: &[char], start: usize) -> (String, usize) {
+    let mut at = start;
+    while at < chars.len() && chars[at] != '"' {
+        at += if chars[at] == '\\' { 2 } else { 1 };
+    }
+    let end = at.min(chars.len());
+    (
+        chars[start..end].iter().collect(),
+        (at + 1).min(chars.len()),
+    )
+}
+
+/// A raw literal (`r"..."`, `r#"..."#`) whose `#`s or quote start at `at`,
+/// or `None` for a raw identifier such as `r#mod`.
+fn raw_literal(chars: &[char], at: usize) -> Option<(String, usize)> {
+    let mut hashes = 0usize;
+    while chars.get(at + hashes) == Some(&'#') {
+        hashes += 1;
+    }
+    let open = at + hashes;
+    if chars.get(open) != Some(&'"') {
+        return None;
+    }
+    let start = open + 1;
+    let mut end = start;
+    while end < chars.len() {
+        if chars[end] == '"' && (1..=hashes).all(|offset| chars.get(end + offset) == Some(&'#')) {
+            break;
+        }
+        end += 1;
+    }
+    let text = chars[start..end.min(chars.len())].iter().collect();
+    Some((text, (end + 1 + hashes).min(chars.len())))
+}
+
+/// The index after a char literal (`'x'`, `'\''`, `'"'`) or after the quote
+/// of a lifetime (`'a`), whose quote is at `at`. A lifetime's name is lexed
+/// as an identifier after it.
+fn char_or_lifetime_end(chars: &[char], at: usize) -> usize {
+    if chars.get(at + 1) == Some(&'\\') {
+        let mut end = at + 3;
+        while end < chars.len() && chars[end] != '\'' {
+            end += 1;
+        }
+        (end + 1).min(chars.len())
+    } else if chars.get(at + 2) == Some(&'\'') {
+        at + 3
+    } else {
+        at + 1
+    }
+}
+
+/// Upper bound on the entries read below one symlinked directory.
+const LINKED_DIR_ENTRY_LIMIT: usize = 1_000;
+
+/// True when the symlinked directory `link` may hold a Rust source: it holds
+/// a `.rs` file or another symlink at any depth, or cannot be read within
+/// [`LINKED_DIR_ENTRY_LIMIT`] entries (#14962 review n3).
+fn linked_dir_may_hold_sources(link: &Path) -> bool {
+    let mut pending = vec![link.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return true;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return true;
+            };
+            seen += 1;
+            if seen > LINKED_DIR_ENTRY_LIMIT {
+                return true;
+            }
+            let Ok(kind) = entry.file_type() else {
+                return true;
+            };
+            if kind.is_symlink() || entry.file_name().to_string_lossy().ends_with(".rs") {
+                return true;
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
+/// Upper bound on the files the mount scan reads; a larger tree is doubt.
+const MOUNT_SCAN_FILE_LIMIT: usize = 20_000;
+
+/// Every Rust source and `Cargo.toml` of the workspace on disk (#14962
+/// review), read once per composition pass that has a skip candidate. The
+/// walk covers the workspace root and every metadata member directory,
+/// skipping `target` and hidden directories. In a committed-history check a
+/// dirty file contributes both its working-tree and its `HEAD` text, so a
+/// mention in either keeps the file.
+struct WorkspaceMountScan {
+    /// Workspace-relative path (when the file sits under the root), its
+    /// lowercased text, and the module names it declares.
+    sources: Vec<(Option<PathBuf>, String, BTreeSet<String>)>,
+}
+
+impl WorkspaceMountScan {
+    /// `None` is doubt for the whole workspace: an unreadable file, a tree
+    /// past [`MOUNT_SCAN_FILE_LIMIT`], or any source that may assemble a
+    /// `mod` or `include!` operand the text cannot name (a dynamic
+    /// `include!(concat!(env!("OUT_DIR"), ..))`, a macro-built `mod`) or that
+    /// spells a `path`/`include!` operand with escapes.
+    fn read(workspace_root: &Path, package_dirs: &BTreeSet<PathBuf>) -> Option<Self> {
+        let absolute_root = std::path::absolute(workspace_root).ok()?;
+        let canonical_root = std::fs::canonicalize(workspace_root).ok();
+        let relative = |path: &Path| -> Option<PathBuf> {
+            path.strip_prefix(&absolute_root)
+                .ok()
+                .or_else(|| {
+                    canonical_root
+                        .as_ref()
+                        .and_then(|root| path.strip_prefix(root).ok())
+                })
+                .map(Path::to_path_buf)
+        };
+        // Only Cargo's build directories are skipped: `target` directly under
+        // the workspace root or a member root, and `CARGO_TARGET_DIR`. A
+        // `target` or hidden directory anywhere else may hold a mounted
+        // module (`pub mod target;`, `#[path = ".gen/m.rs"]`), so it is read
+        // (#14962 review). `.git` holds no sources.
+        let mut build_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        build_dirs.insert(absolute_root.join("target"));
+        for dir in package_dirs {
+            build_dirs.insert(dir.join("target"));
+        }
+        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR")
+            && let Ok(target_dir) = std::path::absolute(PathBuf::from(target_dir))
+        {
+            build_dirs.insert(target_dir);
+        }
+        let mut files: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut pending: Vec<PathBuf> = vec![absolute_root.clone()];
+        pending.extend(package_dirs.iter().cloned());
+        let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+        while let Some(dir) = pending.pop() {
+            if !visited.insert(dir.clone()) {
+                continue;
+            }
+            let entries = std::fs::read_dir(&dir).ok()?;
+            for entry in entries {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let kind = entry.file_type().ok()?;
+                if kind.is_symlink() {
+                    // A symlinked source or directory can alias the file
+                    // under another name (`src/alias.rs -> ../../a/src/
+                    // shared.rs`) that no text scan ties back to it: doubt.
+                    // A directory link without Rust sources (`node_modules`,
+                    // assets) aliases nothing (#14962 review n3).
+                    let target_is_dir = std::fs::metadata(&path).is_ok_and(|meta| meta.is_dir());
+                    if name.ends_with(".rs")
+                        || (target_is_dir && linked_dir_may_hold_sources(&path))
+                    {
+                        return None;
+                    }
+                } else if kind.is_dir() {
+                    if name != ".git" && !build_dirs.contains(&path) {
+                        pending.push(path);
+                    }
+                } else if name.ends_with(".rs") || name == "Cargo.toml" {
+                    files.insert(path);
+                }
+                if files.len() + pending.len() > MOUNT_SCAN_FILE_LIMIT {
+                    return None;
+                }
+            }
+        }
+        let mut sources = Vec::with_capacity(files.len());
+        for path in files {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let manifest = path.ends_with("Cargo.toml");
+            sources.push((relative(&path), text, manifest));
+        }
+        if let Some(overlay) = crate::analysis::committed_source::current_overlay() {
+            for dirty in overlay.dirty_paths() {
+                let dirty = PathBuf::from(dirty);
+                if let Ok(Some(bytes)) =
+                    crate::analysis::committed_source::read_source_bytes(workspace_root, &dirty)
+                {
+                    let manifest = dirty.ends_with("Cargo.toml");
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    sources.push((Some(dirty), text, manifest));
+                }
+            }
+        }
+        let mut lowered = Vec::with_capacity(sources.len());
+        for (path, text, manifest) in sources {
+            if stray_files::spells_a_path_with_escapes(&text)
+                || (!manifest && may_build_mount_operands(&text))
+            {
+                return None;
+            }
+            if manifest {
+                // A manifest names a file only as a target `path` or a
+                // `build` script, and cargo metadata already lists every
+                // target's `src_path`: `crate_root_may_run` asks it.
+                continue;
+            }
+            let mut declared = BTreeSet::new();
+            stray_files::collect_declared_modules(&text, &mut declared);
+            lowered.push((path, text.to_ascii_lowercase(), declared));
+        }
+        Some(Self { sources: lowered })
+    }
+
+    /// True when a source outside `chain` (the file and its own skipped
+    /// ancestry) may compile `file` into another target: it spells the file
+    /// name anywhere (a `#[path]`, an `include!`, a manifest `path`, a build
+    /// script that writes a mount) or declares a `mod` of the file's stem. A
+    /// `.../<dir>/mod.rs` is keyed on its directory (#14962 review): its stem
+    /// is `<dir>`, and any spelling of `mod.rs` outside the chain counts as
+    /// naming it, since a relative operand (`#[path = "../mod.rs"]`,
+    /// `"foo/./mod.rs"`) need not spell `<dir>`. Names compare
+    /// ASCII-case-insensitively.
+    fn may_mount(&self, file: &Path, chain: &BTreeSet<&Path>) -> bool {
+        let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
+            return true;
+        };
+        let stem_source = if name == "mod.rs" {
+            file.parent().and_then(Path::file_name)
+        } else {
+            file.file_stem()
+        };
+        let Some(stem) = stem_source.and_then(|stem| stem.to_str()) else {
+            return true;
+        };
+        let name = name.to_ascii_lowercase();
+        let stem = stem.to_ascii_lowercase();
+        self.sources.iter().any(|(path, text, declared)| {
+            !path.as_deref().is_some_and(|path| chain.contains(path))
+                && (text.contains(name.as_str()) || declared.contains(&stem))
+        })
+    }
+}
+
+/// Cheap premise for the metadata probe (#14962): the package manifest sets
+/// `test = false` on its `[lib]` table or on a `[[bin]]` entry, or a
+/// `[[bin]]` names `required-features`. Anything else cannot skip a lib or
+/// bin target, so no `cargo metadata` subprocess is spent. An unreadable or
+/// unparsable manifest is no premise.
+fn manifest_may_skip_unit_tests(workspace_root: &Path, package_dir: &Path) -> bool {
+    let Some(value) = crate::bounded_input::read_metadata_toml(
+        workspace_root.join(package_dir).join("Cargo.toml"),
+    )
+    .ok()
+    .and_then(|text| toml::from_str::<toml::Value>(&text).ok()) else {
+        return false;
+    };
+    let switches_off = |table: &toml::Value| {
+        table.get("test").and_then(toml::Value::as_bool) == Some(false)
+            || table.get("required-features").is_some()
+    };
+    value.get("lib").is_some_and(switches_off)
+        || value
+            .get("bin")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|entries| entries.iter().any(switches_off))
 }
 
 /// The files positively outside every crate's module tree (#7426): plain
@@ -1247,6 +1840,63 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mount_operand_doubt_needs_a_dynamic_mount_operand() {
+        // #14962 review a1c: only a metavariable or non-literal operand in a
+        // mount position is doubt; an expression metavariable is not.
+        for doubt in [
+            "include!(concat!(env!(\"OUT_DIR\"), \"/m.rs\"));",
+            "include! ( x );",
+            "macro_rules! m { ($n:ident) => { mod $n; }; }",
+            "macro_rules! m { ($p:literal) => { #[path = $p] mod x; }; }",
+            "include!{concat!(env!(\"OUT_DIR\"), \"/m.rs\")}",
+            "include![concat!(env!(\"OUT_DIR\"), \"/m.rs\")];",
+            "include!(/* generated */ concat!(env!(\"OUT_DIR\"), \"/m.rs\"));",
+            "macro_rules! m { ($n:ident) => { mod /* m */ $n; }; }",
+            "macro_rules! m { ($p:literal) => { #[path = /* x */ $p] mod x; }; }",
+            "macro_rules! m { ($n:ident) => { mod // m\n $n; }; }",
+            // Review round 5: a non-`.rs` mount file (n5, n5p).
+            "include!(\"gen.inc\");",
+            "#[path = \"m.txt\"]\npub mod m;",
+            "#![cfg_attr(x, path = \"m.txt\")]",
+            // A string holding `//` or `/*` must not swallow the mount (n2).
+            "macro_rules! m { ($n:ident) => { const U: &str = \"http://x\"; mod /* c */ $n; }; }",
+            "macro_rules! m { ($n:ident) => { const U: &str = r#\"/*\"#; mod/*c*/$n; }; }",
+            // Any `mod`, `include` or attribute `path` in a macro body.
+            "macro_rules! m { ($f:literal) => { include!($f); }; }",
+            "macro_rules! m [ ($n:ident) => { pub mod $n {} } ];",
+            "macro_rules! m { ($a:meta) => { #[$a] mod inner; }; }",
+            "macro m($n:ident) { mod $n; }",
+            "macro_rules! m { ($n:ident) => { r#mod $n; }; }",
+            // Review round 6 (n7): an aliased or re-exported `include`.
+            "use std::include as inc;\ninc!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));",
+            "use core::include;",
+            "pub use ::std::{include as inc};",
+            // An escaped literal decodes to a name no scan matches.
+            "include /* c */ !(\"../../a/src/\\u{73}hared.rs\");",
+            "#[path = \"../../a/src/\\x73hared.rs\"]\nmod m;",
+        ] {
+            assert!(may_build_mount_operands(doubt), "{doubt}");
+        }
+        for plain in [
+            "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
+            "include!(\"gen.rs\");",
+            "include!{\"gen.rs\"}",
+            "include![\"gen.rs\"];",
+            "mod tests;\nfn f() -> u32 { 1 }",
+            "#[path = \"gen.rs\"]\nmod g;",
+            "let path = \"dir/m.txt\";",
+            "const U: &str = \"http://x\"; mod tests;",
+            "const S: &str = \"macro_rules! m { mod $n }\";",
+            "let quote = '\"'; let l: &'static str = \"\"; mod tests;",
+            "// macro_rules! m { ($n:ident) => { mod $n; }; }\nfn f() {}",
+            "macro_rules! p { () => { std::path::Path::new(\"x\") }; }",
+            "macro_rules! v { ($e:expr) => { vec![$e] }; }\nfn f() { let _ = v!(1); }",
+        ] {
+            assert!(!may_build_mount_operands(plain), "{plain}");
+        }
+    }
 
     fn temp_dir(name: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()

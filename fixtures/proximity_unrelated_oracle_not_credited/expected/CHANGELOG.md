@@ -180,3 +180,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — proximity_unrelated_oracle_not_credited (16)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
