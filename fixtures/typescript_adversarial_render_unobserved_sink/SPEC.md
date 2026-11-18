@@ -38,12 +38,15 @@ path, not the changed sink.
 
 ## Then
 
-ripr classifies the change `no_static_path`. The render test does not call or
-otherwise reference the changed owner (`Badge(...)` is not `formatBadge(...)`),
-so the same-file stem alone does not relate it (RIPR-SPEC-0027) and the
-extracted strong assertion is never borrowed as proof of observation. The
-transitive `Badge` → `formatBadge` path stays unresolved by the syntax-first
-preview adapter.
+ripr classifies the change `static_unknown`. The render test does not call
+`formatBadge` directly, so the same-file stem alone does not relate it
+(RIPR-SPEC-0027) and the extracted strong assertion is never borrowed as proof
+of observation. The test does reach `formatBadge` through the exported
+`Badge`, which calls it inside its template substitution
+(`` `${formatBadge(count)}` ``), so ripr reports same-module-caller reach with
+observation unknown rather than `no_static_path` (#13592 follow-up: a call in a
+template substitution is code). Reach through a caller is never promoted to
+`exposed`.
 
 **This fixture must NEVER read `exposed`.** Crediting reach-plus-a-strong-
 oracle as `exposed` without evidence the assertion observes the changed sink

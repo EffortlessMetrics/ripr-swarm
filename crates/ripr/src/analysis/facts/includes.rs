@@ -1,6 +1,5 @@
 use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -23,17 +22,23 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
         })
         .map(|(parent, facts)| (parent, facts.source.as_ref()))
         .collect();
-    // `collect` on a parallel iterator over a slice preserves input order, so
-    // each precomputed entry still matches the BTreeMap file order the serial
-    // loop used (#9214).
+    // `memoize_many` returns one result per source in input order, so each
+    // precomputed entry still matches the BTreeMap file order the serial loop
+    // used (#9214).
+    // The directive read is a pure function of the source text (the parent
+    // path is unused), so the run memo serves files a diff check already
+    // resolved in its admission core when the extended main index resolves
+    // again; misses still parse on the rayon pool.
+    let sources: Vec<&str> = candidates.iter().map(|(_, source)| *source).collect();
+    let directives = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::IncludeDirectives,
+        &sources,
+        |source| rust_include_directives(Path::new(""), source, MAX_INCLUDE_EDGES),
+    );
     let precomputed: Vec<(PathBuf, Result<Vec<_>, String>)> = candidates
-        .par_iter()
-        .map(|(parent, source)| {
-            (
-                (*parent).clone(),
-                rust_include_directives(parent, source, MAX_INCLUDE_EDGES),
-            )
-        })
+        .iter()
+        .map(|(parent, _)| (*parent).clone())
+        .zip(directives)
         .collect();
 
     'files: for (parent, directives) in precomputed {
@@ -228,36 +233,78 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
-/// Whether the index already carries include state from an earlier
-/// resolution pass: resolved parents (whose function identities are rebased)
-/// or physical include targets. The overflow path of the resolution pass
-/// returns before replacing the targets, so a stale set would survive an
-/// in-place extension that a fresh build never had.
-pub(super) fn index_holds_include_state(index: &RustIndex) -> bool {
-    !index.include_parents.is_empty() || !index.include_targets.is_empty()
+/// The include view the retained files of an index were composed against,
+/// captured before the index grows (#12947).
+///
+/// Include resolution is recomputed over the whole index on every extension,
+/// but state derived from the earlier view is not: function identities
+/// already rebased onto a compilation unit (a rebase rewrites a `file::`
+/// prefix once and cannot be undone), and composed roles, provenance and
+/// module-edge claims of retained files that are only withdrawn in part when
+/// the view moves. So an extension stands only when every retained file
+/// keeps exactly its include parent and its include-target membership, and
+/// when the edge limit is not hit (it clears every parent and keeps stale
+/// targets, and the budget is shared, so an inert added directive can spend
+/// it). Added files then bring only include edges and limitations of their
+/// own, and reach the merged resolution unrebased, as in a fresh build. A
+/// new limitation that withdraws a withheld file's module-tree claim is
+/// refused by the caller's withheld-tests check.
+pub(super) struct RetainedIncludeView {
+    parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
+    targets: BTreeSet<PathBuf>,
+}
+
+impl RetainedIncludeView {
+    pub(super) fn capture(index: &RustIndex) -> Self {
+        Self {
+            parents: index.include_parents.clone(),
+            targets: index.include_targets.clone(),
+        }
+    }
+
+    /// Whether `index`, re-resolved after the `added` files joined it,
+    /// still shows every retained file the captured view.
+    pub(super) fn preserved(&self, index: &RustIndex, added: &BTreeSet<&Path>) -> bool {
+        let edge_limit = index
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded");
+        // Before the merge every parent edge had a retained child and a
+        // retained parent, so equal retained edges also keep each retained
+        // file's whole parent chain, and its compilation unit, unchanged.
+        let parents_kept = index
+            .include_parents
+            .iter()
+            .filter(|(child, _)| !added.contains(child.as_path()))
+            .eq(self.parents.iter());
+        let targets_kept = index
+            .include_targets
+            .iter()
+            .filter(|target| !added.contains(target.as_path()))
+            .eq(self.targets.iter());
+        !edge_limit && parents_kept && targets_kept
+    }
 }
 
 /// Whether adding a file with this decoded `source` to an already-indexed
 /// workspace can re-parent function identities through an `include!`
 /// directive. Only an invocation that can become an edge counts: a
 /// parser-backed file-level `include!` with a literal path to a repository
-/// file the merged index holds (`kept`). A mention in a comment or a string
+/// file the index already held before the merge (`kept`; an added target
+/// reaches the merged resolution unrebased). A mention in a comment or a string
 /// never enters the producer the resolution pass reads, and a nested,
 /// dynamic, out-of-repository or unindexed-target invocation only records a
 /// limitation, so none of them re-parents anything (the same-run reuse used
 /// to fall back to a full rebuild for every added file whose bytes merely
 /// contained `include!`). A file the parser refuses, or one over the
 /// directive budget, reports `true`: its directives are unknown, so the
-/// caller fails closed to a fresh build. The edge budget is shared by the
-/// whole index and is spent on inert directives too, so once the cached
-/// index already holds include state (`core_has_include_state`) any
-/// directive in an added file could push the merged total over the budget,
-/// which clears the edges without undoing the rebased identities: it counts.
+/// caller fails closed to a fresh build. An inert directive can still spend
+/// the shared edge budget; the extension checks that after the merge with [`RetainedIncludeView`]
+/// (#12947), so this cheap pre-check only refuses what is sure to re-parent.
 pub(super) fn added_file_may_rebase_includes(
     path: &Path,
     source: &str,
     kept: &BTreeSet<&Path>,
-    core_has_include_state: bool,
 ) -> bool {
     if !might_contain_include_macro(source) {
         return false;
@@ -266,7 +313,6 @@ pub(super) fn added_file_may_rebase_includes(
         return true;
     };
     directives.len() > MAX_INCLUDE_EDGES
-        || (core_has_include_state && !directives.is_empty())
         || directives.iter().any(|directive| {
             directive.is_file_level
                 && directive
@@ -344,6 +390,39 @@ fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
             .then(left.expression.cmp(&right.expression))
     });
     limitations.dedup();
+}
+
+/// #14116: the repository-relative files an `include!` limitation pastes,
+/// when the limitation is a literal path inside the repository: the
+/// invocation sits in an inline module (`mod name { include!("literal"); }`),
+/// or sits at file level and names a file the index does not hold. Every
+/// such invocation on the limitation's line must name a literal path. The
+/// limitation itself stands; this only names the files the paste reads,
+/// which the index may or may not hold. `None` for every other limitation,
+/// a dynamic expression or a path that leaves the repository.
+pub(crate) fn literal_include_fragments(
+    index: &RustIndex,
+    limitation: &RustIncludeLimitation,
+) -> Option<Vec<PathBuf>> {
+    let file_level = match limitation.reason_code.as_str() {
+        "rust_include_nested_module_context" => false,
+        "rust_include_target_not_indexed" => true,
+        _ => return None,
+    };
+    let parent = index.files.get(&limitation.parent)?;
+    if parent.used_lexical_fallback {
+        return None;
+    }
+    let directives =
+        rust_include_directives(&limitation.parent, &parent.source, MAX_INCLUDE_EDGES).ok()?;
+    let mut fragments = Vec::new();
+    for directive in directives.iter().filter(|directive| {
+        directive.is_file_level == file_level && directive.line == limitation.line
+    }) {
+        let literal = directive.literal_path.as_deref()?;
+        fragments.push(repository_relative_target(&limitation.parent, literal)?);
+    }
+    (!fragments.is_empty()).then_some(fragments)
 }
 
 pub(crate) fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
@@ -923,17 +1002,6 @@ mod tests {
     }
 
     #[test]
-    fn include_state_covers_targets_left_without_resolved_parents() {
-        let mut index = RustIndex::default();
-        assert!(!index_holds_include_state(&index));
-        index.include_targets.insert(PathBuf::from("src/frag.rs"));
-        assert!(
-            index_holds_include_state(&index),
-            "ambiguous parents leave targets but no include_parents"
-        );
-    }
-
-    #[test]
     fn added_file_rebase_check_reads_parsed_directives_not_mentions() {
         let path = Path::new("src/added.rs");
         let kept: BTreeSet<&Path> = [Path::new("src/lib.rs"), Path::new("src/x.rs")].into();
@@ -946,7 +1014,7 @@ mod tests {
             "macro_rules! m { () => { include!(\"x.rs\") } }\npub fn a() {}\n",
         ] {
             assert!(
-                !added_file_may_rebase_includes(path, mention, &kept, false),
+                !added_file_may_rebase_includes(path, mention, &kept),
                 "mention must not count: {mention}"
             );
         }
@@ -959,24 +1027,13 @@ mod tests {
             "include!(\"x.rs\"); fn broken( {\n",
         ] {
             assert!(
-                added_file_may_rebase_includes(path, directive, &kept, false),
+                added_file_may_rebase_includes(path, directive, &kept),
                 "directive must count: {directive}"
             );
         }
-        // With rebased edges already in the core, even an inert directive
-        // counts toward the shared edge budget.
-        assert!(added_file_may_rebase_includes(
-            path,
-            "mod m { include!(\"x.rs\"); }\n",
-            &kept,
-            true
-        ));
-        assert!(!added_file_may_rebase_includes(
-            path,
-            "// include!(\"x.rs\")\n",
-            &kept,
-            true
-        ));
+        // An inert directive that spends the shared edge budget is refused
+        // after the merge by `RetainedIncludeView`, not by this pre-check
+        // (#12947).
         // An invocation that cannot become an edge only records a limitation.
         for inert in [
             "include!(\"missing.rs\");\n",
@@ -985,7 +1042,7 @@ mod tests {
             "include!(\"../../escaped.rs\");\n",
         ] {
             assert!(
-                !added_file_may_rebase_includes(path, inert, &kept, false),
+                !added_file_may_rebase_includes(path, inert, &kept),
                 "inert directive must not count: {inert}"
             );
         }
@@ -1058,13 +1115,13 @@ mod tests {
                 "include!(\"frag.rs\");\npub fn added() -> u8 { 3 }\n",
                 1usize,
             ),
-            // The shared edge budget: with a rebased edge in the core, even an
-            // inert directive or a mention-free file with one must rebuild,
-            // while a plain mention still extends in place.
+            // With a rebased edge in the core, an inert directive that leaves
+            // the retained include view and the edge budget intact extends in
+            // place too (#12947), as does a plain mention.
             (
                 edge_core,
                 "mod m { include!(\"nope.rs\"); }\npub fn added() -> u8 { 3 }\n",
-                1usize,
+                0usize,
             ),
             (
                 edge_core,
