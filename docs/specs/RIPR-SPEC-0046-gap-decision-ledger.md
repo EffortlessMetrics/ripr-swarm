@@ -281,7 +281,8 @@ The Markdown ledger report shows imported values exactly. Each gap id, anchor,
 owner, seam id and command is an inline code span that reads back as the value
 in the JSON ledger, including any `|` or backtick, so a command copied from the
 report is the command the ledger carries. A code span is one line, so a line
-ending inside a value shows as a space; the JSON ledger keeps the original.
+ending inside a value shows as a space, and whitespace around a seam id or an
+inspection command is not shown; the JSON ledger keeps the original.
 Warnings and limits are bare text in
 which `<` does not open raw HTML and `@name` does not notify an account.
 

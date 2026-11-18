@@ -6031,6 +6031,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::record_markdown_shows_commands_and_anchors_exactly",
   "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::ordinary_record_markdown_keeps_its_bytes",
   "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::ledger_warnings_cannot_open_html_or_notify",
+  "crates/ripr/src/output/gap_decision_ledger/markdown.rs::tests::warning_with_backtick_in_link_destination_opens_no_html",
   "crates/ripr/src/output/gap_source_subject.rs::tests::subject_relative_path_preserves_whitespace_identity",
   "crates/ripr/src/output/gap_source_subject.rs::tests::subject_relative_path_rejects_prefix_and_root_escape",
   "crates/ripr/src/output/gap_source_subject.rs::tests::source_subject_keeps_whitespace_paths_and_stales_only_the_changed_identity",

@@ -9,7 +9,7 @@ use super::{
     GapDecisionLedgerReport, GapRecord, eligible_projection_names, fallback_gap_id, non_empty,
 };
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
-use crate::output::markdown::{code_span, inline_prose};
+use crate::output::markdown::{code_span, inline_prose, inline_prose_literal};
 use serde_json::Value;
 
 pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
@@ -232,8 +232,18 @@ pub(super) fn render_record_markdown(record: &GapRecord, out: &mut String) {
 
 /// Imported text in a bare list item or sentence: `<` cannot open raw HTML,
 /// `@name` cannot notify an account and a line ending cannot start a block.
+///
+/// `inline_prose` keeps what looks like a code span verbatim, but a parser
+/// gives a backtick inside a link destination to the link, which would leave
+/// a later tag outside any span (#15127). Text carrying both a backtick and
+/// `<` therefore also has its link brackets escaped, so the backticks can
+/// only pair as the code span the helper assumed.
 fn md_inline(value: &str) -> String {
-    inline_prose(value)
+    if value.contains('`') && value.contains('<') {
+        inline_prose_literal(value)
+    } else {
+        inline_prose(value)
+    }
 }
 
 /// Imported value as an inline code span that reads back as exactly `value`
@@ -379,6 +389,26 @@ mod tests {
             "warning text is not shown literally:\n{markdown}"
         );
         assert!(!markdown.contains("@reviewer"), "live mention:\n{markdown}");
+        Ok(())
+    }
+
+    #[test]
+    fn warning_with_backtick_in_link_destination_opens_no_html() -> Result<(), String> {
+        // Without the bracket escape the parser reads `[x](a`b)` as a link,
+        // the first backtick belongs to its destination and `<b>` is raw.
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::Records,
+            records_path: "records.json".to_string(),
+            records_json: Err("gap [x](a`b) <b>bold</b> then `end` is invalid".to_string()),
+        });
+        let markdown = render_gap_decision_ledger_markdown(&report);
+        let (spans, _) = rendered(&markdown)?;
+        assert!(
+            spans.iter().any(|span| span.contains("<b>bold</b>")),
+            "the tag is not inside a code span: {spans:?}\n{markdown}"
+        );
         Ok(())
     }
 }
