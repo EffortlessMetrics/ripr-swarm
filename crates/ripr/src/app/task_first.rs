@@ -1215,7 +1215,11 @@ pub(crate) fn resolve_repair_start(
     // #11246: inference only narrows. When no changed line could be read, the
     // spots above are not scoped to the change, and the text says so first
     // (the reason list is capped, so it is placed where it survives).
-    if let Some(note) = unscoped_diff_note(diff.as_deref(), base, unscoped_subject::REFUSAL_SPOTS) {
+    let narrowed = matches!(scope, Some(ChangeScope::TouchesSeams(_)));
+    if let Some(note) = (!narrowed)
+        .then(|| unscoped_diff_note(diff.as_deref(), base, unscoped_subject::REFUSAL_SPOTS))
+        .flatten()
+    {
         refusal_reasons.insert(0, note);
     }
     // #12831: eligible seams on the change. `ripr check` is the authority on
@@ -1310,8 +1314,9 @@ pub(crate) fn resolve_repair_start(
         RepairStartDecision::Action(..) => Some(unscoped_subject::OFFERED_CHOICES),
         RepairStartDecision::NoEligible { .. } => None,
     };
-    let unscoped_note =
-        subject.and_then(|subject| unscoped_diff_note(diff.as_deref(), base, subject));
+    let unscoped_note = subject
+        .filter(|_| !narrowed)
+        .and_then(|subject| unscoped_diff_note(diff.as_deref(), base, subject));
     Ok(ResolvedRepairStart {
         decision,
         unscoped_note,
@@ -3172,9 +3177,12 @@ pub(crate) mod unscoped_subject {
 }
 
 /// Why repair could not narrow its spots to the change, when it could not
-/// (#11246): no diff was readable (no base resolved), or the diff against the
-/// base changed nothing. A readable diff with changes is not unscoped here.
-/// `subject` names what is not narrowed (see [`unscoped_subject`]).
+/// (#11246): no diff was readable (no base resolved), the diff against the
+/// base changed nothing, or (#13701) the diff changes no Rust production line
+/// (only tests, benches, docs or other files), so no seam can be the change.
+/// A diff that changes Rust production lines adds no note here. `subject`
+/// names what is not narrowed (see [`unscoped_subject`]). Callers skip it when
+/// the diff touches a seam: that selection is narrowed.
 fn unscoped_diff_note(
     diff: Option<&[crate::analysis::ChangedFile]>,
     base: Option<&str>,
@@ -3192,6 +3200,9 @@ fn unscoped_diff_note(
         )),
         (Some([]), None) => Some(format!(
             "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so {subject} not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some(files), _) if changed_rust_production_lines(files).is_none() => Some(format!(
+            "ripr read your change, but it touches no Rust production code (only tests or other files), so {subject} not narrowed to it; pass `--base <ref>` to name another base"
         )),
         (Some(_), _) => None,
     }
@@ -3234,6 +3245,26 @@ mod unscoped_note_tests {
         assert!(!files.is_empty(), "fixture must parse to a changed file");
         assert_eq!(unscoped_diff_note(Some(&files), None, SPOTS), None);
         assert_eq!(unscoped_diff_note(Some(&files), Some("main"), SPOTS), None);
+    }
+
+    /// #13701: a readable diff that changes no Rust production line says so
+    /// in its own words, not as an unreadable change.
+    #[test]
+    fn a_diff_with_no_rust_production_line_says_it_touches_none() {
+        let files = crate::analysis::parse_unified_diff(
+            "diff --git a/tests/t.rs b/tests/t.rs\n--- a/tests/t.rs\n+++ b/tests/t.rs\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(files.len(), 2, "fixture must parse to two changed files");
+        let note = unscoped_diff_note(Some(&files), None, SPOTS).unwrap_or_default();
+        assert!(note.contains("touches no Rust production code"), "{note}");
+        assert!(
+            note.contains("the spots below are not narrowed to it"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("could not tell which lines you changed"),
+            "{note}"
+        );
     }
 }
 

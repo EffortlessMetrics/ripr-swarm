@@ -713,12 +713,12 @@ pub(crate) fn render_before_phase_attempt_stdout(
     Ok(rendered)
 }
 
-/// Augment the `ripr repair --json` start stdout with the additive
-/// envelope-level `repair_start_scope` block (#13701), present only when the
-/// bare start was chosen with no readable change, so it is not narrowed to
-/// it: `narrowed_to_change` (always `false`), `note` (the same plain note the
-/// human start prints) and `base_command` (the `--base` rerun template; its
-/// `<ref>` is the reader's to name). Like the `repair_attempt` block, it is
+/// Augment the `ripr repair --json` start stdout (the packet envelope, or the
+/// resumed attempt's status document) with the additive top-level
+/// `repair_start_scope` block (#13701), present only when the bare start was
+/// not narrowed to the change: `narrowed_to_change` (always `false`),
+/// `note` (the same plain note the human start prints) and `base_command`
+/// (the `--base` rerun template; its `<ref>` is the reader's to name). Like the `repair_attempt` block, it is
 /// inserted into the rendered document without re-rendering packet content.
 pub(crate) fn render_repair_start_scope_stdout(
     start_stdout: &str,

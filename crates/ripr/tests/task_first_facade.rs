@@ -7183,9 +7183,23 @@ fn repair_json_prints_the_packet_with_the_attempt_id() -> Result<(), String> {
         ],
     )?;
     assert_exit(&status, 0, "status --json of the resumed attempt");
+    // #13701: the resumed start carries the same `repair_start_scope` block
+    // the first start did (this one-commit fixture has no readable change);
+    // apart from it, the document is the attempt's status document.
+    let mut repeated_doc: serde_json::Value = serde_json::from_slice(&repeated.stdout)
+        .map_err(|error| format!("repeated stdout must be one JSON document: {error}"))?;
     assert_eq!(
-        stdout_text(&repeated),
-        stdout_text(&status),
+        repeated_doc.get("repair_start_scope"),
+        document.get("repair_start_scope"),
+        "the resumed start must carry the first start's scope block:\n{repeated_doc:#}"
+    );
+    if let Some(object) = repeated_doc.as_object_mut() {
+        object.remove("repair_start_scope");
+    }
+    let status_doc: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("status stdout must be one JSON document: {error}"))?;
+    assert_eq!(
+        repeated_doc, status_doc,
         "a resumed --json start must print the attempt's status document"
     );
     assert_eq!(attempt_ids(root), ids, "no second attempt may be created");

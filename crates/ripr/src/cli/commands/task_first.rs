@@ -500,15 +500,17 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         }
                         _ => None,
                     };
-                    // #13701: the menu leads with the unscoped note; under
-                    // `--json` the `cli_refusal` message carries it too, the way
-                    // a no-eligible refusal's message carries it.
-                    if let Some(unscoped) = &unscoped {
-                        eprintln!("{}", unscoped.human_line());
-                    }
+                    // #13701: the human menu leads with the unscoped note; under
+                    // `--json` the `cli_refusal` message carries it instead, the
+                    // way a no-eligible refusal's message carries it, and the
+                    // boundary echoes that message on stderr, so it is said once.
                     let json_note = match (&unscoped, options.json) {
                         (Some(unscoped), true) => format!("; {}", unscoped.human_line()),
-                        _ => String::new(),
+                        (Some(unscoped), false) => {
+                            eprintln!("{}", unscoped.human_line());
+                            String::new()
+                        }
+                        (None, _) => String::new(),
                     };
                     if let (Some(total), false) = (selection_total, candidates.is_empty()) {
                         // #10978 / #11111: a selection is told in plain words:
@@ -558,7 +560,13 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     if let Some(existing) =
         crate::app::task_first::reusable_awaiting_attempt(&options.root, &seam_id)
     {
-        return resume_awaiting_attempt(&options.root, &seam_id, &existing, options.json);
+        return resume_awaiting_attempt(
+            &options.root,
+            &seam_id,
+            &existing,
+            options.json,
+            unscoped.as_ref(),
+        );
     }
     // The start's stdout is held until the handoff card renders too: a
     // card failure after publication is an untyped decision that writes no
@@ -571,18 +579,19 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // `--json` (#11584): the packet envelope with `repair_attempt` is the
     // whole document; the human card is not appended to it.
     if options.json {
-        match &unscoped {
-            Some(unscoped) => print!(
-                "{}",
-                crate::output::agent_seam_packets::render_repair_start_scope_stdout(
-                    &before_stdout,
-                    &unscoped.note,
-                    &unscoped.base_command,
-                )
-                .map_err(CommandError::Decision)?
-            ),
-            None => print!("{before_stdout}"),
-        }
+        let document = with_repair_start_scope(before_stdout, unscoped.as_ref()).map_err(
+            |error| {
+                // The attempt is already published: name it and its recovery,
+                // and leave stdout empty (#7032).
+                CommandError::Decision(format!(
+                    "repair started attempt `{attempt_id}` for gap `{seam_id}`, but its JSON document could not be completed: {error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root} --json`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root}`",
+                    root = crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy())
+                    ),
+                ))
+            },
+        )?;
+        print!("{document}");
         return Ok(());
     }
     // The compact handoff renders through the same card service the
@@ -625,11 +634,26 @@ struct UnscopedSelection {
 }
 
 impl UnscopedSelection {
+    /// The note, which already says to pass `--base <ref>` (or to check the
+    /// named one), with the rerun given once as its example.
     fn human_line(&self) -> String {
-        format!(
-            "{}; for example, rerun with an explicit base: `{}`",
-            self.note, self.base_command
-        )
+        format!("{} (for example `{}`)", self.note, self.base_command)
+    }
+}
+
+/// A `--json` start or resume document, with the additive
+/// `repair_start_scope` block when the selection was not narrowed (#13701).
+fn with_repair_start_scope(
+    document: String,
+    unscoped: Option<&UnscopedSelection>,
+) -> Result<String, String> {
+    match unscoped {
+        Some(unscoped) => crate::output::agent_seam_packets::render_repair_start_scope_stdout(
+            &document,
+            &unscoped.note,
+            &unscoped.base_command,
+        ),
+        None => Ok(document),
     }
 }
 
@@ -641,6 +665,7 @@ fn resume_awaiting_attempt(
     seam_id: &str,
     existing: &crate::app::task_first::ReusableAttempt,
     json: bool,
+    unscoped: Option<&UnscopedSelection>,
 ) -> Result<(), CommandError> {
     if json {
         // The existing attempt's typed status document, from the same
@@ -653,6 +678,10 @@ fn resume_awaiting_attempt(
                 .map_err(CommandError::Decision)?;
         let rendered = crate::app::agent_status::render_agent_attempt_status_json(&report)
             .map_err(CommandError::Decision)?;
+        // #13701: the resumed start is the same unscoped selection, so its
+        // document carries the same block the first start's did.
+        let rendered =
+            with_repair_start_scope(rendered, unscoped).map_err(CommandError::Decision)?;
         eprintln!(
             "ripr: repair attempt {} for gap `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
             existing.attempt_id

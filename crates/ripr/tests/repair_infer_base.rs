@@ -557,8 +557,8 @@ fn json_document(run: &Run) -> Result<serde_json::Value, String> {
 
 /// The `--base` rerun an unscoped start or menu names (#13701), with the
 /// absolute bound root between the two halves.
-const BASE_RERUN_HEAD: &str = "rerun with an explicit base: `ripr repair --root ";
-const BASE_RERUN_TAIL: &str = " --base <ref>`";
+const BASE_RERUN_HEAD: &str = "(for example `ripr repair --root ";
+const BASE_RERUN_TAIL: &str = " --base <ref>`)";
 
 fn names_base_rerun(text: &str) -> bool {
     text.split_once(BASE_RERUN_HEAD)
@@ -647,6 +647,16 @@ fn an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun() -> Result
         serde_json::Value::Null,
         "the `<ref>` template is never offered as a runnable next step:\n{document:#}"
     );
+    // The boundary echoes the refusal message on stderr; the note is not
+    // printed a second time above the menu.
+    assert_eq!(
+        json.stderr
+            .matches("could not tell which lines you changed")
+            .count(),
+        1,
+        "the --json menu says it once on stderr:\n{}",
+        json.stderr
+    );
     assert!(
         !repo.0.join("target/ripr/repair-attempts").exists(),
         "a menu starts nothing"
@@ -710,14 +720,142 @@ fn an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun() -
         3,
         "{document:#}"
     );
+    // A repeated `--json` start resumes the attempt and prints its status
+    // document, which carries the same block.
+    let resumed = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(resumed.code, Some(0), "{}", resumed.stderr);
+    assert!(
+        resumed
+            .stderr
+            .contains("is already awaiting the focused test edit"),
+        "precondition, the second start resumes:\n{}",
+        resumed.stderr
+    );
+    let resumed_doc = json_document(&resumed)?;
+    assert!(
+        resumed_doc.get("repair_attempt").is_none(),
+        "precondition, the resume prints the status document:\n{resumed_doc:#}"
+    );
+    assert_eq!(
+        resumed_doc.get("repair_start_scope"),
+        document.get("repair_start_scope"),
+        "the resumed start keeps the scope block:\n{resumed_doc:#}"
+    );
+    Ok(())
+}
+
+/// A feature branch off `main` whose only change adds a line to the test file
+/// and a README: the diff is readable but touches no Rust production code.
+fn test_and_readme_only(src: &str, test: &str) -> Result<Repo, String> {
+    let repo = Repo::empty()?;
+    repo.write(
+        "Cargo.toml",
+        "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    repo.write("src/lib.rs", src)?;
+    repo.write("tests/t.rs", test)?;
+    repo.commit_base(Form::FeatureBranch)?;
+    repo.git(&["checkout", "-q", "-b", "feature"])?;
+    repo.write("tests/t.rs", &format!("{test}// touched\n"))?;
+    repo.write("README.md", "fx\n")?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "tests and docs"])?;
+    let names = repo.git_out(&["diff", "--name-only", "main...HEAD"])?;
+    assert_eq!(
+        names.trim(),
+        "README.md\ntests/t.rs",
+        "fixture must change only the test file and the README"
+    );
+    Ok(repo)
+}
+
+const NO_PRODUCTION_CODE: &str = "touches no Rust production code";
+
+/// #13701 (d): a readable diff that changes only tests and docs scopes
+/// nothing, so the whole-repository menu says so in its own words (not as an
+/// unreadable change) and names the `--base` rerun, in human and JSON output.
+#[test]
+fn a_menu_for_a_change_with_no_production_code_says_it_is_not_narrowed() -> Result<(), String> {
+    let repo = test_and_readme_only(TWO_SPOTS_BASE, TWO_SPOTS_TEST)?;
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert_eq!(human.code, Some(3), "{}", human.stderr);
+    assert!(
+        human.stderr.contains("different repairs")
+            && human.stderr.contains("src/lib.rs:2")
+            && human.stderr.contains("src/lib.rs:5"),
+        "precondition, nothing scopes the menu:\n{}",
+        human.stderr
+    );
+    assert!(
+        human.stderr.contains(NO_PRODUCTION_CODE)
+            && human
+                .stderr
+                .contains("the repairs ripr offers here are not narrowed to it")
+            && names_base_rerun(&human.stderr)
+            && !human
+                .stderr
+                .contains("could not tell which lines you changed"),
+        "{}",
+        human.stderr
+    );
+    let json = repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(3), "{}", json.stderr);
+    let document = json_document(&json)?;
+    let message = document["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(NO_PRODUCTION_CODE) && names_base_rerun(message),
+        "{document:#}"
+    );
+    Ok(())
+}
+
+/// #13701 (e): the same readable test-and-docs-only diff, with one repairable
+/// spot: the start says it is not narrowed, on stderr and in the `--json`
+/// document's `repair_start_scope` block.
+#[test]
+fn a_start_for_a_change_with_no_production_code_says_it_is_not_narrowed() -> Result<(), String> {
+    let repo = test_and_readme_only(HELPER_BASE, HELPER_TEST)?;
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert!(
+        human.stdout.contains("Repair prepared for seam") && human.stdout.contains("src/lib.rs:6"),
+        "precondition, a bare repair starts on the unchanged caller line:\nstdout:\n{}\nstderr:\n{}",
+        human.stdout,
+        human.stderr
+    );
+    assert!(
+        human.stderr.contains(NO_PRODUCTION_CODE)
+            && human
+                .stderr
+                .contains("the spot this repair starts on is not narrowed to it")
+            && names_base_rerun(&human.stderr),
+        "{}",
+        human.stderr
+    );
+    let json_repo = test_and_readme_only(HELPER_BASE, HELPER_TEST)?;
+    let json = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
+    let document = json_document(&json)?;
+    assert_eq!(
+        document["repair_start_scope"]["narrowed_to_change"], false,
+        "{document:#}"
+    );
+    assert!(
+        document["repair_start_scope"]["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(NO_PRODUCTION_CODE),
+        "{document:#}"
+    );
     Ok(())
 }
 
 /// #13701 (c): a change the diff reads and that touches a seam scopes the
 /// start, so neither the human start nor the `--json` document carries the
-/// note or the `--base` rerun.
+/// note or the `--base` rerun. (A scoped menu is not covered here: with the
+/// diff read, `ripr check` narrows these fixtures to its one recommended
+/// start, so no scoped menu could be built from them.)
 #[test]
-fn a_start_or_menu_scoped_by_the_diff_carries_no_unscoped_note() -> Result<(), String> {
+fn a_start_scoped_by_the_diff_carries_no_unscoped_note() -> Result<(), String> {
     let new = TWO_SPOTS_BASE.replace("x > 100", "x >= 100");
     let repo = Repo::package(TWO_SPOTS_BASE, &new, TWO_SPOTS_TEST, Form::FeatureBranch)?;
     repo.assert_changed_paths(Form::FeatureBranch, "src/lib.rs")?;
@@ -732,6 +870,7 @@ fn a_start_or_menu_scoped_by_the_diff_carries_no_unscoped_note() -> Result<(), S
         !human
             .stderr
             .contains("could not tell which lines you changed")
+            && !human.stderr.contains(NO_PRODUCTION_CODE)
             && !human.stderr.contains("--base <ref>"),
         "{}",
         human.stderr

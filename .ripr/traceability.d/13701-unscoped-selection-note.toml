@@ -1,10 +1,14 @@
 # A bare `ripr repair` menu or single start chosen with no readable change
 # says it is not narrowed to the change and names the `--base` rerun, in
-# human and JSON output; a diff-scoped start carries no note (#13701).
+# human and JSON output, also when the readable change touches no Rust
+# production code; a diff-scoped start carries no note (#13701).
 [[extend]]
 id = "RIPR-SPEC-0217"
 tests = [
   "crates/ripr/tests/repair_infer_base.rs::an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun",
   "crates/ripr/tests/repair_infer_base.rs::an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun",
-  "crates/ripr/tests/repair_infer_base.rs::a_start_or_menu_scoped_by_the_diff_carries_no_unscoped_note",
+  "crates/ripr/tests/repair_infer_base.rs::a_start_scoped_by_the_diff_carries_no_unscoped_note",
+  "crates/ripr/tests/repair_infer_base.rs::a_menu_for_a_change_with_no_production_code_says_it_is_not_narrowed",
+  "crates/ripr/tests/repair_infer_base.rs::a_start_for_a_change_with_no_production_code_says_it_is_not_narrowed",
+  "crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_diff_with_no_rust_production_line_says_it_touches_none",
 ]
