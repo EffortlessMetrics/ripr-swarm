@@ -495,6 +495,12 @@ written and must not copy these gaps.
   before; `assertion_not_observing` rows take only the slots left free, so no
   window, fix site, exact-oracle alignment or repair readiness changes.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
+- Within one relation-confidence tier, after diff-touched tests (#8387), a row
+  whose test calls the owner or a function the bounded caller walk says
+  reaches it ranks ahead of name order (#15026). In a single-file crate every
+  inline test is `same_test_file`, so without this the window filled with
+  name-order neighbours while tests calling the owner's wrapper were cut. The
+  rule only orders rows; it never admits, drops or lifts a row a tier.
 - On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
   probe whose paired base line and head line each hold exactly one `Err`
   construction, with differing literal variants, and are otherwise identical
@@ -784,6 +790,10 @@ actionability or rendered output.
   selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
+- `crates/ripr/src/analysis/classify/reveal.rs::tests::near_owner_rows_name_tests_that_call_the_owner_or_its_caller`,
+  `crates/ripr/src/analysis/classify/reveal.rs::tests::finalized_related_tests_lead_with_rows_near_the_owner_within_a_tier`
+  and `crates/ripr/tests/related_window_near_owner.rs::wrapper_tests_fill_the_window_before_file_only_neighbours`
+  — rows near the owner lead their tier and fill the window (#15026).
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose and the
   row-owned support controls (#5564): per-row boundaries, no cross-row or
   finding-wide borrowing, typed-family wording, absent support, row-order

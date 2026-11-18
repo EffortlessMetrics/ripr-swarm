@@ -1657,6 +1657,11 @@ impl ClassifiedProbeEvidence {
             },
             arm_selector.as_ref(),
             context.diff_touched,
+            &|test| {
+                test.calls
+                    .iter()
+                    .any(|call| expected_reaches_owner(None, call.name.as_str()))
+            },
         );
         let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
         let (observe, discriminate, mut related_tests, matched_total) = (
