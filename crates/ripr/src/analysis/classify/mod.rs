@@ -12,6 +12,7 @@ mod const_flow;
 mod constant_tail_change;
 pub(in crate::analysis) use constant_tail_change::{
     ConstantTailChange, base_side_may_rebind_trusted_macros, constant_tail_change,
+    is_equal_constant_respelling,
 };
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
