@@ -1990,7 +1990,13 @@ side and stay untrusted, so a guard over them alone, or one whose parameter
 conjuncts all hold or cannot be read, keeps the existing verdict. A guard
 holding `or`, a conditional expression, a `lambda` or a comprehension is read
 whole (parameters only) or not at all: dropping an operand there can turn a
-true guard false. An early exit or an `if`/`elif` chain condition keeps a row
+true guard false. A conjunct that calls or binds something
+(`fill(items) and len(items) > 0`, `(n := seen) and start < 0`) can change
+what another conjunct reads, so such a guard is not read at all, on either
+side; the `isinstance(` and `len(` atoms the guard reader evaluates itself are
+not such a call. A call is a `(` outside string literals that follows a name,
+`)` or `]`; a parenthesis after a keyword opens a group or a display
+(`kind in ('a', 'b')`, `not (x)`) and is not one. An early exit or an `if`/`elif` chain condition keeps a row
 off the line by holding, which a partial conjunction cannot show, so those are
 read only when the whole condition names parameters alone. The reported guard
 text stays the whole condition.

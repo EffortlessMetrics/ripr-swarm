@@ -108,7 +108,10 @@ pub(super) fn parameter_only_guard(condition: &str, parameters: &[String]) -> Op
     // A dropped call or walrus can rebind a parameter used by a kept
     // conjunct. Evaluating only the kept text would then use the call-time
     // value for a different runtime value (#14273).
-    if conjuncts.iter().any(|conjunct| conjunct_has_call_or_walrus(conjunct)) {
+    if conjuncts
+        .iter()
+        .any(|conjunct| conjunct_can_rebind(conjunct))
+    {
         return None;
     }
     if guard_names_only_parameters(condition, parameters) {
@@ -975,18 +978,55 @@ pub(super) fn condition_holds(
     (!unreadable).then_some(true)
 }
 
-/// Whether a dropped conjunct has call or walrus syntax that can change a kept
-/// parameter. Plain grouping parentheses are not calls (`(x is None)`), while
-/// named, method, indexed, and immediately invoked forms are (#14273).
+/// Whether a conjunct has call or walrus syntax that can change a parameter
+/// another conjunct reads. A call is a `(` outside string literals that
+/// follows `)`, `]` or a name; a grouping parenthesis follows an operator or
+/// a keyword (`(x is None)`, `kind in ('a', 'b')`, `not (x)`) and is not one
+/// (#14273).
 pub(super) fn conjunct_has_call_or_walrus(text: &str) -> bool {
-    text.contains(":=")
-        || text.match_indices('(').any(|(index, _)| {
-            text[..index]
-                .trim_end()
-                .as_bytes()
-                .last()
-                .is_some_and(|byte| matches!(*byte, b')' | b']') || is_identifier_byte(*byte))
-        })
+    let bytes = text.as_bytes();
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(_) if byte == b'\\' => index += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b':' && bytes.get(index + 1) == Some(&b'=') => return true,
+            None if byte == b'(' && callee_precedes(&text[..index]) => return true,
+            None => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Whether the text before a `(` ends in something that can be called.
+fn callee_precedes(before: &str) -> bool {
+    let before = before.trim_end();
+    if before.ends_with(')') || before.ends_with(']') {
+        return true;
+    }
+    let name_start = before
+        .bytes()
+        .rposition(|byte| !is_identifier_byte(byte))
+        .map_or(0, |position| position + 1);
+    let name = &before[name_start..];
+    !name.is_empty() && !["in", "is", "not", "and", "or", "if", "else"].contains(&name)
+}
+
+/// Whether a conjunct can rebind or mutate a parameter another conjunct
+/// reads. The `isinstance(` and `len(` atoms the guard reader evaluates
+/// itself are not such a call; anything called inside or after them is.
+pub(super) fn conjunct_can_rebind(conjunct: &str) -> bool {
+    let conjunct = conjunct.trim();
+    let rest = conjunct
+        .strip_prefix("isinstance(")
+        .or_else(|| conjunct.strip_prefix("len("))
+        .unwrap_or(conjunct);
+    conjunct_has_call_or_walrus(rest)
 }
 
 /// True when `text` applies `or`, `not` or a conditional expression

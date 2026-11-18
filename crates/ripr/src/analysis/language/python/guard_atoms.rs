@@ -25,7 +25,7 @@ use super::PythonOwner;
 use super::arm_activation::{ScalarKind, builtin_names_intact, scalar_kind};
 use super::boundary::{CallRow, canonical_decimal, literal_elements, resolve_operand};
 use super::guard_activation::{
-    compare_literal_values, condition_holds, conjunct_has_call_or_walrus, keyword_outside_quotes,
+    compare_literal_values, condition_holds, conjunct_can_rebind, keyword_outside_quotes,
     parameter_rebound_before,
 };
 use super::module_constants::{PythonModuleConstant, mentions_identifier};
@@ -53,11 +53,10 @@ pub(super) fn guard_condition_holds(
     // A call or walrus can mutate a parameter used by another conjunct, so a
     // partial truth value cannot exclude the row (#14273). The two call-shaped
     // atoms above are evaluated explicitly and do not discard that fact.
-    if conjuncts.iter().any(|conjunct| {
-        conjunct_has_call_or_walrus(conjunct)
-            && !conjunct.starts_with("isinstance(")
-            && !conjunct.starts_with("len(")
-    }) {
+    if conjuncts
+        .iter()
+        .any(|conjunct| conjunct_can_rebind(conjunct))
+    {
         return None;
     }
     let reader = Reader {

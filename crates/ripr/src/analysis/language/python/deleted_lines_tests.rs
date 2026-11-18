@@ -1330,7 +1330,11 @@ fn deleted_guard_block_reads_a_parameter_conjunct_beside_a_local() -> Result<(),
 #[test]
 fn deleted_guard_block_refuses_a_walrus_that_can_rebind_a_kept_parameter() -> Result<(), String> {
     let removed = vec![
-        line(3, 3, "    if (total := 2000) and result is not None and total > 1000:"),
+        line(
+            3,
+            3,
+            "    if (total := 2000) and result is not None and total > 1000:",
+        ),
         line(4, 3, "        result = total - 50"),
     ];
     let classes = deleted_guard_classes(
@@ -1458,6 +1462,19 @@ fn parameter_only_guard_keeps_what_an_old_side_read_may_evaluate() {
         ("(total := 2000) and total > 1000", None),
         ("any(x for x in total) and start < 0", None),
         ("(lambda: seq_index)() and start < 0", None),
+        ("seq_index.ready() and start < 0", None),
+        ("handlers[0](seq_index) and start < 0", None),
+        ("fill (total) and total", None),
+        // A keyword before `(` opens a group or a display, not a call.
+        ("total in (1, 2)", Some("total in (1, 2)")),
+        (
+            "total not in (1, 2) and seq_index is None",
+            Some("total not in (1, 2)"),
+        ),
+        (
+            "seq_index is None and not (start < 0)",
+            Some("not (start < 0)"),
+        ),
     ] {
         assert_eq!(
             parameter_only_guard(condition, &params).as_deref(),
