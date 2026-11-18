@@ -4512,8 +4512,11 @@ mod tests {
             ).map_err(|error| error.to_string())?;
             let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
             let count = if named && !ignored { 8 } else { 9 };
+            // Each crowd row also calls a foreign `add`, so it ranks as near the
+            // owner by name just like `zz_named` (#15026). The tie keeps name
+            // order, and `zz_named` stays behind the cap.
             for n in 0..count {
-                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        let one = 0i64.add(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(one, 1);\n    }}\n"));
             }
             if named {
                 source.push_str("    #[test]\n");
