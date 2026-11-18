@@ -170,7 +170,7 @@ Updated:
 ## Pending — owner_self_body_same_name_no_unseen_reach (14)
 
 Reason:
-RIPR-SPEC-0068: the uncalled owner's computed boundary operand now carries the typed activation_boundary_input_unresolved limit that PR guidance already withholds the seam under; class stays no_static_path (#14951)
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
 
 Command:
 `cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
