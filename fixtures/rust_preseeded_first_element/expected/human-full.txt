@@ -29,7 +29,7 @@ Changed
   before: self.log.push(x)
   after:  self.log.push(x * 1)
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl Ledger::record

@@ -624,7 +624,7 @@ Updated:
 ## Pending — error_variant_wrapper_callee_only_pin (48)
 
 Reason:
-RIPR-SPEC-0122: the call_deletion change type reads "a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`

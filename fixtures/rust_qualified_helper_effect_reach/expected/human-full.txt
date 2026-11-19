@@ -29,7 +29,7 @@ Changed
   before: out.push(9)
   after:  out.push(10)
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::record

@@ -20,7 +20,7 @@ Changed
   after:  Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl RequestBuilder::build

@@ -20,7 +20,7 @@ Changed
   after:  try_parse_summary(raw).map_err(Into::into)
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::parse_summary

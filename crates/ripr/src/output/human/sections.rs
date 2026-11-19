@@ -108,8 +108,9 @@ fn plain_change_type(family: &ProbeFamily) -> &'static str {
         ProbeFamily::ErrorPath => "error handling changed",
         // `call_deletion` names the probe ripr runs on a changed line that
         // makes a call (would a test notice if the call were gone?), not the
-        // diff's edit: the call may be added, changed or removed (#15271).
-        ProbeFamily::CallDeletion => "a call changed",
+        // diff's edit: the call itself may be added, changed, removed, or
+        // untouched beside the edit (`f(x) > 0` -> `f(x) > 1`) (#15271).
+        ProbeFamily::CallDeletion => "a line that makes a call changed",
         ProbeFamily::FieldConstruction => "a constructed field changed",
         ProbeFamily::SideEffect => "a side effect changed",
         ProbeFamily::MatchArm => "a match arm changed",

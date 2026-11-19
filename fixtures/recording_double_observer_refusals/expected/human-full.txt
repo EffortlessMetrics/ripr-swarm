@@ -20,7 +20,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/assertion_message.rs::report_assertion_message
@@ -130,7 +130,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/dyn_inherent.rs::report_dyn_inherent
@@ -234,7 +234,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/let_else.rs::report_let_else
@@ -338,7 +338,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/owned_clone.rs::report_owned_clone
@@ -442,7 +442,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/push_dispatch.rs::report_push_dispatch
@@ -546,7 +546,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/raw_binding.rs::report_raw_binding
@@ -652,7 +652,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/raw_receiver.rs::report_raw_receiver
@@ -756,7 +756,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/unicode_binding.rs::report_unicode_binding

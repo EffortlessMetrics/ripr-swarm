@@ -20,7 +20,7 @@ Changed
   after:  events_sent.push(0 + id)
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::send

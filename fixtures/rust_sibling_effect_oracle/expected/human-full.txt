@@ -21,7 +21,7 @@ Changed
   source:  base_deleted — base-side evidence, not a candidate edit target
 
 Change type
-  a call changed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/sensors/ripr_limits.rs::module_limit_evidence
