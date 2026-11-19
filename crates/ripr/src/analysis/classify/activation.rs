@@ -4830,8 +4830,9 @@ fn missing_guard_entry_discriminator(
 /// that selects one arm can still run another. The same refusals as
 /// [`missing_guard_entry_discriminator`]: a callee may call it back
 /// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
-/// read, a read macro it or a related test invokes is rebound
-/// ([`invoked_read_macro_rebound`]), or anything outside the related tests
+/// read, a read macro that it, a callee, a related test or a test helper
+/// invokes is rebound ([`invoked_read_macro_rebound`]; the guard reading
+/// asks about every read-macro name), or anything outside the related tests
 /// names it
 /// ([`owner_named_outside_related_tests`]): its own body (a direct,
 /// `Self::`-qualified or `self.` self-call), a helper passed as a function
