@@ -725,7 +725,13 @@ fn opaque_boundary_input(
     probe_literals: &[String],
 ) -> Option<String> {
     for test in related_tests {
+        // Only a macro the test itself defines: any other unread macro
+        // (`info!`, `assert_that!`) is no evidence that its arguments feed
+        // the owner.
         for (name, arguments) in unread_macro_arguments(&test.body) {
+            if !defines_local_macro(&test.body, &name) {
+                continue;
+            }
             let literals = extract_literals(&arguments);
             if let Some(boundary) = probe_literals
                 .iter()
@@ -738,7 +744,19 @@ fn opaque_boundary_input(
         }
         // A same-file wrapper macro's spliced expansion (#9122) shows the
         // owner call in the body text, but activation does not read its
-        // arguments as owner inputs.
+        // arguments as owner inputs. An owner call the call facts hold with
+        // the boundary is one activation saw and declined (an ignored test,
+        // another receiver), so its reason stands.
+        let declined = test
+            .calls
+            .iter()
+            .filter(|call| call.name == owner)
+            .flat_map(|call| call_arguments(call.text.as_ref(), owner))
+            .flat_map(|arguments| extract_literals(&arguments))
+            .any(|literal| probe_literals.contains(&literal));
+        if declined {
+            continue;
+        }
         if let Some(boundary) = call_arguments(&test.body, owner)
             .iter()
             .flat_map(|arguments| extract_literals(arguments))
@@ -794,6 +812,7 @@ fn unread_macro_arguments(body: &str) -> Vec<(String, String)> {
             .map_or(0, |(index, ch)| index + ch.len_utf8());
         let name = &masked[name_start..name_end];
         if name.is_empty()
+            || RUST_KEYWORDS.contains(&name)
             || name == "macro_rules"
             || super::activation::READ_MACROS.contains(&name)
         {
@@ -807,6 +826,29 @@ fn unread_macro_arguments(body: &str) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// Keywords that can precede a `!` negation (`if !(a == b)`).
+const RUST_KEYWORDS: &[&str] = &[
+    "if", "while", "match", "return", "in", "let", "else", "loop", "break", "yield", "move",
+];
+
+/// Whether `body` holds a `macro_rules! name` definition.
+fn defines_local_macro(body: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    masked.match_indices("macro_rules").any(|(at, _)| {
+        masked[at + "macro_rules".len()..]
+            .trim_start()
+            .strip_prefix('!')
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix(name))
+            .is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+    })
 }
 
 /// Offset of the delimiter closing the one at `open` in masked text.
@@ -2791,7 +2833,11 @@ mod tests {
         };
         let opaque = |test: &TestSummary| opaque_boundary_input(&[test], "discount", &boundary);
         // A same-file wrapper macro, unspliced and spliced (#9122).
-        let wrapped = opaque(&test_with("fn t() { check!(100, 0); }", &[], &[]));
+        let wrapped = opaque(&test_with(
+            "fn t() { macro_rules! check { ($i:expr, $o:expr) => { assert_eq!(discount($i), $o) }; } check!(100, 0); }",
+            &[],
+            &[],
+        ));
         assert!(
             wrapped
                 .as_deref()
@@ -2805,7 +2851,14 @@ mod tests {
         ));
         assert!(spliced.is_some());
         // A local macro nested in a standard assertion.
-        assert!(opaque(&test_with("fn t() { assert_eq!(d!(100), 0); }", &[], &[])).is_some());
+        assert!(
+            opaque(&test_with(
+                "fn t() { macro_rules! d { ($x:expr) => { discount($x) }; } assert_eq!(d!(100), 0); }",
+                &[],
+                &[]
+            ))
+            .is_some()
+        );
         // An rstest fixture parameter fed to the owner.
         let fixture = opaque(&test_with(
             "fn at_threshold(amount: u32) { assert_eq!(discount(amount), 0); }",
@@ -2831,6 +2884,30 @@ mod tests {
                 "fn t() { assert_eq!(discount_all(100), 0); }",
                 &[][..],
                 &[][..],
+            ),
+            // A macro the test does not define is no evidence; nor a negation.
+            (
+                "fn t() { info!(\"limit {}\", 100); assert_that!(discount(50)); }",
+                &[][..],
+                &[][..],
+            ),
+            ("fn t() { if !(x == 100) { return; } }", &[][..], &[][..]),
+            // An owner call with the boundary that activation saw and declined.
+            (
+                "fn t() { assert_eq!(discount(100), 0); }",
+                &[][..],
+                &["assert_eq!(discount(100), 0);"][..],
+            ),
+            // Positional case rows bind bare parameters: no fixture.
+            (
+                "fn t(amount: u32, expected: u32) { assert_eq!(discount(amount), expected); }",
+                &["#[rstest]", "#[case(50, 0)]"][..],
+                &["assert_eq!(discount(amount), expected);"][..],
+            ),
+            (
+                "fn t(amount: u32) { assert_eq!(discount(amount), 0); }",
+                &["#[rstest(amount, case(50))]"][..],
+                &["assert_eq!(discount(amount), 0);"][..],
             ),
             // `vec!` and the standard assertions are read.
             (
