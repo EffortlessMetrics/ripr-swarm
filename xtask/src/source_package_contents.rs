@@ -194,10 +194,14 @@ fn module_graph(members: &BTreeMap<String, Vec<u8>>) -> Result<ModuleGraph, Stri
         return Err("has neither src/lib.rs nor src/main.rs".to_string());
     }
     let roots: BTreeSet<String> = pending.iter().cloned().collect();
+    // Module files walked, kept apart from `compiled` so a file first met as
+    // an include still has its own `mod` declarations followed.
+    let mut walked: BTreeSet<String> = BTreeSet::new();
     while let Some(file) = pending.pop() {
-        if !graph.compiled.insert(file.clone()) {
+        if !walked.insert(file.clone()) {
             continue;
         }
+        graph.compiled.insert(file.clone());
         let Some(bytes) = members.get(&file) else {
             continue;
         };
@@ -330,41 +334,78 @@ fn walk_items(
 fn production_includes(node: &ra_ap_syntax::SyntaxNode) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
     for child in node.children() {
-        if let Some(item) = ast::Item::cast(child.clone())
-            && item_absent_from_production(&item)?
+        // Any attribute owner (an item, an inline module's inner
+        // attributes, an enum variant, a field, a statement) gated out of
+        // production hides the includes beneath it.
+        if let Some(owner) = ast::AnyHasAttrs::cast(child.clone())
+            && absent_from_production(&owner)?
         {
             continue;
         }
-        if let Some(call) = ast::MacroCall::cast(child.clone()) {
+        if let Some(call) = ast::MacroCall::cast(child.clone())
+            && let Some(tree) = call.token_tree()
+        {
             let name = call
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
                 .map(|name| name.text().to_string());
-            if matches!(
-                name.as_deref(),
-                Some("include" | "include_str" | "include_bytes")
-            ) && let Some(tree) = call.token_tree()
-            {
-                // The first token after `(`, past comments and whitespace,
-                // must be a (raw) string literal; any other argument, such
-                // as `concat!(..)`, is not read.
-                let first = tree
-                    .syntax()
-                    .children_with_tokens()
-                    .filter_map(|element| element.into_token())
-                    .filter(|token| !token.kind().is_trivia())
-                    .nth(1);
-                if let Some(literal) = first.and_then(ast::String::cast)
-                    && let Ok(value) = literal.value()
-                {
-                    files.push(value.into_owned());
-                }
+            if is_include_macro(name.as_deref().unwrap_or_default()) {
+                files.extend(string_literal_argument(&tree));
+            } else {
+                // An include nested in another macro's arguments, such as
+                // `format!("{}", include_str!("x"))`, is plain tokens in a
+                // token tree, not a `MacroCall` node.
+                nested_includes(tree.syntax(), &mut files);
             }
         }
         files.extend(production_includes(&child)?);
     }
     Ok(files)
+}
+
+fn is_include_macro(name: &str) -> bool {
+    matches!(name, "include" | "include_str" | "include_bytes")
+}
+
+/// The first token after the opening delimiter, past comments and
+/// whitespace, when it is a (raw) string literal; any other argument, such
+/// as `concat!(..)`, is not read.
+fn string_literal_argument(tree: &ast::TokenTree) -> Option<String> {
+    let first = tree
+        .syntax()
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .nth(1);
+    let literal = first.and_then(ast::String::cast)?;
+    literal.value().ok().map(|value| value.into_owned())
+}
+
+/// Collects `include!`/`include_str!`/`include_bytes!` invocations
+/// (`IDENT ! TokenTree`) in a macro's argument tokens, nested trees included.
+fn nested_includes(tree: &ra_ap_syntax::SyntaxNode, files: &mut Vec<String>) {
+    let elements: Vec<_> = tree
+        .children_with_tokens()
+        .filter(|element| !element.kind().is_trivia())
+        .collect();
+    for (index, element) in elements.iter().enumerate() {
+        match element {
+            ra_ap_syntax::NodeOrToken::Token(token) => {
+                if token.kind() == ra_ap_syntax::SyntaxKind::IDENT
+                    && is_include_macro(token.text())
+                    && elements
+                        .get(index + 1)
+                        .is_some_and(|bang| bang.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                    && let Some(ra_ap_syntax::NodeOrToken::Node(args)) = elements.get(index + 2)
+                    && let Some(args) = ast::TokenTree::cast(args.clone())
+                {
+                    files.extend(string_literal_argument(&args));
+                }
+            }
+            ra_ap_syntax::NodeOrToken::Node(node) => nested_includes(node, files),
+        }
+    }
 }
 
 fn parent_dir(path: &str) -> String {
@@ -401,28 +442,21 @@ fn attribute_text(attr: &ast::Attr) -> String {
         .replacen("#![", "#[", 1)
 }
 
-fn item_absent_from_production(item: &ast::Item) -> Result<bool, String> {
-    match item {
-        ast::Item::Const(it) => absent_from_production(it),
-        ast::Item::Static(it) => absent_from_production(it),
-        ast::Item::Fn(it) => absent_from_production(it),
-        ast::Item::Module(it) => absent_from_production(it),
-        ast::Item::Impl(it) => absent_from_production(it),
-        ast::Item::MacroCall(it) => absent_from_production(it),
-        ast::Item::Struct(it) => absent_from_production(it),
-        ast::Item::Enum(it) => absent_from_production(it),
-        ast::Item::Trait(it) => absent_from_production(it),
-        ast::Item::Use(it) => absent_from_production(it),
-        _ => Ok(false),
-    }
-}
-
 fn path_attribute(module: &ast::Module) -> Option<String> {
     module.attrs().find_map(|attr| {
-        let text = attribute_text(&attr);
-        text.strip_prefix("#[path=\"")
-            .and_then(|rest| rest.strip_suffix("\"]"))
-            .map(str::to_string)
+        let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
+            return None;
+        };
+        if meta.path()?.syntax().text().to_string() != "path" {
+            return None;
+        }
+        let ast::Expr::Literal(literal) = meta.expr()? else {
+            return None;
+        };
+        let ast::LiteralKind::String(value) = literal.kind() else {
+            return None;
+        };
+        value.value().ok().map(|value| value.into_owned())
     })
 }
 
@@ -432,7 +466,9 @@ fn path_attribute(module: &ast::Module) -> Option<String> {
 fn absent_from_production(module: &impl HasAttrs) -> Result<bool, String> {
     let mut absent = false;
     for text in module.attrs().map(|attr| attribute_text(&attr)) {
-        if text.starts_with("#[cfg_attr") && text.contains("path=") {
+        // A `cfg_attr` that sets `path` or a `cfg` changes where or whether
+        // the module is compiled: refused rather than guessed.
+        if text.starts_with("#[cfg_attr") && (text.contains("path=") || text.contains(",cfg(")) {
             return Err(format!(
                 "module attribute {text} is not understood by the source-package check"
             ));
@@ -702,17 +738,88 @@ mod tests {
             &[
                 (
                     "src/lib.rs",
-                    "mod present;\nmod dropped;\nconst DATA: &str = include_str!(/* data */\n    r\"data.txt\");\nconst GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.txt\"));\n#[cfg(test)]\nmod tests;\n",
+                    "mod present;\nmod dropped;\nconst DATA: &str = include_str!(/* data */\n    r\"data.txt\");\nconst GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.txt\"));\npub fn banner() -> String { format!(\"{}\", include_str!(\"banner.txt\")) }\n#[cfg(test)]\nmod tests;\n",
                 ),
                 ("src/present/mod.rs", ""),
             ],
         )?;
-        assert!(error.contains("lacks 2 file(s)"), "{error}");
+        assert!(error.contains("lacks 3 file(s)"), "{error}");
+        assert!(error.contains("src/banner.txt"), "{error}");
         assert!(error.contains("src/dropped.rs"), "{error}");
         assert!(error.contains("src/data.txt"), "{error}");
         assert!(!error.contains("src/present"), "{error}");
         assert!(!error.contains("src/tests"), "{error}");
         assert!(!error.contains("gen.txt"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn gated_attribute_owners_hide_includes_and_presence_cfg_attr_fails_closed()
+    -> Result<(), String> {
+        // An inline module's inner `#![cfg(test)]` and a gated statement
+        // both hide the include beneath them.
+        let lib = "mod tests {\n    #![cfg(test)]\n    const A: &str = include_str!(\"a.txt\");\n}\npub fn f() {\n    #[cfg(test)]\n    let _b = include_str!(\"b.txt\");\n    let _c = include_str!(\"c.txt\");\n}\n";
+        let error = refusal(
+            "ripr",
+            &[
+                ("src/lib.rs", lib),
+                ("src/a.txt", ""),
+                ("src/b.txt", ""),
+                ("src/c.txt", ""),
+            ],
+        )?;
+        assert!(
+            error.contains("src/a.txt (data read by no production include)"),
+            "{error}"
+        );
+        assert!(
+            error.contains("src/b.txt (data read by no production include)"),
+            "{error}"
+        );
+        assert!(!error.contains("c.txt"), "{error}");
+        // A `cfg_attr` that sets a `cfg` is refused; a lint-only one passes.
+        let error = refusal(
+            "ripr",
+            &[
+                (
+                    "src/lib.rs",
+                    "#[cfg_attr(not(test), cfg(test))]\nmod helpers;\n",
+                ),
+                ("src/helpers.rs", ""),
+            ],
+        )?;
+        assert!(error.contains("not understood"), "{error}");
+        check_source_package(
+            "ripr",
+            &members(&[
+                (
+                    "src/lib.rs",
+                    "#[cfg_attr(test, allow(dead_code))]\nmod lints;\n",
+                ),
+                ("src/lints.rs", ""),
+            ]),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn path_literals_decode_and_an_included_module_file_keeps_its_children() -> Result<(), String> {
+        check_source_package(
+            "ripr",
+            &members(&[
+                (
+                    "src/lib.rs",
+                    "#[path = \"live file.rs\"]\nmod live;\n#[path = r\"raw.rs\"]\nmod raw;\nmod a;\nmod b;\n",
+                ),
+                ("src/live file.rs", ""),
+                ("src/raw.rs", ""),
+                // `b` is walked first and includes `a.rs` as data; `a`'s
+                // own `mod c` is still followed.
+                ("src/b.rs", "pub const A: &str = include_str!(\"a.rs\");\n"),
+                ("src/a.rs", "mod c;\n"),
+                ("src/a/c.rs", ""),
+            ]),
+        )?;
         Ok(())
     }
 
