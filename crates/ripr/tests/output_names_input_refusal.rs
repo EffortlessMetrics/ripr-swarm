@@ -709,3 +709,89 @@ fn directory_members_are_inputs_and_missing_inputs_are_not() -> Result<(), Strin
     }
     Ok(())
 }
+
+/// `--out-jsonl` follows the same filesystem-identity rule as `--out` (#14352):
+/// an absolute spelling or a symlink to an evidence input is refused, and the
+/// input is left intact. `policy history --history h --out-jsonl h` is the
+/// intended append flow and must not hit the refusal.
+#[test]
+fn out_jsonl_naming_an_input_by_absolute_path_or_symlink_is_refused() -> Result<(), String> {
+    let dir = scratch("out-jsonl")?;
+    let absolute = dir.join("art").join("in.json").display().to_string();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("in.json", dir.join("art/link.json"))
+        .map_err(|error| format!("symlink: {error}"))?;
+    let mut spellings = vec![absolute];
+    #[cfg(unix)]
+    spellings.push("art/link.json".to_string());
+    let mut failures = Vec::new();
+    for spelling in &spellings {
+        let ledger = run(
+            &dir,
+            &[
+                "pr-ledger",
+                "record",
+                "--pr-number",
+                "1",
+                "--base",
+                "a",
+                "--head",
+                "b",
+                "--gap-ledger",
+                "art/in.json",
+                "--out-jsonl",
+                spelling,
+            ],
+        )?;
+        let history = run(
+            &dir,
+            &[
+                "policy",
+                "history",
+                "--current",
+                "art/in.json",
+                "--out-jsonl",
+                spelling,
+            ],
+        )?;
+        for (label, output) in [("pr-ledger record", ledger), ("policy history", history)] {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let after = fs::read_to_string(dir.join("art/in.json")).unwrap_or_default();
+            if output.status.code() != Some(2)
+                || !stderr.contains(&format!("{label} --out-jsonl must not be the same path as"))
+                || after != SENTINEL
+            {
+                failures.push(format!(
+                    "{label} --out-jsonl {spelling}: exit {:?}; stderr: {stderr}; input {after:?}",
+                    output.status.code()
+                ));
+            }
+        }
+    }
+    // Control: `--history` equal to `--out-jsonl` is the append flow.
+    let append = run(
+        &dir,
+        &[
+            "policy",
+            "history",
+            "--current",
+            "art/in.json",
+            "--history",
+            "art/h.jsonl",
+            "--out-jsonl",
+            "art/h.jsonl",
+        ],
+    )?;
+    let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
+    if append_stderr.contains("--out-jsonl must not be the same path")
+        || append_stderr.contains("names the same file as")
+    {
+        failures.push(format!("history append flow was refused: {append_stderr}"));
+    }
+    let _ = fs::remove_dir_all(&dir);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
+}
