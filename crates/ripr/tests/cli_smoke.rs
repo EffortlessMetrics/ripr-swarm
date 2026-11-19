@@ -37150,8 +37150,11 @@ fn doctor_does_not_run_a_repository_selected_toolchain_path() -> Result<(), Stri
                 return Ok(());
             }
             std::fs::remove_file(&marker).map_err(|err| format!("reset marker: {err}"))?;
+            // `--root .`: the fixture sits under the test TMPDIR, inside this
+            // repository's Cargo workspace, which implicit doctor would widen
+            // to exactly as `ripr check` does (#15304).
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .arg("doctor")
+                .args(["doctor", "--root", "."])
                 .current_dir(&root)
                 .env_remove("RUSTUP_TOOLCHAIN")
                 .output()
@@ -37215,7 +37218,9 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
             dirs.extend(std::env::split_paths(&path));
             let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .args(["--verbose", "doctor"])
+                // `--root .`: diagnose the fixture, not the enclosing Cargo
+                // workspace that holds the test TMPDIR (#15304).
+                .args(["--verbose", "doctor", "--root", "."])
                 .current_dir(&root)
                 .env("PATH", path)
                 .output()
