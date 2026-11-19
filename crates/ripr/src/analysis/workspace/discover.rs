@@ -388,7 +388,7 @@ pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, P
 /// that may include non-production files (fail-closed).
 pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &route);
+    visit_classified(root, root, &mut out, &route, false);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -404,8 +404,8 @@ pub(crate) struct UnlinkedPythonTests {
 }
 
 /// Directories holding installed third-party Python packages or tool caches,
-/// whose `tests/` folders are not the repository's own tests. Skipped only by
-/// [`discover_python_test_files`].
+/// whose files are not the repository's own source. Skipped by
+/// [`discover_python_test_files`] and [`discover_unanalyzed_source_files`].
 const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".venv",
     "venv",
@@ -416,6 +416,13 @@ const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".mypy_cache",
     ".pytest_cache",
 ];
+
+/// Whether a directory holds installed dependencies or tool caches rather than
+/// repository source: a known vendor name, or any virtualenv (a `pyvenv.cfg`
+/// marker, which also covers custom names such as `env/` or `.uv-venv/`).
+fn is_vendored_dir(path: &Path, name: &str) -> bool {
+    PYTHON_VENDOR_DIRS.contains(&name) || path.join("pyvenv.cfg").is_file()
+}
 
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
@@ -525,11 +532,12 @@ pub(crate) fn discover_python_test_files(
 
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
 /// shell, ...), with their language names, skipping the same directories as
-/// the other discovery walks. Pilot uses it so a repository written in such a
+/// the other discovery walks plus virtualenv and tool-cache directories (a
+/// `.venv`'s `activate.ps1` is not repository source). Pilot uses it so a repository written in such a
 /// language gets a named non-claim instead of an empty "complete" ranking.
 pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &unanalyzed_source_language);
+    visit_classified(root, root, &mut out, &unanalyzed_source_language, true);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -584,6 +592,7 @@ fn visit_classified<T>(
     dir: &Path,
     out: &mut Vec<(T, PathBuf)>,
     classify: &dyn Fn(&Path) -> Option<T>,
+    skip_vendored: bool,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -598,10 +607,12 @@ fn visit_classified<T>(
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if DEFAULT_IGNORED_DIRS.contains(&name) {
+            if DEFAULT_IGNORED_DIRS.contains(&name)
+                || (skip_vendored && is_vendored_dir(&path, name))
+            {
                 continue;
             }
-            visit_classified(root, &path, out, classify);
+            visit_classified(root, &path, out, classify, skip_vendored);
         } else if let Some(class) = classify(&path) {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             out.push((class, relative));

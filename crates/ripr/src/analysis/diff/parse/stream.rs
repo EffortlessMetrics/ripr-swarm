@@ -100,7 +100,11 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
                  before the remaining diff lines and analysis was not run. Repair \
                  route: reduce the diff scope, split the extraction PR, run a \
                  narrower diff, or raise the limit via \
-                 {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
+                 {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
+                 `--path <glob>` and/or `--exclude <glob>` (for example \
+                 `--exclude '.venv/**'` for a committed virtualenv) to `ripr check` \
+                 (repeatable, repository-relative; files left out are reported as \
+                 not analyzed)."
             )
             .into())
         },
