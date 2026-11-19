@@ -1,0 +1,150 @@
+//! #15308: `config validate` checks the suppressions manifest the config
+//! selects, not only `ripr.toml`.
+
+use super::validate_config;
+use crate::config::CONFIG_FILE_NAME;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const VALID_MANIFEST: &str = "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/lib.rs\"\nreason = \"accepted debt\"\nowner = \"team\"\n";
+
+fn workspace(label: &str) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-config-suppr-{label}-{nonce}"));
+    fs::create_dir_all(root.join(".ripr")).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, text).map_err(|error| error.to_string())
+}
+
+#[test]
+fn a_missing_configured_manifest_fails_and_names_the_key() -> Result<(), String> {
+    let root = workspace("missing-configured")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        "[suppressions]\npath = \"policy/missing.toml\"\n",
+    )?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result
+        .err()
+        .ok_or("a missing configured manifest must fail")?;
+    if !(error.contains("[suppressions] path `policy/missing.toml` does not exist")
+        && error.contains("`.ripr/suppressions.toml`"))
+    {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_missing_default_manifest_stays_valid_and_silent() -> Result<(), String> {
+    let root = workspace("missing-default")?;
+    write(&root, CONFIG_FILE_NAME, "[analysis]\nmode = \"fast\"\n")?;
+    let with_config = validate_config(&root);
+    fs::remove_file(root.join(CONFIG_FILE_NAME)).map_err(|error| error.to_string())?;
+    let without_config = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let with_config = with_config?;
+    if with_config.contains("suppressions") || with_config.lines().count() != 1 {
+        return Err(format!("unexpected manifest line: {with_config}"));
+    }
+    if without_config? != "✓ no ripr.toml found; built-in defaults apply" {
+        return Err("the no-config line changed".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_malformed_default_manifest_fails_without_any_ripr_toml() -> Result<(), String> {
+    let root = workspace("malformed-default")?;
+    write(
+        &root,
+        ".ripr/suppressions.toml",
+        &VALID_MANIFEST.replace("[[suppressions]]", "[[suppression]]"),
+    )?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result
+        .err()
+        .ok_or("a malformed default manifest must fail")?;
+    if !(error.starts_with(".ripr/suppressions.toml validation failed:\n")
+        && error.contains(".ripr/suppressions.toml:2 "))
+    {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_malformed_configured_manifest_fails_with_its_own_path() -> Result<(), String> {
+    let root = workspace("malformed-configured")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        "[suppressions]\npath = \"policy/s.toml\"\n",
+    )?;
+    write(
+        &root,
+        "policy/s.toml",
+        &format!("{VALID_MANIFEST}owner = \"again\"\n"),
+    )?;
+    // A valid default manifest must not stand in for the configured one.
+    write(&root, ".ripr/suppressions.toml", VALID_MANIFEST)?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result
+        .err()
+        .ok_or("a malformed configured manifest must fail")?;
+    if !(error.starts_with("policy/s.toml validation failed:\n")
+        && error.contains("policy/s.toml:7 duplicate `[[suppressions]]` field `owner`"))
+    {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_valid_manifest_is_named_with_its_entry_count() -> Result<(), String> {
+    let root = workspace("valid")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        "[suppressions]\npath = \"policy/s.toml\"\n",
+    )?;
+    write(
+        &root,
+        "policy/s.toml",
+        &format!(
+            "{VALID_MANIFEST}[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:x\"\nreason = \"r\"\nowner = \"o\"\n"
+        ),
+    )?;
+    write(&root, "src/lib.rs", "")?;
+    let configured = validate_config(&root);
+    fs::remove_file(root.join(CONFIG_FILE_NAME)).map_err(|error| error.to_string())?;
+    write(&root, ".ripr/suppressions.toml", VALID_MANIFEST)?;
+    let default = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let configured = configured?;
+    if configured.lines().nth(1) != Some("✓ suppressions valid (policy/s.toml, 2 entries)") {
+        return Err(format!("unexpected output: {configured}"));
+    }
+    let default = default?;
+    if default
+        != "✓ no ripr.toml found; built-in defaults apply\n✓ suppressions valid (.ripr/suppressions.toml, 1 entry)"
+    {
+        return Err(format!("unexpected output: {default}"));
+    }
+    Ok(())
+}

@@ -1795,7 +1795,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 
 Examples:
   ripr config validate --root PATH
