@@ -12,8 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub use super::suppressions_core::*;
 
-const CONFINEMENT_REFUSAL: &str =
-    "`suppressions.path` must resolve to a regular file inside the repository; replace the link or choose an in-repository regular file";
+const CONFINEMENT_REFUSAL: &str = "`suppressions.path` must resolve to a regular file inside the repository; replace the link or choose an in-repository regular file";
 
 /// Loads the repository-controlled implicit suppression policy after proving
 /// that its resolved target remains inside `root`.
@@ -156,12 +155,8 @@ mod tests {
     #[test]
     fn directory_and_parent_traversal_fail_with_the_fixed_refusal() -> Result<(), String> {
         let root = temp_root("invalid-kind")?;
-        std::fs::create_dir_all(root.join(".ripr/policy.toml"))
-            .map_err(|err| err.to_string())?;
-        for relative in [
-            Path::new(".ripr/policy.toml"),
-            Path::new("../outside.toml"),
-        ] {
+        std::fs::create_dir_all(root.join(".ripr/policy.toml")).map_err(|err| err.to_string())?;
+        for relative in [Path::new(".ripr/policy.toml"), Path::new("../outside.toml")] {
             let errors = load_suppressions_for_root_at(&root, relative)
                 .err()
                 .ok_or("unsafe path must fail closed")?;
@@ -205,8 +200,7 @@ mod tests {
         let outside = sandbox.join("outside.toml");
         std::fs::write(&outside, format!("owner = {OUTSIDE_SENTINEL}\n"))
             .map_err(|err| err.to_string())?;
-        symlink(&outside, root.join(".ripr/suppressions.toml"))
-            .map_err(|err| err.to_string())?;
+        symlink(&outside, root.join(".ripr/suppressions.toml")).map_err(|err| err.to_string())?;
 
         let error = load_suppressions_for_root_at(&root, Path::new(".ripr/suppressions.toml"))
             .err()
@@ -228,15 +222,10 @@ mod tests {
         let root = sandbox.join("repo");
         std::fs::create_dir_all(root.join(".ripr")).map_err(|err| err.to_string())?;
 
-        symlink(
-            root.join("missing.toml"),
-            root.join(".ripr/dangling.toml"),
-        )
-        .map_err(|err| err.to_string())?;
-        symlink("loop-b.toml", root.join(".ripr/loop-a.toml"))
+        symlink(root.join("missing.toml"), root.join(".ripr/dangling.toml"))
             .map_err(|err| err.to_string())?;
-        symlink("loop-a.toml", root.join(".ripr/loop-b.toml"))
-            .map_err(|err| err.to_string())?;
+        symlink("loop-b.toml", root.join(".ripr/loop-a.toml")).map_err(|err| err.to_string())?;
+        symlink("loop-a.toml", root.join(".ripr/loop-b.toml")).map_err(|err| err.to_string())?;
 
         let outside_dir = sandbox.join("outside-dir");
         std::fs::create_dir_all(&outside_dir).map_err(|err| err.to_string())?;
@@ -245,8 +234,7 @@ mod tests {
             format!("owner = {OUTSIDE_SENTINEL}\n"),
         )
         .map_err(|err| err.to_string())?;
-        symlink(&outside_dir, root.join("linked-policy-dir"))
-            .map_err(|err| err.to_string())?;
+        symlink(&outside_dir, root.join("linked-policy-dir")).map_err(|err| err.to_string())?;
 
         for relative in [
             Path::new(".ripr/dangling.toml"),
