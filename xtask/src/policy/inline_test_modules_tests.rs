@@ -15,6 +15,10 @@ fn counts_each_test_gated_inline_module_form() {
         Ok(1)
     );
     assert_eq!(
+        count("#[cfg(all(not(windows), test))]\nmod tests {}\n"),
+        Ok(1)
+    );
+    assert_eq!(
         count("#[cfg(any(test, feature = \"test-fixtures\"))]\npub(crate) mod tests {}\n"),
         Ok(1)
     );
@@ -44,6 +48,12 @@ fn out_of_line_modules_and_non_test_cfgs_are_not_counted() {
     assert_eq!(count("#[cfg(feature = \"test\")]\nmod gated {}\n"), Ok(0));
     assert_eq!(count("#[cfg(unix)]\nmod unix_only {}\n"), Ok(0));
     assert_eq!(count("#[cfg(kani)]\nmod proofs {}\n"), Ok(0));
+    // `not(test)` gates production code, at any depth.
+    assert_eq!(count("#[cfg(not(test))]\nmod prod_only {}\n"), Ok(0));
+    assert_eq!(
+        count("#[cfg(all(unix, not(test)))]\nmod prod_unix {}\n"),
+        Ok(0)
+    );
     // Spelling inside a string or comment is data, not a module.
     assert_eq!(
         count("const S: &str = \"#[cfg(test)]\\nmod tests {}\";\n// #[cfg(test)] mod tests {}\n"),

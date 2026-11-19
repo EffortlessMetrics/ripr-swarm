@@ -31,15 +31,47 @@ fn is_scanned_path(path: &str) -> bool {
 }
 
 /// True when the attribute is `cfg(..)` and its predicate names `test` as an
-/// identifier (not inside a string such as `feature = "test"`).
+/// identifier outside any `not(..)` (`test`, `all(test, ..)`, `any(test, ..)`).
+/// `feature = "test"` is a string, and `not(test)` gates production code, so
+/// neither counts.
 fn is_test_cfg(attr: &ast::Attr) -> bool {
     let Some(ast::Meta::CfgMeta(cfg)) = attr.meta() else {
         return false;
     };
-    cfg.syntax()
+    let tokens: Vec<_> = cfg
+        .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == "test")
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    // Names of the open predicate calls (`all`, `any`, `not`, and the outer
+    // `cfg`) enclosing the current token.
+    let mut open: Vec<String> = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind() {
+            SyntaxKind::L_PAREN => {
+                let name = index
+                    .checked_sub(1)
+                    .and_then(|before| tokens.get(before))
+                    .filter(|before| before.kind() == SyntaxKind::IDENT)
+                    .map_or_else(String::new, |before| before.text().to_string());
+                open.push(name);
+            }
+            SyntaxKind::R_PAREN => {
+                open.pop();
+            }
+            SyntaxKind::IDENT if token.text() == "test" => {
+                let followed_by_call = tokens
+                    .get(index + 1)
+                    .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN);
+                if !followed_by_call && !open.iter().any(|name| name == "not") {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Number of outermost inline test modules in `source`, or an error when the
