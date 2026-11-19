@@ -2003,3 +2003,156 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// #14929: a refusal names the evidence that refused it. A carrier refused by its
+/// own later narration line, or a later body that superseded an attesting review
+/// at an unchanged head, must not read like "no review at this head". The detail
+/// lines explain the decision; the admit/refuse outcome is unchanged.
+#[test]
+fn issue_14929_refusal_names_the_refusing_review_and_line() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let verdict = format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.");
+    let detail_lines = |output: &Output| -> Vec<String> {
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("::error::source review refusal detail: "))
+            .map(str::to_string)
+            .collect()
+    };
+
+    // A neutral residual admits under both carriers and prints no detail.
+    let residual = "- Residual: the hosted lane on this head has not run.";
+    for (name, body) in [
+        (
+            "marker with residual",
+            format!("SOURCE_REVIEW_READY\n\n{residual}"),
+        ),
+        ("verdict with residual", format!("{verdict}\n\n{residual}")),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, true, name)?;
+        if !detail_lines(&output).is_empty() {
+            return Err(format!("{name}: an admitted head printed refusal details"));
+        }
+    }
+
+    // A retraction word used as narration refuses under both carriers, and the
+    // detail names the matched phrase and the line it sits on.
+    let narration = "- The final commit message still states the withdrawn timing attribution.";
+    for (name, body) in [
+        (
+            "marker with retraction word",
+            format!("SOURCE_REVIEW_READY\n\n{narration}"),
+        ),
+        (
+            "verdict with retraction word",
+            format!("{verdict}\n\n{narration}"),
+        ),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, false, name)?;
+        let details = detail_lines(&output);
+        let named = details.iter().any(|line| {
+            line.contains("author's review at 2026-10-15T01:00:01Z")
+                && line.contains("phrase 'withdrawn'")
+                && line.contains("timing attribution")
+        });
+        if !named {
+            return Err(format!(
+                "{name}: detail did not name the refusing line: {details:?}"
+            ));
+        }
+    }
+
+    // A short-SHA verdict posted after an attesting marker at the same head
+    // supersedes it; the detail says so and names the earlier review.
+    let reviews = serde_json::json!([
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            "SOURCE_REVIEW_READY"
+        ),
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:02Z",
+            &format!(
+                "VERDICT: APPROVE {} \u{2014} no blocking findings on this head.",
+                &head[..10]
+            )
+        ),
+    ]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "short-SHA verdict superseding a marker")?;
+    let details = detail_lines(&output);
+    if details.len() != 1
+        || !details[0].contains("short SHA")
+        || !details[0]
+            .contains("supersedes the same login's attesting review at 2026-10-15T01:00:01Z")
+    {
+        return Err(format!(
+            "short-SHA supersession detail missing: {details:?}"
+        ));
+    }
+
+    // With no review at the head, the detail says that instead.
+    let reviews = serde_json::json!([review(
+        "author",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "SOURCE_REVIEW_READY"
+    )]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "review only at another commit")?;
+    let details = detail_lines(&output);
+    if details
+        != [format!(
+            "::error::source review refusal detail: no trusted review on head {head} carries an attestation; 1 trusted review(s) target other commits"
+        )]
+    {
+        return Err(format!("missing-review detail wrong: {details:?}"));
+    }
+
+    // Review fields are untrusted log text: a login or timestamp carrying a line
+    // break cannot start a workflow command of its own.
+    let mut forged = review(
+        "u\r\n::warning::EVIL",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z\n::error::PWN",
+        "x\n\nThe earlier REVIEW_READY is withdrawn.",
+    );
+    forged["id"] = serde_json::json!(7);
+    let output = check_reviews(&serde_json::json!([forged]), &head)?;
+    expect_outcome(&output, false, "forged login and timestamp")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr
+        .lines()
+        .any(|line| line.starts_with("::warning::EVIL") || line.starts_with("::error::PWN"))
+        || detail_lines(&output).is_empty()
+    {
+        return Err(format!(
+            "review fields reached the log as commands: {stderr}"
+        ));
+    }
+    Ok(())
+}
