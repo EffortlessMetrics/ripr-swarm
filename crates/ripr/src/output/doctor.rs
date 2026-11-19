@@ -7084,10 +7084,10 @@ mod tests {
         add_output_location_check(&mut report, &root, None);
         let real_target = output_location_check(&report).cloned();
         let status = report.status;
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         assert_eq!(missing_target, None);
         assert_eq!(real_target, None);
         assert_eq!(status, DoctorStatus::Pass);
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -7108,7 +7108,6 @@ mod tests {
         add_output_location_check(&mut refused, &root, None);
         let mut waived = output_location_base_report();
         add_output_location_check(&mut waived, &root, Some("/var/cache/ripr"));
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
 
         // Fixture premise: this is the state `ripr check` refuses.
         assert!(guard.is_err(), "{guard:?}");
@@ -7138,6 +7137,7 @@ mod tests {
             DoctorFirstCommand::resolve_for_report(&waived, || false),
             DoctorFirstCommand::DefaultCheck
         );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -7151,7 +7151,6 @@ mod tests {
         std::fs::write(root.join("target"), "x").map_err(|error| error.to_string())?;
         let mut report = output_location_base_report();
         add_output_location_check(&mut report, &root, None);
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         let check = output_location_check(&report)
             .ok_or_else(|| format!("no output_location check: {report:?}"))?;
         let evidence = check.evidence.as_deref().unwrap_or_default();
@@ -7160,6 +7159,7 @@ mod tests {
             evidence.contains("cannot enumerate") && evidence.contains("; "),
             "{evidence}"
         );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 }
