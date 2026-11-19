@@ -633,3 +633,60 @@ fn a_switch_clause_some_test_input_can_select_keeps_exposed() -> Result<(), Stri
     }
     Ok(())
 }
+
+const SHAPE: &str = "export function size(x: unknown): number {\n  if (Array.isArray(x)) {\n    return 1;\n  }\n  return 2;\n}\n";
+
+fn shape_arm(
+    label: &str,
+    source: &str,
+    line: usize,
+    removed: &str,
+    calls: &[(&str, &str)],
+) -> Result<Finding, String> {
+    let added = removed.replace("1", "99");
+    let source = source.replace(removed.trim(), added.trim());
+    let test = format!(
+        "import {{ size }} from \"../src/price\";\ntest(\"size\", () => {{\n{}}});\n",
+        calls
+            .iter()
+            .map(|(call, expected)| format!("  expect({call}).toBe({expected});\n"))
+            .collect::<String>()
+    );
+    finding_at(label, &source, line, removed, &added, &test)
+}
+
+#[test]
+fn array_is_array_and_typeof_guards_withdraw_exposed_for_other_inputs() -> Result<(), String> {
+    let typeof_source = SHAPE.replace("Array.isArray(x)", "typeof x === 'object'");
+    for (label, source) in [("is-array", SHAPE), ("typeof", typeof_source.as_str())] {
+        let skipped = shape_arm(
+            &format!("{label}-skipped"),
+            source,
+            3,
+            "    return 1;",
+            &[("size(5)", "2")],
+        )?;
+        assert_eq!(skipped.class, ExposureClass::ReachableUnrevealed, "{label}");
+        let entered = shape_arm(
+            &format!("{label}-entered"),
+            source,
+            3,
+            "    return 1;",
+            &[("size([1])", "1")],
+        )?;
+        assert_eq!(entered.class, ExposureClass::Exposed, "{label}");
+        let computed = shape_arm(
+            &format!("{label}-computed"),
+            source,
+            3,
+            "    return 1;",
+            &[("size(make())", "2")],
+        )?;
+        assert_ne!(
+            computed.class,
+            ExposureClass::ReachableUnrevealed,
+            "{label}"
+        );
+    }
+    Ok(())
+}
