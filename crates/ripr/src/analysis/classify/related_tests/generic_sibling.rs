@@ -456,6 +456,11 @@ fn literal_kind_rules_out_owner(
 fn file_rebinds_name(source: &str, name: &str) -> bool {
     const DECLARING: [&str; 5] = ["type", "struct", "enum", "union", "trait"];
     let masked = mask_comments_and_strings(source);
+    // A glob import (`use aliases::*;`) shadows a primitive name with any
+    // item of that name it brings in, which this reading cannot see.
+    if has_glob_import(&masked) {
+        return true;
+    }
     masked.match_indices(name).any(|(at, found)| {
         if !ident_boundary(&masked, at, at + found.len()) {
             return false;
@@ -475,6 +480,77 @@ fn file_rebinds_name(source: &str, name: &str) -> bool {
             .match_indices("use")
             .any(|(start, matched)| ident_boundary(statement, start, start + matched.len()))
     })
+}
+
+/// Whether masked source has a glob import outside a `#[cfg(test)]`
+/// module: a `*` written as a path segment (after `::`, `{` or `,`) in a
+/// statement with a `use` keyword after the previous `;`. A test module's
+/// glob (`use super::*;`) cannot rebind a name for production code outside
+/// it, and the owner is production code. A dereference after `{` or `,`
+/// that happens to share a statement with a `use` only keeps the direct
+/// call, which is the conservative answer.
+fn has_glob_import(masked: &str) -> bool {
+    let test_modules = cfg_test_module_spans(masked);
+    masked.match_indices('*').any(|(at, _)| {
+        if test_modules.iter().any(|span| span.contains(&at)) {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        if !before.ends_with(['{', ',']) && !before.ends_with("::") {
+            return false;
+        }
+        let statement = &before[before.rfind(';').map_or(0, |i| i + 1)..];
+        statement
+            .match_indices("use")
+            .any(|(start, matched)| ident_boundary(statement, start, start + matched.len()))
+    })
+}
+
+/// The byte spans of `#[cfg(test)] mod name { .. }` bodies in masked
+/// source. An attribute not followed by an inline module (a `mod name;`
+/// file module, or another item) contributes nothing.
+fn cfg_test_module_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    for (at, matched) in masked.match_indices("#[cfg(test)]") {
+        let mut rest = masked[at + matched.len()..].trim_start();
+        // Further attributes between `#[cfg(test)]` and the item.
+        while let Some(attribute) = rest.strip_prefix("#[") {
+            let Some(close) = attribute.find(']') else {
+                break;
+            };
+            rest = attribute[close + 1..].trim_start();
+        }
+        rest = rest.strip_prefix("pub").map_or(rest, str::trim_start);
+        let Some(after_mod) = rest.strip_prefix("mod") else {
+            continue;
+        };
+        if !after_mod.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let after_mod = after_mod.trim_start();
+        let name_end = after_mod
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after_mod.len());
+        let Some(body) = after_mod[name_end..].trim_start().strip_prefix('{') else {
+            continue;
+        };
+        let open = masked.len() - body.len();
+        let mut depth = 1usize;
+        for (offset, byte) in body.bytes().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        spans.push(open..open + offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    spans
 }
 
 /// Whether any `let` in `text` binds `name` in its pattern (`let (n,) = ..`,
@@ -733,6 +809,16 @@ mod tests {
             "impl Scale<u8> for Bar::scale",
             "let b = Bar(2); let by = 2.0; let _: f64 = by; assert_eq!(b.scale(by), 5);"
         )?);
+        // A glob import from another file may bring in an alias with a
+        // primitive's name, so the name is not read as the primitive.
+        const GLOB: &str = "mod aliases;\nuse aliases::*;\npub trait Scale<T> { fn scale(&self, by: T) -> u32; }\npub struct Bar(pub u32);\n\
+            impl Scale<u8> for Bar {\n    fn scale(&self, by: u8) -> u32 { (self.0 as f64 * by) as u32 + 1 }\n}\n\
+            impl Scale<f32> for Bar {\n    fn scale(&self, by: f32) -> u32 { (self.0 as f32 * by) as u32 + 2 }\n}\n";
+        assert!(!refused(
+            GLOB,
+            "impl Scale<u8> for Bar::scale",
+            "let b = Bar(2); let by = 2.0; let _: f64 = by; assert_eq!(b.scale(by), 5);"
+        )?);
         // A path spelling a primitive's name is not the primitive.
         const QUALIFIED: &str = "pub mod aliases { pub type u8 = f64; }\npub trait Scale<T> { fn scale(&self, by: T) -> u32; }\npub struct Bar(pub u32);\n\
             impl Scale<aliases::u8> for Bar {\n    fn scale(&self, by: aliases::u8) -> u32 { (self.0 as f64 * by) as u32 + 1 }\n}\n\
@@ -758,6 +844,21 @@ mod tests {
             ("// type u8 = f64;\nfn f(x: u8) {}", false),
             ("let s = \"use u8\"; fn f(x: u8) {}", false),
             ("fn u8_count() {}", false),
+            ("use aliases::*;", true),
+            ("use aliases::{*, other};", true),
+            ("use aliases::{other, inner::*};", true),
+            ("use super::*;\nimpl Scale<u8> for Bar {}", true),
+            (
+                "impl Scale<u8> for Bar {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+                false,
+            ),
+            (
+                "#[cfg(test)]\n#[allow(dead_code)]\npub mod tests { use super::*; }\nuse aliases::*;",
+                true,
+            ),
+            ("#[cfg(test)]\nmod tests;\nuse aliases::*;", true),
+            ("fn f(x: &mut u8, y: u8) { *x = 2 * y; }", false),
+            ("fn f(x: &mut u8) { let a = (1, *x); }", false),
         ] {
             assert_eq!(
                 file_rebinds_name(source, "u8") || file_rebinds_name(source, "str"),
