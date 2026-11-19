@@ -8821,7 +8821,7 @@ mod tests {
         let report = report_of(vec![issued("a", None), issued("b", Some(failing.clone()))]);
         let markdown = render_agent_status_markdown(&report);
         if !markdown.contains("Test run (attempt `a`): none recorded. ") {
-            return Err(format!("A's reading must name A:\n{markdown}"));
+            return Err(format!("A's reading must name its attempt:\n{markdown}"));
         }
         if !markdown.contains(
             "Test run (attempt `b`): reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test",
