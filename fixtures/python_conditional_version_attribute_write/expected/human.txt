@@ -50,7 +50,6 @@ More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
   establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
   related test(s). This is not a coverage assessment. A test may already exercise these changes

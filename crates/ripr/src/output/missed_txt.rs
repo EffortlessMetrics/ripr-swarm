@@ -5,7 +5,8 @@
 //! The selection mirrors the `github` renderer so no second classifier
 //! exists: a finding is listed only when it is candidate-actionable
 //! (`Finding::is_candidate_actionable`), is not suppressed by an explicit
-//! `--suppression-policy`, is not severity-`off` for its file, and its class
+//! `--suppression-policy`, is not withheld because its changed owner carries
+//! `#[mutants::skip]` (#13819), is not severity-`off` for its file, and its class
 //! is not `exposed`. The class is the shared owner's wording verbatim; this
 //! module claims no runtime mutation outcome.
 //!
@@ -19,7 +20,8 @@
 //! the `github` renderer treats as not clean, through the same shared helpers
 //! (`unanalyzed_state_notes`, `complete_outcome_limitation_message`): an
 //! incomplete or refused analysis outcome, advisory limitations on a complete
-//! one, uncommitted/untracked/ignored working-tree sources, no analysis scope,
+//! one (not the requested-scope note for files the operator left out with
+//! `--path`/`--exclude` or a configured pattern, #13894), uncommitted/untracked/ignored working-tree sources, no analysis scope,
 //! and preview-language files not analyzed. Zero bytes therefore means the run
 //! was fully analyzed, scoped, limitation-free and had no listed gap; paths and
 //! expressions are only whitespace-collapsed and control-escaped, so a field
@@ -42,10 +44,18 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld the same way and counted under its own reason, as in `github`.
+    let withheld_ids: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
     let mut rows: Vec<GapRow> = output
         .findings
         .iter()
         .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| !withheld_ids.contains(finding.id.as_str()))
         .filter(|finding| finding.class != ExposureClass::Exposed)
         .filter(|finding| finding.is_candidate_actionable())
         .filter(|finding| {
@@ -69,7 +79,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 limitation_suffix(outcome)
             ));
         }
-        Some(outcome) if !outcome.limitations.is_empty() => {
+        Some(outcome) if outcome.has_advisory_limitations() => {
             out.push_str(&comment_line(
                 &crate::output::github::complete_outcome_limitation_message(outcome),
             ));
@@ -79,7 +89,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     for note in crate::output::github::unanalyzed_state_notes(output) {
         out.push_str(&comment_line(&format!("{}: {}", note.title, note.message)));
     }
-    if let Some(line) = omitted_findings_comment(output, &suppressed_ids) {
+    if let Some(line) = omitted_findings_comment(output, &suppressed_ids, &withheld_ids) {
         out.push_str(&line);
     }
     for row in rows {
@@ -90,7 +100,8 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 }
 
 /// Findings deliberately left out of the list because they are suppressed
-/// by an explicit policy or are not current obligations of this change
+/// by an explicit policy, withheld by an owner opt-out, or are not current
+/// obligations of this change
 /// (base-side or unresolved evidence). Counting them keeps an empty list from
 /// reading as "no gaps" when the run did produce findings (github's #4393
 /// denominator rule). Exposed and severity-off findings are not counted:
@@ -98,19 +109,29 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 fn omitted_findings_comment(
     output: &CheckOutput,
     suppressed_ids: &std::collections::BTreeSet<&str>,
+    withheld_ids: &std::collections::BTreeSet<&str>,
 ) -> Option<String> {
+    // A policy suppression wins over an owner opt-out, so each finding is
+    // counted once (the `github` denominator's order).
     let suppressed = output
         .findings
         .iter()
         .filter(|finding| suppressed_ids.contains(finding.id.as_str()))
         .count();
+    let withheld = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| withheld_ids.contains(finding.id.as_str()))
+        .count();
     let not_current = output
         .findings
         .iter()
         .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| !withheld_ids.contains(finding.id.as_str()))
         .filter(|finding| !finding.is_candidate_actionable())
         .count();
-    if suppressed == 0 && not_current == 0 {
+    if suppressed == 0 && withheld == 0 && not_current == 0 {
         return None;
     }
     let mut parts = Vec::new();
@@ -122,6 +143,16 @@ fn omitted_findings_comment(
             .unwrap_or_default();
         parts.push(format!("{suppressed} suppressed by policy {policy}"));
     }
+    if withheld > 0 {
+        let reason = output
+            .owner_opt_outs
+            .first()
+            .map(|opt_out| opt_out.reason.as_str())
+            .unwrap_or_default();
+        parts.push(format!(
+            "{withheld} withheld by owner opt-out ({reason}: the changed function or an enclosing scope carries #[mutants::skip])"
+        ));
+    }
     if not_current > 0 {
         parts.push(format!(
             "{not_current} not current in this change (base-side or unresolved evidence)"
@@ -129,7 +160,7 @@ fn omitted_findings_comment(
     }
     Some(comment_line(&format!(
         "{} finding(s) not listed: {}. Run `ripr check --format json` to list every finding.",
-        suppressed + not_current,
+        suppressed + withheld + not_current,
         parts.join("; ")
     )))
 }
@@ -324,6 +355,8 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -439,6 +472,76 @@ mod tests {
         );
     }
 
+    /// #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    /// not listed, matching human, JSON, SARIF and `github`; it is counted
+    /// once under its own reason, and a policy suppression of the same
+    /// finding wins.
+    #[test]
+    fn owner_opt_out_findings_are_not_listed_and_are_disclosed() {
+        use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
+        let gap_lines = |rendered: &str| -> Vec<String> {
+            rendered
+                .lines()
+                .filter(|line| !line.starts_with("# "))
+                .map(str::to_string)
+                .collect()
+        };
+        let baseline = gap_lines(&render_with_config(
+            &output(fixture()),
+            &RiprConfig::default(),
+        ));
+        let mut out = output(fixture());
+        let withheld_id = out.findings[1].id.clone();
+        let withheld_prefix = format!(
+            "{}:{}:",
+            out.findings[1].probe.location.file.display(),
+            out.findings[1].probe.location.line
+        );
+        assert_eq!(
+            baseline
+                .iter()
+                .filter(|line| line.starts_with(&withheld_prefix))
+                .count(),
+            1,
+            "fixture must list the finding before it is withheld: {baseline:?}"
+        );
+        out.owner_opt_outs = vec![OwnerOptOut {
+            finding_id: withheld_id.clone(),
+            owner: "limit".to_string(),
+            reason: OwnerOptOutReason::MutantsSkip,
+            scope: OwnerOptOutScope::Fn,
+            scope_label: String::new(),
+        }];
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        let listed = gap_lines(&rendered);
+        assert!(
+            !listed.iter().any(|line| line.starts_with(&withheld_prefix)),
+            "withheld finding must not be listed: {rendered}"
+        );
+        assert_eq!(listed.len() + 1, baseline.len(), "{rendered}");
+        assert!(
+            rendered.starts_with(
+                "# ripr: 1 finding(s) not listed: 1 withheld by owner opt-out (owner_mutants_skip: the changed function or an enclosing scope carries #[mutants::skip])."
+            ),
+            "{rendered}"
+        );
+
+        // A policy suppression of the same finding wins: counted once.
+        out.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "p.toml".to_string(),
+            suppressed: vec![SuppressedCheckFinding {
+                finding_id: withheld_id,
+                selector: "src/**".to_string(),
+            }],
+            warnings: Vec::new(),
+        });
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert!(
+            rendered.starts_with("# ripr: 1 finding(s) not listed: 1 suppressed by policy p.toml."),
+            "{rendered}"
+        );
+    }
+
     #[test]
     fn all_findings_omitted_is_never_an_empty_stream() {
         let mut out = output(fixture());
@@ -519,6 +622,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
         let rendered = render_with_config(&out, &RiprConfig::default());
         assert_all_comments(&rendered);

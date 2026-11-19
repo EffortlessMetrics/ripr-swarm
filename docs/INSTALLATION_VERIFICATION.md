@@ -201,7 +201,7 @@ predate the RIPR producer envelope, so `ripr outcome` reads them (with a
 warning) but `ripr agent verify` rejects them as non-canonical. Exercise
 `agent verify` and `agent receipt` through the real loop instead: run
 `ripr agent repair --phase before` on a pilot seam, add the focused test,
-then run the `--phase after` command it prints. Both artifacts must live under
+then run the `ripr continue ... --attempt` command it prints. Both artifacts must live under
 `--root`; two identical snapshots exit 3 (no repository movement) by design.
 
 Run the generator self-pin smoke with the binary built from the release commit
@@ -220,7 +220,8 @@ target/ripr/install-smoke-path/bin/ripr init --ci github --dry-run \
   --root "$smoke" > "$smoke/stdout.txt" 2> "$smoke/stderr.txt" &&
   test ! -s "$smoke/stderr.txt" &&
   ! grep -q 'is unreleased' "$smoke/stdout.txt" &&
-  grep -q "cargo install ripr --version $version --locked" "$smoke/stdout.txt" &&
+  grep -q "ripr/.github/actions/ripr-check@v$version\$" "$smoke/stdout.txt" &&
+  grep -q "^          version: $version\$" "$smoke/stdout.txt" &&
   echo "init self-pin smoke: pass" || { echo "init self-pin smoke: FAIL" >&2; false; }
 ```
 
@@ -239,7 +240,7 @@ cargo xtask release-readiness --version 0.11.0
 ```
 
 The readiness report must show that generated GitHub CI includes `#### First-run
-status`, `missing_start_here`, `start-here.md` in the `ripr-reports` artifact, and
+status`, `missing_start_here`, `ripr/reports/start-here.md` in the `ripr-reports` artifact, and
 the `ripr first-pr` safe next action; it must also verify that the VS Code manifest contributes `ripr: Start Current Repair`.
 
 ## Public Cargo Install Proof
@@ -311,7 +312,7 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
-ripr on PATH, when ripr.server.version is empty
+ripr on PATH, when ripr.server.version is empty and not older than the expected version
 verified first-run download from GitHub Releases
 ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error

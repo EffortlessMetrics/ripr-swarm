@@ -16,12 +16,15 @@
 //!   constant itself (`from settings import LIMIT`) or calls a module function
 //!   with literal arguments (`over_limit(11)`) whose body is one `return
 //!   <expression>` over its parameters, literals and the constant;
-//! - the assertion holds under the old value and fails under the new one.
+//! - ordinarily the assertion holds under the old value and fails under the
+//!   new one. A direct string reader comparison also establishes the reverse
+//!   distinction; only an exact current-side string pin may be newly edited.
 //!
-//! Anything the evaluator cannot decide (a name, a call, an operator or a
-//! value kind it does not model) is not a credit, and the finding keeps the
-//! `missing_import_graph` abstention. A value no assertion distinguishes is not
-//! a gap either: other code or tests may observe it.
+//! One pre-existing string membership assertion that accepts both distinct
+//! reader returns supplies weak observation and a concrete return-value gap.
+//! This evidence is separate from a discriminating credit. Anything the
+//! evaluator cannot decide (a name, call, operator or value kind it does not
+//! model) supplies neither; an unresolved string consumer stays unknown.
 
 use super::bool_oracle::count_bindings;
 use super::module_constants::{
@@ -29,7 +32,8 @@ use super::module_constants::{
     module_literal_constants, module_table_binding_at,
 };
 use super::related_tests::{
-    import_source_module_matches_owner, owner_module_callees, submodule_receivers,
+    import_source_module_matches_owner, owner_module_callees, owner_module_paths,
+    submodule_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
@@ -38,9 +42,9 @@ use super::table_reads::{
     unsafe_table_uses_lexed,
 };
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
-use crate::domain::OwnerKind;
+use crate::domain::{FlowSinkFact, FlowSinkKind, OwnerKind};
 use rayon::prelude::*;
-use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::path::Path;
 
 /// Words that mark a file able to rewrite another module's attribute at
@@ -2221,7 +2225,7 @@ fn source_words(source: &str) -> impl Iterator<Item = &str> {
         .filter(|word| !word.is_empty())
 }
 
-/// One assertion that fails when the constant takes its new value.
+/// One assertion that distinguishes the constant's old and new values.
 pub(super) struct ModuleValueCredit<'a> {
     pub(super) test: &'a PythonTest,
     pub(super) assertion: &'a PythonAssertion,
@@ -2232,6 +2236,47 @@ pub(super) struct ModuleValueCredit<'a> {
     /// The module function the assertion reads the constant through, when it
     /// does not read the constant directly.
     pub(super) reader: Option<String>,
+}
+
+/// A reached string reader whose membership assertion holds for both values.
+/// This is a missing discriminator, never a strong module-value credit.
+pub(super) struct ModuleValueRead<'a> {
+    pub(super) test: &'a PythonTest,
+    pub(super) assertion: &'a PythonAssertion,
+    pub(super) constant: String,
+    pub(super) reader: String,
+    pub(super) call: String,
+    pub(super) old: String,
+    pub(super) new: String,
+    pub(super) sink: FlowSinkFact,
+}
+
+/// A fully evaluated string comparison owns the reader's return sink even
+/// after its assertion becomes discriminating and needs no repair guidance.
+pub(super) struct ModuleStringPin<'a> {
+    pub(super) assertion: &'a PythonAssertion,
+    pub(super) sink: FlowSinkFact,
+}
+
+#[derive(Default)]
+pub(super) struct ModuleConstantEvidence<'a> {
+    pub(super) credits: Vec<ModuleValueCredit<'a>>,
+    /// Fully evaluated direct string comparisons retain their oracle kind
+    /// while gaining strong discrimination; other consumers keep their rows.
+    pub(super) string_pins: Vec<ModuleStringPin<'a>>,
+    /// Current-side string assertions reject the old value. Only an exact
+    /// equality pin may be edited in the diff.
+    pub(super) current_pins: Vec<&'a PythonAssertion>,
+    pub(super) weak_reads: Vec<ModuleValueRead<'a>>,
+    pub(super) unresolved_string_read: bool,
+}
+
+impl<'a> ModuleConstantEvidence<'a> {
+    pub(super) fn string_pin(&self, assertion: &PythonAssertion) -> Option<&ModuleStringPin<'a>> {
+        self.string_pins
+            .iter()
+            .find(|pin| std::ptr::eq(pin.assertion, assertion))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2320,6 +2365,19 @@ pub(super) struct Reader {
     pub(super) expression: Expr,
 }
 
+fn reader_return_sink(owner: &PythonOwner, reader: &Reader, source: &str) -> FlowSinkFact {
+    FlowSinkFact {
+        kind: FlowSinkKind::ReturnValue,
+        text: format!(
+            "return {}",
+            super::source_utils::text_for_range(source, reader.expression.range())
+        ),
+        line: SourceText::new(source)
+            .line_for_offset(usize::from(reader.expression.range().start())),
+        owner: Some(owner.symbol_id()),
+    }
+}
+
 /// What an expression's names and calls mean while it is evaluated.
 pub(super) struct Scope<'a> {
     pub(super) constant: &'a str,
@@ -2367,15 +2425,41 @@ pub(super) struct ModuleEdit<'a> {
     pub(super) new_source: &'a str,
 }
 
-/// The credits for an edit of a module-level constant. Empty when the edit is
-/// not a certain constant replacement or no assertion distinguishes the values.
-pub(super) fn module_constant_credits<'a>(
+/// Discriminating credits and weak string-reader observations for a certain
+/// module constant replacement. An unresolved string edit explicitly retains
+/// unknown consumer reach rather than claiming there is no path. Every string
+/// route requires the workspace producer's positive module-import identity.
+pub(super) fn module_constant_evidence<'a>(
     edit: &ModuleEdit<'_>,
     module_owner: &PythonOwner,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-) -> Vec<ModuleValueCredit<'a>> {
-    credits(edit, module_owner, owners, all_tests).unwrap_or_default()
+    module_import_unshadowed: bool,
+) -> ModuleConstantEvidence<'a> {
+    let string_edit = match (
+        constant_line(edit.line_text),
+        edit.old_line_text.and_then(constant_line),
+    ) {
+        (Some((name, Value::Str(new))), Some((old_name, Value::Str(old)))) => {
+            name == old_name && new != old
+        }
+        _ => false,
+    };
+    if string_edit
+        && (!module_import_unshadowed
+            || module_owner.foreign_writes.reflection_elsewhere()
+            || module_owner.foreign_writes.names_may_differ_elsewhere()
+            || module_owner.foreign_writes.writes_dunder())
+    {
+        return ModuleConstantEvidence {
+            unresolved_string_read: true,
+            ..ModuleConstantEvidence::default()
+        };
+    }
+    let mut evidence = credits(edit, module_owner, owners, all_tests).unwrap_or_default();
+    evidence.unresolved_string_read =
+        string_edit && evidence.credits.is_empty() && evidence.weak_reads.is_empty();
+    evidence
 }
 
 fn credits<'a>(
@@ -2383,7 +2467,7 @@ fn credits<'a>(
     module_owner: &PythonOwner,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-) -> Option<Vec<ModuleValueCredit<'a>>> {
+) -> Option<ModuleConstantEvidence<'a>> {
     let ModuleEdit {
         file,
         line,
@@ -2397,7 +2481,11 @@ fn credits<'a>(
             (&name, &parameters, &new_body),
             module_owner,
             all_tests,
-        );
+        )
+        .map(|credits| ModuleConstantEvidence {
+            credits,
+            ..ModuleConstantEvidence::default()
+        });
     }
     let (name, new_value) = constant_line(line_text)?;
     let (old_name, old_value) = constant_line(old_line_text?)?;
@@ -2489,12 +2577,22 @@ fn credits<'a>(
 
     let forwarders = forwarders_of(module_owner, file, new_source, &readers, owners);
 
-    let mut out = Vec::new();
+    let mut out = ModuleConstantEvidence::default();
+    let string_values = matches!((&old_value, &new_value), (Value::Str(_), Value::Str(_)));
+    let read_assertion = |assertion: &PythonAssertion| {
+        if string_values {
+            // The generic oracle extractor may retain only a strong `and`
+            // conjunct in gate_text. A module string reader must be observed
+            // by the actual source condition, including its short circuits.
+            assertion_text_expression(&assertion.text)
+        } else {
+            assertion_expression(assertion)
+        }
+    };
     for test in all_tests {
-        // A test file edited in the same diff may assert the new value; only
-        // an assertion the diff leaves alone is read as a pre-existing oracle.
+        // An edited test can contribute only the current-side exact string
+        // pin below. It cannot lend a pre-existing oracle or weak repair route.
         if super::test_activation::activation_control(test).is_some()
-            || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&name)
         {
             continue;
@@ -2506,7 +2604,7 @@ fn credits<'a>(
             constant_spellings(test, module_owner, &name)
         };
         for assertion in &test.assertions {
-            let Some(expression) = assertion_expression(assertion) else {
+            let Some(expression) = read_assertion(assertion) else {
                 continue;
             };
             if !straight_line_assertion(test, assertion) {
@@ -2516,13 +2614,14 @@ fn credits<'a>(
                 .assertions
                 .iter()
                 .filter(|prior| prior.line < assertion.line)
-                .map(assertion_expression)
+                .map(read_assertion)
                 .collect::<Option<Vec<_>>>()
             else {
                 continue;
             };
             // The constant read directly.
-            if !constant_spellings.is_empty()
+            if !test.constant_rebinding.edited_in_diff
+                && !constant_spellings.is_empty()
                 && flips(
                     &expression,
                     &name,
@@ -2533,7 +2632,7 @@ fn credits<'a>(
                     &preceding,
                 )
             {
-                out.push(credit(
+                out.credits.push(credit(
                     test,
                     assertion,
                     &name,
@@ -2548,9 +2647,34 @@ fn credits<'a>(
                 if test.constant_rebinding.assigns_attribute(&owner.name) {
                     continue;
                 }
-                let spellings = reader_spellings(test, owner, &module_owner.foreign_writes);
-                if spellings.is_empty()
-                    || !flips(
+                let spellings = if string_values {
+                    direct_reader_spellings(test, owner, &module_owner.foreign_writes)
+                } else {
+                    reader_spellings(test, owner, &module_owner.foreign_writes)
+                };
+                if spellings.is_empty() {
+                    continue;
+                }
+                let reading = string_values
+                    .then(|| {
+                        string_reader_assertion(
+                            &expression,
+                            &name,
+                            (&old_value, &new_value),
+                            &constant_spellings,
+                            &spellings,
+                            (old_reader, new_reader),
+                            &preceding,
+                        )
+                    })
+                    .flatten();
+                let current_pin = reading.as_ref().is_some_and(|reading| {
+                    !reading.old_holds
+                        && reading.new_holds
+                        && (!test.constant_rebinding.edited_in_diff || reading.exact)
+                });
+                let old_pin = !test.constant_rebinding.edited_in_diff
+                    && (flips(
                         &expression,
                         &name,
                         (&old_value, &new_value),
@@ -2558,11 +2682,52 @@ fn credits<'a>(
                         &spellings,
                         [(Some(old_reader), None), (Some(new_reader), None)],
                         &preceding,
-                    )
-                {
+                    ) || reading
+                        .as_ref()
+                        .is_some_and(|reading| reading.old_holds && !reading.new_holds));
+                if !old_pin && !current_pin {
+                    // A single, selected assertion avoids lending another
+                    // row's oracle or repair placement to this read.
+                    if !test.constant_rebinding.edited_in_diff
+                        && test.assertions.len() == 1
+                        && let Some(reading) = reading
+                        && reading.old_holds
+                        && reading.new_holds
+                        && reading.old != reading.new
+                    {
+                        let call = super::source_utils::text_for_range(
+                            assertion.text.trim(),
+                            reading.call_range,
+                        );
+                        let (Ok(old), Ok(new)) = (
+                            serde_json::to_string(&reading.old),
+                            serde_json::to_string(&reading.new),
+                        ) else {
+                            continue;
+                        };
+                        out.weak_reads.push(ModuleValueRead {
+                            test,
+                            assertion,
+                            constant: name.clone(),
+                            reader: owner.name.clone(),
+                            call,
+                            old,
+                            new,
+                            sink: reader_return_sink(owner, new_reader, new_source),
+                        });
+                    }
                     continue;
                 }
-                out.push(credit(
+                if current_pin {
+                    out.current_pins.push(assertion);
+                }
+                if reading.is_some() {
+                    out.string_pins.push(ModuleStringPin {
+                        assertion,
+                        sink: reader_return_sink(owner, new_reader, new_source),
+                    });
+                }
+                out.credits.push(credit(
                     test,
                     assertion,
                     &name,
@@ -2578,6 +2743,11 @@ fn credits<'a>(
             // The constant read through a reader a sibling module's function
             // forwards to (#9619).
             for forwarder in &forwarders {
+                // The positive string-import fact covers the changed file,
+                // not this additional module's import identity.
+                if string_values || test.constant_rebinding.edited_in_diff {
+                    continue;
+                }
                 let (_, old_reader, new_reader) = &readers[forwarder.reader];
                 if test
                     .constant_rebinding
@@ -2635,7 +2805,7 @@ fn credits<'a>(
                 {
                     continue;
                 }
-                out.push(credit(
+                out.credits.push(credit(
                     test,
                     assertion,
                     &name,
@@ -3062,6 +3232,115 @@ fn credit<'a>(
     }
 }
 
+struct StringReaderAssertion {
+    call_range: rustpython_parser::text_size::TextRange,
+    old: String,
+    new: String,
+    old_holds: bool,
+    new_holds: bool,
+    exact: bool,
+}
+
+/// One direct reader call compared with an independent string literal.
+/// No outer boolean, branch, chain or wrapper can lend an unexecuted call.
+fn string_reader_assertion(
+    expression: &Expr,
+    name: &str,
+    values: (&Value, &Value),
+    constant_spellings: &[String],
+    reader_spellings: &[String],
+    readers: (&Reader, &Reader),
+    preceding: &[Expr],
+) -> Option<StringReaderAssertion> {
+    let Expr::Compare(compare) = expression else {
+        return None;
+    };
+    let [operator] = compare.ops.as_slice() else {
+        return None;
+    };
+    let [right] = compare.comparators.as_slice() else {
+        return None;
+    };
+    let (subject, literal) = match operator {
+        ast::CmpOp::Eq => match (compare.left.as_ref(), right) {
+            (subject @ Expr::Call(_), Expr::Constant(literal))
+            | (Expr::Constant(literal), subject @ Expr::Call(_)) => (subject, literal),
+            _ => return None,
+        },
+        ast::CmpOp::In | ast::CmpOp::NotIn => match (compare.left.as_ref(), right) {
+            (Expr::Constant(literal), subject @ Expr::Call(_)) => (subject, literal),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let ast::Constant::Str(expected) = &literal.value else {
+        return None;
+    };
+    let returned = |value, reader| {
+        let scope = Scope {
+            constant: name,
+            value,
+            parameters: None,
+            constant_spellings,
+            reader_spellings,
+            reader: Some(reader),
+            model: None,
+            receiver: None,
+            floats: false,
+            callee: None,
+        };
+        if !preceding
+            .iter()
+            .all(|prior| module_condition(prior, &scope) == Some(true))
+        {
+            return None;
+        }
+        let Value::Str(value) = evaluate(subject, &scope)? else {
+            return None;
+        };
+        (value.len() <= 64 * 1024).then_some(value)
+    };
+    let old = returned(values.0, readers.0)?;
+    let new = returned(values.1, readers.1)?;
+    let holds = |value: &str| match operator {
+        ast::CmpOp::Eq => value == expected.as_str(),
+        ast::CmpOp::In => value.contains(expected.as_str()),
+        ast::CmpOp::NotIn => !value.contains(expected.as_str()),
+        _ => false,
+    };
+    Some(StringReaderAssertion {
+        call_range: subject.range(),
+        old_holds: holds(&old),
+        new_holds: holds(&new),
+        old,
+        new,
+        exact: *operator == ast::CmpOp::Eq,
+    })
+}
+
+/// Prefix assertions still have to pass on both sides. String membership is
+/// local to the module-reader path; the shared evaluator is unchanged.
+fn module_condition(expression: &Expr, scope: &Scope<'_>) -> Option<bool> {
+    if let Some(value) = evaluate(expression, scope) {
+        return Some(value.truthy());
+    }
+    let Expr::Compare(compare) = expression else {
+        return None;
+    };
+    let [operator @ (ast::CmpOp::In | ast::CmpOp::NotIn)] = compare.ops.as_slice() else {
+        return None;
+    };
+    let [right] = compare.comparators.as_slice() else {
+        return None;
+    };
+    let (Value::Str(left), Value::Str(right)) =
+        (evaluate(&compare.left, scope)?, evaluate(right, scope)?)
+    else {
+        return None;
+    };
+    Some(right.contains(&left) == (*operator == ast::CmpOp::In))
+}
+
 /// Whether the assertion holds under the old value and fails under the new
 /// one, with every part of both evaluations decided.
 fn flips(
@@ -3344,6 +3623,28 @@ pub(super) fn reader_spellings(
     keep_unshadowed(test, callees)
 }
 
+/// The string-import fact proves the owner's physical module paths. A
+/// package re-export has its own import identity and cannot borrow that fact.
+fn direct_reader_spellings(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    module_foreign: &ForeignWrites,
+) -> Vec<String> {
+    let modules = owner_module_paths(&owner.file);
+    let mut direct = std::collections::BTreeSet::new();
+    for import in &test.imports {
+        if import.imported == owner.name && modules.contains(&import.source_module) {
+            direct.insert(import.alias.clone());
+        }
+        for receiver in submodule_receivers(import, owner, &test.file) {
+            direct.insert(format!("{receiver}.{}", owner.name));
+        }
+    }
+    let mut callees = reader_spellings(test, owner, module_foreign);
+    callees.retain(|callee| direct.contains(callee));
+    callees
+}
+
 pub(super) fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String> {
     spellings.retain(|spelling| {
         let root = spelling.split('.').next().unwrap_or(spelling);
@@ -3358,7 +3659,11 @@ pub(super) fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> 
 
 /// The condition of a bare `assert <condition>` assertion.
 pub(super) fn assertion_expression(assertion: &PythonAssertion) -> Option<Expr> {
-    let text = assertion.gate_text.trim();
+    assertion_text_expression(&assertion.gate_text)
+}
+
+fn assertion_text_expression(text: &str) -> Option<Expr> {
+    let text = text.trim();
     if !text.starts_with("assert ") {
         return None;
     }

@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -88,6 +89,19 @@ class ProcessControlTests(unittest.TestCase):
         child_pid = int(result.stdout.strip())
         if os.name == "posix":
             proc = Path(f"/proc/{child_pid}/stat")
+            # SIGKILL delivery and reparenting are asynchronous under runner
+            # load, so the guarantee under test is "not executing" and the
+            # state is polled before asserting (#13113, #13443 shard-2 flake).
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if not proc.exists():
+                    break
+                try:
+                    if proc.read_text().split()[2] in ("Z", "X"):
+                        break
+                except (ProcessLookupError, FileNotFoundError):
+                    break
+                time.sleep(0.05)
             if proc.exists():
                 self.assertIn(proc.read_text().split()[2], ("Z", "X"), "owned descendant is still executing")
             else:

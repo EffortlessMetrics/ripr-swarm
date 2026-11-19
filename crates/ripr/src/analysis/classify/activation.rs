@@ -78,6 +78,8 @@ pub(in crate::analysis) struct ActivationWithBoundaryInput {
     pub(in crate::analysis) unresolved_boundary: Option<String>,
     pub(in crate::analysis) literal_length_boundary:
         Option<super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// `activation_evidence_with_value_facts` that also returns the
@@ -104,6 +106,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
                 test,
                 owner_fn,
                 super::argument_fold::FoldScope::of_test(test, index),
+                Some(index),
             ),
         })
         .collect::<Vec<_>>();
@@ -150,6 +153,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         },
         unresolved_boundary,
         literal_length_boundary: None,
+        slice_counter_boundary: None,
     }
 }
 
@@ -195,12 +199,12 @@ impl TestValueFacts {
     ) -> Vec<ValueFact> {
         let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn, scope);
+            return value_facts_for_test(test, owner_fn, scope, Some(index));
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn, scope);
+        let facts = value_facts_for_test(test, owner_fn, scope, Some(index));
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -248,6 +252,39 @@ fn owner_name_call_text<'text>(
     }
 }
 
+/// Read each direct free-owner occurrence in a captured line (#13373).
+/// Facts intentionally share the full line. Mask before locating occurrences
+/// so quoted or commented calls cannot contribute arguments; retain raw bytes
+/// for the existing argument reader. Nested calls are separate rows, not an
+/// evaluation of the outer argument. Identity remains the caller's authority.
+/// Associated owners keep their existing single-site reading: a repeated name
+/// alone does not establish that two receivers have the same type.
+fn owner_call_argument_rows(text: &str, name: &str, free_owner: bool) -> Vec<Vec<String>> {
+    if !free_owner {
+        return call_arguments(text, name).into_iter().collect();
+    }
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .filter_map(|(at, _)| {
+            // Whitespace or a comment may separate the name from `(`; the
+            // mask turns a comment into blanks, so the paren is the first
+            // non-blank byte after the name. Rebuild an adjacent spelling
+            // for the argument reader.
+            let after = at + name.len();
+            let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+            if !masked[open..].starts_with('(') {
+                return None;
+            }
+            call_arguments(&format!("{name}{}", &text[open..]), name)
+        })
+        .collect()
+}
+
 /// The value context of a qualified path token found in a test (#5357):
 /// `Constant` when the path's spelling establishes a constant, otherwise the
 /// historical `EnumVariant`.
@@ -263,6 +300,7 @@ fn value_facts_for_test(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     scope: super::argument_fold::FoldScope<'_>,
+    index: Option<&crate::analysis::rust_index::RustIndex>,
 ) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
@@ -273,33 +311,41 @@ fn value_facts_for_test(
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-            .and_then(|text| call_arguments(text, &call.name))
-        else {
+        let argument_rows = owner_call_argument_rows(&call.text, &call.name, free_owner);
+        // The expansion must not newly label a rival or shadowed call's
+        // arguments as owner inputs. Preserve the existing whole-line refusal.
+        if argument_rows.len() > 1
+            && let (Some(index), Some(owner)) = (index, owner_fn)
+            && !super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            )
+        {
             continue;
-        };
-        for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false, scope) {
-                let value = parameters
-                    .get(idx)
-                    .map(|parameter| format!("{parameter} = {value}"))
-                    .unwrap_or(value);
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    value,
-                    context: ValueContext::FunctionArgument,
-                });
-            }
-            for value in enum_variant_values(argument) {
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    context: path_value_context(&value),
-                    value,
-                });
+        }
+        for arguments in argument_rows {
+            for (idx, argument) in arguments.iter().enumerate() {
+                for value in owner_row_argument_values(test, argument, false, scope) {
+                    let value = parameters
+                        .get(idx)
+                        .map(|parameter| format!("{parameter} = {value}"))
+                        .unwrap_or(value);
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        value,
+                        context: ValueContext::FunctionArgument,
+                    });
+                }
+                for value in enum_variant_values(argument) {
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        context: path_value_context(&value),
+                        value,
+                    });
+                }
             }
         }
     }
@@ -378,6 +424,16 @@ fn observed_discriminator_values(
     let Some(owner) = owner_fn else {
         return Vec::new();
     };
+    // #13037: a guarded comparison's boundary rows are the ones that hold
+    // its guards. A guarded shape this reading declines gets no boundary
+    // row at all: the compound reading below (#9637) would read the
+    // comparison without its guards and credit rows that miss them.
+    if let Some(guarded) = guarded_comparison(probe, owner) {
+        return match guarded.reading(probe, owner, related_tests, helper_chain, index) {
+            GuardedReading::Reached(facts) => facts,
+            GuardedReading::Unreached(_) | GuardedReading::Unread => Vec::new(),
+        };
+    }
     let parameters = function_parameters(owner);
     let owner_source = index
         .files()
@@ -388,6 +444,7 @@ fn observed_discriminator_values(
         owner_source,
         &parameters,
         &probe.expression,
+        probe.before.as_deref(),
         probe.location.line,
         index,
     ) else {
@@ -480,6 +537,9 @@ fn observed_discriminator_values(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let mut facts = Vec::new();
     let replaced = replaced_equality_constant(probe, owner, owner_source);
 
@@ -567,10 +627,9 @@ fn observed_discriminator_values(
             .or_else(|| {
                 visible_operand(&right, right_constant.as_ref()).map(|operand| operand.value)
             });
-        if right_value
-            .as_deref()
-            .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
-        {
+        if right_value.as_deref().is_some_and(|value| {
+            boundary_side_values_equal(&left_value.value, value, right_constant.as_ref())
+        }) {
             facts.push(ValueFact {
                 file: left_value.file.clone(),
                 line: left_value.line,
@@ -591,6 +650,72 @@ fn observed_discriminator_values(
                 context: ValueContext::FunctionArgument,
             });
         }
+    }
+    if let Some(constant) = &right_constant
+        && constant.lookup.is_declared_once()
+        && boundary_parameter_field_projection(&parameters, &left).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&right, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &left,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: String::new(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
+    }
+    if let Some(constant) = &left_constant
+        && constant.lookup.is_declared_once()
+        && boundary_parameter_field_projection(&parameters, &right).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&left, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &right,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: String::new(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
     }
     if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
         for (file, line, text) in owner_calls_passing_constant(
@@ -1075,6 +1200,11 @@ fn credited_parameter(
     found.clone().filter(|_| {
         !(parameters.iter().any(|parameter| parameter == operand)
             && owner_rebinds_operand(owner, operand, predicate_line))
+            && boundary_parameter_field_projection(parameters, operand).is_none_or(
+                |(parameter, field)| {
+                    !owner_rebinds_boundary_field(owner, &parameter, &field, predicate_line)
+                },
+            )
     })
 }
 
@@ -1122,13 +1252,19 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
+        // A flat prelude may rebind the flag or a constant the initializer
+        // reads (`let si = !si;`, a function-local `const KB`); read exactly,
+        // those rebindings are applied below instead of declining (#12771).
+        let prelude = super::owner_prelude::owner_prelude(owner, operand, &initializer, parameters);
+        let accounted = |name: &str| prelude.as_ref().is_some_and(|found| found.binds(name));
         // A flag-selected initializer reads its flag from the caller's row
         // and its arms from the file's constants, so neither may be rebound
-        // in the owner (`let si = !si;`, a local `KB`).
+        // in the owner (`let si = !si;`, a local `KB`) beyond the prelude.
         if initializer.trim_start().starts_with("if ")
             && free_identifiers(&initializer)
                 .iter()
                 .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .filter(|name| !accounted(name))
                 .any(|name| {
                     name_rebound_in_owner(owner, name)
                         || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
@@ -1149,11 +1285,24 @@ fn resolve_boundary_operand(
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
+                && !accounted(name)
                 && parameter_rebound_before(owner, name, declared_line, &initializer)
         }) {
             return None;
         }
-        let constants = initializer_constants(owner, &initializer, parameters, index);
+        let (initializer, constants) = match &prelude {
+            Some(found) => {
+                let rewritten = found.rewrite_initializer(&initializer)?;
+                let mut constants = initializer_constants(owner, &rewritten, parameters, index);
+                constants.retain(|(name, _)| !found.binds(name));
+                constants.extend(found.constants.iter().cloned());
+                (rewritten, constants)
+            }
+            None => {
+                let constants = initializer_constants(owner, &initializer, parameters, index);
+                (initializer, constants)
+            }
+        };
         let names = free_identifiers(&initializer);
         let mut parameters_read: Vec<&String> = names
             .iter()
@@ -1736,6 +1885,11 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                 .strip_prefix(operand)
                 .is_some_and(|rest| rest.trim_start().starts_with(':'))
     });
+    // Each occurrence asks about the text before it (arm pattern, `for` and
+    // `let` heads) and the brackets after it. Reading those afresh per
+    // occurrence made one call quadratic in the body, and the call runs once
+    // per changed comparison (#11738); the scan answers them from one pass.
+    let scan = RebindingScan::new(body);
     body.match_indices(operand).any(|(start, _)| {
         let before = &body[..start];
         let after = &body[start + operand.len()..];
@@ -1790,34 +1944,22 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                     || after_trimmed.starts_with("=>")
                     || after_trimmed.starts_with(','))
         };
-        let match_arm_pattern = !binds_scrutinee_itself && in_match_arm_pattern(before);
+        let match_arm_pattern =
+            !binds_scrutinee_itself && in_match_arm_pattern(scan.chars_before(start));
         // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
         // the bracket group holding the name is followed by a bare `=`.
-        let destructuring_assignment = {
-            let mut depth = 0usize;
-            let mut closed_at = None;
-            for (offset, ch) in after.char_indices() {
-                match ch {
-                    '(' | '[' | '{' => depth += 1,
-                    ')' | ']' | '}' if depth == 0 => {
-                        closed_at = Some(offset + 1);
-                        break;
-                    }
-                    ')' | ']' | '}' => depth -= 1,
-                    _ => {}
-                }
-            }
-            closed_at.is_some_and(|at| {
-                let rest = after[at..].trim_start();
+        let destructuring_assignment = scan
+            .first_unmatched_closer_from(start + operand.len())
+            .is_some_and(|closer| {
+                let rest = body[closer + 1..].trim_start();
                 rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
-            })
-        };
-        let for_pattern = before
-            .rfind("for ")
+            });
+        let for_pattern = scan
+            .last_for_before(start)
             .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
             .is_some_and(|at| !contains_word(&before[at..], "in"));
-        let let_pattern = before
-            .rfind("let ")
+        let let_pattern = scan
+            .last_let_before(start)
             .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
             .is_some_and(|at| !before[at..].contains(['=', ';']));
         let single_pipes = line_before
@@ -1846,8 +1988,7 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
 /// its `=>` with no separator) or any other operator ends it as not a pattern,
 /// so guard operators (`==`, `>=`), `1..=5` ranges and struct braces after the
 /// name never hide the binding (#9197).
-fn in_match_arm_pattern(before: &str) -> bool {
-    let chars: Vec<char> = before.chars().collect();
+fn in_match_arm_pattern(chars: &[char]) -> bool {
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let mut i = chars.len();
     // After a `,` or a skipped `{}` block at this level the text read back is
@@ -1885,9 +2026,7 @@ fn in_match_arm_pattern(before: &str) -> bool {
             match ch {
                 '(' | '[' => tolerant = false,
                 '{' => {
-                    let head: String = chars[..i].iter().collect();
-                    let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
-                    if contains_word(&head[boundary..], "match") {
+                    if statement_head_names_match(&chars[..i]) {
                         return true;
                     }
                     tolerant = false;
@@ -1901,9 +2040,7 @@ fn in_match_arm_pattern(before: &str) -> bool {
         match ch {
             '(' | '[' => {}
             '{' => {
-                let head: String = chars[..i].iter().collect();
-                let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
-                if contains_word(&head[boundary..], "match") {
+                if statement_head_names_match(&chars[..i]) {
                     return true;
                 }
             }
@@ -1939,6 +2076,150 @@ fn in_match_arm_pattern(before: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether the statement head that ends `head` (the text after its last `;`,
+/// `{` or `}`) holds the word `match`.
+fn statement_head_names_match(head: &[char]) -> bool {
+    let boundary = head
+        .iter()
+        .rposition(|ch| matches!(ch, ';' | '{' | '}'))
+        .map_or(0, |at| at + 1);
+    head[boundary..]
+        .split(|ch| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+        .any(|token| token.iter().copied().eq("match".chars()))
+}
+
+/// The per-body answers [`owner_rebinds_operand`] asks once per occurrence of
+/// the operand, each built on first use from one pass over the body.
+struct RebindingScan<'a> {
+    body: &'a str,
+    chars: std::cell::OnceCell<Vec<char>>,
+    /// Byte offset of the last prefix handed out and its length in chars.
+    /// Occurrences arrive in ascending order, so each prefix is counted from
+    /// the previous one.
+    counted: std::cell::Cell<(usize, usize)>,
+    for_starts: std::cell::OnceCell<Vec<usize>>,
+    let_starts: std::cell::OnceCell<Vec<usize>>,
+    closers: std::cell::OnceCell<BracketClosers>,
+}
+
+impl<'a> RebindingScan<'a> {
+    fn new(body: &'a str) -> Self {
+        Self {
+            body,
+            chars: std::cell::OnceCell::new(),
+            counted: std::cell::Cell::new((0, 0)),
+            for_starts: std::cell::OnceCell::new(),
+            let_starts: std::cell::OnceCell::new(),
+            closers: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The chars of `body[..end]`; `end` is a char boundary.
+    fn chars_before(&self, end: usize) -> &[char] {
+        let chars = self.chars.get_or_init(|| self.body.chars().collect());
+        let (from, counted) = match self.counted.get() {
+            (from, counted) if from <= end => (from, counted),
+            _ => (0, 0),
+        };
+        let count = counted + self.body[from..end].chars().count();
+        self.counted.set((end, count));
+        &chars[..count]
+    }
+
+    /// `body[..end].rfind("for ")`.
+    fn last_for_before(&self, end: usize) -> Option<usize> {
+        let starts = self
+            .for_starts
+            .get_or_init(|| keyword_starts(self.body, "for "));
+        last_start_ending_by(starts, "for ".len(), end)
+    }
+
+    /// `body[..end].rfind("let ")`.
+    fn last_let_before(&self, end: usize) -> Option<usize> {
+        let starts = self
+            .let_starts
+            .get_or_init(|| keyword_starts(self.body, "let "));
+        last_start_ending_by(starts, "let ".len(), end)
+    }
+
+    /// The first closing bracket at or after `from` that closes nothing
+    /// opened at or after `from`: where a forward scan that counts every
+    /// `(`, `[`, `{` up and every `)`, `]`, `}` down first goes below zero.
+    fn first_unmatched_closer_from(&self, from: usize) -> Option<usize> {
+        self.closers
+            .get_or_init(|| BracketClosers::of(self.body))
+            .first_unmatched_from(from)
+    }
+}
+
+/// Every byte offset where `keyword` starts. Neither keyword this is used for
+/// can overlap itself, so these are all of its occurrences.
+fn keyword_starts(body: &str, keyword: &str) -> Vec<usize> {
+    body.match_indices(keyword).map(|(at, _)| at).collect()
+}
+
+/// The last of the ascending `starts` whose `len`-byte keyword ends at or
+/// before `end`.
+fn last_start_ending_by(starts: &[usize], len: usize, end: usize) -> Option<usize> {
+    let within = starts.partition_point(|at| at + len <= end);
+    within
+        .checked_sub(1)
+        .and_then(|last| starts.get(last).copied())
+}
+
+/// Bracket structure of a body, kinds not distinguished (the scan it replaces
+/// counted all three kinds on one depth).
+struct BracketClosers {
+    /// Per byte offset (and one past the end): the innermost bracket opened
+    /// before it and not yet closed.
+    enclosing: Vec<Option<usize>>,
+    /// Per byte offset of an opening bracket: the offset of its closer.
+    closer_of: Vec<Option<usize>>,
+    /// Closing brackets met with nothing open, ascending.
+    unopened: Vec<usize>,
+}
+
+impl BracketClosers {
+    fn of(body: &str) -> Self {
+        let mut enclosing = Vec::with_capacity(body.len() + 1);
+        let mut closer_of = vec![None; body.len()];
+        let mut unopened = Vec::new();
+        let mut open: Vec<usize> = Vec::new();
+        // Brackets are ASCII, and no byte of a multi-byte char is.
+        for (at, byte) in body.bytes().enumerate() {
+            enclosing.push(open.last().copied());
+            match byte {
+                b'(' | b'[' | b'{' => open.push(at),
+                b')' | b']' | b'}' => match open.pop() {
+                    Some(opener) => {
+                        if let Some(slot) = closer_of.get_mut(opener) {
+                            *slot = Some(at);
+                        }
+                    }
+                    None => unopened.push(at),
+                },
+                _ => {}
+            }
+        }
+        enclosing.push(open.last().copied());
+        Self {
+            enclosing,
+            closer_of,
+            unopened,
+        }
+    }
+
+    fn first_unmatched_from(&self, from: usize) -> Option<usize> {
+        match self.enclosing.get(from).copied()? {
+            Some(opener) => self.closer_of.get(opener).copied().flatten(),
+            None => {
+                let next = self.unopened.partition_point(|closer| *closer < from);
+                self.unopened.get(next).copied()
+            }
+        }
+    }
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
@@ -2128,6 +2409,22 @@ fn missing_discriminator_facts(
 /// the probe line itself carries a binding form beside it, or when `name` is
 /// ever assigned or bound `mut`. A true result only declines the
 /// intermediate-input reading and keeps the gap (#9147).
+/// Whether a call's boundary row reaches the guarded comparison on `line`
+/// as the caller passed it, as `check`'s guarded reading requires: the
+/// compared parameter is never rebound first, and no earlier branch, early
+/// return or loop can take the row away from the line (#14873).
+pub(in crate::analysis) fn guarded_boundary_row_reaches(
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    parameter: &str,
+    line: usize,
+) -> bool {
+    !parameter_may_be_rebound(owner, parameter, line)
+        && owner_source.is_none_or(|source| {
+            changed_line_is_first_decision(owner.start_line, source, line, false)
+        })
+}
+
 fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -2580,6 +2877,535 @@ fn missing_boundary_discriminator(
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    let legacy = |unresolved: &mut Option<String>| {
+        missing_boundary_discriminator_in(
+            probe,
+            owner,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            unresolved,
+        )
+    };
+    // #13037: `amount >= LIMIT && !express` compares `amount` with `LIMIT`;
+    // the `&&` tail only selects which rows reach that boundary, so it is
+    // not part of either operand. A guarded boundary no row reaches is
+    // reported as unresolved with the guard named, and a guarded shape this
+    // reading declines is unresolved too: neither is ever an actionable
+    // missing discriminator (fail-closed), and neither falls through to the
+    // compound reading (#9637), which ignores the guards. Every shape that
+    // is not guarded keeps the reading below unchanged.
+    let Some(guarded) = guarded_comparison(probe, owner) else {
+        return legacy(unresolved);
+    };
+    match guarded.reading(probe, owner, related_tests, helper_chain, index) {
+        GuardedReading::Reached(_) => None,
+        GuardedReading::Unreached(reason) => {
+            *unresolved = Some(reason);
+            None
+        }
+        GuardedReading::Unread => {
+            *unresolved = Some(guarded.unread_reason());
+            None
+        }
+    }
+}
+
+/// What the related-test rows say about a guarded comparison's boundary.
+enum GuardedReading {
+    /// Readable rows hold every guard and sit on the boundary value; one
+    /// `parameter == value && guard == bool` fact per such row.
+    Reached(Vec<ValueFact>),
+    /// Rows are readable, but none that holds the guards sits on the boundary.
+    Unreached(String),
+    /// The operands, rows or control flow are not ones this reading trusts.
+    Unread,
+}
+
+/// A changed comparison joined by top-level `&&` to boolean guards that are
+/// each a bare owner parameter or its negation (`amount >= LIMIT &&
+/// !express`), so the comparison alone is the boundary and the guards only
+/// select which related-test rows reach it (#13037).
+pub(in crate::analysis) struct GuardedComparison {
+    comparison: String,
+    /// `(parameter, value it must hold)`; `!express` requires `false`.
+    guards: Vec<(String, bool)>,
+    /// Whether a guard parameter may be rebound before the changed line, so
+    /// a test's argument is not the value the guard holds there.
+    rebound_guard: bool,
+    /// The old comparison when the edit changed only the comparison; `None`
+    /// for a pure insertion.
+    before: Option<String>,
+}
+
+impl GuardedComparison {
+    fn guard_list(&self) -> String {
+        self.guards
+            .iter()
+            .map(|(parameter, value)| format!("`{parameter} = {value}`"))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    }
+
+    fn unread_reason(&self) -> String {
+        format!(
+            "the changed boundary `{}` decides the result only when {}, and ripr does not read which test rows reach it here (for example a guard that may be rebound, a moved threshold, operators that agree at the boundary, a boundary value it cannot see, or rows that do not spell each guard as a literal)",
+            self.comparison,
+            self.guard_list()
+        )
+    }
+
+    fn unreached_reason(&self, parameter: &str, boundary: &str, value: &str) -> String {
+        let guards = self.guard_list();
+        format!(
+            "the changed boundary `{}` decides the result only when {guards}, and no related test row with {guards} passes `{parameter}` at the boundary value {}, so ripr cannot tell whether a test reaches it",
+            self.comparison,
+            if boundary == value {
+                format!("`{value}`")
+            } else {
+                format!("`{boundary}` ({value})")
+            }
+        )
+    }
+
+    fn reading(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        related_tests: &[&TestSummary],
+        helper_chain: Option<&super::helper_transfer::HelperChain>,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> GuardedReading {
+        if self.rebound_guard {
+            return GuardedReading::Unread;
+        }
+        let Some((parameter, boundary, boundary_value)) =
+            self.resolved_boundary(probe, owner, index)
+        else {
+            return GuardedReading::Unread;
+        };
+        let parameters = function_parameters(owner);
+        let rows = call_values_for_owner(
+            owner,
+            &parameters,
+            related_tests,
+            helper_chain,
+            index,
+            false,
+        );
+        // Every row must spell each guard as a literal: a guard fed from a
+        // variable or a helper row without the guard column is not a row
+        // that misses the guard, so neither credit nor the unreached reason
+        // may rest on it.
+        let guards_readable = |row: &Vec<ParameterValue>| {
+            self.guards.iter().all(|(guard, _)| {
+                parameter_value(row, guard)
+                    .is_some_and(|cell| matches!(cell.value.trim(), "true" | "false"))
+            })
+        };
+        if rows.is_empty() || !rows.iter().all(guards_readable) {
+            return GuardedReading::Unread;
+        }
+        let guarded_rows = || rows.iter().filter(|row| self.holds(row));
+        let facts = guarded_rows()
+            .filter_map(|row| parameter_value(row, &parameter))
+            .filter(|cell| comparable_value(&cell.value) == comparable_value(&boundary_value.value))
+            .map(|cell| ValueFact {
+                file: cell.file.clone(),
+                line: cell.line,
+                text: cell.text.clone(),
+                // The value as fed, plus each guard as fed: same-test
+                // pairing matches only `parameter == literal` terms against
+                // the literals one call passes, so a call that misses a
+                // guard cannot pair with this boundary row.
+                value: std::iter::once(format!("{parameter} == {}", cell.value))
+                    .chain(
+                        self.guards
+                            .iter()
+                            .map(|(guard, value)| format!("{guard} == {value}")),
+                    )
+                    .collect::<Vec<_>>()
+                    .join(" && "),
+                context: ValueContext::FunctionArgument,
+            })
+            .collect::<Vec<_>>();
+        if facts.is_empty() {
+            GuardedReading::Unreached(self.unreached_reason(
+                &parameter,
+                &boundary,
+                &boundary_value.value,
+            ))
+        } else {
+            GuardedReading::Reached(facts)
+        }
+    }
+
+    /// The compared owner parameter, the boundary operand and its visible
+    /// value. `None` unless exactly one side is a plain owner parameter the
+    /// owner never rebinds, the other is a literal or a named constant whose
+    /// value the owner's file shows, and nothing before the changed line can
+    /// divert a row away from it.
+    fn resolved_boundary(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Option<(String, String, ExactOperand)> {
+        let parameters = function_parameters(owner);
+        let owner_source = index
+            .files()
+            .get(&owner.file)
+            .map(|facts| &*facts.data().source);
+        let (left, right) = comparison_operands(&self.comparison)?;
+        let is_parameter = |operand: &str| parameters.iter().any(|parameter| parameter == operand);
+        let (parameter, boundary) = match (is_parameter(&left), is_parameter(&right)) {
+            (true, false) => (left, right),
+            (false, true) => (right, left),
+            _ => return None,
+        };
+        // A row on the boundary value tells the old comparison from the new
+        // one only when the edit changed just the operator and the two
+        // operators disagree at equality (`>` to `>=`, not `>=` to `<=`), or
+        // when an equality test (`==` or `!=`) kept its operator and changed
+        // only the value it compares with (`label == "alpha"` to `label ==
+        // "beta"`): a row on the new value takes the other branch in each
+        // version. A moved ordering threshold (`x >= 5` to `x >= 6`) needs a
+        // row this reading does not look for. A pure insertion has no old comparison: the
+        // boundary row must enter the inserted branch (#12414), so a strict
+        // operator, whose boundary row stays outside it, is not read.
+        let new_at_equality = holds_at_equality(&self.comparison)?;
+        match self.before.as_deref() {
+            None if !new_at_equality => return None,
+            None => {}
+            Some(before) => {
+                let (old_left, old_right) = comparison_operands(before)?;
+                let same_operands = (old_left == parameter && old_right == boundary)
+                    || (old_right == parameter && old_left == boundary);
+                let operator = comparison_operator(&self.comparison)?;
+                let moved_equality_value = matches!(operator, "==" | "!=")
+                    && comparison_operator(before)? == operator
+                    && (old_left == parameter || old_right == parameter)
+                    && old_left != boundary
+                    && old_right != boundary;
+                if !moved_equality_value
+                    && (!same_operands || holds_at_equality(before)? == new_at_equality)
+                {
+                    return None;
+                }
+            }
+        }
+        let constant = boundary_constant(owner, &boundary, index);
+        let value = visible_operand(&boundary, constant.as_ref())?;
+        // An earlier branch or early return may take a row away from the
+        // changed line; a rebound parameter is not the caller's value.
+        if parameter_may_be_rebound(owner, &parameter, probe.location.line)
+            || !first_decision_is_clear(owner, owner_source, probe, false)
+        {
+            return None;
+        }
+        Some((parameter, boundary, value))
+    }
+
+    /// The comparison alone, without its guards (`amount >= LIMIT`).
+    pub(in crate::analysis) fn comparison(&self) -> &str {
+        &self.comparison
+    }
+
+    /// Whether one owner call's argument values (one list per parameter, in
+    /// order) hold every guard as a single literal.
+    pub(in crate::analysis) fn guards_hold_in(
+        &self,
+        parameters: &[String],
+        arguments: &[Vec<String>],
+    ) -> bool {
+        !self.rebound_guard
+            && self.guards.iter().all(|(guard, required)| {
+                parameters
+                    .iter()
+                    .position(|parameter| parameter == guard)
+                    .and_then(|at| arguments.get(at))
+                    .is_some_and(|values| {
+                        values.len() == 1
+                            && values[0].trim() == if *required { "true" } else { "false" }
+                    })
+            })
+    }
+
+    /// Whether one owner call's argument values (one list per parameter, in
+    /// order) sit on the boundary while holding every guard. Same-test
+    /// pairing reads this per observed call, so a call that misses a guard
+    /// never pairs. `None` when the shape is not one this reading resolves.
+    pub(in crate::analysis) fn call_reaches_boundary(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &crate::analysis::rust_index::RustIndex,
+        arguments: &[Vec<String>],
+    ) -> Option<bool> {
+        if self.rebound_guard {
+            return None;
+        }
+        let (parameter, _, value) = self.resolved_boundary(probe, owner, index)?;
+        let parameters = function_parameters(owner);
+        let on_boundary = parameters
+            .iter()
+            .position(|name| *name == parameter)
+            .and_then(|at| arguments.get(at))
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|fed| comparable_value(fed) == comparable_value(&value.value))
+            });
+        Some(on_boundary && self.guards_hold_in(&parameters, arguments))
+    }
+
+    fn holds(&self, row: &[ParameterValue]) -> bool {
+        self.guards.iter().all(|(parameter, value)| {
+            parameter_value(row, parameter)
+                .is_some_and(|cell| cell.value.trim() == if *value { "true" } else { "false" })
+        })
+    }
+}
+
+/// The comparison and guards of a changed `comparison && guard && ...`
+/// predicate. `None` for anything else: no top-level `&&`, an `||` anywhere
+/// at top level, more or fewer than one comparison, a guard that is not a
+/// bare owner parameter (optionally negated), or an edit that touches the
+/// guards (`a >= T` to `a >= T && !x`, or a flipped or added guard): rows
+/// that hold the new guards may not see that change. A guard the owner may
+/// rebind is recognized but marked, so the shape is declined rather than
+/// read without its guards.
+pub(in crate::analysis) fn guarded_comparison(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<GuardedComparison> {
+    let continuation = wrapped_guard_continuation(owner, probe.location.line);
+    let with_continuation = |text: &str| match &continuation {
+        Some(rest) => format!(
+            "{} {rest}",
+            crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+        ),
+        None => text.to_string(),
+    };
+    let (comparison, guards, rebound_guard) = split_guarded(
+        &with_continuation(&probe.expression),
+        owner,
+        probe.location.line,
+    )?;
+    let before = match probe.before.as_deref() {
+        None => None,
+        Some(before) => {
+            let Some((old_comparison, old_guards, _)) =
+                split_guarded(&with_continuation(before), owner, probe.location.line)
+            else {
+                // A wrapped guard the old line cannot be read with (`if a > T {`
+                // becoming `if a >= T` over `&& !x`) is a guard-touching edit:
+                // decline it rather than fall back to reading the comparison
+                // without its guards.
+                if continuation.is_some() {
+                    return Some(GuardedComparison {
+                        comparison,
+                        guards,
+                        rebound_guard: true,
+                        before: None,
+                    });
+                }
+                return None;
+            };
+            let sorted = |guards: &[(String, bool)]| {
+                let mut guards = guards.to_vec();
+                guards.sort();
+                guards
+            };
+            if sorted(&old_guards) != sorted(&guards) {
+                return None;
+            }
+            Some(old_comparison)
+        }
+    };
+    Some(GuardedComparison {
+        comparison,
+        guards,
+        rebound_guard,
+        before,
+    })
+}
+
+/// Whether a single comparison holds when its two operands are equal, read
+/// from its operator as `comparison_operands` picks it.
+fn holds_at_equality(comparison: &str) -> Option<bool> {
+    comparison_operator(comparison).map(|operator| matches!(operator, ">=" | "<=" | "=="))
+}
+
+/// The comparison operator of a single comparison, two-character operators
+/// first so `>=` is not read as `>`.
+fn comparison_operator(comparison: &str) -> Option<&'static str> {
+    [">=", "<=", "==", "!=", ">", "<"]
+        .into_iter()
+        .find(|operator| comparison.contains(operator))
+}
+
+/// The comparison, each guard with the value it must hold, and whether a
+/// guard may be rebound before the changed line.
+type GuardedSplit = (String, Vec<(String, bool)>, bool);
+
+/// The bare bool parameter guards of the predicate on one source line
+/// (`if order_cents >= FREE_OVER_CENTS && !express {`) whose comparison is
+/// `comparison`, each with the value it must hold, and whether a guard may
+/// be rebound before that line. `None` when the line is not exactly one
+/// comparison joined by top-level `&&` to bare owner parameters, or its
+/// comparison is a different one. The repo-wide seam view reads the same
+/// guards the diff reading does (#13037), so a row that misses a guard
+/// never lends the comparison a boundary row there either.
+pub(in crate::analysis) fn predicate_line_bool_guards(
+    line_text: &str,
+    comparison: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(Vec<(String, bool)>, bool)> {
+    let text = line_text.trim();
+    let text = text
+        .strip_prefix("} else if ")
+        .or_else(|| text.strip_prefix("else if "))
+        .or_else(|| text.strip_prefix("while "))
+        .unwrap_or(text);
+    let joined;
+    let text = match wrapped_guard_continuation(owner, line) {
+        // The head's own trailing comment masked, so it cannot swallow the
+        // wrapped guards joined after it (`if a >= T // note` / `&& g`).
+        Some(rest) => {
+            joined = format!(
+                "{} {rest}",
+                crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
+            );
+            joined.as_str()
+        }
+        None => text,
+    };
+    let (found, guards, rebound) = split_guarded(text, owner, line)?;
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
+/// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
+/// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
+/// read a wrapped guard as they read a one-line one (#14873). The head may
+/// already carry guards (`if a >= T && member`); its continuation adds the
+/// rest. Only lines that each open with `&&` count, up to the opening
+/// brace, with comments masked; a `||` or any other continuation is not
+/// read, which leaves the comparison as its one-line spelling reads.
+fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
+    let offset = line.checked_sub(owner.start_line)?;
+    // Comments masked to spaces, so `&& !express // note` reads its guard
+    // instead of dropping the line and the comparison's guard with it.
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    if masked.len() != owner.body.len() {
+        return None;
+    }
+    let mut lines = masked.lines().skip(offset);
+    let head = lines.next()?.trim();
+    let opens_condition = ["if ", "} else if ", "else if ", "while "]
+        .iter()
+        .any(|prefix| head.starts_with(prefix));
+    if !opens_condition || head.ends_with('{') || head.contains("||") {
+        return None;
+    }
+    let mut guards = Vec::new();
+    for next in lines {
+        let next = next.trim();
+        if next == "{" {
+            break;
+        }
+        let rest = next.strip_prefix("&&")?;
+        let (rest, done) = match rest.trim_end().strip_suffix('{') {
+            Some(rest) => (rest, true),
+            None => (rest, false),
+        };
+        if rest.contains("||") {
+            return None;
+        }
+        guards.push(format!("&& {}", rest.trim()));
+        if done {
+            break;
+        }
+    }
+    (!guards.is_empty()).then(|| guards.join(" "))
+}
+
+fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {
+    let expression = clean_operand(expression);
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&expression);
+    if masked.len() != expression.len() {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0i32;
+    let mut cuts = Vec::new();
+    let mut start = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'|' if depth == 0 && bytes.get(at + 1) == Some(&b'|') => return None,
+            b'&' if depth == 0 && bytes.get(at + 1) == Some(&b'&') => {
+                cuts.push(expression[start..at].trim());
+                at += 2;
+                start = at;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    if cuts.is_empty() || depth != 0 {
+        return None;
+    }
+    cuts.push(expression[start..].trim());
+    let parameters = function_parameters(owner);
+    let mut comparison = None;
+    let mut guards = Vec::new();
+    let mut rebound = false;
+    for part in cuts {
+        let (negated, name) = match part.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, part),
+        };
+        // A `mut` parameter is named with its binding mode; it may hold
+        // something other than the caller's argument by the changed line.
+        let mutable = parameters
+            .iter()
+            .any(|parameter| parameter.strip_prefix("mut ").map(str::trim) == Some(name));
+        if mutable || parameters.iter().any(|parameter| parameter == name) {
+            rebound |= mutable || parameter_may_be_rebound(owner, name, line);
+            guards.push((name.to_string(), !negated));
+            continue;
+        }
+        if comparison.is_some() || comparison_operands(part).is_none() {
+            return None;
+        }
+        comparison = Some(part.to_string());
+    }
+    let comparison = comparison?;
+    (!guards.is_empty()).then_some((comparison, guards, rebound))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
+)]
+fn missing_boundary_discriminator_in(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+    unresolved: &mut Option<String>,
+) -> Option<MissingDiscriminatorFact> {
     // #12414: a pure insertion whose changed line is itself a predicate
     // names the inserted guard's activating domain, not the changed
     // comparison's equality boundary: the equality point passes on both
@@ -2611,6 +3437,7 @@ fn missing_boundary_discriminator(
         owner_source,
         &parameters,
         &probe.expression,
+        probe.before.as_deref(),
         probe.location.line,
         index,
     )?;
@@ -2634,7 +3461,18 @@ fn missing_boundary_discriminator(
         index,
         text_cells,
     );
-    if call_values.is_empty() {
+    if call_values.is_empty()
+        && boundary_parameter_field_projection(&parameters, &left).is_none_or(|_| {
+            boundary_operand_values_at_owner_calls(
+                owner,
+                &left,
+                probe.location.line,
+                related_tests,
+                index,
+            )
+            .is_empty()
+        })
+    {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
         // unresolved rather than silently unmeasured.
@@ -2787,6 +3625,9 @@ fn missing_boundary_discriminator(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -2878,9 +3719,37 @@ fn missing_boundary_discriminator(
             })
         })
     });
+    let field_boundary_equality_observed = right_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &left).is_some()
+            && visible_operand(&right, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &left,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
+            })
+    }) || left_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &right).is_some()
+            && visible_operand(&left, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &right,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
+            })
+    });
     let equality_observed = exact_equality_observed
         || replaced_row_observed
-        || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
+        || parameter_equality(left_credit.as_deref(), right_credit.as_deref())
+        || field_boundary_equality_observed;
     let constant_named = constant_passed(left_credit.as_deref());
     if (equality_observed || constant_named)
         && equality_line_may_be_diverted(probe, owner, owner_source)
@@ -2966,6 +3835,16 @@ fn missing_boundary_discriminator(
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
+            && boundary_parameter_field_projection(&parameters, operand).is_none_or(|_| {
+                boundary_operand_values_at_owner_calls(
+                    owner,
+                    operand,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                )
+                .is_empty()
+            })
     };
     // When neither side has a value (`out.len() != data.len() / 2`) no
     // row says which side of the boundary a test reaches either, so both
@@ -3081,6 +3960,15 @@ fn missing_boundary_discriminator(
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
+    if boundary_parameter_field_projection(&parameters, &left).is_some() {
+        left_values.extend(boundary_operand_values_at_owner_calls(
+            owner,
+            &left,
+            probe.location.line,
+            related_tests,
+            index,
+        ));
+    }
     // Exact evaluated lefts join the observed listing so the reason
     // names real values instead of `unknown` (#3295).
     let exact_lefts: Vec<String> = exact_rows
@@ -3290,7 +4178,7 @@ fn adaptor_element_runs(
     // No direct call: bind the parameter up the resolved helper chain, each
     // hop passing exactly its caller's own, never rebound, parameter.
     let chain = helper_chain?;
-    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut position = tail.position;
@@ -3699,6 +4587,64 @@ fn missing_error_variant_discriminator(
 /// it to keep an unselected arm from counting as activated.
 pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 
+/// #12078: the repo seam view's reading of [`missing_match_arm_discriminator`]
+/// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
+/// select other arms grips the arm as `ripr check` reads it, never strongly.
+/// The seam has no diff, so the arm is read as one whose pattern did not
+/// change: the probe is the owner's own source line at the seam. The index
+/// is read as complete. That holds for the workspace inventories `repair`,
+/// `agent brief` and repo exposure read. The check screen's in-file seam view
+/// indexes only the finding's file and its related tests; there a rival
+/// outside the subset could go unseen, but that view only chooses which
+/// refusal to print (it never starts a repair), and `ripr repair` re-reads the
+/// full inventory. The same refusals apply as in `check` (a same-named
+/// function, a helper or unreadable use of the owner, a computed input), each
+/// leaving the arm unnamed.
+pub(in crate::analysis) fn repo_seam_unselected_arm(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    let probe = Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    // The selector read is cheap and refuses most arms (a computed or
+    // guarded arm, a non-parameter scrutinee) before the workspace lookups.
+    super::arm_selection::ArmSelector::establish(&probe, owner)?;
+    let fact =
+        missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)?;
+    // The check-side callee-identity defeat (`classifier::evidence`): a test
+    // file that imports the owner's name from a foreign path may call that
+    // item instead, so its bare call's input says nothing about which arm
+    // the owner runs (#15006 review). A same-named function in the test's
+    // package is already refused by the unique-name read above.
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
+    let imports_foreign = related_tests.iter().any(|test| {
+        index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        })
+    });
+    (!imports_foreign).then_some(fact)
+}
+
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
 /// discriminator when every related test calls the owner directly and every
 /// call's scrutinee input provably selects a different arm (`reason(Some(5))`
@@ -3715,6 +4661,19 @@ fn missing_match_arm_discriminator(
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may select the arm and no mention scan below can see it.
+    // An unestablished container may be one, so only a known non-trait
+    // owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return None;
+    }
     // A same-named function elsewhere makes a direct call ambiguous, and a
     // partial index cannot show that the name is unique.
     if related_tests.is_empty()
@@ -3725,6 +4684,16 @@ fn missing_match_arm_discriminator(
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
         .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Every test's inputs first: one test that selects the arm, or an input
+    // that does not read, refuses before the workspace-wide lookups below.
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
     // Built once per probe: the helper walk below looks names up for every
     // related test.
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
@@ -3734,16 +4703,20 @@ fn missing_match_arm_discriminator(
             .or_default()
             .push(function);
     }
-    let mut inputs = Vec::new();
-    for test in related_tests {
-        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
-            return None;
-        }
-        let observed = selector.observed_inputs(test)?;
-        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
-            return None;
-        }
-        inputs.extend(observed.inputs);
+    if related_tests
+        .iter()
+        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
+    {
+        return None;
+    }
+    // A call's input names the first arm it enters, not every arm it runs
+    // (#12078 review): an owner that may run again from inside its own call
+    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
+    // that calls it back, an operator or `Display` impl that names it) can
+    // run the arm from a call that selects another one. Read after every
+    // test, so a test that selects the arm skips the workspace scan.
+    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
+        return None;
     }
     inputs.sort();
     inputs.dedup();
@@ -3777,10 +4750,11 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 /// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
 /// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
-/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
-/// use of the owner, one computed input, a partial index, a same-named
-/// function, or a related test that may reach the owner through a helper
-/// or macro leaves the guard unnamed.
+/// refusals as [`missing_match_arm_discriminator`] apply: a trait-method or
+/// unestablished-container owner (#15010), one unreadable use of the owner,
+/// one computed input, a partial index, a same-named function, or a related
+/// test that may reach the owner through a helper or macro leaves the guard
+/// unnamed.
 fn missing_guard_entry_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -3791,6 +4765,19 @@ fn missing_guard_entry_discriminator(
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
     if related_tests.is_empty() || !workspace_complete {
+        return None;
+    }
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may enter the guard and no mention scan below can see it
+    // (#15010, as in `missing_match_arm_discriminator`). An unestablished
+    // container may be one, so only a known non-trait owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
         return None;
     }
     // The cheap text read first: most side effects sit under no readable
@@ -3837,6 +4824,72 @@ fn missing_guard_entry_discriminator(
         inputs.extend(guard.unentered_inputs(test)?);
     }
     Some(guard_unentered_fact(&guard, inputs, flow_sinks))
+}
+
+/// Whether `owner` may run again from inside its own call, so a test input
+/// that selects one arm can still run another. The same refusals as
+/// [`missing_guard_entry_discriminator`]: a callee may call it back
+/// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
+/// read, a read macro that it, a callee, a related test or a test helper
+/// invokes is rebound ([`invoked_read_macro_rebound`]; the guard reading
+/// asks about every read-macro name), or anything outside the related tests
+/// names it
+/// ([`owner_named_outside_related_tests`]): its own body (a direct,
+/// `Self::`-qualified or `self.` self-call), a helper passed as a function
+/// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
+/// and strings are masked; any other mention refuses even when it cannot
+/// run inside the owner's call (a production caller the owner never reaches,
+/// a same-named local), which costs coverage but never names an arm a test
+/// may run.
+fn owner_may_call_itself(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    owner_may_reenter(owner, functions_by_name)
+        || invokes_unread_macro(&owner.body)
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
+        // The read macros are trusted by name (#15022, as in
+        // `missing_guard_entry_discriminator`): a workspace that defines,
+        // imports or may glob in another macro under one of those names can
+        // run the owner with an input the call it wraps never shows. Only
+        // the names the owner, its callees, the related tests and their
+        // helpers invoke are asked about, so an unrelated `macro_rules!
+        // assert` elsewhere leaves an `assert_eq!`-only arm readable.
+        || invoked_read_macro_rebound(owner, functions_by_name, index, related_tests)
+}
+
+/// Whether a [`READ_MACROS`] name that the owner, a function it reaches,
+/// a related test or a helper that test reaches invokes is rebound in the
+/// workspace ([`macro_names_rebound`]). A name nothing on those paths
+/// invokes cannot run the owner from a read call.
+fn invoked_read_macro_rebound(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    let mut invoked = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    collect_read_macros(&owner.body, &mut invoked);
+    pending.extend(owner.calls.iter().map(|call| call.name.as_str()));
+    for test in related_tests {
+        collect_read_macros(&test.body, &mut invoked);
+        pending.extend(test.body_calls().map(|call| call.name.as_str()));
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            collect_read_macros(&function.body, &mut invoked);
+            pending.extend(function.calls.iter().map(|call| call.name.as_str()));
+        }
+    }
+    let names = invoked.into_iter().collect::<Vec<_>>();
+    !names.is_empty() && macro_names_rebound(index, &names)
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -3922,14 +4975,41 @@ fn may_reach_owner_unread(
 }
 
 /// Whether any indexed file mentions `owner` more often than the related
-/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
-/// paths do not count ([`unread_mentions`]); every other mention must be
-/// one a related test's body holds, since only those calls are read.
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions
+/// in the owner's `fn` header and in plain `use` paths do not count
+/// ([`unread_mentions`]), nor do mentions inside a function that provably
+/// never runs ([`never_runs`]); every other mention must be one a related
+/// test's body holds, since only those calls are read.
 fn owner_named_outside_related_tests(
     index: &crate::analysis::rust_index::RustIndex,
     owner: &str,
     related_tests: &[&TestSummary],
 ) -> bool {
+    // A mention inside a function nothing can run (#15006 review: an unused
+    // `advertised_small_price()` wrapper) cannot run the owner either.
+    let unreachable = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name != owner
+                && unread_mentions(&function.body, owner) > 0
+                && never_runs(index, function)
+        })
+        .collect::<Vec<_>>();
+    // A nested `fn` is its own function and also sits in its parent's body:
+    // count each mention once, from the outermost function only.
+    let unreachable = unreachable
+        .iter()
+        .filter(|inner| {
+            !unreachable.iter().any(|outer| {
+                outer.id != inner.id
+                    && outer.file == inner.file
+                    && outer.start_line <= inner.start_line
+                    && inner.end_line <= outer.end_line
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
     index.files().iter().any(|(path, file)| {
         let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
@@ -3937,11 +5017,125 @@ fn owner_named_outside_related_tests(
             .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
             .map(|test| unread_mentions(&test.body, owner))
             .sum();
-        unread_mentions(&file.source, owner) > read
+        let unreached: usize = unreachable
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| unread_mentions(&function.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read + unreached
             || doc_comment_names(&file.source, owner)
             || crate::analysis::extract::mask_comments_and_strings(&file.source)
                 .contains("include!")
     })
+}
+
+/// Whether `function` provably never runs: an attribute-free production
+/// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
+/// attribute) outside any trait and outside an attributed `impl`, not
+/// `main`, whose name appears nowhere in the workspace but its own header
+/// (no call, `use`, comment or string names it; not a raw `r#` name; no
+/// file uses `paste` or `concat_idents`), and whose body declares no item and
+/// invokes no macro at all. A trait method runs from calls that never name
+/// it, an attribute may register a function with a harness or a linker, a
+/// nested `impl` runs without its parent, and a macro may expand to either,
+/// so any of those keeps the function reachable.
+fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    function.source_role == FunctionSourceRole::Production
+        && function.attrs.is_empty()
+        && function.impl_attrs.is_empty()
+        && matches!(
+            function.item.container,
+            FunctionContainer::Free | FunctionContainer::Inherent { .. }
+        )
+        && function.name != "main"
+        && !function.name.is_empty()
+        // `fn r#name` is called as `name`, which the count below would miss.
+        && !function.name.starts_with("r#")
+        // An item nested in the body can run without its parent: an `impl`
+        // (`impl From<Forward> for u32` reached by `.into()`), an exported
+        // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
+        && !declares_free_standing_item(&function.body)
+        // A macro it invokes may expand to such an item (`reg!(price_cents)`
+        // emitting an `impl Drop`), which no file read here shows. A read
+        // macro's name may be rebound (`macro_rules! dbg`), so none is
+        // trusted here.
+        && !invokes_any_macro(&function.body)
+        // Every whole-word spelling of the name, in code, comments and
+        // strings alike, must be its own `fn` header: a string can name it
+        // to a derive (`#[serde(default = "medium_price")]`) that runs it.
+        && index
+            .files()
+            .iter()
+            .map(|(_, file)| whole_word_count(&file.source, &function.name))
+            .sum::<usize>()
+            == 1
+        // A macro that pastes identifiers together can spell a call to it
+        // that no file holds whole.
+        && !index.files().iter().any(|(_, file)| {
+            whole_word_count(&file.source, "paste") > 0
+                || whole_word_count(&file.source, "concat_idents") > 0
+        })
+}
+
+/// Whether `body` holds an item that runs or is visible without the
+/// enclosing function running: any `impl`, `macro_rules!`, `extern` or
+/// attribute. Comments and strings are masked. Any `#` refuses, since an
+/// attribute may put whitespace or a comment between `#` and `[`
+/// (`# [unsafe(export_name = "cb")]`); an `impl Trait` return type or a raw
+/// identifier also refuses, which only keeps the function counted as
+/// reachable.
+fn declares_free_standing_item(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains('#')
+        || ["impl", "macro_rules", "extern"]
+            .iter()
+            .any(|word| whole_word_count(&masked, word) > 0)
+}
+
+/// Whether `body` invokes any macro (`name!(`, `name! [`, `name !{`),
+/// standard or not. Comments and strings are masked.
+fn invokes_any_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let head = masked[..offset].trim_end();
+        let name_start = head
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &head[name_start..];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
+    })
+}
+
+/// How many times `word` appears in `source` with no identifier character on
+/// either side, unmasked.
+fn whole_word_count(source: &str, word: &str) -> usize {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    source
+        .match_indices(word)
+        .filter(|(offset, _)| {
+            !source[..*offset].chars().next_back().is_some_and(is_word)
+                && !source[offset + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count()
 }
 
 /// Whether a doc comment in `source` names `owner`, or a doc attribute
@@ -4099,46 +5293,69 @@ fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) 
 /// Whether `body` invokes a macro other than [`READ_MACROS`], whose
 /// expansion is not read and may call any function.
 fn invokes_unread_macro(body: &str) -> bool {
+    macro_invocations(body)
+        .iter()
+        .any(|(name, foreign_path)| *foreign_path || !READ_MACROS.contains(&name.as_str()))
+}
+
+/// Add to `invoked` each [`READ_MACROS`] name that `body` invokes without a
+/// path outside the standard crates (#15022).
+fn collect_read_macros(body: &str, invoked: &mut std::collections::BTreeSet<&'static str>) {
+    for (name, foreign_path) in macro_invocations(body) {
+        if let Some(read) = READ_MACROS.iter().find(|read| **read == name)
+            && !foreign_path
+        {
+            invoked.insert(*read);
+        }
+    }
+}
+
+/// The macro invocations in `body`, comments and strings masked: each
+/// name, and whether a path outside the standard crates qualifies it.
+fn macro_invocations(body: &str) -> Vec<(String, bool)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter
     // and the name.
-    masked.match_indices('!').any(|(offset, _)| {
-        let next = bytes[offset + 1..]
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace());
-        if !matches!(next, Some(b'(' | b'[' | b'{')) {
-            return false;
-        }
-        let name_end = masked[..offset].trim_end().len();
-        let name_start = masked[..name_end]
-            .char_indices()
-            .rev()
-            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let name = &masked[name_start..name_end];
-        // A path-qualified name (`util::println!`) is a read macro only
-        // under the standard crates.
-        let qualifier = masked[..name_start].trim_end();
-        let foreign_path = qualifier.ends_with("::")
-            && !["std::", "core::", "alloc::"].iter().any(|root| {
-                qualifier.strip_suffix(root).is_some_and(|head| {
-                    !head
-                        .chars()
-                        .next_back()
-                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-                })
-            });
-        // `if !(done)` is a negation after a keyword, not a macro.
-        !name.is_empty()
-            && (foreign_path || !READ_MACROS.contains(&name))
-            && !matches!(
-                name,
-                "if" | "while" | "match" | "return" | "in" | "else" | "break"
-            )
-    })
+    masked
+        .match_indices('!')
+        .filter_map(|(offset, _)| {
+            let next = bytes[offset + 1..]
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace());
+            if !matches!(next, Some(b'(' | b'[' | b'{')) {
+                return None;
+            }
+            let name_end = masked[..offset].trim_end().len();
+            let name_start = masked[..name_end]
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
+            let name = &masked[name_start..name_end];
+            // A path-qualified name (`util::println!`) is a read macro only
+            // under the standard crates.
+            let qualifier = masked[..name_start].trim_end();
+            let foreign_path = qualifier.ends_with("::")
+                && !["std::", "core::", "alloc::"].iter().any(|root| {
+                    qualifier.strip_suffix(root).is_some_and(|head| {
+                        !head
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                    })
+                });
+            // `if !(done)` is a negation after a keyword, not a macro.
+            (!name.is_empty()
+                && !matches!(
+                    name,
+                    "if" | "while" | "match" | "return" | "in" | "else" | "break"
+                ))
+            .then(|| (name.to_string(), foreign_path))
+        })
+        .collect()
 }
 
 /// Produce a missing-discriminator fact for a `FieldConstruction` seam whose
@@ -4367,6 +5584,493 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
     owner_borrows_receiver(&owner.body)
         && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+        && !assertion_restates_seeded_field(test, path, assertion)
+        && !test_file_declares_owner_type_namesake(owner, test, index)
+}
+
+/// #14407: a test outside the owner's file that declares (or aliases) a type
+/// named like the owner's impl type, at any scope, may build its receiver from
+/// that namesake and run the namesake's same-named method. The relation's
+/// shadow check exempts a test file's own root, so this read rule refuses the
+/// whole file by a text scan instead. A test in the owner's own file refuses
+/// when that file declares, aliases or renames the name more than once (an
+/// inline `mod tests` namesake). An owner without an impl type is unaffected.
+/// Which type a test outside the owner's file binds by name is reveal's
+/// question ([`test_binds_owner_type`]).
+fn test_file_declares_owner_type_namesake(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(impl_type) = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type())
+    else {
+        return false;
+    };
+    let Some(facts) = index.files().get(&test.file) else {
+        // An unindexed test file cannot be shown free of a namesake.
+        return true;
+    };
+    if test.file == owner.file {
+        super::owner_pin::source_type_declaration_count(&facts.source, impl_type) > 1
+    } else {
+        super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type)
+    }
+}
+
+/// #14407: whether `test` names the owner's impl type itself when it spells
+/// the type's bare name or crate-qualified name, read by text and fail closed.
+/// Reveal's short-field credit asks this; activation and the repository seam
+/// do not.
+///
+/// - The owner's file must declare the name exactly once (no alias or
+///   rename), before the owner, so a later inline-module namesake cannot be
+///   the one declaration.
+/// - The owner's `impl` is a top-level item of its file.
+/// - Every `use` in the test's file that could bind the name must reach the
+///   owner's type. A rename to the name refuses. In the owner's own file a
+///   named import must spell `super::Name` or `crate::<owner module>::Name`;
+///   elsewhere `krate::<owner module>::Name`, or `krate::Name` when the
+///   library root names the owner's type
+///   ([`super::related_tests::root_library_names_owner_type`]).
+/// - A glob must be `super::*` or `crate::<owner module>::*` in the owner's
+///   file, or `krate::*` elsewhere when the library root binds no other type
+///   of the name. Any other glob refuses, in-crate ones included, since the
+///   module it reaches may re-export another type of the name.
+/// - A test in another file that imports neither the name nor a glob must
+///   spell the name only path-qualified; a bare name there is another type.
+pub(in crate::analysis) fn test_binds_owner_type(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(impl_type) = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type())
+    else {
+        return false;
+    };
+    let Some(owner_facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    if super::owner_pin::source_type_declaration_count(&owner_facts.source, impl_type) != 1
+        || !super::owner_pin::source_declares_type_before_line(
+            &owner_facts.source,
+            impl_type,
+            owner.start_line,
+        )
+    {
+        return false;
+    }
+    // The owner's `impl` must be a top-level item of its file, so the file's
+    // module path names it (an inline-module owner is not at that path).
+    if !super::related_tests::owner_impl_is_top_level_item(index, owner) {
+        return false;
+    }
+    let module = super::related_tests::indexed_library_module_path(index, &owner.file);
+    let Some(test_facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let same_file = test.file == owner.file;
+    let krate = index.root_library_name.as_deref();
+    if !same_file && (krate.is_none() || module.is_none()) {
+        return false;
+    }
+    let root_names_owner =
+        super::related_tests::root_library_names_owner_type(index, owner, impl_type);
+    let joined = |head: &str| {
+        module.as_ref().map(|module| {
+            std::iter::once(head)
+                .chain(module.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("::")
+        })
+    };
+    // In-crate spellings of the owner's module, and the external one (a
+    // binary target's file has neither).
+    let crate_module = joined("crate");
+    let krate_module = krate.and_then(joined);
+    let uses = super::reveal::flattened_use_paths(&test_facts.source);
+    // Another file reaches the owner's type by a path or an import; with
+    // neither, a bare name there is some other type (one a macro made).
+    let binds_name = |item: &super::reveal::UsePath| {
+        let path = item.path.trim_start_matches("::");
+        path.ends_with("::*")
+            || item
+                .alias
+                .as_deref()
+                .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path))
+                == impl_type
+    };
+    if !same_file && !uses.iter().any(binds_name) {
+        let masked = crate::analysis::extract::mask_comments_and_strings(&test_facts.source);
+        let qualified_only = super::owner_pin::whole_word_offsets(&masked, impl_type)
+            .iter()
+            .all(|offset| masked[..*offset].trim_end().ends_with("::"));
+        if !qualified_only {
+            return false;
+        }
+    }
+    uses.iter().all(|item| {
+        let path = item.path.trim_start_matches("::");
+        if let Some(prefix) = path.strip_suffix("::*") {
+            if same_file && (prefix == "super" || Some(prefix) == crate_module.as_deref()) {
+                return true;
+            }
+            // Any other in-crate glob may reach a module that declares or
+            // re-exports (`pub use dep::*;`) another type of the name.
+            return !same_file
+                && Some(prefix) == krate
+                && (root_names_owner
+                    || !super::related_tests::library_root_binds_type_name(index, impl_type));
+        }
+        let binding = item
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path));
+        if binding != impl_type {
+            return true;
+        }
+        if item.alias.is_some() {
+            return false;
+        }
+        let Some(parent) = path.strip_suffix(&format!("::{impl_type}")) else {
+            return false;
+        };
+        if same_file {
+            parent == "super" || Some(parent) == crate_module.as_deref()
+        } else {
+            Some(parent) == krate_module.as_deref() || (Some(parent) == krate && root_names_owner)
+        }
+    })
+}
+
+/// #14407: whether the field the assertion reads already held the expected
+/// value before the owner ran, so deleting or changing the write may leave the
+/// assertion passing. Before the read line, the binding's latest `let` struct
+/// literal gives `path` that expected value (or shorthand, or `..base`, whose
+/// value this scan cannot read), or a plain `binding.path = <expected>;`
+/// assignment seeds it. An expected operand that cannot be told apart from
+/// the read refuses too. A receiver built by a constructor (`Counter::new()`)
+/// is not read: its field values stay a known limit.
+fn assertion_restates_seeded_field(test: &TestSummary, path: &str, assertion: &OracleFact) -> bool {
+    let Some(operands) = macro_arguments(&assertion.text) else {
+        return true;
+    };
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
+        .iter()
+        .any(|read| {
+            let prefix = format!("{}.", read.binding);
+            let expected = operands
+                .iter()
+                .take(2)
+                .map(|operand| compact(operand))
+                .find(|operand| !operand.trim_start_matches(['&', '*']).starts_with(&prefix));
+            let Some(expected) = expected else {
+                return true;
+            };
+            binding_seeds_field(test, &read.binding, path, &expected, assertion.line)
+        })
+}
+
+/// #14407: whether every binding the assertion reads the field `path` from
+/// has a pre-call value of that field that reveal can read and tell apart
+/// from the expected value. Before the read:
+/// - the binding has exactly one `let`, initialized by a visible struct
+///   literal that names `path` (a single field segment) with a plain literal;
+/// - the assertion's expected operand is a plain literal that differs from
+///   that seed by value (a `const`, a variable, another binding's field or an
+///   expression such as `0 + 1` may equal the seed, so it refuses); and
+/// - apart from that `let`, the binding appears only as the receiver of a
+///   top-level `binding.<owner>(..)` statement, so nothing else (a setter, a
+///   reassignment, `&mut binding`, an alias, `mem::replace`) can seed the
+///   field before the owner runs.
+///
+/// A constructor, call or other initializer may already leave the expected
+/// value in the field (`Counter::new()` building `Counter { n: 1 }`), so
+/// reveal's assigned-field credit refuses it. Activation and the repository
+/// seam do not ask this.
+pub(in crate::analysis) fn assigned_field_seed_is_visible(
+    test: &TestSummary,
+    owner_name: &str,
+    path: &str,
+    written: Option<&str>,
+    assertion: &OracleFact,
+) -> bool {
+    let reads =
+        super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path);
+    let Some(operands) = macro_arguments(&assertion.text) else {
+        return false;
+    };
+    let body = test.body.as_str();
+    let end = body
+        .split_inclusive('\n')
+        .take(assertion.line.saturating_sub(test.start_line))
+        .map(str::len)
+        .sum::<usize>()
+        .min(body.len());
+    let Some(raw) = body.get(..end) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(raw);
+    !owner_name.is_empty()
+        && !path.contains('.')
+        && !reads.is_empty()
+        && reads.iter().all(|read| {
+            let binding = read.binding.as_str();
+            let prefix = format!("{binding}.");
+            let mut others = operands.iter().take(2).filter(|operand| {
+                !operand
+                    .trim()
+                    .trim_start_matches(['&', '*'])
+                    .starts_with(&prefix)
+            });
+            let (Some(expected), None) = (others.next(), others.next()) else {
+                return false;
+            };
+            super::related_tests::let_statement_count(&masked, binding) == 1
+            && binding_mentioned_only_as_owner_receiver(&masked, binding, owner_name)
+            && super::reveal::owner_call_binding_let_initializer(&masked, binding)
+                .filter(|init| super::related_tests::initializer_is_struct_literal(init))
+                .and_then(|init| {
+                    let start = init.as_ptr() as usize - masked.as_ptr() as usize;
+                    let open = start + init.find('{')?;
+                    let close = start + init.rfind('}')?;
+                    (close > open).then(|| raw.get(open + 1..close)).flatten()
+                })
+                .is_some_and(|fields| {
+                    let fields = split_top_level_args(fields);
+                    let mut seeds = fields.iter().filter_map(|field| {
+                        field
+                            .split_once(':')
+                            .filter(|(name, _)| name.trim() == path)
+                            .map(|(_, value)| value.trim())
+                    });
+                    // A float literal compares as `f64`, which may differ
+                    // where the field's `f32` values are equal: refuse it.
+                    let float_like = |text: &str| {
+                        let text = text.trim();
+                        text.starts_with(|ch: char| ch.is_ascii_digit() || ch == '-')
+                            && (text.contains('.')
+                                || text.contains("f32")
+                                || text.contains("f64")
+                                || text.contains(['e', 'E']))
+                    };
+                    matches!(
+                        (seeds.next(), seeds.next()),
+                        (Some(seed), None)
+                            if !float_like(seed)
+                                && !float_like(expected)
+                                && super::builder_override::literals_equal(seed, expected.trim())
+                                    == Some(false)
+                                // An expected literal that differs from the
+                                // literal the owner writes fails with or
+                                // without the write.
+                                && written.is_none_or(|written| {
+                                    super::builder_override::literals_equal(
+                                        written,
+                                        expected.trim(),
+                                    ) != Some(false)
+                                })
+                    )
+                })
+        })
+}
+
+/// #14407: the right-hand side of the owner's plain assignment
+/// `self.<path> = <value>;`, when its body holds exactly one such statement
+/// (a compound `+=` write, or none, gives `None`).
+pub(in crate::analysis) fn owner_plain_written_value(body: &str, path: &str) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let mut values = super::owner_pin::whole_word_offsets(&masked, "self")
+        .into_iter()
+        .filter_map(|offset| {
+            let after_self = offset + "self".len();
+            let rest = masked.get(after_self..)?.strip_prefix('.')?;
+            let raw_prefix = usize::from(rest.starts_with("r#")) * 2;
+            let rest = &rest[raw_prefix..];
+            let field = rest.strip_prefix(path)?;
+            if field.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_') {
+                return None;
+            }
+            let assign = field.trim_start();
+            if !assign.starts_with('=') || assign.starts_with("==") {
+                return None;
+            }
+            let value_start = masked.len() - assign.len() + 1;
+            let value_end = value_start + masked.get(value_start..)?.find(';')?;
+            body.get(value_start..value_end)
+                .map(|value| value.trim().to_string())
+        });
+    match (values.next(), values.next()) {
+        (Some(value), None) => Some(value),
+        _ => None,
+    }
+}
+
+/// #14407: whether the owner's body touches the receiver only through plain
+/// field accesses and names the written field `path` exactly once (the
+/// changed write). An earlier write of the same field (`self.n = 1;` before
+/// the changed one), a `self` method call that may write it, or a bare `self`
+/// that may alias it could already leave the asserted value when the changed
+/// write is deleted, so reveal's assigned-field credit refuses those owners.
+pub(in crate::analysis) fn owner_writes_field_only_at_probe(body: &str, path: &str) -> bool {
+    if path.is_empty() || path.contains('.') {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return false;
+    };
+    let block = &masked[open..];
+    let mut field_mentions = 0usize;
+    let plain = super::owner_pin::whole_word_offsets(block, "self")
+        .into_iter()
+        .all(|offset| {
+            let Some(rest) = block[offset + "self".len()..].strip_prefix('.') else {
+                return false;
+            };
+            // `self.r#n` is the field `n`.
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
+            let field_len = rest
+                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .unwrap_or(rest.len());
+            let (field, after) = rest.split_at(field_len);
+            if field.is_empty() || after.trim_start().starts_with(['(', ':', '!']) {
+                return false;
+            }
+            if field == path {
+                field_mentions += 1;
+            }
+            true
+        });
+    plain && field_mentions == 1
+}
+
+/// #14407: whether every whole-word mention of `binding` in masked `text` is
+/// either its `let` declaration or the receiver of a bare statement
+/// `binding.<owner_name>(..);` (nothing chained after the call, which might
+/// write the field through a returned `&mut Self`). Anything else may write
+/// the field before the owner runs, so it refuses.
+fn binding_mentioned_only_as_owner_receiver(text: &str, binding: &str, owner_name: &str) -> bool {
+    let call = format!("{binding}.{owner_name}(");
+    let bare_call = |rest: &str| {
+        let Some(args) = rest.strip_prefix(&call) else {
+            return false;
+        };
+        let mut depth = 1usize;
+        for (at, ch) in args.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return args[at + 1..].trim_start().starts_with(';');
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    };
+    super::owner_pin::whole_word_offsets(text, binding)
+        .into_iter()
+        .all(|offset| {
+            let before = text[..offset].trim_end();
+            let declared = before.ends_with("let")
+                || before
+                    .strip_suffix("mut")
+                    .is_some_and(|rest| rest.trim_end().ends_with("let"));
+            let before_char = text[..offset].chars().next_back();
+            let qualified = before_char.is_some_and(|ch| ch == '.' || ch == ':');
+            !qualified
+                && (declared
+                    || (bare_call(&text[offset..])
+                        && (before.is_empty() || before.ends_with([';', '{', '}']))))
+        })
+}
+
+/// Whether `test`'s body, before file line `read_line`, seeds `binding.path`
+/// with `expected` (compact text) or with a value it cannot read; see
+/// [`assertion_restates_seeded_field`].
+fn binding_seeds_field(
+    test: &TestSummary,
+    binding: &str,
+    path: &str,
+    expected: &str,
+    read_line: usize,
+) -> bool {
+    let body = test.body.as_str();
+    let end = body
+        .split_inclusive('\n')
+        .take(read_line.saturating_sub(test.start_line))
+        .map(str::len)
+        .sum::<usize>()
+        .min(body.len());
+    let Some(raw) = body.get(..end) else {
+        return true;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(raw);
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    let same = |value: &str| {
+        let value = compact(value);
+        super::builder_override::literals_equal(&value, expected).unwrap_or(value == expected)
+    };
+    // The latest `let` initializer, located in masked code and read raw (the
+    // masking keeps byte offsets), when it is a struct literal.
+    let seeded_by_literal = super::reveal::owner_call_binding_let_initializer(&masked, binding)
+        .and_then(|init| {
+            let start = init.as_ptr() as usize - masked.as_ptr() as usize;
+            let open = start + init.find('{')?;
+            let close = start + init.rfind('}')?;
+            (close > open).then(|| raw.get(open + 1..close)).flatten()
+        })
+        .is_some_and(|fields| {
+            let first = path.split('.').next().unwrap_or(path);
+            if first != path {
+                // A nested path's seed sits inside a nested literal: refuse
+                // when the expected value appears there at all.
+                return compact(fields).contains(expected);
+            }
+            let fields = split_top_level_args(fields);
+            let named = fields.iter().any(|field| {
+                field
+                    .split_once(':')
+                    .map_or(field.trim(), |(name, _)| name.trim())
+                    == path
+            });
+            fields.iter().any(|field| {
+                let field = field.trim();
+                if field.starts_with("..") {
+                    return !named;
+                }
+                match field.split_once(':') {
+                    Some((name, value)) => name.trim() == path && same(value),
+                    None => field == path,
+                }
+            })
+        });
+    if seeded_by_literal {
+        return true;
+    }
+    // A plain assignment `binding.path = <value>;` before the read.
+    let place = format!("{binding}.{path}");
+    masked.match_indices(&place).any(|(at, _)| {
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+        let after = &masked[at + place.len()..];
+        let rest = after.trim_start();
+        let rhs_at = at + place.len() + (after.len() - rest.len()) + 1;
+        before_ok
+            && rest.starts_with('=')
+            && !rest.starts_with("==")
+            && masked[rhs_at..]
+                .find(';')
+                .and_then(|stop| raw.get(rhs_at..rhs_at + stop))
+                .is_some_and(same)
+    })
 }
 
 /// #11870: the one start policy for a changed field write that a related test
@@ -4402,6 +6106,36 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, false)
+}
+
+/// RIPR-SPEC-0228 examples 3, 4 and 6 (#12771): whether the changed field
+/// write is a placed gap for `check`'s class. The same policy as
+/// [`assigned_field_weak_read_start`], except that a test may also read only
+/// other declared fields of the binding it ran the owner on, directly or
+/// through a getter that plainly returns one ([`sibling_field_read`]). Such a
+/// test cannot observe the write, and every other guard still withholds when
+/// anything else may read it. The repair start stays with the weak-read
+/// policy alone: a sibling-only test holds no weak read of the field to
+/// strengthen, like a test that reads nothing (`reachable_unrevealed`).
+pub(in crate::analysis) fn assigned_field_gap_is_placed(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, true)
+}
+
+fn assigned_field_unchecked(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    sibling_reads: bool,
+) -> bool {
     if !owner_borrows_receiver(&owner.body)
         || path.is_empty()
         || tests.iter().any(|test| {
@@ -4433,7 +6167,13 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
+            if let Some(binding) =
+                weak_assigned_field_read(owner, path, test, assertion).or_else(|| {
+                    sibling_reads
+                        .then(|| sibling_field_read(owner, path, test, assertion, index))
+                        .flatten()
+                })
+            {
                 weak_reads.push((at, binding));
             }
         }
@@ -4629,6 +6369,162 @@ fn weak_assigned_field_read(
     .then_some(binding)
 }
 
+/// RIPR-SPEC-0228 example 4 (#12771): the binding `assertion` reads only
+/// other fields of, after the test ran the owner on it. Every member access
+/// in the masked assertion must be on that one bare binding, and each must be
+/// either a plain field `<binding>.g` or a getter `<binding>.m()` that
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)
+/// resolves to a field `g`, where `g` is declared on the owner's impl type and
+/// is not the written field `path` (nor a projection of it). The binding
+/// appears nowhere else in the assertion (`&c`, `c.clone()`), the test calls
+/// the owner on it exactly once, and the confirming rule's binding guards
+/// hold. Such a read cannot observe the
+/// write, so it places a test for [`assigned_field_gap_is_placed`]: the rest
+/// of that policy still withholds when anything
+/// else in the test may read `path`. Any other shape (a method on another
+/// local, a chained projection, a computed getter, an unknown field) is
+/// unplaced, so it fails closed.
+fn sibling_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let impl_type = call.impl_type()?;
+    let root = path.split('.').next().filter(|root| !root.is_empty())?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let text = masked.trim();
+    let (name, _) = text.split_once('!')?;
+    if !matches!(name.trim(), "assert_eq" | "assert_ne" | "assert")
+        || macro_names_rebound(index, &["assert", "assert_eq", "assert_ne"])
+    {
+        return None;
+    }
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut binding: Option<&str> = None;
+    let mut accesses = 0usize;
+    for (dot, _) in text.match_indices('.') {
+        let before = &text[..dot];
+        let receiver_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| is_ident(*ch))
+            .last()
+            .map(|(at, _)| at)?;
+        let receiver = &before[receiver_start..];
+        let preceded = before[..receiver_start].chars().next_back();
+        if receiver.is_empty()
+            || receiver.starts_with(|ch: char| ch.is_ascii_digit())
+            || preceded.is_some_and(|ch| is_ident(ch) || ch == '.' || ch == ':')
+        {
+            return None;
+        }
+        if binding.is_some_and(|known| known != receiver) {
+            return None;
+        }
+        binding = Some(receiver);
+        let after = &text[dot + 1..];
+        let member_len = after.find(|ch: char| !is_ident(ch)).unwrap_or(after.len());
+        let member = &after[..member_len];
+        let tail = &after[member_len..];
+        if member.is_empty() || member.starts_with(|ch: char| ch.is_ascii_digit()) {
+            return None;
+        }
+        let field = if let Some(rest) = tail.strip_prefix("()") {
+            if rest.trim_start().starts_with(['.', '[', '?']) {
+                return None;
+            }
+            getter_field(index, impl_type, member)?
+        } else {
+            if tail.trim_start().starts_with(['.', '[', '(', '?']) {
+                return None;
+            }
+            member.to_string()
+        };
+        // The only refusal of the written field in a placed assertion: the
+        // shared guards skip a placed assertion, so a `.<root>` access here
+        // (`c.n + c.m`) or a getter that returns it must decline. A getter
+        // named after the field that returns another (`c.count()` reading
+        // `self.other`) is a sibling read.
+        if field == root || super::field_reach::declared_field_reach(owner, &field, index).is_none()
+        {
+            return None;
+        }
+        accesses += 1;
+    }
+    let binding = binding?;
+    // Every mention of the binding is one of the member accesses above.
+    if accesses == 0
+        || text
+            .match_indices(binding)
+            .filter(|(at, _)| {
+                !text[..*at].chars().next_back().is_some_and(is_ident)
+                    && !text[at + binding.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_ident)
+            })
+            .count()
+            != accesses
+        || names_format_capture(&assertion.text, binding)
+    {
+        return None;
+    }
+    // One owner call on the binding: a second run can carry the first
+    // write into a sibling (`self.m = self.count; self.count += 1;` run
+    // twice leaves the written value in `m`), so the read could observe it.
+    let body = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    let call_text = format!("{binding}.{}(", call.name());
+    if body
+        .match_indices(&call_text)
+        .filter(|(at, _)| !body[..*at].chars().next_back().is_some_and(is_ident))
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let binding = binding.to_string();
+    (!super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+            call.impl_type(),
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The field a getter `<impl_type>::<getter>(&self)` plainly returns
+/// (`self.g`, `&self.g`, a clone of it; see
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)).
+fn getter_field(
+    index: &crate::analysis::rust_index::RustIndex,
+    impl_type: &str,
+    getter: &str,
+) -> Option<String> {
+    let body = super::builder_override::inherent_method_body(index, impl_type, getter)?;
+    let at = body.rfind("self.")?;
+    let rest = &body[at + "self.".len()..];
+    let len = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    let field = &rest[..len];
+    (!field.is_empty()
+        && super::builder_override::getter_plainly_reads(index, impl_type, getter, field))
+    .then(|| field.to_string())
+}
+
 /// The binding whose field `path` the masked assertion reads as one whole
 /// side of a relational check, and the other side's text.
 fn weak_read_sides<'a>(masked: &'a str, path: &str) -> Option<(String, &'a str)> {
@@ -4809,17 +6705,23 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
+    // #14407: an integration test may build the receiver as
+    // `krate::Ty { .. }` through the owner's own, unshadowed library name.
+    let own_crate = std::cell::OnceCell::new();
     super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
         .into_iter()
         .any(|read| {
             !super::reveal::owner_called_on_other_receiver(&test.body, &read.binding, call.name())
-                && super::reveal::owner_call_precedes_read(
+                && super::reveal::owner_call_precedes_read_in_crate(
                     &test.body,
                     test.start_line,
                     &read.binding,
                     call.name(),
                     assertion.line,
                     call.impl_type(),
+                    *own_crate.get_or_init(|| {
+                        super::related_tests::own_crate_qualifier(index, test, owner)
+                    }),
                 )
                 && super::reveal::binding_untouched_after_owner_call(
                     &test.body,
@@ -5427,15 +7329,15 @@ fn owner_call_parameter_values_where(
         return rows;
     }
     for test in related_tests {
-        for call in test.body_calls() {
-            if call.name != owner_name || !keep(test, call) {
-                continue;
-            }
-            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-                .and_then(|text| call_arguments(text, &call.name))
-            else {
-                continue;
-            };
+        for (call, arguments) in test
+            .body_calls()
+            .filter(|call| call.name == owner_name && keep(test, call))
+            .flat_map(|call| {
+                owner_call_argument_rows(&call.text, owner_name, free_owner)
+                    .into_iter()
+                    .map(move |arguments| (call, arguments))
+            })
+        {
             // A constant-row `for` table (#5328) yields one value per row,
             // and cells of the same row belong together: the call runs once
             // per row, so it contributes one input row per table row. A
@@ -5855,20 +7757,17 @@ pub(in crate::analysis) fn computed_input_parameters(
                 {
                     continue;
                 }
-                let Some(arguments) =
-                    owner_name_call_text(&call.text, &target.name, is_free(target))
-                        .and_then(|text| call_arguments(text, &call.name))
-                else {
-                    continue;
-                };
-                called = true;
-                for (idx, argument) in arguments.iter().enumerate() {
-                    if deterministic_computed_argument(argument, |name| {
-                        !owner_argument_values(test, name).is_empty()
-                    }) && let Some(parameter) = names.get(idx)
-                        && !computed.contains(parameter)
-                    {
-                        computed.push(parameter.clone());
+                for arguments in owner_call_argument_rows(&call.text, &target.name, is_free(target))
+                {
+                    called = true;
+                    for (idx, argument) in arguments.iter().enumerate() {
+                        if deterministic_computed_argument(argument, |name| {
+                            !owner_argument_values(test, name).is_empty()
+                        }) && let Some(parameter) = names.get(idx)
+                            && !computed.contains(parameter)
+                        {
+                            computed.push(parameter.clone());
+                        }
                     }
                 }
             }
@@ -5884,7 +7783,7 @@ pub(in crate::analysis) fn computed_input_parameters(
     };
     // #6614: a macro-argument hop binds no argument, so no parameter
     // value crosses it.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let Some(entry) = chain.hops.last() else {
@@ -5960,7 +7859,7 @@ fn helper_transferred_rows(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     // #6614: a macro-argument hop binds no argument rows.
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return Vec::new();
     }
     let rows = chain_entry_rows(chain, related_tests, index);
@@ -6139,7 +8038,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
     chain: &super::helper_transfer::HelperChain,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
-    if chain.hops.iter().any(|hop| hop.through_macro) {
+    if chain.hops.iter().any(|hop| hop.reach_only()) {
         return None;
     }
     let mut rows = chain_entry_rows(chain, related_tests, index);
@@ -6469,6 +8368,27 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
         .collect()
 }
 
+/// The declared type text of the one parameter of `function` whose whole
+/// pattern is exactly `name` (`flag: &str` gives `&str`), or `None` when no
+/// parameter or more than one has that pattern, or it has no type.
+pub(crate) fn parameter_type(function: &FunctionSummary, name: &str) -> Option<String> {
+    let arguments = signature_arguments(function)?;
+    let mut found = split_top_level_args(&arguments)
+        .into_iter()
+        .filter_map(|argument| {
+            let pattern = top_level_pattern(&argument);
+            (pattern.trim() == name)
+                .then(|| {
+                    argument
+                        .get(pattern.len() + 1..)
+                        .map(|ty| ty.trim().to_string())
+                })
+                .flatten()
+        });
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// The contents of `function`'s parameter list with comments and strings
 /// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
 /// signature cannot add, split or shift parameter names (#7840).
@@ -6562,8 +8482,249 @@ fn boundary_operand_parameter(
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
+        .or_else(|| {
+            boundary_parameter_field_projection(parameters, operand).map(|(parameter, _)| parameter)
+        })
         .or_else(|| mut_boundary_parameter(function, parameters, operand, at_line))
         .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
+}
+
+pub(in crate::analysis) fn boundary_parameter_field_projection(
+    parameters: &[String],
+    operand: &str,
+) -> Option<(String, String)> {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    for parameter in parameters {
+        let Some(rest) = operand.strip_prefix(parameter) else {
+            continue;
+        };
+        let Some(field) = rest.strip_prefix('.') else {
+            continue;
+        };
+        if is_plain_identifier(field) {
+            return Some((parameter.clone(), field.to_string()));
+        }
+    }
+    None
+}
+
+fn projected_boundary_field_expression(argument: &str, field: &str) -> Option<String> {
+    if !is_plain_identifier(field) {
+        return None;
+    }
+    let argument = argument.trim();
+    if is_plain_identifier(argument) {
+        return Some(format!("{argument}.{field}"));
+    }
+    let base = argument
+        .strip_prefix('&')
+        .map(str::trim)
+        .and_then(|borrowed| {
+            borrowed
+                .strip_prefix("mut ")
+                .map(str::trim)
+                .or(Some(borrowed))
+        })
+        .filter(|borrowed| is_plain_identifier(borrowed))?;
+    Some(format!("{base}.{field}"))
+}
+
+fn owner_rebinds_boundary_field(
+    owner: &FunctionSummary,
+    parameter: &str,
+    field: &str,
+    predicate_line: usize,
+) -> bool {
+    let operand = format!("{parameter}.{field}");
+    // A shadowing `let` or a reassignment of the base parameter changes which
+    // object the comparison reads, so the caller's field value no longer
+    // reaches it. `owner_rebinds_operand` fails closed on such a binding.
+    if owner_rebinds_operand(owner, parameter, predicate_line)
+        || owner_rebinds_operand(owner, &operand, predicate_line)
+    {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    masked.lines().enumerate().any(|(offset, line)| {
+        owner.start_line.saturating_add(offset) <= predicate_line
+            && owner_line_assigns_field(line, &operand)
+    })
+}
+
+fn owner_line_assigns_field(line: &str, operand: &str) -> bool {
+    let line = code_line_before_comment(line);
+    let trimmed = line.trim_start();
+    trimmed.strip_prefix(operand).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        (rest.starts_with('=') && !rest.starts_with("=="))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| rest.starts_with(assignment))
+    })
+}
+
+/// Whether a field value that merely *names* the boundary constant (`CURRENT`)
+/// is that owner constant for this test: declared once, and not shadowed by a
+/// declaration in the test file. A spelled value (`7`) never needs this.
+fn boundary_field_identity_permitted(
+    owner: &FunctionSummary,
+    constant: &BoundaryConstant,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    constant.lookup.is_declared_once()
+        && !crate::analysis::value_resolution::test_file_may_shadow_constant(
+            &owner.file,
+            &test.file,
+            index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref()),
+            &constant.name,
+        )
+}
+
+fn field_boundary_values_equal(
+    input: &str,
+    boundary: &str,
+    constant: &BoundaryConstant,
+    identity_permitted: bool,
+) -> bool {
+    if comparable_value(input) == comparable_value(boundary) {
+        return true;
+    }
+    identity_permitted && constant.offset == 0 && input.trim() == constant.name
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "policy:6671-field-boundary-scan: one scan authority over owner tests and call sites"
+)]
+fn collect_boundary_field_values_at_owner_calls<F>(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    constant: Option<&BoundaryConstant>,
+    mut emit: F,
+) where
+    F: FnMut(&TestSummary, usize, &str, &str, bool),
+{
+    let Some((parameter, field)) = boundary_parameter_field_projection(parameters, operand) else {
+        return;
+    };
+    if owner_rebinds_boundary_field(owner, &parameter, &field, predicate_line) {
+        return;
+    }
+    let Some(position) = parameters.iter().position(|name| name == &parameter) else {
+        return;
+    };
+    for test in related_tests {
+        // Only a value that names the constant depends on which declaration
+        // the test file means; a spelled literal is judged on its own value.
+        let identity_permitted = constant.is_some_and(|constant| {
+            boundary_field_identity_permitted(owner, constant, test, index)
+        });
+        let file_scan = crate::analysis::value_resolution::FileValueScan::build(test, index);
+        let env_facts =
+            crate::analysis::value_resolution::ValueEnvFacts::build(test, &file_scan, index);
+        for call in test.body_calls() {
+            if call.name != owner.name {
+                continue;
+            }
+            if !super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            ) {
+                continue;
+            }
+            let Some(text) = owner_name_call_text(&call.text, &owner.name, is_free(owner)) else {
+                continue;
+            };
+            let Some(arguments) = call_arguments(text, &call.name) else {
+                continue;
+            };
+            let Some(argument) = arguments.get(position) else {
+                continue;
+            };
+            let Some(projected) = projected_boundary_field_expression(argument, &field) else {
+                continue;
+            };
+            for (value, _) in
+                env_facts.resolve_at_call(&projected, call.line, &call.name, &call.text)
+            {
+                emit(test, call.line, &call.text, &value, identity_permitted);
+            }
+        }
+    }
+}
+
+fn boundary_operand_values_at_owner_calls(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<String> {
+    let parameters = function_parameters(owner);
+    let mut values = Vec::new();
+    collect_boundary_field_values_at_owner_calls(
+        owner,
+        &parameters,
+        operand,
+        predicate_line,
+        related_tests,
+        index,
+        None,
+        |_test, _line, _text, value, _identity_permitted| {
+            if !values.iter().any(|existing| existing == value) {
+                values.push(value.to_string());
+            }
+        },
+    );
+    values
+}
+
+/// Whether some related test's owner call passes the boundary value in the
+/// compared field. A value that only names the constant counts for a test
+/// only when that test file does not shadow the constant (#6671).
+fn field_boundary_value_observed_at_owner_calls(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    boundary_value: &str,
+    constant: &BoundaryConstant,
+) -> bool {
+    let parameters = function_parameters(owner);
+    let mut observed = false;
+    collect_boundary_field_values_at_owner_calls(
+        owner,
+        &parameters,
+        operand,
+        predicate_line,
+        related_tests,
+        index,
+        Some(constant),
+        |_test, _line, _text, value, identity_permitted| {
+            observed |=
+                field_boundary_values_equal(value, boundary_value, constant, identity_permitted);
+        },
+    );
+    observed
+}
+
+fn boundary_side_values_equal(
+    input: &str,
+    boundary: &str,
+    constant: Option<&BoundaryConstant>,
+) -> bool {
+    if comparable_value(input) == comparable_value(boundary) {
+        return true;
+    }
+    constant.is_some_and(|constant| constant.offset == 0 && input == constant.name)
 }
 
 /// A `mut n` parameter as the operand `n` (#10306): the signature keeps the
@@ -7071,41 +9232,46 @@ fn replaced_equality_constant(
         .flatten()
 }
 
-fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
-    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
-        let text = text.trim();
-        let text = text.strip_prefix("if ").unwrap_or(text);
-        let text = text.strip_suffix('{').unwrap_or(text).trim();
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
-        if masked.len() != text.len()
-            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
-                .iter()
-                .any(|token| masked.contains(token))
-        {
-            return None;
-        }
-        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
-            (1, 0) => "==",
-            (0, 1) => "!=",
-            _ => return None,
-        };
-        let at = masked.find(operator)?;
-        let left = text.get(..at)?;
-        let right = text.get(at + operator.len()..)?.trim();
-        let literal = !right.is_empty()
-            && if right.starts_with('"') || right.starts_with('\'') {
-                super::match_transfer::is_single_literal(right)
-            } else {
-                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-            };
-        (literal && !left.trim().is_empty()).then(|| {
-            (
-                left.split_whitespace().collect::<String>(),
-                operator,
-                right.to_string(),
-            )
-        })
+/// A bare `left == literal` or `left != literal` comparison (whitespace-free
+/// left side, operator, literal text): one operator, no connective, and a
+/// right side that is a single string or char literal or a digits-only
+/// integer. `None` for any other shape.
+fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+    let text = text.trim();
+    let text = text.strip_prefix("if ").unwrap_or(text);
+    let text = text.strip_suffix('{').unwrap_or(text).trim();
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    if masked.len() != text.len()
+        || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+            .iter()
+            .any(|token| masked.contains(token))
+    {
+        return None;
     }
+    let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+        (1, 0) => "==",
+        (0, 1) => "!=",
+        _ => return None,
+    };
+    let at = masked.find(operator)?;
+    let left = text.get(..at)?;
+    let right = text.get(at + operator.len()..)?.trim();
+    let literal = !right.is_empty()
+        && if right.starts_with('"') || right.starts_with('\'') {
+            super::match_transfer::is_single_literal(right)
+        } else {
+            right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        };
+    (literal && !left.trim().is_empty()).then(|| {
+        (
+            left.split_whitespace().collect::<String>(),
+            operator,
+            right.to_string(),
+        )
+    })
+}
+
+fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
     let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
     let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
     if before_left != after_left
@@ -7149,10 +9315,11 @@ fn oriented_comparison_operands(
     owner_source: Option<&str>,
     parameters: &[String],
     expression: &str,
+    before: Option<&str>,
     predicate_line: usize,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<(String, String)> {
-    let (left, right) = comparison_operands(expression)?;
+    let (left, right) = comparison_operands(changed_comparison_conjunct(expression, before)?)?;
     let owner_bound = |operand: &str| {
         boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
@@ -7165,6 +9332,265 @@ fn oriented_comparison_operands(
         return Some((right, left));
     }
     Some((left, right))
+}
+
+/// The one comparison a `&&`/`||` predicate's boundary reading may use.
+/// Comparison binds tighter than `&&` and `||`, so `a && b > 1` is
+/// `a && (b > 1)`; splitting the whole text at `>` would read `a && b` as
+/// the compared operand and name a boundary no input can sit on
+/// (`a && b == 1`, #9637). A predicate without a top-level connective is
+/// read whole, as before. Otherwise exactly one top-level operand may be a
+/// comparison, and when the pre-edit text is known it must not already
+/// hold that same operand: an edit to another operand (`x > 1 && a` to
+/// `x > 1 && b`) does not move `x`'s boundary. Anything else, including
+/// text the bounded scanner cannot balance (with or without a connective)
+/// and a continuation line that starts with `&&` or `||`, has no single
+/// boundary here.
+pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
+    expression: &'a str,
+    before: Option<&str>,
+) -> Option<&'a str> {
+    let operands = top_level_connective_operands(expression)?;
+    if operands.len() == 1 {
+        return Some(expression);
+    }
+    if let Some(added) =
+        before.and_then(|before| added_equality_disjunct(expression, &operands, before))
+    {
+        return Some(added);
+    }
+    let mut comparisons = operands
+        .iter()
+        .copied()
+        .filter(|operand| comparison_operands(&mask_literal_bodies(operand)).is_some());
+    let comparison = comparisons.next()?;
+    if comparisons.next().is_some() {
+        return None;
+    }
+    let normalized = |text: &str| {
+        let cleaned = clean_operand(text);
+        let in_literal = literal_body_bytes(&cleaned);
+        cleaned
+            .char_indices()
+            .filter(|(at, character)| {
+                !character.is_whitespace() || in_literal.get(*at).copied().unwrap_or(false)
+            })
+            .map(|(_, character)| character)
+            .collect::<String>()
+    };
+    let changed = normalized(comparison);
+    if let Some(before) = before {
+        let before_operands = top_level_connective_operands(before)?;
+        if before_operands
+            .iter()
+            .any(|operand| normalized(operand) == changed)
+        {
+            return None;
+        }
+    }
+    Some(comparison)
+}
+
+/// #14726: the one comparison an edit added as a new `||` disjunct of a bare
+/// equality, `x == A` to `x == A || x == B` (either order). An input equal to
+/// `B` makes the added disjunct true and the kept one false, because `A` and
+/// `B` are different literal values, so that input flips the predicate and
+/// `x == B` is its boundary reading. Every part is fail-closed: the
+/// pre-edit text must be one bare `==` comparison kept verbatim as one
+/// operand, the connective must be a single top-level `||`, the added
+/// operand must be a bare `==` on the same left side, and both right sides
+/// must be literals whose values differ. Any other shape, including an added
+/// `&&` conjunct, a `!=` or ordered comparison, a third operand, a left side
+/// that is not a plain place path (a call or index), an escaped literal, or a
+/// second literal equal in value to the first (`5` and `05`), keeps the
+/// two-comparison refusal (RIPR-SPEC-0158).
+fn added_equality_disjunct<'a>(
+    expression: &'a str,
+    operands: &[&'a str],
+    before: &str,
+) -> Option<&'a str> {
+    let [first, second] = operands else {
+        return None;
+    };
+    let base = expression.as_ptr() as usize;
+    let gap_start = first.as_ptr() as usize - base + first.len();
+    let gap_end = second.as_ptr() as usize - base;
+    if expression.get(gap_start..gap_end)?.trim() != "||" {
+        return None;
+    }
+    if top_level_connective_operands(before)?.len() != 1 {
+        return None;
+    }
+    let kept = bare_equality(before)?;
+    let added = match (bare_equality(first), bare_equality(second)) {
+        (Some(one), Some(two)) if one == kept => (*second, two),
+        (Some(one), Some(two)) if two == kept => (*first, one),
+        _ => return None,
+    };
+    let (kept_left, kept_operator, kept_literal) = kept;
+    let (added_text, (added_left, added_operator, added_literal)) = added;
+    if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
+        return None;
+    }
+    // Both sides must name the same value: a plain place path (`flag`,
+    // `self.mode`), never a call or index that may read a different value on
+    // each evaluation (`it.next() == 1 || it.next() == 2`).
+    let place_path = kept_left.split('.').all(|segment| {
+        segment
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    });
+    // An escape can spell one value two ways (`"A"` and `"\x41"`), which the
+    // textual literal comparison would read as different values.
+    if !place_path || kept_literal.contains('\\') || added_literal.contains('\\') {
+        return None;
+    }
+    let kept_value = literal_operand_value(&kept_literal)?;
+    let added_value = literal_operand_value(&added_literal)?;
+    (!same_literal_value(&kept_value, &added_value)).then_some(added_text)
+}
+
+/// `text` with every string and char literal body byte replaced by `x`, so a
+/// quoted operator (`s.starts_with('>')`, `s.contains("<")`) never reads as
+/// a comparison.
+fn mask_literal_bodies(text: &str) -> String {
+    let in_literal = literal_body_bytes(text);
+    let mut masked = String::with_capacity(text.len());
+    for (at, character) in text.char_indices() {
+        if in_literal.get(at).copied().unwrap_or(false) {
+            masked.push('x');
+        } else {
+            masked.push(character);
+        }
+    }
+    masked
+}
+
+/// Per byte of `text`, whether it sits inside a string or char literal's
+/// body (between, not on, the quotes). Uses the same bounded char-literal
+/// rule as [`top_level_connective_operands`]; an unterminated string marks
+/// the rest of the text.
+fn literal_body_bytes(text: &str) -> Vec<bool> {
+    let bytes = text.as_bytes();
+    let mut in_literal = vec![false; bytes.len()];
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let open = index;
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                let close = index.min(bytes.len());
+                for flag in &mut in_literal[open + 1..close] {
+                    *flag = true;
+                }
+            }
+            b'\'' => {
+                let body = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 3
+                } else {
+                    index + 2
+                };
+                if let Some(close) = bytes
+                    .get(body..)
+                    .and_then(|rest| rest.iter().take(10).position(|byte| *byte == b'\''))
+                    .filter(|close| bytes[index + 1] == b'\\' || *close < 4)
+                {
+                    let close = body + close;
+                    for flag in &mut in_literal[index + 1..close] {
+                        *flag = true;
+                    }
+                    index = close;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    in_literal
+}
+
+/// The operands of `expression` split at top-level `&&` and `||`, outside
+/// brackets and string or char literals. `None` when the text has an
+/// unbalanced closing bracket, an unterminated string, a block comment, or
+/// an empty operand (text after a `//` line comment is not read),
+/// so a shape the scanner cannot read is never split by guess.
+fn top_level_connective_operands(expression: &str) -> Option<Vec<&str>> {
+    let bytes = expression.as_bytes();
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut index = 0;
+    let mut end = bytes.len();
+    while index < bytes.len() {
+        match bytes[index] {
+            // A line comment ends the predicate text; a block comment is a
+            // shape this bounded scan does not read.
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                end = index;
+                break;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => return None,
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+                if index >= bytes.len() {
+                    return None;
+                }
+            }
+            b'\'' => {
+                // A char literal (`'-'`, `'é'`, `'\\''`) closes within a few
+                // bytes; a lifetime (`'a`) has no close and is one byte.
+                let body = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 3
+                } else {
+                    index + 2
+                };
+                if let Some(close) = bytes
+                    .get(body..)
+                    .and_then(|rest| rest.iter().take(10).position(|byte| *byte == b'\''))
+                    .filter(|close| bytes[index + 1] == b'\\' || *close < 4)
+                {
+                    index = body + close;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b'&' if depth == 0 && bytes.get(index + 1) == Some(&b'&') => {
+                operands.push(expression[start..index].trim());
+                index += 2;
+                start = index;
+                continue;
+            }
+            b'|' if bytes.get(index + 1) == Some(&b'|') && depth == 0 => {
+                operands.push(expression[start..index].trim());
+                index += 2;
+                start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    operands.push(expression[start..end].trim());
+    if operands.len() > 1 && operands.iter().any(|operand| operand.is_empty()) {
+        return None;
+    }
+    Some(operands)
 }
 
 fn clean_operand(operand: &str) -> String {
@@ -7473,12 +9899,41 @@ fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact>
         .find(|sink| sink.kind != FlowSinkKind::Unknown)
 }
 
-fn list_or_unknown(values: &[String]) -> String {
+pub(super) fn list_or_unknown<T: AsRef<str>>(values: &[T]) -> String {
     if values.is_empty() {
-        "unknown".to_string()
-    } else {
-        values.join(", ")
+        return "unknown".to_string();
     }
+
+    // This list is explanation only: the decision above has already read all
+    // values. Bound both the number and the bytes copied into each finding.
+    const MAX_VALUES: usize = 16;
+    const MAX_VALUE_BYTES: usize = 1024;
+    let mut result = String::new();
+    let mut retained = 0;
+    for value in values.iter().take(MAX_VALUES) {
+        let value = value.as_ref();
+        let separator = if retained == 0 { "" } else { ", " };
+        if result
+            .len()
+            .saturating_add(separator.len())
+            .saturating_add(value.len())
+            > MAX_VALUE_BYTES
+        {
+            break;
+        }
+        result.push_str(separator);
+        result.push_str(value);
+        retained += 1;
+    }
+    let elided = values.len() - retained;
+    if elided > 0 {
+        if retained > 0 {
+            result.push_str(", ");
+        }
+        let noun = if elided == 1 { "value" } else { "values" };
+        result.push_str(&format!("({elided} {noun} elided)"));
+    }
+    result
 }
 
 /// The values a related test feeds into the changed owner's inputs:
@@ -8439,7 +10894,187 @@ fn looks_like_builder_method(line: &str) -> bool {
 mod method_hop_rows;
 
 #[cfg(test)]
+mod rebinding_scan;
+
+#[cfg(test)]
 mod tests {
+    /// #14726: `x == A` to `x == A || x == B` reads the added `x == B`; every
+    /// other two-comparison shape keeps no boundary reading (RIPR-SPEC-0158).
+    #[test]
+    fn an_added_equality_disjunct_is_the_boundary_reading() {
+        use super::changed_comparison_conjunct as conjunct;
+        let kept = Some("flag == \"-v\"");
+        assert_eq!(
+            conjunct("flag == \"-v\" || flag == \"--verbose\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        // Either order, chars and integers.
+        assert_eq!(
+            conjunct("flag == \"--verbose\" || flag == \"-v\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        assert_eq!(
+            conjunct("c == 'a' || c == 'b'", Some("c == 'a'")),
+            Some("c == 'b'")
+        );
+        assert_eq!(conjunct("n == 1 || n == 2", Some("n == 1")), Some("n == 2"));
+        // A field place path names one value too.
+        assert_eq!(
+            conjunct("self.mode == 1 || self.mode == 2", Some("self.mode == 1")),
+            Some("self.mode == 2")
+        );
+        for (expression, before) in [
+            // No pre-edit text, or a pre-edit text that is not kept verbatim.
+            ("flag == \"-v\" || flag == \"--verbose\"", None),
+            ("flag == \"-x\" || flag == \"--verbose\"", kept),
+            // `&&`, a third operand, and a mixed connective.
+            ("flag == \"-v\" && flag == \"--verbose\"", kept),
+            (
+                "flag == \"-v\" || flag == \"-q\" || flag == \"--verbose\"",
+                kept,
+            ),
+            ("flag == \"-v\" || flag == \"--verbose\" && on", kept),
+            // Another left side, a non-equality, or a non-literal right side.
+            ("flag == \"-v\" || other == \"--verbose\"", kept),
+            ("flag == \"-v\" || flag != \"--verbose\"", kept),
+            ("flag == \"-v\" || flag == VERBOSE", kept),
+            // A left side that may read another value on each evaluation.
+            ("it.next() == 1 || it.next() == 2", Some("it.next() == 1")),
+            ("xs[i] == 1 || xs[i] == 2", Some("xs[i] == 1")),
+            ("f(\"a b\") == 1 || f(\"ab\") == 2", Some("f(\"a b\") == 1")),
+            // An escape can spell the kept value again.
+            ("s == \"A\" || s == \"\\x41\"", Some("s == \"A\"")),
+            ("c == 'a' || c == '\\x61'", Some("c == 'a'")),
+            (
+                "flag != \"-v\" || flag != \"--verbose\"",
+                Some("flag != \"-v\""),
+            ),
+            // The same literal value spelled again flips nothing.
+            ("n == 5 || n == 05", Some("n == 5")),
+            ("flag == \"-v\" || flag == \"-v\"", kept),
+            // A pre-edit text that already held two comparisons.
+            ("a == 1 || a == 2 || a == 3", Some("a == 1 || a == 2")),
+        ] {
+            assert_eq!(conjunct(expression, before), None, "{expression}");
+        }
+    }
+
+    #[test]
+    fn a_compound_predicate_reads_only_its_one_changed_comparison() {
+        use super::changed_comparison_conjunct as conjunct;
+        // #9637: the added conjunct, not `s.starts_with('-') && s.len()`.
+        assert_eq!(
+            conjunct(
+                "s.starts_with('-') && s.len() > 1",
+                Some("s.starts_with('-')")
+            ),
+            Some("s.len() > 1")
+        );
+        assert_eq!(
+            conjunct(
+                "if label == \"beta\" && on {",
+                Some("if label == \"alpha\" && on {")
+            ),
+            Some("if label == \"beta\"")
+        );
+        assert_eq!(conjunct("ready || n >= 10", None), Some("n >= 10"));
+        // No connective: read whole, exactly as before.
+        assert_eq!(
+            conjunct("amount >= 100", Some("amount > 100")),
+            Some("amount >= 100")
+        );
+        assert_eq!(conjunct("x | y > 1", None), Some("x | y > 1"));
+        // Connectives inside calls, strings and chars do not split.
+        assert_eq!(
+            conjunct("f(a && b) > 1", Some("f(a && b) >= 1")),
+            Some("f(a && b) > 1")
+        );
+        assert_eq!(conjunct("s == \"a && b\"", None), Some("s == \"a && b\""));
+        assert_eq!(
+            conjunct("s.ends_with('&') && n > 1", Some("s.ends_with('&')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("s.ends_with('\\'') && n > 1", Some("s.ends_with('\\'')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("s.ends_with('é') && n > 1", Some("s.ends_with('é')")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct(
+                "s.ends_with('\\u{41}') && n > 1",
+                Some("s.ends_with('\\u{41}')")
+            ),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("f(&&x) > 1", Some("f(&&x) >= 1")),
+            Some("f(&&x) > 1")
+        );
+        // Two comparisons, an unchanged comparison, or an unreadable shape:
+        // no single boundary.
+        assert_eq!(conjunct("x > 1 && y < 5", None), None);
+        assert_eq!(conjunct("x > 1 && b", Some("x > 1 && a")), None);
+        assert_eq!(conjunct("x > 1 && b", Some("x  >  1 || a")), None);
+        assert_eq!(conjunct("a && b", None), None);
+        assert_eq!(conjunct("a && ) > 1", None), None);
+        assert_eq!(conjunct("a && s == \"open", None), None);
+        assert_eq!(conjunct("&& n > 1", None), None);
+        assert_eq!(conjunct("    || n >= 10", None), None);
+        assert_eq!(conjunct("x > 1)", None), None);
+        // A line comment's connective never splits; a block comment is not read.
+        assert_eq!(conjunct("a && n > 1 // b || c", Some("a")), Some("n > 1"));
+        assert_eq!(conjunct("n > 1 // a && b", None), Some("n > 1 // a && b"));
+        assert_eq!(conjunct("a /* x || y */ && n > 1", None), None);
+        // A quoted operator is not a comparison, and whitespace inside a
+        // literal is part of its value.
+        assert_eq!(
+            conjunct(
+                "s.starts_with('>') && s.len() > 1",
+                Some("s.starts_with('>')")
+            ),
+            Some("s.len() > 1")
+        );
+        assert_eq!(
+            conjunct("s.contains(\"<\") && n > 1", Some("s.contains(\"<\")")),
+            Some("n > 1")
+        );
+        assert_eq!(
+            conjunct("label == \"ab\" && on", Some("label == \"a b\" && on")),
+            Some("label == \"ab\"")
+        );
+        assert_eq!(
+            conjunct("label  ==  \"a b\" && on", Some("label == \"a b\" && off")),
+            None
+        );
+    }
+
+    #[test]
+    fn observed_value_listing_bounds_count_and_bytes_with_explicit_elision() {
+        let values: Vec<String> = (0..100).map(|i| format!("value_{i:03}")).collect();
+        let result = super::list_or_unknown(&values);
+        assert!(result.len() <= 1100, "{} bytes", result.len());
+        assert!(result.contains("84 values elided"), "{result}");
+        let huge = vec!["é".repeat(5000)];
+        let result = super::list_or_unknown(&huge);
+        assert!(result.len() <= 1100, "{} bytes", result.len());
+        assert!(result.contains("1 value elided"), "{result}");
+        let exactly = "é".repeat(512);
+        assert_eq!(
+            super::list_or_unknown(std::slice::from_ref(&exactly)),
+            exactly
+        );
+        let over_then_short = vec!["é".repeat(513), "short".to_string()];
+        assert_eq!(
+            super::list_or_unknown(&over_then_short),
+            "(2 values elided)"
+        );
+        assert_eq!(super::list_or_unknown(&["3", "7"]), "3, 7");
+        assert_eq!(super::list_or_unknown(&[] as &[String]), "unknown");
+    }
+
     #[test]
     fn receiver_mode_is_established_only_when_the_signature_says_so() {
         // #12061: guidance names a value to assert on from `Some` only.
@@ -9803,6 +12438,323 @@ mod tests {
     }
 
     #[test]
+    fn given_field_assignment_to_named_constant_then_reversed_predicate_credits_boundary() {
+        // #6671: `CURRENT > manifest.version` with field assignments to
+        // `CURRENT - 1` and `CURRENT` observes the named-constant boundary.
+        let mut owner = function(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+        );
+        owner.name = "is_stale".to_string();
+        let mut test = test_with_body_calls(
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 6;\n\
+             is_stale(&manifest);\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);"), (15, "is_stale(&manifest);")],
+        );
+        for call in &mut test.calls {
+            call.name = "is_stale".into();
+        }
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("src/lib.rs"),
+                source: format!(
+                    "pub struct Manifest {{ pub version: u32, }}\n\
+                     impl Default for Manifest {{\n\
+                         fn default() -> Self {{ Self {{ version: 0 }} }}\n\
+                     }}\n\
+                     pub const CURRENT: u32 = 7;\n{}",
+                    owner.body
+                )
+                .into(),
+                ..Default::default()
+            },
+        );
+        index.insert_file_only(
+            PathBuf::from("tests/score.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("tests/score.rs"),
+                source: std::sync::Arc::from(test.body.as_ref()),
+                ..Default::default()
+            },
+        );
+        let gathered = activation_and_boundary_input(
+            &probe(ProbeFamily::Predicate, "CURRENT > manifest.version"),
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &index,
+            false,
+            None,
+        );
+        assert!(
+            has_observed_boundary_equality(&gathered.activation),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+        assert_eq!(gathered.unresolved_boundary, None);
+    }
+
+    fn field_named_constant_boundary_gathered(
+        owner_body: &str,
+        test_body: &str,
+        calls: &[(usize, &str)],
+        test_file_prefix: &str,
+    ) -> super::ActivationWithBoundaryInput {
+        let mut owner = function(owner_body);
+        owner.name = "is_stale".to_string();
+        owner.end_line = owner.start_line + owner.body.lines().count().saturating_sub(1);
+        let probe_line = owner
+            .body
+            .lines()
+            .enumerate()
+            .find_map(|(offset, line)| {
+                line.contains("CURRENT > manifest.version")
+                    .then_some(owner.start_line + offset)
+            })
+            .unwrap_or(owner.end_line);
+        let mut test = test_with_body_calls(test_body, calls);
+        for call in &mut test.calls {
+            call.name = "is_stale".into();
+        }
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("src/lib.rs"),
+                source: format!(
+                    "pub struct Manifest {{ pub version: u32, }}\n\
+                     impl Default for Manifest {{\n\
+                         fn default() -> Self {{ Self {{ version: 0 }} }}\n\
+                     }}\n\
+                     pub const CURRENT: u32 = 7;\n{}",
+                    owner.body
+                )
+                .into(),
+                ..Default::default()
+            },
+        );
+        index.insert_file_only(
+            PathBuf::from("tests/score.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("tests/score.rs"),
+                source: format!("{test_file_prefix}{}", test.body.as_ref()).into(),
+                ..Default::default()
+            },
+        );
+        activation_and_boundary_input(
+            &Probe {
+                id: ProbeId("probe:src/lib.rs:field-boundary".to_string()),
+                location: SourceLocation::new("src/lib.rs", probe_line, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: Some("CURRENT > manifest.version".to_string()),
+                expression: "CURRENT > manifest.version".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &index,
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn owner_rebinds_field_assignment_before_comparison() {
+        let owner = function(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest.version = 6;\n    CURRENT > manifest.version\n}",
+        );
+        let probe_line = owner.start_line + 2;
+        assert!(owner_rebinds_boundary_field(
+            &owner, "manifest", "version", probe_line
+        ));
+    }
+
+    #[test]
+    fn given_field_assignment_boundary_then_wrong_object_owner_write_or_shadow_do_not_credit() {
+        let positive = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(has_observed_boundary_equality(&positive.activation));
+
+        let wrong_object = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             let mut other = Manifest::default();\n\
+             manifest.version = 7;\n\
+             other.version = 6;\n\
+             is_stale(&other);\n\
+             }\n",
+            &[(15, "is_stale(&other);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&wrong_object.activation));
+
+        let owner_write = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n\
+                 manifest.version = 6;\n\
+                 CURRENT > manifest.version\n\
+             }",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&owner_write.activation));
+
+        let shadowed = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = CURRENT;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(!has_observed_boundary_equality(&shadowed.activation));
+    }
+
+    #[test]
+    fn given_owner_rebinds_the_base_parameter_then_field_boundary_is_not_credited() {
+        // The comparison reads the owner's own `manifest`, not the caller's:
+        // a shadowing `let` or a plain reassignment before it must refuse the
+        // caller's field value, the same as a direct field write does.
+        for (label, body) in [
+            (
+                "let shadow",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    let manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+            (
+                "reassignment",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+        ] {
+            let owner = function(body);
+            assert!(
+                owner_rebinds_boundary_field(&owner, "manifest", "version", owner.start_line + 2),
+                "{label}"
+            );
+            let gathered = field_named_constant_boundary_gathered(
+                body,
+                "{\n\
+                 let mut manifest = Manifest::default();\n\
+                 manifest.version = 7;\n\
+                 is_stale(&manifest);\n\
+                 }\n",
+                &[(13, "is_stale(&manifest);")],
+                "",
+            );
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+            // The owner's own `manifest` is read: the caller's row credits
+            // nothing, the same as a direct owner write (no claim either way).
+            assert!(
+                gathered.activation.observed_values.is_empty(),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+        }
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_literal_field_assignment_still_credits() {
+        // The owner constant is 7. The shadowing `CURRENT = 8` in the test
+        // file matters only to a credit that rests on the name `CURRENT`; an
+        // explicit `manifest.version = 7` is the boundary value on its own.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(
+            has_observed_boundary_equality(&gathered.activation),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_named_field_assignment_keeps_the_missing_boundary() {
+        // `manifest.version = CURRENT` names the test file's own `CURRENT`
+        // (8), so it neither credits the boundary nor erases the gap.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = CURRENT;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(
+            gathered.activation.missing_discriminators.len(),
+            1,
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+    }
+
+    #[test]
+    fn given_field_assignment_off_boundary_then_missing_boundary_is_reported() {
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 6;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(gathered.activation.missing_discriminators.len(), 1);
+        assert_eq!(
+            gathered.activation.missing_discriminators[0].value,
+            "manifest.version == CURRENT"
+        );
+    }
+
+    #[test]
     fn given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset() {
         // #6671: `LIMIT - 2` with `const LIMIT: i32 = 10;` compares against
         // 8, never the literal 2, and naming LIMIT itself is not the
@@ -10293,6 +13245,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -10342,6 +13295,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let context_of = |value: &str| {
             facts
@@ -10380,6 +13334,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
 
@@ -10434,6 +13389,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -10508,7 +13464,8 @@ assert_eq!(input.amount, 100);"#
                         value_facts_for_test(
                             test,
                             owner,
-                            crate::analysis::classify::argument_fold::FoldScope::default()
+                            crate::analysis::classify::argument_fold::FoldScope::default(),
+                            Some(&index)
                         ),
                         "round {round}: {} / {:?}",
                         test.name,
@@ -10531,7 +13488,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 &detached,
                 owners[1],
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&index)
             )
         );
         let other_index = index.clone();
@@ -10540,7 +13498,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 other_index.tests().at(0),
                 None,
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&other_index)
             )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
@@ -10561,7 +13520,8 @@ assert_eq!(input.amount, 100);"#
                     value_facts_for_test(
                         test,
                         Some(owner),
-                        crate::analysis::classify::argument_fold::FoldScope::default()
+                        crate::analysis::classify::argument_fold::FoldScope::default(),
+                        Some(&reordered)
                     )
                 );
             }
@@ -11509,6 +14469,301 @@ assert_eq!(input.amount, 100);"#
         }
     }
 
+    /// #14407: reveal's short-field credit needs an owner whose only touch of
+    /// the field is the changed write.
+    #[test]
+    fn only_a_single_plain_field_write_admits_the_owner() {
+        for kept in [
+            "pub fn reset(&mut self) {\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.m = 0;\n    self.n += 2;\n}",
+        ] {
+            assert!(owner_writes_field_only_at_probe(kept, "n"), "{kept}");
+        }
+        for refused in [
+            "pub fn reset(&mut self) {\n    self.n = 1 + 0;\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.n = self.n + 1;\n}",
+            "pub fn reset(&mut self) {\n    self.seed();\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    let s = &mut *self;\n    s.n = 1;\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    Self::seed(self);\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.m = 0;\n}",
+            "pub fn reset(&mut self) {\n    self.r#n = 1;\n    self.n = 1;\n}",
+        ] {
+            assert!(!owner_writes_field_only_at_probe(refused, "n"), "{refused}");
+        }
+        assert!(!owner_writes_field_only_at_probe(
+            "pub fn reset(&mut self) {\n    self.inner.n = 1;\n}",
+            "inner.n"
+        ));
+    }
+
+    /// #14407: only one plain `self.<field> = <value>;` names the value the
+    /// owner writes; a compound write or a second write names none.
+    #[test]
+    fn only_a_single_plain_literal_write_names_the_written_value() {
+        assert_eq!(
+            owner_plain_written_value("pub fn reset(&mut self) {\n    self.n = 1;\n}", "n")
+                .as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            owner_plain_written_value(
+                "pub fn reset(&mut self) {\n    self.name = \"a; b\";\n}",
+                "name"
+            )
+            .as_deref(),
+            Some("\"a; b\"")
+        );
+        for none in [
+            "pub fn reset(&mut self) {\n    self.n += 1;\n}",
+            "pub fn reset(&mut self) {\n    self.n = 1;\n    self.n = 2;\n}",
+            "pub fn reset(&mut self) {\n    self.nn = 1;\n}",
+            "pub fn reset(&mut self) {\n    if self.n == 1 {}\n}",
+        ] {
+            assert_eq!(owner_plain_written_value(none, "n"), None, "{none}");
+        }
+    }
+
+    /// #14407: reveal's short-field credit needs a receiver built by one
+    /// visible struct literal.
+    #[test]
+    fn only_a_struct_literal_receiver_has_a_visible_seed() {
+        let visible = |lines: &[&str]| {
+            let body = lines.join("\n");
+            let assertion = lines.last().copied().unwrap_or_default().trim();
+            let test = TestSummary {
+                start_line: 10,
+                end_line: 10 + lines.len(),
+                body: body.as_str().into(),
+                ..test_with_assertion("reference", assertion, OracleKind::ExactValue)
+            };
+            let fact = OracleFact {
+                line: 10 + lines.len() - 1,
+                ..oracle_fact(assertion, OracleKind::ExactValue)
+            };
+            assigned_field_seed_is_visible(&test, "reset", "n", Some("1"), &fact)
+        };
+        for kept in [
+            &[
+                "let mut c = probe::Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 0u32, m: 7 };",
+                "c.reset();",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
+            ],
+        ] {
+            assert!(visible(kept), "{kept:?}");
+        }
+        for refused in [
+            &[
+                "let mut c = probe::Counter::new();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter::default();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &["let mut c = make();", "c.reset();", "assert_eq!(c.n, 1);"],
+            &[
+                "let mut c = Counter { n: 5 }.clone();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &["c.reset();", "assert_eq!(c.n, 1);"],
+            &[
+                "let mut c = Counter::new();",
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            // A seed equal to the expected value by value, not by spelling,
+            // or an expected operand that is not a plain literal.
+            &[
+                "let mut c = Counter { n: ONE };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 0 + 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 1u32 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let expected = 1;",
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, expected);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "let d = Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, d.n);",
+            ],
+            // Float literals compare as `f64` (#14407 F6).
+            &[
+                "let mut c = Counter { n: 0.1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 0.10000000149011612);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1f32);",
+            ],
+            &[
+                "let mut c = Counter { n: 5, ..Default::default() };",
+                "let mut c2 = Counter { ..c };",
+                "c2.reset();",
+                "assert_eq!(c2.n, 1);",
+            ],
+            // Any other pre-call use of the binding may seed the field.
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.set_n(1);",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c = Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "let r = &mut c;",
+                "r.n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "std::mem::replace(&mut c.n, 1);",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c . n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "if flag { c.reset().set_n(1); }",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(!visible(refused), "{refused:?}");
+        }
+    }
+
+    /// #14407: a field the test seeded with the expected value before the
+    /// owner call cannot tell a deleted or changed write from a kept one.
+    #[test]
+    fn a_read_restating_the_seeded_field_value_is_refused() {
+        // The body's first line is file line 10; the assertion is on the
+        // last line, line 10 + (lines - 1).
+        let restates = |lines: &[&str]| {
+            let body = lines.join("\n");
+            let assertion = lines.last().copied().unwrap_or_default().trim();
+            let test = TestSummary {
+                start_line: 10,
+                end_line: 10 + lines.len(),
+                body: body.as_str().into(),
+                ..test_with_assertion("reference", assertion, OracleKind::ExactValue)
+            };
+            let fact = OracleFact {
+                line: 10 + lines.len() - 1,
+                ..oracle_fact(assertion, OracleKind::ExactValue)
+            };
+            assertion_restates_seeded_field(&test, "n", &fact)
+        };
+        // A different seed, or a constructor this scan does not read, keeps
+        // the credit.
+        for kept in [
+            &[
+                "let mut c = probe::Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { m: 1, n: 5 };",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
+            ],
+            &[
+                "let mut c = Counter::new();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.n = 7;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(!restates(kept), "{kept:?}");
+        }
+        for refused in [
+            // The literal seeds the expected value, under any spelling.
+            &[
+                "let mut c = probe::Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { n: 1u32 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { m: 0, n : 1 };",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
+            ],
+            // Shorthand and a functional update hide the seeded value.
+            &[
+                "let n = 1;",
+                "let mut c = Counter { n };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { ..base };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            // A plain assignment seeds it before the call.
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(restates(refused), "{refused:?}");
+        }
+    }
+
     fn oracle_fact(assertion: &str, kind: OracleKind) -> OracleFact {
         OracleFact {
             kind,
@@ -12429,6 +15684,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -12440,6 +15696,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
@@ -12517,6 +15774,7 @@ assert_eq!(input.amount, 100);"#
                 .collect(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,

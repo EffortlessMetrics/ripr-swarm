@@ -28,10 +28,25 @@ use super::model::{
 /// that refused before analysis. The typed identity selects the message;
 /// the repair route and human diagnostic ride in the first warning.
 pub(crate) fn refusal_badge_summary(notice: &crate::core_error::RefusalNotice) -> BadgeSummary {
+    refusal_badge_summary_for(notice, BadgeKind::Ripr, BadgeScope::Diff)
+}
+
+/// The degraded refusal badge for one badge family (#14499): the `ripr+`
+/// and repo-scoped badges refuse with the same message, color and zeroed
+/// counts as the diff `ripr` badge, under their own kind and scope.
+pub(crate) fn refusal_badge_summary_for(
+    notice: &crate::core_error::RefusalNotice,
+    kind: BadgeKind,
+    scope: BadgeScope,
+) -> BadgeSummary {
+    let basis = match scope {
+        BadgeScope::Diff => BadgeBasis::FindingExposure,
+        BadgeScope::Repo => BadgeBasis::CanonicalActionableGap,
+    };
     BadgeSummary {
-        kind: BadgeKind::Ripr,
-        scope: BadgeScope::Diff,
-        basis: BadgeBasis::FindingExposure,
+        kind,
+        scope,
+        basis,
         message: format!("refused: {}", notice.identity),
         status: BadgeStatus::Warn,
         color: "lightgrey",
@@ -168,6 +183,24 @@ pub(crate) fn calibrated_unknown_count<'a>(
         .count()
 }
 
+/// [`calibrated_unknown_count`] over the findings a badge headline may
+/// count: an unknown whose changed owner carries `#[mutants::skip]` is
+/// withheld from actionable output (#13819), so neither RIPR 0 nor ripr+
+/// counts it. The one calculation both badge kinds share.
+pub(crate) fn headline_calibrated_unknown_count(output: &CheckOutput) -> usize {
+    let owner_withheld: BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    calibrated_unknown_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !owner_withheld.contains(finding.id.as_str())),
+    )
+}
+
 /// RIPR 0 / ripr+ unknown headline contribution. `calibrated_unknowns` must
 /// already exclude preview evidence; `unknowns_test_efficiency` is the
 /// seam-native opaque axis and is independent of Finding language status.
@@ -279,8 +312,21 @@ pub fn ripr_badge_summary_with_suppressions(
         .keys()
         .filter(|id| calibrated_ids.contains(id.as_str()))
         .count();
-    let unsuppressed_exposure_gaps = calibrated_gap_findings.len().saturating_sub(suppressed);
-    let calibrated_unknowns = calibrated_unknown_count(&output.findings);
+    // #13819: a gap whose changed owner carries `#[mutants::skip]` is
+    // withheld from actionable output, so it is not an unsuppressed gap.
+    // An explicit suppression that matches it still wins and counts as
+    // suppressed, mirroring `ripr check` where the policy wins.
+    let owner_withheld: BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    let unsuppressed_exposure_gaps = calibrated_gap_findings
+        .iter()
+        .filter(|finding| !suppressed_findings.contains_key(finding.id.as_str()))
+        .filter(|finding| !owner_withheld.contains(finding.id.as_str()))
+        .count();
+    let calibrated_unknowns = headline_calibrated_unknown_count(output);
 
     let counts = BadgeCounts {
         unsuppressed_exposure_gaps,

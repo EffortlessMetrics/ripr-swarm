@@ -61,17 +61,23 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
 ## Refreshing the corpus
 
 `.github/workflows/mutation-spot-check.yml` is the one place third-party crate
-build scripts and tests run for this harness. It clones the pinned checkouts in
+build scripts and tests run for this harness. A `plan` job turns
 `benchmarks/mutation_spot_check/corpus.json` (name, URL, revision, optional
-`mutants_args`), runs `cargo xtask mutation-spot-check --run-mutants` on a hosted
-runner with read-only permissions and no secrets, and uploads the receipt as the
-`mutation-spot-check` artifact. It runs weekly and on `workflow_dispatch`
-(optionally limited to a comma-separated `repos` list). It is advisory: it never
-writes the default branch, and its numbers gate nothing.
+`mutants_args`) into a per-crate matrix. Each `mutate` job pins one revision,
+runs `cargo xtask mutation-spot-check --run-mutants` on a hosted runner with
+read-only permissions and no secrets, and uploads that crate's receipt and
+`mutants.out` as `spot-<name>`; a lost or timed-out runner costs one crate
+(#13650). A final `score` job re-pins the crates whose `mutants.out` remained,
+scores them together through `--mutants-out` (with `--rust-diff-mode --max-mutants
+300`, so the receipt also carries the product-path `rust_diff_mode` recall; the
+score step is bounded at 150 minutes so the upload still runs), and uploads the scoreboard receipt
+as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
+`mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
+per-crate `spot-<name>` receipts keep them). It runs only on explicit
+`workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
+advisory: it never writes the default branch, and its numbers gate nothing.
 
-The harness writes the receipt only when the whole run finishes, and the job is
-capped at 350 minutes, so a run that times out uploads nothing. If the first
-full run does, split the manifest into smaller complete manifests and rerun each.
+A crate whose job times out, is lost, or fails before finishing is excluded from the final scoreboard receipt (only legs that wrote `LEG_COMPLETE` with full `outcomes.json` and `mutants.json` are scored) and is named in the `score` job's warnings; the others are still scored.
 A `repos` batch is for trying a crate, not for promotion: before promoting, check
 that the receipt's repository names and revisions exactly match `corpus.json`,
 and never promote a filtered receipt while the manifest still lists more crates.
@@ -119,6 +125,24 @@ other keys are unaffected):
   absent. The recorded observation is one crate (rust-hex), one diff, one run.
   Python/TypeScript agreement stays `not_established` in this criterion (both are scored separately by the synthetic-diff method), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
+
+The span join scores Rust mutants against repo-exposure seams, which is not
+the path a developer meets: `ripr check --diff`. With `--rust-diff-mode`, each
+cargo-mutants mutant is also applied from its own recorded diff to a scratch
+copy of the checkout and run through `ripr check --diff`, using the same
+verdict join as TypeScript and Python (`agreement_method:
+synthetic_diff_verdict`, capped by `--max-mutants`). A recorded diff that no
+longer matches the checkout is refused by the same `mutants.out` preflight as
+the span join; `recorded_diff_mismatch` is the per-mutant guard if a diff still
+fails to apply. A Rust run keeps the checkout's own `ripr.toml`. A
+mutant with no recorded diff (cargo-mutants before 27) is
+`recorded_diff_missing`; a hunk that only deletes lines is
+`deletion_only_mutant`, because it has no new line to read a verdict from. The
+result is additive and never changes a span-join figure: a
+`rust_diff_mode_verdict` section with its own `repos` entries, and
+`recall_of_missed.by_language.rust_diff_mode`, which stays
+`insufficient_sample` below 30 scored claim pairs. `--rederive-summaries`
+re-derives it from that section's per-repo tables.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
 refresh a recorded receipt without re-running mutation testing:
@@ -171,8 +195,8 @@ join rule. The report is advisory and is not a suite adequacy measure.
 ## TypeScript: real Stryker mutants (synthetic-diff verdict join)
 
 The hosted run installs with `--no-package-lock`, so transitive dependencies
-resolve fresh each week; the receipt records the package revision and Stryker
-version but not resolved dependency versions, so weekly results can drift for
+resolve fresh on each run; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so results can drift for
 reasons outside ripr. The lane is advisory.
 
 `ripr check --format repo-exposure-json` lists no seams for TypeScript (or
@@ -217,7 +241,11 @@ excluded; the receipt's `sampling` records `eligible` and `selected`),
 `ripr_check_failed`, `analysis_incomplete`, `no_finding_on_mutated_lines`,
 `ambiguous_verdict`, and `language_adapter_unavailable` /
 `language_scope_unsupported` when ripr names that limitation for an empty
-result.
+result. A Python `no_static_path` carrying
+`static_limit_kind: python_transitive_reach_unresolved` or the matching stop
+reason is also an exclusion: it is an honest bounded-reach unknown, not a
+scoreable claim that no test would catch the mutant. Ordinary `no_static_path`
+remains scoreable under the table above.
 
 The receipt stays `ripr-mutation-spot-check-v2`; these repos add
 `language: "typescript"`, `agreement_method: "synthetic_diff_verdict"` and the
@@ -235,7 +263,7 @@ method, not the span-join agreement it is defined over). A mutated line is not a
 analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
-`.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
+`.github/workflows/mutation-spot-check-typescript.yml` runs it on demand on the
 pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
@@ -275,14 +303,75 @@ are never scored. One run scores one synthetic language: `--stryker-report` and
 receipt, exclusions and claim boundary is as for TypeScript, with
 `language: "python"` and `recall_of_missed.by_language.python`.
 
-`.github/workflows/mutation-spot-check-python.yml` runs it on demand and
-weekly on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
+`.github/workflows/mutation-spot-check-python.yml` runs it on explicit demand
+on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
 distributor, pytest). Third-party code (the packages and cosmic-ray) runs only
-there, never in an agent sandbox. **That workflow and corpus have not run**:
-no package is confirmed to install, pass its baseline or finish a session, and
-the cosmic-ray dump field names were taken from its source, not from a real
-dump. The first run is the first evidence; it uploads the raw dumps beside the
-receipt so a parser mismatch can be diagnosed.
+there, never in an agent sandbox. Run 42538508465 installed python-semver,
+passed its baseline, produced a session and scored 853 mutants (#13776).
+cachetools remains unconfirmed in the recorded corpus. The job uploads the raw
+dumps beside the receipt so a parser mismatch can be diagnosed.
+
+## Python: real mutmut mutants (same join)
+
+`--mutmut-dump <name>=<file>` (with the matching `--repo <name>=<checkout>`)
+scores Python mutmut (3.x) outcomes through the same join (#13842). mutmut
+has no machine-readable export of a mutant's location, so the workflow writes
+the file: for each mutant listed by `mutmut results --all true` it records
+`mutmut show <name>` as one `{"name", "status", "diff"}` JSON line. That diff
+compares the original function with the mutant function from mutmut's own
+module, so it is the real mutation, but its line numbers count from the
+function and a method is dedented to column 0. The parser (`mutmut.rs`) finds
+the hunk's original side (context and removed lines) in the checkout at one
+constant indent (a line inside a multi-line string may also match verbatim)
+and requires exactly one placement, so code repeated verbatim in two places
+(`unlocatable_ambiguous`) is never scored, and neither is a hunk with no
+placement (`unlocatable_diff`: a dump from another revision, or a package not
+indented with 4 spaces, since `mutmut show` re-renders blocks at 4 spaces per
+level). The replaced range is the smallest span (common prefix and
+suffix removed) between the dump's own removed and added lines, mapped onto
+the checkout (a line matched through the indent shifts by it, a line inside a
+multi-line string does not), so multi-line mutants are located exactly; a diff with several changed hunks
+is `unlocatable_multihunk`. A record with an empty diff has no path, so it is
+counted by status in the receipt's `mutation_tool.records_without_diff` rather
+than dropped. `--mutmut-version` records the version; the workflow passes the
+corpus pin.
+
+`mutmut apply` is deliberately not used. In mutmut 3.8.1 it replaces the first
+function of the mutant's name anywhere in the module (any class's `__init__`,
+or an `@overload` stub), and on the first hosted run it garbled the file for
+about a third of itsdangerous and cachetools mutants.
+
+Status mapping: mutmut's detected status is `caught` and its undetected status
+is `missed`; `timeout`, `no tests`, `skipped`, `not checked`, `suspicious`,
+`segfault` and the type-checker rejection (the tests never ran) are never
+scored. As with cosmic-ray, a mutant that breaks import also reads as detected,
+so `caught` is an upper bound on tests discriminating. One run scores one tool:
+`--mutmut-dump` together with `--cosmic-ray-dump` or `--stryker-report` is
+refused.
+
+The `mutmut` job of `.github/workflows/mutation-spot-check-python.yml` runs it
+on demand beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
+`corpus-python-mutmut.json` (isodate, itsdangerous, tomli, python-slugify, and
+cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
+must pass its own tests before mutmut runs, and mutmut must pass them again
+under its trampoline: humanize was dropped because it does not (see the corpus
+note), tomli skips its two recursion-limit tests (the trampoline's extra
+frames overflow them) and python-slugify skips one test that cannot run there.
+The job passes each package's pytest arguments as `--mutmut-test-args`, so the
+receipt records them per repo (`mutation_tool.test_args`, `excluded_tests`,
+`reduced_suite`). A left-out test cannot kill a mutant, so a mutant only it
+would catch reads as missed: the language figure then lists those repos under
+`reduced_suite_repos` and the markdown says it is computed under a reduced
+suite. pytest is pinned in the corpus beside mutmut, and both jobs build xtask
+with the repository's pinned Rust toolchain.
+The recall figure the scoreboard reads is
+`recall_of_missed.by_language.python`: of the runtime-missed mutants with a
+scoreable verdict, the strict share ripr calls a gap and the share it calls a
+gap, weak or unknown. Every spot-check run also writes
+`mutation-spot-check-records.jsonl`, one line per located mutant with its
+disposition, verdict, outcome, file and line, so a located miss can be traced
+without re-running the join. A mutmut record with no diff has no location or
+JSONL row; its status is counted in `records_without_diff`.
 
 ## Pilot top recommendations
 

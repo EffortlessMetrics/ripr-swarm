@@ -35,7 +35,7 @@ use super::boundary::{
 use super::effect_alignment::ChangedEffect;
 use super::module_constants::{body_bound_names, mentions_identifier};
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
-use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
+use super::related_tests::{PythonHiddenCode, PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
@@ -183,13 +183,14 @@ fn code_mentions(text: &str, token: &str) -> bool {
 fn code_mention_count(text: &str, token: &str) -> usize {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let word = token.chars().all(is_word);
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(token)
         .filter(|(start, _)| {
             let (start, end) = (*start, start + token.len());
             let whole = !word
                 || (!text[..start].chars().next_back().is_some_and(is_word)
                     && !text[end..].chars().next().is_some_and(is_word));
-            whole && !python_text_hides_code(text, start)
+            whole && !hidden.hides(start)
         })
         .count()
 }

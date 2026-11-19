@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,7 +13,7 @@ impl proptest::arbitrary::Arbitrary for Pair {
+ 
+     fn arbitrary_with(_: ()) -> Self::Strategy {
+         let pairs = proptest::num::u8::ANY.prop_map(|a| {
+-            Pair(a, a.wrapping_add(2))
++            Pair(a, a.wrapping_add(5))
+         });
+         pairs.boxed()
+     }

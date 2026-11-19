@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An exact `assert_eq!` pin on a changed value inside a tail `if`/`else` branch now reads exposed when the pinned call's literal arguments take that branch and the two versions return different values there. Before, it read `weakly_exposed` and asked for an assertion that already existed. Inputs that take another branch, and pinned values that neither version returns, keep their earlier reading (#14387).

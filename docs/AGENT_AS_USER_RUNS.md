@@ -533,8 +533,9 @@ nothing more is fixable from the test side` with no records, no file:line and
 no `next=` pointer — while the human surface for the same run named a file, a
 gap id, and a co-located test as the next step. An agent that obeyed the bare
 `stop=` had no bounded route to the evidence short of the 57-110 KB JSON
-document. After the fix the same run prints one bounded record per counted
-`limits=` finding (class, file:line, id) plus `next=ripr explain <id>`, and
+document. After the fix the same run prints `limits=` plus `next=ripr explain <id>`
+(#13594 later dropped the per-finding `missing=-` records for static-limited
+findings; only a finding with a producer discriminator keeps one), and
 the terminal line names the co-located-test route instead of claiming nothing
 more is fixable. Base-side or unresolved findings still get no record, and an
 incomplete analysis keeps its own terminal.
