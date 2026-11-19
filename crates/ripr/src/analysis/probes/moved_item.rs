@@ -319,9 +319,12 @@ fn observes_source_position(masked: &str) -> bool {
             return false;
         }
         let name_end = masked[..at].trim_end().len();
+        // Past the whole character before the name, which may be multibyte
+        // (`\u{85}` is trimmed as a blank but `e\u{301}` is not).
         let name_start = masked[..name_end]
-            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .map_or(0, |before| before + 1);
+            .char_indices()
+            .rfind(|(_, character)| !(character.is_ascii_alphanumeric() || *character == '_'))
+            .map_or(0, |(before, character)| before + character.len_utf8());
         let name = &masked[name_start..name_end];
         !name.is_empty()
             && !name.starts_with(|character: char| character.is_ascii_digit())
@@ -559,6 +562,24 @@ mod tests {
         let old = "mod outer {\n    pub(in crate::outer) mod m {\n        fn a() {}\n\n        fn b() {}\n\n        fn c() {}\n    }\n}\n";
         let (new, changed) = moved(old, 3, 4, 7);
         assert_eq!(counts(old, &new, &changed), (1, 1));
+    }
+
+    #[test]
+    fn a_multibyte_character_before_a_macro_name_is_read_whole() {
+        // `\u{85}` is a blank to `trim_end`; `\u{301}` is a combining mark.
+        // Both are two bytes, so the name starts past the whole character.
+        for (source, observes) in [
+            ("let s = \u{85}stringify!(x);", false),
+            ("let s = stringify\u{85}!(x);", false),
+            ("e\u{301}assert!(x);", false),
+            ("let s = \u{85}tracing_info!(x);", true),
+        ] {
+            assert_eq!(
+                super::observes_source_position(source),
+                observes,
+                "{source:?}"
+            );
+        }
     }
 
     #[test]
