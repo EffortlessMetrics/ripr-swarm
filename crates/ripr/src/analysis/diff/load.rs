@@ -894,7 +894,7 @@ pub(crate) fn resolve_effective_base_core_with_commit(
     if explicit.starts_with('-') {
         return Err(CoreError::base_unresolvable(format!(
             "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
-             did not run). Pass `--base <ref>` for a ref this repository has."
+             did not run). Choose a ref this repository has (`git branch --all` lists its branches)."
         )));
     }
     if explicit.trim().is_empty() {
@@ -4759,6 +4759,9 @@ mod tests {
         assert!(!planted_exists, "git diff must not write an --output file");
         let err = resolved.expect_err("an option-shaped base must be refused");
         assert!(err.contains("starts with `-`"), "{err}");
+        // The bad value came from `--base` (or the LSP setting), so the advice
+        // must not answer it with the same flag (#15338).
+        assert!(!err.contains("--base <ref>"), "{err}");
         assert!(identity.is_none());
         Ok(())
     }
