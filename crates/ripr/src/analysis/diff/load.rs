@@ -1620,7 +1620,29 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         }
         (None, false, _) | (None, true, None) => String::new(),
     };
-    format!("{single_branch_note}{branch_context}")
+    let set_head_note = if origin_lacks_head_pointer(root, git_timeout) {
+        " `git remote set-head origin --auto` records the remote's default branch as \
+         `origin/HEAD`, which a bare check then uses."
+    } else {
+        ""
+    };
+    format!("{single_branch_note}{branch_context}{set_head_note}")
+}
+
+/// True when an `origin` remote exists but `refs/remotes/origin/HEAD` does
+/// not: a repository set up with `git remote add` + `git fetch` never gets the
+/// pointer `git clone` writes, so a default branch like `trunk` stays
+/// unresolved for a hook that cannot pass `--base`. `git remote set-head
+/// origin --auto` creates it. False when there is no `origin` or Git cannot
+/// answer, so the advice is only given where it can apply.
+fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
+    let succeeds = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(root, args, git_timeout)
+            .ok()
+            .map(|output| output.status.success())
+    };
+    succeeds(&["remote", "get-url", "origin"]) == Some(true)
+        && succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.
@@ -4799,6 +4821,45 @@ mod tests {
             "an unborn HEAD must be named as the cause, got: {err}"
         );
 
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn default_base_failure_names_set_head_only_when_origin_lacks_a_head_pointer()
+    -> std::io::Result<()> {
+        // `git remote add` + `git fetch` creates `origin/trunk` but never
+        // `origin/HEAD`, so a bare check (a pre-commit hook) cannot resolve a
+        // base. The literal fix is `git remote set-head origin --auto`.
+        let dir = unique_fixture_root("resolve-base-origin-no-head")?;
+        init_git_repo(&dir, "trunk")?;
+        // Control: no `origin` remote, so the advice cannot apply.
+        let err = resolve_default_base(&dir, None).expect_err("no default candidate");
+        assert!(
+            !err.contains("set-head"),
+            "no origin remote must not get set-head advice, got: {err}"
+        );
+
+        let remote = dir.to_string_lossy().to_string();
+        run_git_checked(&dir, &["remote", "add", "origin", remote.as_str()])?;
+        run_git_checked(&dir, &["fetch", "-q", "origin"])?;
+        run_git_checked(&dir, &["checkout", "-q", "-b", "feature/discount"])?;
+        let err = resolve_default_base(&dir, None).expect_err("origin/HEAD is absent");
+        assert!(
+            err.contains("git remote set-head origin --auto"),
+            "an origin without origin/HEAD must name the literal fix, got: {err}"
+        );
+        assert!(
+            err.contains("`--base trunk`") || err.contains("`--base origin/trunk`"),
+            "the --base example must remain, got: {err}"
+        );
+
+        run_git_checked(&dir, &["remote", "set-head", "origin", "--auto"])?;
+        assert_eq!(
+            resolve_default_base(&dir, None).as_deref(),
+            Ok("origin/trunk"),
+            "the named command must make the default base resolve"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
