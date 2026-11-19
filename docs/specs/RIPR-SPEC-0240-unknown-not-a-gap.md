@@ -1077,6 +1077,34 @@ gated.
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
 
+### `FromStr::from_str` through `str::parse` (#5334)
+
+`"1.2".parse::<Version>()` runs `from_str` of `impl FromStr for Version`
+without naming it. `related_tests::parse_dispatch` relates such a test to the
+owner by `direct_owner_call`, so the turbofish spelling reads exactly as the
+same test written `Version::from_str("1.2")`; the finding is then judged by the
+ordinary oracle pipeline. The reading follows the operator one and fails
+closed. All of these hold, or the test is not related:
+
+- the owner is `from_str` of a non-generic `impl FromStr for T` with a plain
+  self type (`FromStr` spelled bare or under `str::`, `std::str::` or
+  `core::str::`), the trait name is the standard one (no workspace file
+  declares a trait `FromStr` and the owner's file imports none by a
+  non-standard path or glob), and it is the only indexed `FromStr` impl for `T`;
+- the test is in the owner's file, outside property-test macros and
+  `stringify!`, no scope between the test and the file declares or renames
+  another `T`, the owner's file defines no `macro_rules!`, and no workspace
+  `macro_rules!` expands to an `impl` the index never sees;
+- the call is `.parse::<T>()` with the bare type name as its only generic
+  argument and no arguments, and its receiver is a plain or raw string
+  literal. A literal is a `&str`, whose inherent `parse` wins over any trait
+  method of that name, so the call is `str::parse`.
+
+A receiver ripr cannot type (`text.parse::<T>()`), an annotated binding
+(`let v: Result<T, E> = "1".parse();`), another target type, a call through a
+test helper or from another file, and a commented or stringified call relate
+nothing and keep their previous reading. `parse_call_credit` pins both sides.
+
 ### A refused owner assertion beside an admitted weaker oracle (#5431)
 
 A `weakly_exposed` finding asks for a stronger assertion. When a related test
