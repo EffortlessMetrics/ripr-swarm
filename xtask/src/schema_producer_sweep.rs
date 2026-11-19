@@ -137,6 +137,22 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_status_json_conforms_at_every_stage_of_a_repair_loop in crates/ripr/tests/agent_status_json_schema.rs validates the real CLI bytes for a fresh workspace, an attempt awaiting its edit, a finished attempt with an issued receipt and a failed attempt, and published_agent_status_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-status.valid.json"],
+        // The VS Code extension's attempt-inventory stimulus is hand-written
+        // and trimmed to the fields `parseAttemptInventory` reads (no
+        // artifacts, no baseline or receipt fields), so it is not producer
+        // output and does not conform.
+        excluded: &[(
+            "editors/vscode/test-fixtures/attempt-status/inventory.json",
+            "hand-written VS Code extension stimulus for parseAttemptInventory, trimmed to the fields the extension reads; not ripr output",
+        )],
+    },
+    Binding {
         schema_path: "schemas/ripr/cache-export.schema.json",
         pointer: None,
         corpus: Corpus::Authority(

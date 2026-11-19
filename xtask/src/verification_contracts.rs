@@ -110,6 +110,17 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr agent status --json`, the inventory document. The one-attempt
+        // document (`--attempt <id>`) has its own constant and is not
+        // published here.
+        "agent-status",
+        &[producer(
+            "crates/ripr/src/app/agent_status.rs",
+            "pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr cache status --json`. This versions the status report, not
         // the on-disk cache layers.
         "cache-status",
@@ -588,6 +599,17 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    // `ripr agent status --json`. The fixture is a capture of a finished
+    // repair loop with the host's absolute root replaced by `.`; the
+    // producer-byte authority is `agent_status_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-status.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["repair_attempts", "missing_commands"],
     },
     // `ripr cache export` success stdout. The fixture is a capture with the
     // host's absolute export directory replaced by a portable path; the

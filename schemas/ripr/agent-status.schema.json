@@ -1,0 +1,817 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/agent-status.schema.json",
+  "title": "RIPR Agent Status",
+  "description": "The document `ripr agent status --json` writes to stdout: which agent-loop artifacts exist under the root, the repair attempts recorded there, and the one next command status selects, if any. It is a static reading of files on disk; it runs no test and says nothing about whether a repair is correct. The one-attempt document (`ripr agent status --attempt <id> --json`) has a different shape and is not described here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "status",
+    "root",
+    "seam",
+    "artifacts",
+    "repair_attempts",
+    "missing_commands",
+    "next_command",
+    "test_run",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "tool": {
+      "const": "ripr"
+    },
+    "status": {
+      "description": "`complete`: no next command, no missing artifact the loop still needs, and no warning. `warning`: no next command and nothing missing, but at least one warning says why the loop is not called complete. `incomplete`: anything else.",
+      "enum": [
+        "incomplete",
+        "complete",
+        "warning"
+      ]
+    },
+    "root": {
+      "description": "The root as given on the command line, in display form.",
+      "type": "string",
+      "minLength": 1
+    },
+    "seam": {
+      "description": "The seam the newest readable loop artifact names, and which artifact named it; `null` when none does.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/seam"
+        }
+      ]
+    },
+    "artifacts": {
+      "description": "The seven agent-loop artifacts, always all seven, in this order.",
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "repair_attempts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/repair_attempt"
+      }
+    },
+    "missing_commands": {
+      "description": "Commands that would produce the artifacts the loop still needs.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "next_command": {
+      "description": "The one command status selects; `null` when the loop is complete or status will not choose between several (a warning then says why).",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/command"
+        }
+      ]
+    },
+    "test_run": {
+      "description": "What the newest issued receipt records about a focused test run; `null` when no receipt applies. ripr itself never runs the test.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/test_run"
+        }
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/warning"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "next_command": {
+            "type": "null"
+          },
+          "warnings": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "warning"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "next_command": {
+            "type": "null"
+          },
+          "warnings": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "seam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seam_id",
+        "source"
+      ],
+      "properties": {
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "description": "The artifact the seam id was read from.",
+          "enum": [
+            "agent_receipt",
+            "agent_verify",
+            "agent_packet",
+            "agent_brief"
+          ]
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label",
+        "path",
+        "required",
+        "state",
+        "bytes",
+        "modified_unix_ms"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative to the root.",
+          "type": "string"
+        },
+        "required": {
+          "description": "`false` for a repository-global copy a recorded repair attempt supersedes.",
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "present",
+            "missing"
+          ]
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "modified_unix_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "name": {
+              "const": "before_snapshot"
+            },
+            "label": {
+              "const": "before snapshot"
+            },
+            "path": {
+              "const": "target/ripr/workflow/before.repo-exposure.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "after_snapshot"
+            },
+            "label": {
+              "const": "after snapshot"
+            },
+            "path": {
+              "const": "target/ripr/workflow/after.repo-exposure.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "analysis_outcome"
+            },
+            "label": {
+              "const": "analysis outcome"
+            },
+            "path": {
+              "const": "target/ripr/workflow/analysis-outcome.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "agent_brief"
+            },
+            "label": {
+              "const": "agent brief"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-brief.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "agent_packet"
+            },
+            "label": {
+              "const": "agent packet"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-packet.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "agent_verify"
+            },
+            "label": {
+              "const": "agent verify"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-verify.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "name": {
+              "const": "agent_receipt"
+            },
+            "label": {
+              "const": "agent receipt"
+            },
+            "path": {
+              "const": "target/ripr/reports/agent-receipt.json"
+            }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "present"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "bytes": {
+                "type": "integer"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "bytes": {
+                "type": "null"
+              },
+              "modified_unix_ms": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step",
+        "artifact",
+        "reason",
+        "command"
+      ],
+      "properties": {
+        "step": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "description": "The artifact or attempt manifest the command writes or resumes, relative to the root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requires_substitution": {
+          "description": "Present, and `true`, only when the command holds a placeholder to fill in before it runs.",
+          "const": true
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifact",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "repair_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "seam_id",
+        "state",
+        "head_current",
+        "disposition",
+        "baseline_ambiguous",
+        "baseline_unavailable_reason",
+        "manifest",
+        "command",
+        "receipt",
+        "last_after_refusal"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "description": "The attempt manifest's recorded state.",
+          "enum": [
+            "prepared",
+            "awaiting_edit",
+            "ready_to_finish",
+            "stale",
+            "incomparable",
+            "failed"
+          ]
+        },
+        "head_current": {
+          "description": "Whether the current HEAD is the one the attempt's evidence describes (or, awaiting an edit, one its after phase admits); `null` when that could not be read.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "disposition": {
+          "description": "What status makes of the attempt now. Only `finished` (an advisory receipt issued for this attempt with static grip improved) reads as a closed gap.",
+          "enum": [
+            "resumable",
+            "prepared_at_other_head",
+            "retry_budget_spent",
+            "head_unknown",
+            "baseline_ambiguous",
+            "baseline_unavailable",
+            "not_published",
+            "finished",
+            "gap_open",
+            "unconfirmed",
+            "ended"
+          ]
+        },
+        "baseline_ambiguous": {
+          "description": "Read from the attempt's retained edit-cage baseline: `true` when that capture recorded ambiguity, `false` when it did not (not a comparability or success claim), `null` when the reading is unavailable.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "baseline_unavailable_reason": {
+          "description": "Why the baseline reading is unavailable; otherwise `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest": {
+          "description": "The attempt manifest, relative to the root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "description": "The command that continues or restarts this attempt; `null` when there is none or the repair gate withholds it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "receipt": {
+          "description": "The receipt reading for this attempt; always `null` unless `state` is `ready_to_finish`.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/receipt"
+            }
+          ]
+        },
+        "last_after_refusal": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/after_refusal"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready_to_finish"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "else": {
+            "properties": {
+              "receipt": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "issued_for_attempt",
+        "unreadable",
+        "unavailable",
+        "unavailable_reason",
+        "superseded_by",
+        "status",
+        "movement",
+        "receipt_state",
+        "shows_gap_closed",
+        "recommended_action",
+        "verification_status",
+        "analysis_outcome_error"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issued_for_attempt": {
+          "type": "boolean"
+        },
+        "unreadable": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "superseded_by": {
+          "description": "The attempt whose receipt replaced this one's, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "movement": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "receipt_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shows_gap_closed": {
+          "type": "boolean"
+        },
+        "recommended_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verification_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "analysis_outcome_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "unavailable": {
+                "const": true
+              }
+            },
+            "required": [
+              "unavailable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "unavailable_reason": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "unavailable_reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "issued_for_attempt": {
+                "const": true
+              }
+            },
+            "required": [
+              "issued_for_attempt"
+            ]
+          },
+          "then": {
+            "properties": {
+              "receipt_state": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "shows_gap_closed": {
+                "const": false
+              },
+              "status": {
+                "type": "null"
+              },
+              "movement": {
+                "type": "null"
+              },
+              "receipt_state": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "after_refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "recorded_unix_ms",
+        "refusal_count",
+        "retry_budget_exhausted",
+        "history"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_unix_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "refusal_count": {
+          "description": "Every after-phase refusal the attempt recorded, uncapped.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry_budget_exhausted": {
+          "type": "boolean"
+        },
+        "history": {
+          "description": "A bounded earlier-to-latest history.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "recorded_unix_ms"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "recorded_unix_ms": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "test_run": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempt_id",
+            "status",
+            "test_changed",
+            "next_step"
+          ],
+          "properties": {
+            "attempt_id": {
+              "description": "The repair attempt this reading speaks for. With several finished attempts, a caller-reported failure is reported first.",
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "const": "not_recorded"
+            },
+            "test_changed": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "next_step": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempt_id",
+            "status",
+            "test_changed",
+            "file",
+            "ran",
+            "passed",
+            "failed",
+            "next_step"
+          ],
+          "properties": {
+            "attempt_id": {
+              "description": "The repair attempt this reading speaks for. With several finished attempts, a caller-reported failure is reported first.",
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "description": "The caller reported the run; ripr did not run or observe it.",
+              "const": "caller_reported"
+            },
+            "test_changed": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ran": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "passed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "next_step": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    }
+  }
+}
