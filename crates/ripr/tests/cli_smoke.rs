@@ -6897,6 +6897,19 @@ fn pr_review_front_panel_names_an_unreadable_assistant_proof()
         stderr.contains("test-oracle-assistant-proof.json"),
         "{stderr}"
     );
+    // #14631: the promoted line's read cause already names the path, so the
+    // renderer must not append it a second time.
+    let unreadable_line = stderr
+        .lines()
+        .find(|line| line.contains("Assistant proof artifact is unreadable: "))
+        .unwrap_or_default();
+    assert_eq!(
+        unreadable_line
+            .matches("test-oracle-assistant-proof.json")
+            .count(),
+        1,
+        "{stderr}"
+    );
     assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
     Ok(())
