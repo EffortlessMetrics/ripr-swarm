@@ -624,7 +624,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "--base and --head revisions",
-            "cooperative time budget (default 120000 ms)",
+            "cooperative time budget (default 600000 ms)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/review/comments.json"),

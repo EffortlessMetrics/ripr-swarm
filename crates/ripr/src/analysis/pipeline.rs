@@ -2387,6 +2387,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 .saturating_add(file.removed_lines.len())
         })
         .sum::<usize>();
+    let mut changed_line_index = crate::analysis_outcome::ChangedLineIndex::default();
+    for file in changed_files.iter() {
+        changed_line_index.record(
+            super::stable_path_text(&file.path),
+            file.added_lines.iter().map(|line| line.new_side_line),
+        );
+    }
     let kind = if limitations.iter().any(|limitation| {
         matches!(
             limitation.kind,
@@ -2513,6 +2520,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_consumed_sources,
         owner_opt_outs,
         language_view: Some(language_view),
+        changed_lines: Some(changed_line_index),
         preview_fact_caches,
     })
 }
@@ -2829,6 +2837,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         // reports every owner.
         owner_opt_outs: Vec::new(),
         language_view: Some(language_view),
+        changed_lines: None,
         preview_fact_caches: Vec::new(),
     })
 }

@@ -164,6 +164,9 @@ impl Drop for McpSession {
 struct SessionAudit {
     frames: usize,
     max_frame_bytes: usize,
+    /// Every reply byte the session wrote: what an agent that reads each
+    /// result once pays for the whole walk.
+    total_frame_bytes: usize,
 }
 
 impl McpSession {
@@ -429,6 +432,7 @@ impl McpSession {
                     return Ok(SessionAudit {
                         frames: self.frame_sizes.len(),
                         max_frame_bytes,
+                        total_frame_bytes: self.frame_sizes.iter().sum(),
                     });
                 }
                 None if Instant::now() < deadline => {
@@ -1231,6 +1235,23 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     let audit = session.finish(bound)?;
     if audit.frames == 0 || audit.max_frame_bytes == 0 {
         return Err("b2: session audit is empty".to_string());
+    }
+    // #9360: the whole walk is what an agent pays to take one gap from
+    // discovery to the repair route, so its reply bytes are held here the
+    // way `tools/list` and the descriptions are held in the unit tests.
+    // Measured 84,384 bytes over 14 replies on this one-predicate fixture
+    // (2026-11-11), with the default text mode carrying each document twice.
+    // The ceiling leaves about 4% for temp-path length; a failure means a
+    // result document or the listing grew and needs an explicit decision.
+    const B2_JOURNEY_REPLY_BYTE_CEILING: usize = 88_000;
+    if audit.total_frame_bytes > B2_JOURNEY_REPLY_BYTE_CEILING {
+        return Err(format!(
+            "b2: the journey's {} replies total {} bytes, over the {B2_JOURNEY_REPLY_BYTE_CEILING}-byte ceiling",
+            audit.frames, audit.total_frame_bytes
+        ));
+    }
+    if audit.total_frame_bytes < audit.max_frame_bytes {
+        return Err("b2: the reply total is below its largest frame".to_string());
     }
 
     // The journey may warm the producer fact cache under target/ and

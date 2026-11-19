@@ -221,13 +221,13 @@
           "type": "integer",
           "minimum": 1000,
           "default": 30000,
-          "description": "Longest time, in milliseconds, ripr waits for each git command while refreshing. A slower git command is stopped and ripr shows a limited result that says git timed out; run ripr: Refresh Diagnostics to try again."
+          "description": "Longest time, in milliseconds, ripr waits for each git command while refreshing. A slower git command is stopped and ripr shows a limited result that says git timed out; run ripr: Refresh Full Analysis to try again."
         },
         "ripr.refreshDeadlineMs": {
           "type": "integer",
           "minimum": 1000,
           "default": 600000,
-          "description": "Longest time, in milliseconds, one analysis refresh may run before ripr stops it. A stopped refresh shows no new results and reports 'analysis deadline exceeded'; save a file or run ripr: Refresh Diagnostics to start a fresh attempt."
+          "description": "Longest time, in milliseconds, one analysis refresh may run before ripr stops it. A stopped refresh shows no new results and reports 'analysis deadline exceeded'; save a file or run ripr: Refresh Full Analysis to start a fresh attempt."
         },
         "ripr.trace.server": {
           "type": "string",
@@ -519,7 +519,7 @@
       {
         "id": "ripr.getStarted",
         "title": "ripr: Get Started",
-        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, diagnose, act.",
+        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, check setup, read, act.",
         "steps": [
           {
             "id": "ripr.trustWorkspace",
@@ -541,6 +541,17 @@
             },
             "completionEvents": [
               "onContext:resourceLangId == rust"
+            ]
+          },
+          {
+            "id": "ripr.checkSetup",
+            "title": "Check that the server started",
+            "description": "See which ripr server is running, or why none was found.\n[Diagnose Setup](command:ripr.diagnoseSetup)",
+            "media": {
+              "markdown": "walkthrough/setup.md"
+            },
+            "completionEvents": [
+              "onCommand:ripr.diagnoseSetup"
             ]
           },
           {

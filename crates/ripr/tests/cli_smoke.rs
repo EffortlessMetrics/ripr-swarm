@@ -122,6 +122,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+// Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
+#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -2284,8 +2286,9 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
 
 /// #9346: the issue's diff shape end to end — the actual two-probe
 /// shape from the live witness. The signature line of the production
-/// function changes (seeding a whole-function `static_unknown` probe at
-/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// function gains an attribute (seeding a whole-function `static_unknown`
+/// probe at `src/lib.rs:1`; a trailing comment no longer does, #14175),
+/// the predicate line below it flips its boundary and
 /// reaches a decisive `exposed` verdict for the same function, and the
 /// discriminating test is added in `tests/` in the same working tree.
 /// Both production probes cover `discounted_total`, so Start here must
@@ -2301,7 +2304,7 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         let changed = source
             .replacen(
                 "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
-                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                "#[must_use] pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
                 1,
             )
             .replacen(">= discount_threshold", "> discount_threshold", 1);
@@ -37509,7 +37512,7 @@ fn review_comments_help_survives_invalid_admission_environment()
             let stdout = String::from_utf8(output.stdout)?;
             assert!(stdout.contains("Usage: ripr review-comments"));
             assert!(stdout.contains(variable));
-            assert!(stdout.contains("Default: 1200"));
+            assert!(stdout.contains("Default: 5000"));
         }
         let output = run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),

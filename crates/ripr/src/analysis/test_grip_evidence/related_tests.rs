@@ -1,8 +1,9 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
-    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem,
+    owner_call_selects_generic_sibling, owner_dispatch_trait, owner_impl_identity_shadowed,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -126,6 +127,24 @@ fn find_related_tests_in<'context, 'index>(
             *reason == RelationReason::HelperOwnerCall
                 || context.tests.get(*test_index).is_none_or(|indexed| {
                     !crate::analysis::classify::test_calls_only_through_local_rival_module(
+                        context.index,
+                        owner_fn,
+                        indexed.test,
+                    )
+                })
+        });
+    }
+
+    // #14087: a test whose every call of the owner's name is a bare call
+    // bound by a test-local `const`, `static` or tuple `struct` of that name
+    // runs the item, not the owner: the same rule diff-mode applies.
+    if owner.free_function
+        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+    {
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    !crate::analysis::classify::test_calls_only_a_local_value_item(
                         context.index,
                         owner_fn,
                         indexed.test,
@@ -396,6 +415,15 @@ pub(super) fn match_direct_owner_call(
         // the direct-call credit, so this can only lower a relation.
         if owner.function.is_some_and(|function| {
             owner_impl_identity_shadowed(indexed.test, function, context.index)
+        }) {
+            continue;
+        }
+        // #14074: a test whose every call passes a value written as a
+        // sibling impl's trait argument (`Cents::from(2u32)` beside
+        // `impl From<&str> for Cents`) cannot run this owner; the
+        // finding-level relation refuses the same call.
+        if owner.function.is_some_and(|function| {
+            owner_call_selects_generic_sibling(indexed.test, function, context.index)
         }) {
             continue;
         }

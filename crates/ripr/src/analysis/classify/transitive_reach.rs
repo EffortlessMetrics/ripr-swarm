@@ -1131,7 +1131,7 @@ impl<'a> ReachGraph<'a> {
 
 /// Trait methods Rust calls through syntax, macros or scope rather than by
 /// name, so a test reaches them with no call fact (#6297 review).
-const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
+pub(super) const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
     "fmt",
     "eq",
     "ne",
@@ -4344,6 +4344,7 @@ mod tests {
                 item_scopes: None,
                 macro_candidates: None,
                 external_docs: None,
+                constant_syntax: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -6517,6 +6518,7 @@ mod tests {
                     item_scopes: None,
                     macro_candidates: None,
                     external_docs: None,
+                    constant_syntax: None,
                 },
             )
         };
@@ -6612,6 +6614,7 @@ mod tests {
                     item_scopes: None,
                     macro_candidates: None,
                     external_docs: None,
+                    constant_syntax: None,
                 },
             )
         };
