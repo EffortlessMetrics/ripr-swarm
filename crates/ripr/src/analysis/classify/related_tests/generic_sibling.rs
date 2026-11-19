@@ -12,9 +12,11 @@
 //! `let`, a struct, tuple-struct or variant literal) and that type is a
 //! sibling's trait argument, not the owner's. A literal whose type is left to
 //! inference still has a kind: an unsuffixed integer is some integer type and
-//! `2.0` some float, never `&str` or a struct, so it refuses an owner whose
-//! argument is outside that kind when a sibling's argument is inside it. The
-//! same holds for a `let` binding initialised by such a literal (#14074).
+//! `2.0` some float, never `&str`, so it refuses an owner whose argument is a
+//! primitive outside that kind when a sibling's argument is inside it. An
+//! owner argument that is not a primitive may be an alias of one and is left
+//! alone. The same holds for a `let` binding initialised by such a literal
+//! (#14074).
 //! Anything else whose type would need inference keeps the relation the caller
 //! already had, so an unreadable call never turns into a new gap.
 
@@ -268,6 +270,11 @@ const INTEGER_TYPES: [&str; 12] = [
     "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const FLOAT_TYPES: [&str; 2] = ["f32", "f64"];
+/// Primitive names, which no alias can stand behind.
+const PRIMITIVE_TYPES: [&str; 17] = [
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32",
+    "f64", "str", "bool", "char",
+];
 
 impl LiteralKind<'_> {
     fn admits(self, head: &str) -> bool {
@@ -395,7 +402,15 @@ fn literal_kind_rules_out_owner(
         literal_kind(argument, raw_argument)
     };
     kind.is_some_and(|kind| {
-        !kind.admits(owner_head) && sibling_heads.iter().any(|head| kind.admits(head))
+        // Only a suffixed literal names one type. Any other kind could be the
+        // owner's argument through an alias (`type Count = i32;` makes
+        // `From<Count>` take an unsuffixed `2`), so it rules the owner out
+        // only when the owner's argument is itself a primitive.
+        let owner_is_named =
+            matches!(kind, LiteralKind::Exact(_)) || PRIMITIVE_TYPES.contains(&owner_head);
+        owner_is_named
+            && !kind.admits(owner_head)
+            && sibling_heads.iter().any(|head| kind.admits(head))
     })
 }
 
@@ -600,6 +615,25 @@ mod tests {
                 "{body}"
             );
         }
+        // An unsuffixed `2` defaults to `i32`, which is `Count`: the owner
+        // may run, so a non-primitive owner argument is not ruled out.
+        const ALIASED: &str = "pub type Count = i32;\n#[derive(Debug, PartialEq)]\npub struct Cents(pub i64);\n\
+            impl From<Count> for Cents {\n    fn from(v: Count) -> Self { Cents(v as i64 + 1) }\n}\n\
+            impl From<u64> for Cents {\n    fn from(v: u64) -> Self { Cents(v as i64) }\n}\n";
+        for body in [
+            "assert_eq!(Cents::from(2), Cents(3));",
+            "let n = 2; assert_eq!(Cents::from(n), Cents(3));",
+        ] {
+            assert!(
+                !refused(ALIASED, "impl From<Count> for Cents::from", body)?,
+                "{body}"
+            );
+        }
+        assert!(refused(
+            ALIASED,
+            "impl From<Count> for Cents::from",
+            "assert_eq!(Cents::from(2u64), Cents(2));"
+        )?);
         Ok(())
     }
 

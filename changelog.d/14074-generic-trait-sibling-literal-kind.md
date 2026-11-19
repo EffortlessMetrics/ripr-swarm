@@ -5,5 +5,7 @@
   reads `exposed` from a test that calls `Cents::from(2)`, `Cents::from(0x2)`
   or passes a binding from `let n = 2;` or `let n = 2u32;`: an integer literal
   is never `&str`. The same holds for float literals against integer impls
-  and string literals against numeric ones. A literal whose kind fits the
+  and string literals against numeric ones. The changed impl's argument must
+  be a primitive for an unsuffixed literal to rule it out, since an alias
+  such as `type Count = i32;` can take one; a literal whose kind fits the
   changed impl keeps its relation (#14074).
