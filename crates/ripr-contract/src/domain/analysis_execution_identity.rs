@@ -378,7 +378,10 @@ mod tests {
             "snapshot:a:b",
             "snapshot:a:b:c",
         ] {
-            assert!(CompletedAnalysisSnapshotId::parse(value).is_ok(), "{value}");
+            assert!(
+                CompletedAnalysisSnapshotId::parse(value).ok().is_some(),
+                "{value}"
+            );
         }
         for value in [
             "snapshot:42",
@@ -399,7 +402,8 @@ mod tests {
     fn a_diagnostic_result_needs_a_producer_prefix_and_a_16_hex_digest() {
         assert!(
             DiagnosticResultId::from_producer_id("ripr-workspace-diagnostics-v2:0123456789abcdef")
-                .is_ok()
+                .ok()
+                .is_some()
         );
         assert_eq!(
             DiagnosticResultId::from_producer_id("0123456789abcdef"),
@@ -445,7 +449,7 @@ mod tests {
             );
         }
         // A prefix only counts at the start of the value.
-        assert!(ContinuationId::parse_request("page:gap:2").is_ok());
+        assert!(ContinuationId::parse_request("page:gap:2").ok().is_some());
     }
 
     #[test]

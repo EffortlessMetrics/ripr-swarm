@@ -820,10 +820,10 @@ mod tests {
         for reason in FeedbackReason::all() {
             assert_eq!(FeedbackReason::parse(reason.as_str()), Ok(reason));
         }
-        assert!(FeedbackJudgment::parse("Useful").is_err());
-        assert!(ActorKind::parse("bot").is_err());
-        assert!(ReviewStatus::parse("reviewed").is_err());
-        assert!(FeedbackReason::parse("").is_err());
+        assert_eq!(FeedbackJudgment::parse("Useful").ok(), None);
+        assert_eq!(ActorKind::parse("bot").ok(), None);
+        assert_eq!(ReviewStatus::parse("reviewed").ok(), None);
+        assert_eq!(FeedbackReason::parse("").ok(), None);
     }
 
     #[test]
@@ -852,7 +852,7 @@ mod tests {
             assert_eq!(absent.validate(), Ok(()), "{label}");
         }
         let mut control = identity("snap\t1", None);
-        assert!(control.validate().is_err());
+        assert!(control.validate().err().is_some());
         control.snapshot_id = "snap-1".to_string();
         assert_eq!(control.validate(), Ok(()));
     }
@@ -874,7 +874,7 @@ mod tests {
         );
         // 512 two-byte characters fit; one more does not.
         let multibyte = other(FeedbackJudgment::Useful, &"\u{e9}".repeat(513));
-        assert!(multibyte.validate().is_err());
+        assert!(multibyte.validate().err().is_some());
         assert_eq!(
             other(FeedbackJudgment::Useful, "a\0b").validate(),
             Err(
