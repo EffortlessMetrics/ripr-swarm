@@ -19,14 +19,23 @@ fn run_ripr_in(
     args: &[&str],
     root: Option<&std::path::Path>,
 ) -> Result<std::process::Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    run_program_in(env!("CARGO_BIN_EXE_ripr"), args, root)
+}
+
+/// The single process spawn point for this target (process-policy bound).
+fn run_program_in(
+    program: &str,
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(program);
     command.args(args);
     if let Some(root) = root {
         command.current_dir(root);
     }
     command
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+        .map_err(|error| format!("failed to run {program} {args:?}: {error}"))
 }
 
 /// Run `test` in a fresh Git repository root. Cargo runs this target from the
@@ -44,16 +53,12 @@ fn in_git_root(
     let root =
         std::env::temp_dir().join(format!("ripr-help-{label}-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let result = Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status()
-        .map_err(|error| format!("git init: {error}"))
-        .and_then(|status| {
-            if status.success() {
+    let result = run_program_in("git", &["init", "-q"], Some(&root))
+        .and_then(|output| {
+            if output.status.success() {
                 Ok(())
             } else {
-                Err(format!("git init failed: {status}"))
+                Err(format!("git init failed: {output:?}"))
             }
         })
         .and_then(|()| test(&root));

@@ -132,10 +132,20 @@ fn init_ci_refuses_a_root_below_the_git_toplevel_and_writes_nothing() -> TestRes
                     .split_once(&step)
                     .map(|(_, tail)| tail)
                     .ok_or_else(|| format!("next step missing: {stderr}"))?;
-                let named_root = tail.split('`').next().unwrap_or_default();
+                let named_root = tail
+                    .split('`')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches(['\'', '"']);
                 assert!(
-                    named_root.trim_matches('\'').ends_with(repo_name),
+                    named_root.ends_with(repo_name),
                     "next step must name the repository root: {stderr}"
+                );
+                #[cfg(unix)]
+                assert_eq!(
+                    std::path::Path::new(named_root),
+                    std::fs::canonicalize(&repo)?,
+                    "next step must name the canonical repository root: {stderr}"
                 );
                 assert!(stderr.contains("at the repository root"), "{stderr}");
             }
@@ -146,6 +156,12 @@ fn init_ci_refuses_a_root_below_the_git_toplevel_and_writes_nothing() -> TestRes
             !sub.join("ripr.toml").exists(),
             "refusal must write nothing"
         );
+        for top_level_file in [".github", ".gitlab-ci.yml", "ripr.toml"] {
+            assert!(
+                !repo.join(top_level_file).exists(),
+                "refusal must not redirect the write to the top level: {top_level_file}"
+            );
+        }
         Ok(())
     })();
     std::fs::remove_dir_all(&repo)?;
