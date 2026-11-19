@@ -6172,11 +6172,10 @@ impl OwnerReturnPin {
                     .map(Box::new)
                 });
         let call = pin_call(owner, index)?;
-        // #6617 keeps the associated-function pin to a return value: a
-        // `T::new()` whole-value field pin is a separate claim.
-        if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
-        {
+        // #15345: an associated constructor (`Cfg::new()`) pins its fields
+        // through the same `T::name(..)` call identity a return value uses
+        // (#6617, RIPR-SPEC-0172).
+        if other_definition_competes(owner, index, call.kind(), None) {
             return None;
         }
         Some(Self {

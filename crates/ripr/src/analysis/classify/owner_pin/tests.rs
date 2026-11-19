@@ -9917,6 +9917,43 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
+/// #15345: an associated constructor (`Config::fresh(3)`) pins its
+/// returned literal's field through the `T::name(..)` call identity
+/// (RIPR-SPEC-0172): the test names the owner's own type through a direct
+/// `use` (a brace list is refused there). A bare `fresh(3)`, another type's
+/// `Other::fresh(3)`, a glob import and `assert_ne!` do not pin.
+#[test]
+fn an_associated_constructor_pins_its_whole_value_field() {
+    let lib = format!(
+        "{CONFIG_LIB}\nimpl Config {{\n    pub fn fresh(n: u32) -> Self {{\n        Config {{\n            retries: n + 1,\n            name: \"x\".into(),\n            count: Count(n),\n        }}\n    }}\n}}\n"
+    );
+    let literal = r#"Config { retries: 7, name: "x".into(), count: Count(3) }"#;
+    let admits = |imports: &str, body: &str| {
+        let tests = format!("{imports}\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(&lib, "fresh", &tests);
+        assert!(pin.is_some(), "the associated field pin must establish");
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let direct = "use demo::Config;\nuse demo::Count;";
+    for body in [
+        format!("assert_eq!(Config::fresh(3), {literal});"),
+        format!("let c = Config::fresh(3);\nassert_eq!(c, {literal});"),
+    ] {
+        assert!(admits(direct, &body), "{body}");
+    }
+    for (imports, body) in [
+        (direct, format!("assert_ne!(Config::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(Other::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(fresh(3), {literal});")),
+        (
+            "use demo::*;",
+            format!("assert_eq!(Config::fresh(3), {literal});"),
+        ),
+    ] {
+        assert!(!admits(imports, &body), "{imports} {body}");
+    }
+}
+
 /// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
 /// tail, an early `return Err(..)` exits as `?` does, and the test may
 /// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
