@@ -33,6 +33,9 @@ pub(crate) struct PackageDiscovery {
     pub(crate) framework_hint: Option<TsFramework>,
     /// Runner detected from lockfile or `scripts.test` (evidence-backed only).
     pub(crate) runner_hint: Option<TsRunner>,
+    /// `scripts.test` is npm's `npm init` placeholder (`echo "Error: no test
+    /// specified" && exit 1`), so `<pm> test -- <file>` can never run a test.
+    pub(crate) test_script_is_placeholder: bool,
     /// How much manifest/lockfile evidence backed the resolution.
     pub(crate) confidence: TsPackageConfidence,
     /// Named limitations emitted when required evidence is absent.
@@ -231,6 +234,7 @@ pub(crate) fn resolve_package_discovery(
                 workspace_root: None,
                 framework_hint: None,
                 runner_hint: None,
+                test_script_is_placeholder: false,
                 confidence: TsPackageConfidence::None,
                 limitations: vec![TsPackageLimitation::PackageRootNotFound],
             };
@@ -245,6 +249,7 @@ pub(crate) fn resolve_package_discovery(
             workspace_root: None,
             framework_hint: None,
             runner_hint: None,
+            test_script_is_placeholder: false,
             confidence: TsPackageConfidence::None,
             limitations: vec![TsPackageLimitation::PackageRootNotFound],
         };
@@ -266,6 +271,7 @@ pub(crate) fn resolve_package_discovery(
                 workspace_root: None,
                 framework_hint: None,
                 runner_hint: None,
+                test_script_is_placeholder: false,
                 confidence: TsPackageConfidence::None,
                 limitations: vec![limitation],
             };
@@ -329,9 +335,19 @@ pub(crate) fn resolve_package_discovery(
         workspace_root: Some(rel_ws_root),
         framework_hint,
         runner_hint,
+        test_script_is_placeholder: manifest_test_script_is_placeholder(&pkg_json_text),
         confidence,
         limitations,
     }
+}
+
+/// Is `scripts.test` the placeholder `npm init` writes
+/// (`echo "Error: no test specified" && exit 1`)? Running it through the
+/// package manager can only fail, so it is no evidence of a runnable suite.
+fn manifest_test_script_is_placeholder(pkg_json: &str) -> bool {
+    parse_manifest_facts(pkg_json)
+        .and_then(|facts| facts.test_script)
+        .is_some_and(|script| script.contains("no test specified"))
 }
 
 // ─── Manifest helpers ─────────────────────────────────────────────────────────
@@ -751,9 +767,10 @@ fn json_declares_workspace(pkg_json: &str) -> bool {
 /// framework Vitest   -> <launch> vitest run <file>
 /// framework Jest     -> <launch> jest <file>
 /// framework Ava      -> <launch> ava <file>
+/// framework Mocha    -> <launch> mocha <file>
 /// framework NodeTest -> node --test <file>
 /// (no framework) runner Bun  -> bun test <file>
-/// (no framework) runner Npm  -> npm test -- <file>
+/// (no framework) runner Npm  -> npm test -- <file>   (never when scripts.test is npm's placeholder)
 /// (no framework) runner Pnpm -> pnpm test -- <file>
 /// (no framework) runner Yarn -> yarn test <file>
 /// ```
@@ -816,10 +833,19 @@ pub(crate) fn verify_command_for_discovery(
             let launch = local_binary_launcher(discovery.runner_hint);
             format!("{launch} ava {file_str}")
         }
-        // Mocha does not have a simple file-target form in the spec table;
-        // fall through to runner fallback.
-        Some(TsFramework::Mocha) | None => {
-            // No framework resolved: use runner fallback.
+        Some(TsFramework::Mocha) => {
+            let launch = local_binary_launcher(discovery.runner_hint);
+            format!("{launch} mocha {file_str}")
+        }
+        None => {
+            // No framework resolved: use runner fallback. `<pm> test` runs
+            // `scripts.test`, so it is only a verify command when that script
+            // is not npm's `npm init` placeholder (which always fails).
+            if discovery.test_script_is_placeholder
+                && !matches!(discovery.runner_hint, Some(TsRunner::Bun))
+            {
+                return None;
+            }
             match discovery.runner_hint {
                 Some(TsRunner::Bun) => format!("bun test {file_str}"),
                 Some(TsRunner::Npm) => format!("npm test -- {file_str}"),
@@ -1314,6 +1340,7 @@ mod tests {
             workspace_root: Some(PathBuf::from(".")),
             framework_hint: Some(TsFramework::Ava),
             runner_hint: None,
+            test_script_is_placeholder: false,
             confidence: TsPackageConfidence::Medium,
             limitations: Vec::new(),
         };
@@ -1332,6 +1359,7 @@ mod tests {
             workspace_root: None,
             framework_hint: None,
             runner_hint: None,
+            test_script_is_placeholder: false,
             confidence: TsPackageConfidence::None,
             limitations: vec![TsPackageLimitation::PackageRootNotFound],
         };
@@ -1727,6 +1755,7 @@ mod tests {
             workspace_root: package_root.map(PathBuf::from),
             framework_hint,
             runner_hint,
+            test_script_is_placeholder: false,
             confidence: TsPackageConfidence::High,
             limitations: Vec::new(),
         }
@@ -1774,6 +1803,59 @@ mod tests {
             result,
             Some("npx --no-install ava tests/math.test.ts".to_string())
         );
+    }
+
+    #[test]
+    fn verify_command_framework_mocha_launches_the_local_binary() {
+        for (runner, expected) in [
+            (None, "npx --no-install mocha test/age.spec.js"),
+            (
+                Some(TsRunner::Npm),
+                "npx --no-install mocha test/age.spec.js",
+            ),
+            (Some(TsRunner::Pnpm), "pnpm exec mocha test/age.spec.js"),
+            (Some(TsRunner::Yarn), "yarn mocha test/age.spec.js"),
+            (Some(TsRunner::Bun), "bun run mocha test/age.spec.js"),
+        ] {
+            let discovery = make_discovery(Some("."), Some(TsFramework::Mocha), runner);
+            let result = verify_command_for_discovery(&discovery, Path::new("test/age.spec.js"));
+            assert_eq!(result.as_deref(), Some(expected), "runner {runner:?}");
+        }
+    }
+
+    #[test]
+    fn verify_command_never_routes_through_the_npm_init_placeholder_script() {
+        for runner in [
+            Some(TsRunner::Npm),
+            Some(TsRunner::Pnpm),
+            Some(TsRunner::Yarn),
+        ] {
+            let mut discovery = make_discovery(Some("."), None, runner);
+            discovery.test_script_is_placeholder = true;
+            assert_eq!(
+                verify_command_for_discovery(&discovery, Path::new("tests/math.test.ts")),
+                None,
+                "runner {runner:?}"
+            );
+        }
+        // Bun's `bun test` does not run `scripts.test`.
+        let mut bun = make_discovery(Some("."), None, Some(TsRunner::Bun));
+        bun.test_script_is_placeholder = true;
+        assert_eq!(
+            verify_command_for_discovery(&bun, Path::new("tests/math.test.ts")),
+            Some("bun test tests/math.test.ts".to_string())
+        );
+    }
+
+    #[test]
+    fn manifest_placeholder_script_is_recognized_only_for_the_npm_init_default() {
+        assert!(manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#
+        ));
+        assert!(!manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"mocha"}}"#
+        ));
+        assert!(!manifest_test_script_is_placeholder(r#"{"name":"x"}"#));
     }
 
     #[test]
