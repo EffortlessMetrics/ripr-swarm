@@ -75,10 +75,10 @@ pub(crate) fn limitations_for_absent_changed_files(
             let (recovery, detail) = match unread_side_prefix(root, path) {
                 Some(prefix) => (
                     format!(
-                        "If the patch was written with a custom side prefix ({prefix}), ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
+                        "If the patch was written with a custom side prefix{prefix}, ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
                     ),
                     format!(
-                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component ({prefix}) is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
+                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component{prefix} is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
                     ),
                 ),
                 None => (
@@ -98,12 +98,13 @@ pub(crate) fn limitations_for_absent_changed_files(
         .collect()
 }
 
-/// The first component of an absent changed path, quoted for display, when
-/// the path without it is a regular source file under `root` (#15103). A
+/// The first component of an absent changed path, as a parenthesized quote
+/// for display (or empty when it is not echoed), when the path without it is a regular source file under `root` (#15103). A
 /// patch written with custom side prefixes (`--src-prefix=old/
 /// --dst-prefix=new/`) keeps the prefix in every path ripr reads; git's
 /// default and mnemonic prefixes are already stripped by the diff parser.
-/// A long first component is not echoed.
+/// A long first component, or one with a backtick or control character, is
+/// not echoed, so the hint never carries unbounded or markup-breaking text.
 fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
     let mut components = path.components();
     let first = match components.next()? {
@@ -116,10 +117,12 @@ fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
     if rest.as_os_str().is_empty() || !is_regular_source_below_root(root, rest) {
         return None;
     }
-    Some(if first.chars().count() <= 32 {
-        format!("`{first}/`")
+    let echoable =
+        first.chars().count() <= 32 && !first.chars().any(|c| c == '`' || c.is_control());
+    Some(if echoable {
+        format!(" (`{first}/`)")
     } else {
-        "its first path component".to_string()
+        String::new()
     })
 }
 
@@ -734,6 +737,37 @@ mod tests {
             assert!(
                 !has_inspectable_source_file(&dangling),
                 "a dangling link named like a source file is not a source"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unread_side_prefix_echoes_only_a_short_plain_first_component() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-side-prefix-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "fn a() {}\n").map_err(io)?;
+        let long = "p".repeat(33);
+        for (path, expected) in [
+            ("new/src/lib.rs".to_string(), Some(" (`new/`)".to_string())),
+            (
+                format!("{}/src/lib.rs", "q".repeat(32)),
+                Some(format!(" (`{}/`)", "q".repeat(32))),
+            ),
+            (format!("{long}/src/lib.rs"), Some(String::new())),
+            ("n`w/src/lib.rs".to_string(), Some(String::new())),
+            ("new/src/missing.rs".to_string(), None),
+            ("new/src".to_string(), None),
+            ("lib.rs".to_string(), None),
+            ("../src/lib.rs".to_string(), None),
+        ] {
+            assert_eq!(
+                unread_side_prefix(&root, Path::new(&path)),
+                expected,
+                "{path}"
             );
         }
         let _ = fs::remove_dir_all(&root);
