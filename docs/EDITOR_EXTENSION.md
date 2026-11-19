@@ -152,6 +152,12 @@ separate supply-chain boundary.
 ## Settings
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
+  Use the full path; a leading `~` means your home directory (for example
+  `~/.cargo/bin/ripr`). A relative path such as `./target/debug/ripr` is
+  refused, because it would not be resolved against the workspace folder. On
+  Windows the full path starts with a drive letter, a colon and a separator,
+  or with a UNC root; `C:ripr.exe` and `\tools\ripr.exe` are refused the same way. A
+  bare command name is looked up on `PATH`.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
   actions. Defaults to `true`; set it to `false` to hide the main status-bar
   item and skip starting the language server. `ripr: Show Status` still names

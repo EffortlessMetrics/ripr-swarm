@@ -187,6 +187,10 @@ share one rule in `analysis/classify/call_identity.rs`:
   keeps the test's relation. The initializer is not read, so a `const` that
   aliases the owner itself is withheld as well; an item inside a nested
   block stays unsettled as above;
+- scopes record every name without its raw prefix: `use crate::b::r#render;`
+  binds `render`, as do a raw rename, a raw path segment and a raw item or
+  module name (#14087). A call spelled `r#render(..)` in the test body is
+  still not read and stays unsettled;
 - a test whose every call of the name settles on another definition is not
   related to the owner through any signal (direct call, file, module or
   name affinity), so it supplies neither reach nor confirming tokens;

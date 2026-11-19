@@ -556,3 +556,69 @@ fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The Python long-line input the fuzz lane found (#14195): a function whose
+/// `return` is one comprehension with 20,000 `for` clauses (260 KB). The
+/// comment-and-string lexer re-read the body for every match of a name, so
+/// the check took 16 seconds in a release build and minutes in a debug build.
+///
+/// The diff changes the assignment on line 2 alone. The case must finish in
+/// time with the answer the analysis exists to give: the change is reported
+/// as `exposed` through the test that calls the owner. A refusal, or a run
+/// that skipped the owner's body, would finish in time without that finding.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_long_line_regression_finishes_within_the_deadline() -> Result<(), String> {
+    const CLAUSES: usize = 20_000;
+    let source = format!(
+        "def price(amount, years):\n    a = amount - years\n    return [a {}]\n",
+        "for _ in [1] ".repeat(CLAUSES)
+    );
+    if source.lines().count() != 3 || source.len() < 13 * CLAUSES {
+        return Err("fixture is not one long body line".to_string());
+    }
+    let test =
+        "from pkg.account import price\n\n\ndef test_price():\n    assert price(200, 5) == [195]\n";
+    let diff = "diff --git a/pkg/account.py b/pkg/account.py\n--- a/pkg/account.py\n+++ b/pkg/account.py\n@@ -2,1 +2,1 @@\n-    a = amount\n+    a = amount - years\n";
+    let workspace = Workspace::create(&[
+        ("pyproject.toml", PYPROJECT_TOML.as_bytes()),
+        ("pkg/account.py", source.as_bytes()),
+        ("tests/test_account.py", test.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    workspace
+        .check_within(
+            REGRESSION_DEADLINE,
+            &[
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("comprehension chain ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    let exposed = findings.iter().any(|finding| {
+        finding["class"].as_str() == Some("exposed")
+            && finding["probe"]["location"]["line"].as_u64() == Some(2)
+            && finding["related_tests"].as_array().is_some_and(|tests| {
+                tests
+                    .iter()
+                    .any(|test| test["name"].as_str() == Some("test_price"))
+            })
+    });
+    if !exposed {
+        return Err(format!(
+            "the changed assignment was not reported as exposed through `test_price` ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}

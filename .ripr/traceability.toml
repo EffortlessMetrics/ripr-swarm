@@ -6350,6 +6350,9 @@ tests = [
   "editors/vscode/test/suite/download_base_url.test.ts::the mirror remedy asks for the https folder or an empty value (#15163)",
   "editors/vscode/test/suite/download_base_url.test.ts::a malformed mirror skips the download and names the setting in the failure (#15163)",
   "editors/vscode/test/suite/download_base_url.test.ts::a malformed mirror still lets a usable PATH server start (#15163)",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a leading ~ in ripr.server.path means the home directory, and nothing else is rewritten (#15075)",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a relative ripr.server.path with a directory part is refused by name; a bare command is not (#15075)",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::resolveServer probes the expanded home path and never probes a relative one (#15075)",
   "editors/vscode/test/suite/walkthrough_contract.test.ts::the check-setup step runs a contributed command and names the missing-server fixes (#13638)",
 ]
 fixtures = [
@@ -10327,6 +10330,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "tools/repo-policy/src/coverage_diagnostics/memory.rs",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids.rs",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs",
   "tools/repo-policy/src/coverage_diagnostics.rs",
@@ -13924,6 +13928,7 @@ tests = [
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_local_value_item_withholds_only_the_bare_calls_it_binds",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_local_value_item_beats_a_glob_of_the_owners_module",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::related_tests_drop_a_test_whose_bare_call_a_local_value_item_binds",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_raw_identifier_import_leaf_binds_the_plain_name",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_use_import_settles_a_bare_call",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_bare_call_binds_its_own_files_definition_through_use_super_glob",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::integration_test_paths_through_the_crate_name_settle",

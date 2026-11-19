@@ -15284,6 +15284,35 @@ mod disk_bytes_equal_text_tests {
         Ok(())
     }
 
+    /// #13839: libtest runs this module's tests as threads of one process and
+    /// the digest cache is process-wide. A reset that cleared the cache evicted
+    /// a peer test's entry between its lookups, and that peer then counted a
+    /// second disk read. The reset here stands in for the peer: a cached
+    /// digest must survive it and be served without another read.
+    #[test]
+    fn peer_reset_keeps_a_cached_disk_digest() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("peer-reset");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let first = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let first_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        reset_disk_equality_read_cache_for_tests();
+        let second = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let reads_after_reset = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if first.is_none() || first != second || first_reads != 1 || reads_after_reset != 0 {
+            return Err(format!(
+                "first_reads={first_reads} reads_after_reset={reads_after_reset} digests_equal={}",
+                first == second
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn disk_rewrite_rereads_and_finds_equality() -> Result<(), String> {
         reset_disk_equality_read_cache_for_tests();
