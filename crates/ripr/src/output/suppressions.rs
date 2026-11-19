@@ -345,8 +345,9 @@ impl PendingSuppression {
     }
 }
 
-/// Every field a `[[suppressions]]` entry accepts; the parser's match arms
-/// above are the authority and a test binds this list to them.
+/// Every field a `[[suppressions]]` entry accepts, for near-miss hints only.
+/// The parser's match arms above are the authority; a test checks that each
+/// name listed here is accepted (an omitted one only loses its hint).
 const ENTRY_FIELDS: &[&str] = &[
     "kind",
     "finding_id",
