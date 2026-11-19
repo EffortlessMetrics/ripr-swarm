@@ -532,8 +532,13 @@ pub(in crate::analysis) struct DropImplIndex {
     /// invisible and no type can be called plain.
     any_unparseable: bool,
     /// Self-type names (last path segment, generics dropped) of a `Drop`
-    /// impl whose `drop` body is not empty.
+    /// impl whose `drop` body is not empty, or that a macro writes
+    /// (#15107; [`MACRO_DROP_TARGET`] when the macro names no fixed type).
     non_plain: BTreeSet<String>,
+    /// Pairs of names one source binds to the same type (`use a::Cfg as
+    /// Config;`, `type Config = Cfg;`), so an impl written against one name
+    /// is read for the other (#15107).
+    same_type_names: Vec<(String, String)>,
     /// The sources hold no macro, `extern crate` or outside-crate item that
     /// could generate a `Drop` impl this scan cannot read.
     sources_closed: bool,
@@ -556,8 +561,14 @@ impl DropImplIndex {
             .iter()
             .map(|source| non_plain_drop_types(source))
             .collect();
+        let same_type_names = sources
+            .iter()
+            .filter_map(|source| parse_clean_source_file(source))
+            .flat_map(|parse| same_type_name_pairs(&parse.tree()))
+            .collect();
         let mut built = Self {
             sources_closed: closed_field_workspace(index, &[], false),
+            same_type_names,
             ..Self::default()
         };
         for scan in scans {
@@ -576,7 +587,27 @@ impl DropImplIndex {
     }
 
     fn is_plain(&self, type_name: &str) -> bool {
-        !self.any_unparseable && !self.non_plain.contains(type_name)
+        if self.any_unparseable || self.non_plain.contains(MACRO_DROP_TARGET) {
+            return false;
+        }
+        // Every name bound to the same type, across files and transitively.
+        let mut names = BTreeSet::from([type_name.to_string()]);
+        let mut pending = vec![type_name.to_string()];
+        while let Some(name) = pending.pop() {
+            for (left, right) in &self.same_type_names {
+                let other = if *left == name {
+                    right
+                } else if *right == name {
+                    left
+                } else {
+                    continue;
+                };
+                if names.insert(other.clone()) {
+                    pending.push(other.clone());
+                }
+            }
+        }
+        names.iter().all(|name| !self.non_plain.contains(name))
     }
 }
 
@@ -611,6 +642,106 @@ fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
     names
 }
 
+/// A [`DropImplIndex::non_plain`] entry for a `Drop` impl a macro writes for
+/// a type it receives (`impl Drop for $name`): no type is then called plain.
+const MACRO_DROP_TARGET: &str = "$";
+
+/// #15107: pairs of names `tree` binds to the same type. A rename
+/// `use guard::Cfg as Config;` and an alias `type Config = Cfg;` (generics
+/// dropped) each pair `Config` with `Cfg`.
+fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
+    let last_segment = |text: &str| {
+        let text = squeeze(text);
+        let text = text.split('<').next().unwrap_or(&text).to_string();
+        text.rsplit("::").next().unwrap_or(&text).to_string()
+    };
+    let mut pairs = Vec::new();
+    for node in tree.syntax().descendants() {
+        if let Some(rename) = ast::Rename::cast(node.clone())
+            && let Some(name) = rename.name()
+            && let Some(path) = rename
+                .syntax()
+                .parent()
+                .and_then(ast::UseTree::cast)
+                .and_then(|use_tree| use_tree.path())
+        {
+            pairs.push((
+                last_segment(&path.syntax().text().to_string()),
+                name.text().to_string(),
+            ));
+        } else if let Some(alias) = ast::TypeAlias::cast(node)
+            && let Some(name) = alias.name()
+            && let Some(ty) = alias.ty()
+        {
+            pairs.push((
+                name.text().to_string(),
+                last_segment(&ty.syntax().text().to_string()),
+            ));
+        }
+    }
+    pairs
+}
+
+/// #15107: the types a `Drop` impl written inside a macro definition or
+/// invocation is for. A macro body is a token tree, not parsed items, so the
+/// impl's `drop` body is unread and the type is called non-plain; a target
+/// the macro receives (`impl Drop for $name`) yields [`MACRO_DROP_TARGET`].
+/// Derive and attribute macros from other crates stay unread.
+fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet<String> {
+    let mut targets = BTreeSet::new();
+    for token_tree in tree.syntax().descendants().filter_map(ast::TokenTree::cast) {
+        if token_tree
+            .syntax()
+            .parent()
+            .and_then(ast::TokenTree::cast)
+            .is_some()
+        {
+            // Nested trees are read through their outermost tree.
+            continue;
+        }
+        let tokens: Vec<_> = token_tree
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .collect();
+        for (at, token) in tokens.iter().enumerate() {
+            if token.kind() != SyntaxKind::IDENT
+                || !drop_names.iter().any(|name| name == token.text())
+            {
+                continue;
+            }
+            // `Drop for Target`, the target maybe `$name` or a path.
+            let mut rest = tokens.iter().skip(at + 1);
+            if !rest
+                .by_ref()
+                .take(8)
+                .any(|token| token.kind() == SyntaxKind::FOR_KW)
+            {
+                continue;
+            }
+            let mut target = None;
+            for token in rest.take(16) {
+                match token.kind() {
+                    SyntaxKind::DOLLAR => {
+                        target = Some(MACRO_DROP_TARGET.to_string());
+                        break;
+                    }
+                    SyntaxKind::IDENT => target = Some(token.text().to_string()),
+                    SyntaxKind::COLON2
+                    | SyntaxKind::COLON
+                    | SyntaxKind::CRATE_KW
+                    | SyntaxKind::SELF_KW
+                    | SyntaxKind::SUPER_KW => {}
+                    _ => break,
+                }
+            }
+            targets.insert(target.unwrap_or_else(|| MACRO_DROP_TARGET.to_string()));
+        }
+    }
+    targets
+}
+
 /// The self-type names of every non-plain `Drop` impl in `source`, or `None`
 /// when the source does not parse cleanly. A source that never spells `Drop`
 /// cannot hold a `Drop` impl or a `Drop` alias, so it is parsed only to
@@ -622,6 +753,10 @@ fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
         return Some(types);
     }
     let aliases = drop_alias_names(&parse.tree());
+    let drop_names: Vec<String> = std::iter::once("Drop".to_string())
+        .chain(aliases.iter().cloned())
+        .collect();
+    types.extend(macro_drop_targets(&parse.tree(), &drop_names));
     for node in parse.tree().syntax().descendants() {
         let Some(imp) = ast::Impl::cast(node) else {
             continue;
@@ -1948,6 +2083,94 @@ mod tests {
             files,
             ..Default::default()
         }))
+    }
+
+    /// #15107: a `Drop` impl a macro writes is unread, so its type is not
+    /// plain; one the macro writes for a type it receives calls no type plain.
+    #[test]
+    fn a_drop_impl_written_by_a_macro_is_not_plain() -> Result<(), String> {
+        for (source, row_plain, other_plain) in [
+            // A macro definition writing the impl for a received type.
+            (
+                "macro_rules! loud { ($t:ident) => { impl Drop for $t { fn drop(&mut self) { std::process::exit(0); } } }; }\nloud!(Row);\n",
+                false,
+                false,
+            ),
+            // An invocation whose tokens hold an impl for a fixed type.
+            (
+                "wrap! { impl Drop for Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nwrap! { impl Cleanup for crate::Row { fn drop(&mut self) {} } }\n",
+                false,
+                true,
+            ),
+            // A macro that names no `Drop` impl leaves every type plain.
+            (
+                "macro_rules! describe { ($t:ident) => { impl $t { fn d(&self) {} } }; }\ndescribe!(Row);\n",
+                true,
+                true,
+            ),
+        ] {
+            let index = drop_index(&[("src/lib.rs", source)])?;
+            if drop_is_plain(&index, "Row") != row_plain
+                || drop_is_plain(&index, "Other") != other_plain
+            {
+                return Err(format!(
+                    "expected Row plain={row_plain}, Other plain={other_plain} for {source}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15107: an impl written against one name is read for every name a
+    /// rename or type alias binds to the same type, in any file.
+    #[test]
+    fn a_renamed_or_aliased_type_shares_its_drop_impl() -> Result<(), String> {
+        let loud = "pub struct Cfg;\nimpl Drop for Cfg { fn drop(&mut self) { std::process::exit(0); } }\n";
+        for (lib, name, expected) in [
+            (
+                "mod guard;\npub use guard::Cfg as Config;\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config = guard::Cfg;\n",
+                "Config",
+                false,
+            ),
+            // Transitively, and from the alias back to the original.
+            (
+                "mod guard;\npub use guard::Cfg as Config;\npub type Settings = Config;\n",
+                "Settings",
+                false,
+            ),
+            // An unrelated rename stays plain.
+            (
+                "mod guard;\npub use guard::Other as Config;\n",
+                "Config",
+                true,
+            ),
+        ] {
+            let index = drop_index(&[("src/guard.rs", loud), ("src/lib.rs", lib)])?;
+            if drop_is_plain(&index, name) != expected {
+                return Err(format!("{name} plain should be {expected} for {lib}"));
+            }
+        }
+        let reverse = drop_index(&[
+            ("src/guard.rs", "pub struct Cfg;\n"),
+            (
+                "src/lib.rs",
+                "mod guard;\npub use guard::Cfg as Config;\nimpl Drop for Config { fn drop(&mut self) { std::process::exit(0); } }\n",
+            ),
+        ])?;
+        if drop_is_plain(&reverse, "Cfg") {
+            return Err("an impl against the rename must reach the original name".into());
+        }
+        Ok(())
     }
 
     /// #9209: the corpus is scanned once per index, not once per probe and

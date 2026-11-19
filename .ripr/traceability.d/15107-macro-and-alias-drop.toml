@@ -1,0 +1,14 @@
+# A Drop impl a macro writes, or one reached through a rename or type alias,
+# withholds the owner return pin (#15107).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_drop_impl_written_by_a_macro_is_not_plain",
+  "crates/ripr/src/analysis/classify/element_field_pin.rs::tests::a_renamed_or_aliased_type_shares_its_drop_impl",
+]
+fixtures = [
+  "fixtures/rust_returned_type_drop_macro_exit",
+  "fixtures/rust_returned_type_drop_macro_plain",
+  "fixtures/rust_returned_type_drop_alias_exit",
+  "fixtures/rust_returned_type_drop_alias_plain",
+]
