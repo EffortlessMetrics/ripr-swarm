@@ -1655,12 +1655,12 @@ impl Backend {
             recovery => recovery,
         };
         let withdrawn = has_snapshot;
+        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
         } else {
             analysis_pending_diagnostics(recovery)
         };
-        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
             .quarantine
             .documents
@@ -1761,7 +1761,7 @@ impl Backend {
         recovery: &AnalysisPendingRecovery,
         withdrawn: bool,
     ) -> String {
-        format!("{}:{withdrawn}", recovery.recovery_id())
+        format!("{}:{withdrawn}", recovery.payload_identity())
     }
 
     #[cfg(test)]
@@ -2272,6 +2272,22 @@ impl Backend {
             health.state = state;
             health.snapshot_id = Some("snapshot:test".to_string());
             health.last_success_snapshot_id = Some("snapshot:test".to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_analysis_attempt_failure_for_test(
+        &self,
+        kind: AnalysisFailureKind,
+        message: &str,
+    ) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.attempt_id = Some(2);
+            health.state = AnalysisAttemptState::Failed;
+            health.failure = Some(AnalysisFailure {
+                kind,
+                message: bounded_failure_message(message),
+            });
         }
     }
 
@@ -3409,8 +3425,30 @@ impl Backend {
             AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
                 AnalysisPendingRecovery::AnalysisRunning
             }
+            // A failed attempt with no snapshot: a bare retry fails the same
+            // way, so name the recorded failure rather than the start route.
+            AnalysisPendingRecovery::SaveOrRefresh => self.latest_attempt_failure().map_or(
+                AnalysisPendingRecovery::SaveOrRefresh,
+                |failure| AnalysisPendingRecovery::AnalysisFailed {
+                    kind: failure.kind,
+                    detail: failure.message,
+                },
+            ),
             recovery => recovery,
         }
+    }
+
+    /// The bounded failure the latest attempt recorded, only while that
+    /// attempt's state is `failed` (a later success, cancel or new attempt
+    /// clears the claim).
+    fn latest_attempt_failure(&self) -> Option<AnalysisFailure> {
+        self.analysis_health.lock().ok().and_then(|health| {
+            if health.state == AnalysisAttemptState::Failed {
+                health.failure.clone()
+            } else {
+                None
+            }
+        })
     }
 
     /// Whether an analysis attempt is queued or running right now.
@@ -9087,7 +9125,7 @@ fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -
 /// produces a fresh identity — the client re-renders the marker instead of
 /// holding a stale route behind `unchanged`.
 fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
-    format!("ripr:analysis-pending:{}", recovery.recovery_id())
+    format!("ripr:analysis-pending:{}", recovery.payload_identity())
 }
 
 /// The withdrawal variant identity (#8731 review): the pre-analysis marker

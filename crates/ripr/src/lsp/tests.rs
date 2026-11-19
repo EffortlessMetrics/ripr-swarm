@@ -27802,11 +27802,12 @@ fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Resul
 
 #[test]
 #[serial]
-fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+fn framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis()
 -> Result<(), String> {
     // #14447 review: "in progress" must not outlive the attempt. When the
     // first analysis fails without a snapshot and nothing follows it, the
-    // push marker returns to the save/refresh route that starts analysis.
+    // push marker names that failure and its fix: the cold-start
+    // save/refresh route would fail the same way.
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
         let file = root.path().join("lib.rs");
@@ -27860,7 +27861,7 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
             }),
         )
         .await?;
-        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+        let (recoveries, failed_message) = tokio::time::timeout(Duration::from_mins(1), async {
             let mut recoveries = Vec::new();
             loop {
                 let message = read_lsp_message(&mut client_read).await?;
@@ -27875,25 +27876,40 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
                     .and_then(|marker| marker["data"]["recovery"].as_str())
                     .unwrap_or_default()
                     .to_string();
-                let done = recovery == "save_or_refresh";
+                let done = recovery == "fix_failure_then_refresh";
                 recoveries.push(recovery);
                 if done {
-                    return Ok::<_, String>(recoveries);
+                    let message = message["params"]["diagnostics"][0]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    return Ok::<_, String>((recoveries, message));
                 }
             }
         })
         .await
         .map_err(|elapsed| {
-            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+            format!("no failed-attempt marker after the failed attempt: {elapsed}")
         })??;
         if recoveries.first().map(String::as_str) != Some("analysis_running") {
             return Err(format!(
                 "the didOpen marker must name the running analysis first: {recoveries:?}"
             ));
         }
-        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+        if recoveries
+            .iter()
+            .any(|recovery| recovery == "save_or_refresh")
+        {
             return Err(format!(
-                "a failed attempt must restore the start route: {recoveries:?}"
+                "a failed attempt must not fall back to the start route: {recoveries:?}"
+            ));
+        }
+        if !failed_message.contains("The last analysis attempt failed:")
+            || !failed_message.contains("Fix that cause")
+            || failed_message.contains("has not analyzed this workspace yet")
+        {
+            return Err(format!(
+                "the marker must name the recorded failure and its fix: {failed_message}"
             ));
         }
 

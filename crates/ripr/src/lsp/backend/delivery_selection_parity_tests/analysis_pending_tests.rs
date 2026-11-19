@@ -142,6 +142,85 @@ fn analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_on
     assert_pending_marker(&report["items"])
 }
 
+/// A failed attempt with no snapshot names its recorded failure and fix
+/// instead of the cold-start route: a bare save/refresh fails the same way
+/// (for example outside a Git work tree). A different failure gets a
+/// different result id so the client never holds stale reason text, and a
+/// `failed` state with no recorded failure keeps the start route.
+#[test]
+fn analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt() -> Result<(), String>
+{
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("pending.rs")?;
+    let not_git = "workspace analysis failed: This root is not inside a Git work tree (the analysis did not run). Run from inside a repository.";
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(AnalysisFailureKind::AnalysisError, not_git);
+    let report = document_report(&harness, &uri, None)?;
+    let failed_id = result_id(&report)?;
+    if !failed_id.starts_with("ripr:analysis-pending:fix_failure_then_refresh:") {
+        return Err(format!(
+            "failed attempt must carry its own result id: {failed_id}"
+        ));
+    }
+    let marker = report["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .ok_or_else(|| format!("marker missing: {report}"))?;
+    if marker["code"] != DIAGNOSTIC_ANALYSIS_PENDING_CODE
+        || marker["data"]["state"] != "no_snapshot"
+        || marker["data"]["recovery"] != "fix_failure_then_refresh"
+        || marker["data"]["failure_kind"] != "analysis_error"
+    {
+        return Err(format!("failed-attempt marker shape drifted: {marker}"));
+    }
+    let message = marker["message"].as_str().unwrap_or_default();
+    for needle in [
+        "not inside a Git work tree",
+        "Run from inside a repository",
+        "not evidence of a clean workspace",
+        "Fix that cause",
+    ] {
+        if !message.contains(needle) {
+            return Err(format!("marker must contain {needle:?}: {message}"));
+        }
+    }
+    if message.contains("has not analyzed this workspace yet")
+        || message.contains("to start analysis")
+    {
+        return Err(format!(
+            "a failed attempt must not read as cold start: {message}"
+        ));
+    }
+    if result_id(&document_report(&harness, &uri, Some(failed_id.clone()))?)? != failed_id {
+        return Err("the same failure must keep its result id".to_string());
+    }
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::BaseUnresolvable,
+            "could not resolve a default base. This repository has no commits yet; commit once.",
+        );
+    let other = document_report(&harness, &uri, Some(failed_id.clone()))?;
+    let other_id = result_id(&other)?;
+    if other_id == failed_id || other["items"][0]["data"]["failure_kind"] != "base_unresolvable" {
+        return Err(format!("a different failure must re-render: {other}"));
+    }
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    let running = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&running)?,
+        "ripr:analysis-pending:analysis_running"
+    );
+    Ok(())
+}
+
 /// #14447 review: a queued or running attempt never hides a blocked route.
 /// While the root authority or a latched configuration failure blocks the
 /// next refresh, the marker keeps naming that block, not "in progress".

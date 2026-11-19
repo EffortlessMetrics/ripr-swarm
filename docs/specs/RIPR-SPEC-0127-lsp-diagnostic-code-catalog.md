@@ -225,7 +225,15 @@ start an attempt; a pull client is asked to re-pull once the attempt is
 queued. The marker does not request `ripr.refresh`. When the attempt ends
 without a snapshot and no follow-up attempt starts, the marker returns to
 recovery `save_or_refresh` and its "has not analyzed this workspace yet"
-wording. Blocked states keep their own recovery routes. A pull client is
+wording, unless the attempt failed with a recorded failure: then a bare retry
+fails the same way (for example outside a Git work tree, or in a repository
+with no commits), so the marker says "ripr could not analyze this workspace",
+quotes the recorded failure (bounded and path-redacted, as the health status
+carries it), and asks to fix that cause before saving or running
+`ripr.refresh`, under recovery `fix_failure_then_refresh` with
+`data.failure_kind` naming the failure kind. Its result id folds a digest of
+the failure, so a different failure re-renders. Blocked states keep their own
+recovery routes. A pull client is
 asked to re-pull only when the served recovery route changes.
 
 The marker's code, data kind and state are unchanged; #14447 adds only the
@@ -299,11 +307,15 @@ test-sufficiency claim.
   catalog metadata for those families.
 - `analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one`
   pins the pull marker's `analysis_running` route while an attempt is queued
-  or running and the return to `save_or_refresh` after a failed attempt;
+  or running and the return to `save_or_refresh` after a failed state with no
+  recorded failure;
+  `analysis_pending_tests.rs::analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt`
+  pins the `fix_failure_then_refresh` route, the quoted failure and the
+  per-failure result id;
   `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
   pins the push marker on an unblocked didOpen and its retraction on commit;
-  `lsp/tests.rs::framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis`
-  pins the return to `save_or_refresh` after a failed first attempt; and
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis`
+  pins the push marker naming the failure after a failed first attempt; and
   `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
   pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
