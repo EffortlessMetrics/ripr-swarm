@@ -157,6 +157,9 @@
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-and-false.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-masked.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-observed.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
@@ -12093,6 +12096,84 @@
       ]
     },
     {
+      "id": "rust_repo_owner_value_masked",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-masked.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/owner-value-masked",
+      "vector": "repo_owner_return_value_must_reach_the_compared_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "test": "at_the_boundary",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_owner_value_and_false",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-and-false.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/owner-value-and-false",
+      "vector": "literal_false_forces_conjunction_independent_of_owner_value",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "test": "at_the_boundary",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_owner_value_observed",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-owner-value-observed.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/owner-value-observed",
+      "vector": "repo_owner_return_value_must_reach_the_compared_operand",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::over",
+          "expression": "qty >= 10",
+          "test": "at_the_boundary",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "rust_repo_exposure_identical_inline_arms_not_promoted",
       "language": "rust",
       "tier": "pure",
@@ -12409,8 +12490,17 @@
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/wrapper-fed-error",
-      "vector": "repo_exposure_err_inside_a_wrapper_call_or_mem_replace_is_written_by_the_test_and_cannot_grade_an_error_seam_up",
+      "vector": "repo_exposure_error_pin_refuses_wrapper_fed_errors_and_unresolved_old_value_flow",
       "assertions": [
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_replaced",
+          "expression": "n % 2 == 0",
+          "test": "replaced_masked",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::parse_wrapped",

@@ -3243,7 +3243,7 @@ fn analyze_related_assertions(
                 // that field or the whole record.
                 let owner_value_masked = predicate_family
                     && match_context.owner_callee.is_some_and(|owner| {
-                        owner_field_value_flow(test, &assertion.text, owner, predicate_field)
+                        owner_field_value_flow(test, &assertion.text, owner, predicate_field, None)
                             == OwnerValueFlow::Masked
                     });
                 let observation_confirmed = !self_computed

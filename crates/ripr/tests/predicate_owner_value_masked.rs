@@ -41,18 +41,24 @@ impl Drop for Scratch {
     }
 }
 
-/// The predicate finding for `qty > 10` changed to `qty >= 10`, with `body`
-/// as the body of the one unit test beside the owner.
-fn predicate_finding(body: &str) -> Result<Value, String> {
+/// A small subject shared by the diff and repo-scope readings.
+fn subject(body: &str) -> Result<Scratch, String> {
     let scratch = Scratch::create()?;
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
     let lib = format!(
         "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
     );
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
+
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+
+    Ok(scratch)
+}
+
+fn predicate_finding(body: &str) -> Result<Value, String> {
+    let scratch = subject(body)?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
     let diff_file = scratch.0.join("change.diff");
     std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
@@ -154,6 +160,402 @@ fn an_observing_assertion_beside_a_masked_one_keeps_the_credit() -> Result<(), S
     ] {
         let finding = predicate_finding(body)?;
         assert_eq!(finding["classification"], "exposed", "{body}: {finding}");
+    }
+    Ok(())
+}
+
+/// The real repo renderer, including per-test grades and canonical repair
+/// evidence, must agree about both seams on the owner's boolean tail (#15071).
+fn assert_repo_grips(body: &str, expected: &str) -> Result<(), String> {
+    assert_repo_grips_with_summary(body, expected, None)
+}
+
+fn assert_repo_grips_with_summary(
+    body: &str,
+    expected: &str,
+    summary_fragment: Option<&str>,
+) -> Result<(), String> {
+    let scratch = subject(body)?;
+    let output = ripr::app::repo_seam_inventory_input(CheckInput {
+        root: scratch.0.clone(),
+        mode: Mode::Fast,
+        ..CheckInput::default()
+    });
+    // Exercise the compact path cold before the full renderer can populate caches.
+    let summary = render_check(&output, &OutputFormat::RepoExposureSummaryJson)?;
+    let summary: Value = serde_json::from_str(&summary).map_err(|error| error.to_string())?;
+    assert_eq!(summary["metrics"]["raw_seams"], 2, "{body}: {summary}");
+    assert_eq!(
+        summary["metrics"]["grip_class"][expected], 2,
+        "{body}: {summary}"
+    );
+    let rendered = render_check(&output, &OutputFormat::RepoExposureJson)?;
+    let report: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    assert_eq!(report["run_status"], "complete");
+    let seams: Vec<_> = report["seams"]
+        .as_array()
+        .ok_or("missing repo seams")?
+        .iter()
+        .filter(|seam| seam["owner"] == "src/lib.rs::over")
+        .collect();
+    assert_eq!(
+        seams.len(),
+        2,
+        "must inspect both actual owner seams: {report}"
+    );
+    for kind in ["predicate_boundary", "return_value"] {
+        let seam = seams
+            .iter()
+            .find(|seam| seam["kind"] == kind)
+            .ok_or_else(|| format!("missing {kind}: {report}"))?;
+        assert_eq!(seam["grip_class"], expected, "{body}: {seam}");
+        let strength = if expected == "strongly_gripped" {
+            "strong"
+        } else {
+            "weak"
+        };
+        let related = seam["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        assert_eq!(related.len(), 1, "{body}: {seam}");
+        assert_eq!(related[0]["oracle_strength"], strength, "{body}: {seam}");
+        let discriminate = &seam["evidence_record"]["evidence_path"]["discriminate"];
+        if let Some(fragment) = summary_fragment {
+            assert!(
+                discriminate["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary.contains(fragment)),
+                "{body}: {seam}"
+            );
+        }
+        assert_eq!(
+            discriminate["state"],
+            if strength == "strong" { "yes" } else { "weak" },
+            "{body}: {seam}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_masked_owner_values_cannot_strongly_grip_either_tail_seam() -> Result<(), String> {
+    for body in MASKED {
+        assert_repo_grips(body, "weakly_gripped")?;
+    }
+    assert_repo_grips(
+        "let got = Some(over(10)); assert_eq!(got.is_some(), true);",
+        "weakly_gripped",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn repo_forcing_boolean_literals_mask_both_tail_seams() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10) && false, false);",
+        "assert_eq!(false && over(10), false);",
+        "assert_eq!(over(10) || true, true);",
+        "assert_eq!(true || over(10), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_or_identity_preserves_existing_relational_credit() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10) || false, true);",
+        "assert_eq!(false || over(10), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("kind-match true"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_observed_owner_values_keep_both_tail_seams_strong() -> Result<(), String> {
+    for body in [
+        "assert_eq!(over(10), true);",
+        "assert_eq!(over(10) && true, true);",
+        "assert_eq!(true && over(10), true);",
+        "assert_eq!(Some(over(10)), Some(true));",
+        "let got = Some(over(10)); assert_eq!(got, Some(true));",
+        "assert_eq!((over(10), 1).0, true);",
+    ] {
+        assert_repo_grips(body, "strongly_gripped")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_mem_replace_observes_only_the_old_temporary_on_both_seams() -> Result<(), String> {
+    assert_repo_grips(
+        "assert_eq!(std::mem::replace(&mut over(10), false), true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "assert_eq!(std::mem::replace(&mut true, over(10)), true);",
+        "let replace = |_: &mut bool, _: bool| true; assert_eq!(replace(&mut over(10), false), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_mem_replace_binding_keeps_credit_until_a_possible_write() -> Result<(), String> {
+    assert_repo_grips(
+        "let got = std::mem::replace(&mut over(10), false); assert_eq!(got, true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "let mut got = std::mem::replace(&mut over(10), false); got = true; assert_eq!(got, true);",
+        "let mut got = std::mem::replace(&mut over(10), false); let alias = &mut got; *alias = true; assert_eq!(got, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_mem_replace_mutable_receiver_cannot_keep_both_seams_strong() -> Result<(), String> {
+    assert_repo_grips_with_summary(
+        "let mut got = std::mem::replace(&mut over(10), false); got.clone_from(&true); assert_eq!(got, true);",
+        "weakly_gripped",
+        Some("masks the owner"),
+    )?;
+    assert_repo_grips(
+        "let got = std::mem::replace(&mut over(10), false); let mut other = false; other.clone_from(&true); assert_eq!(got, other);",
+        "strongly_gripped",
+    )
+}
+
+#[test]
+fn repo_owner_value_binding_with_write_capability_masks_both_seams() -> Result<(), String> {
+    assert_repo_grips(
+        "let got = &over(10); assert_eq!(*got, true);",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "let got = &mut over(10); got.clone_from(&true); assert_eq!(*got, true);",
+        "fn set(x: &mut bool) { *x = true; } let got = &mut over(10); set(got); assert_eq!(*got, true);",
+        "let got = std::cell::Cell::new(over(10)); got.set(true); assert_eq!(got.get(), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_unresolved_owner_binding_does_not_preserve_strong_credit() -> Result<(), String> {
+    for body in [
+        "let got = over(10); let got = true; assert_eq!(got, true);",
+        "let original = over(10); let got = original; let got = true; assert_eq!(got, true);",
+        "let a = over(10); let b = a; let c = b; let d = c; let e = d; assert_eq!(e, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips_with_summary(
+        "let _got = over(10); let other = false; let other = true; assert_eq!(other, true);",
+        "strongly_gripped",
+        Some("kind-match true"),
+    )
+}
+
+#[test]
+fn repo_discarded_owner_aliases_mask_both_seams() -> Result<(), String> {
+    for body in [
+        "let got = over(10); assert_eq!((got, true).1, true);",
+        "let got = over(10); let alias = got; assert_eq!({ let _ = alias; true }, true);",
+        "let got = over(10); macro_rules! ignore { ($v:expr) => { true }; } assert_eq!(ignore!(got), true);",
+        "let got = over(10); assert_eq!(Some(true).unwrap_or(got), true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips(
+        "let got = over(10); assert_eq!((got, true).0, true);",
+        "strongly_gripped",
+    )
+}
+
+#[test]
+fn repo_owner_binding_requires_a_passive_initializer() -> Result<(), String> {
+    for body in [
+        "let got = std::cell::Cell::from(over(10)); got.set(true); assert_eq!(got.get(), true);",
+        "use std::sync::atomic::{AtomicBool, Ordering}; let got = AtomicBool::new(over(10)); got.store(true, Ordering::SeqCst); assert_eq!(got.load(Ordering::SeqCst), true);",
+        "let mut got; got = over(10); got = true; assert_eq!(got, true);",
+        "let got = Some(over(10)).unwrap(); assert_eq!(got, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    assert_repo_grips(
+        "let got = Some(over(10)); assert_eq!(got, Some(true));",
+        "strongly_gripped",
+    )
+}
+
+#[test]
+fn repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams() -> Result<(), String> {
+    assert_repo_grips(
+        "let got = std::mem::replace(&mut over(10), false); let ref alias = got; assert_eq!(got, true); let _ = alias;",
+        "strongly_gripped",
+    )?;
+    for body in [
+        "let mut got = std::mem::replace(&mut over(10), false); let ref mut alias = got; *alias = true; assert_eq!(got, true);",
+        "let mut got = std::mem::replace(&mut over(10), false); if let ref mut alias = got { *alias = true; } assert_eq!(got, true);",
+        "let mut got = std::mem::replace(&mut over(10), false); match got { ref mut alias => *alias = true }; assert_eq!(got, true);",
+    ] {
+        assert_repo_grips_with_summary(body, "weakly_gripped", Some("masks the owner"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_mem_replace_distinguishes_glob_shadow_from_absolute_path() -> Result<(), String> {
+    let scratch = subject("")?;
+    let root = &scratch.0;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "mod fake;
+pub fn over(qty: u32) -> bool { qty >= 10 }
+         #[cfg(test)] mod tests {
+             use super::over;
+             use crate::fake::*;
+             #[test] fn relative() { assert_eq!(std::mem::replace(&mut over(10), false), true); }
+             #[test] fn absolute() { assert_eq!(::std::mem::replace(&mut (over(10)), false), true); }
+         }
+",
+    ).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/fake.rs"),
+        "pub mod std { pub mod mem { pub fn replace(_: &mut bool, _: bool) -> bool { true } } }",
+    )
+    .map_err(|error| error.to_string())?;
+    assert_relative_and_absolute_replace_grades(root)
+}
+
+#[test]
+fn repo_mem_replace_distinguishes_statement_macro_shadow_from_absolute_path() -> Result<(), String>
+{
+    let scratch = subject("")?;
+    std::fs::write(
+        scratch.0.join("src/lib.rs"),
+        r#"pub fn over(qty: u32) -> bool {
+    qty >= 10
+}
+#[cfg(test)]
+mod tests {
+    use super::over;
+    macro_rules! install {
+        ($root:ident) => {
+            mod $root {
+                pub mod mem {
+                    pub fn replace(_: &mut bool, _: bool) -> bool { true }
+                }
+            }
+        };
+    }
+    #[test]
+    fn relative() {
+        install!(std);
+        assert_eq!(std::mem::replace(&mut over(10), false), true);
+        assert_eq!(std::mem::replace(&mut over(0), false), true);
+    }
+    #[test]
+    fn absolute() {
+        install!(std);
+        assert_eq!(::std::mem::replace(&mut (over(10)), false), true);
+        assert_eq!(::std::mem::replace(&mut (over(0)), false), false);
+    }
+}
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_relative_and_absolute_replace_grades(&scratch.0)
+}
+
+#[test]
+fn repo_mem_replace_checks_legacy_root_for_out_of_line_tests() -> Result<(), String> {
+    let scratch = subject("")?;
+    for (path, source) in [
+        (
+            "Cargo.toml",
+            r#"[package]
+name="replace_legacy"
+version="0.0.0"
+edition="2015"
+[workspace]
+"#,
+        ),
+        (
+            "src/lib.rs",
+            r#"#![no_std]
+pub fn over(qty: u32) -> bool { qty >= 10 }
+mod std {
+    pub mod mem {
+        pub fn replace(_: &mut bool, _: bool) -> bool { true }
+    }
+}
+#[cfg(test)]
+mod checks;
+"#,
+        ),
+        (
+            "src/checks.rs",
+            r#"use super::over;
+#[test]
+fn absolute() {
+    assert_eq!(::std::mem::replace(&mut over(10), false), true);
+    assert_eq!(::std::mem::replace(&mut over(0), false), true);
+}
+"#,
+        ),
+    ] {
+        std::fs::write(scratch.0.join(path), source).map_err(|error| error.to_string())?;
+    }
+    assert_replace_grades(&scratch.0, &[("absolute", "weak")])
+}
+
+fn assert_relative_and_absolute_replace_grades(root: &std::path::Path) -> Result<(), String> {
+    assert_replace_grades(root, &[("relative", "weak"), ("absolute", "strong")])
+}
+
+fn assert_replace_grades(root: &std::path::Path, grades: &[(&str, &str)]) -> Result<(), String> {
+    let output = ripr::app::repo_seam_inventory_input(CheckInput {
+        root: root.to_path_buf(),
+        mode: Mode::Fast,
+        ..CheckInput::default()
+    });
+    let rendered = render_check(&output, &OutputFormat::RepoExposureJson)?;
+    let report: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    let seams = report["seams"].as_array().ok_or("missing repo seams")?;
+    for kind in ["predicate_boundary", "return_value"] {
+        let seam = seams
+            .iter()
+            .find(|s| s["owner"] == "src/lib.rs::over" && s["kind"] == kind)
+            .ok_or_else(|| format!("missing {kind}: {report}"))?;
+        let related = seam["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        for &(name, strength) in grades {
+            let test = related
+                .iter()
+                .find(|t| t["name"] == name)
+                .ok_or_else(|| format!("missing {name}: {seam}"))?;
+            assert_eq!(test["oracle_strength"], strength, "{kind}: {test}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_observing_assertion_keeps_credit_beside_a_masked_assertion() -> Result<(), String> {
+    for body in [
+        "assert_eq!(Some(over(10)).is_some(), true); assert_eq!(over(10), true);",
+        "assert_eq!(over(10), true); assert_eq!(Some(over(10)).is_some(), true);",
+    ] {
+        assert_repo_grips(body, "strongly_gripped")?;
     }
     Ok(())
 }

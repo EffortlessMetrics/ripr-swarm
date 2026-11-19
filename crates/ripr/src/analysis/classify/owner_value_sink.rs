@@ -24,11 +24,15 @@
 //! `Reaches` reading says the syntax carries the value, not that the test
 //! would fail.
 
-use super::super::rust_index::TestSummary;
+use super::super::rust_index::{RustIndex, TestSummary};
 use super::reveal::contains_as_whole_word;
 use crate::analysis::extract::{assertion_oracle_text, mask_comments_and_strings};
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{AstNode, ast, ast::HasArgList, ast::HasGenericArgs, ast::HasName};
+use std::{
+    cell::OnceCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 /// How the owner call's value relates to an assertion's compared operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +145,19 @@ enum Sink {
     Payload,
 }
 
+fn boolean_literal(mut expr: ast::Expr) -> Option<bool> {
+    while let ast::Expr::ParenExpr(paren) = &expr {
+        expr = paren.expr()?;
+    }
+    match expr {
+        ast::Expr::Literal(literal) => match literal.kind() {
+            ast::LiteralKind::Bool(value) => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl Sink {
     fn reaches(self) -> bool {
         matches!(self, Self::Value | Self::Record | Self::Payload)
@@ -163,6 +180,7 @@ pub(in crate::analysis) fn owner_field_value_flow(
     assertion_text: &str,
     owner: &str,
     kept_field: Option<&str>,
+    test_index: Option<&RustIndex>,
 ) -> OwnerValueFlow {
     if owner.is_empty() {
         return OwnerValueFlow::Absent;
@@ -187,6 +205,8 @@ pub(in crate::analysis) fn owner_field_value_flow(
         kept_field,
         credit: false,
         strict: false,
+        test_index,
+        owner_aliases: OnceCell::new(),
     };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
@@ -235,6 +255,8 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
         kept_field: Some(kept_field),
         credit: false,
         strict: true,
+        test_index: None,
+        owner_aliases: OnceCell::new(),
     };
     // A sub-expression the operand's own reading never visits (a closure
     // argument, an `if` branch, a method argument of the owner's value:
@@ -326,6 +348,8 @@ pub(in crate::analysis) fn bool_field_assertion(
         kept_field: Some(field),
         credit: true,
         strict: false,
+        test_index: None,
+        owner_aliases: OnceCell::new(),
     };
     reader.inner(read.expr(), 0) == Sink::Record
 }
@@ -530,6 +554,37 @@ fn borrows_mutably(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
         })
 }
 
+/// A `ref mut` binding also creates a write-capable alias. The borrowed
+/// place is the initializer or scrutinee, not a RefExpr inside the pattern.
+fn binds_mutable_reference(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    let reads_local = |expr: Option<ast::Expr>| {
+        expr.is_some_and(|expr| has_identifier(&expr.syntax().text().to_string(), name))
+    };
+    let binds = |pattern: Option<ast::Pat>| {
+        pattern.is_some_and(|pattern| {
+            pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .any(|binding| binding.ref_token().is_some() && binding.mut_token().is_some())
+        })
+    };
+    root.descendants().any(|node| {
+        if let Some(statement) = ast::LetStmt::cast(node.clone()) {
+            return binds(statement.pat()) && reads_local(statement.initializer());
+        }
+        if let Some(condition) = ast::LetExpr::cast(node.clone()) {
+            return binds(condition.pat()) && reads_local(condition.expr());
+        }
+        ast::MatchExpr::cast(node).is_some_and(|matched| {
+            reads_local(matched.expr())
+                && matched
+                    .match_arm_list()
+                    .is_some_and(|arms| arms.arms().any(|arm| binds(arm.pat())))
+        })
+    })
+}
+
 fn has_identifier(text: &str, name: &str) -> bool {
     mask_comments_and_strings(text)
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
@@ -581,6 +636,102 @@ fn macro_arguments(call: &ast::MacroCall) -> Option<Vec<String>> {
     Some(arguments)
 }
 
+// Relative paths can pick up a module via an imported glob. Only a plain
+// super glob in an inline module can be checked from this complete file.
+fn std_path_is_unshadowed(source: &str, absolute: bool) -> bool {
+    let Some(parse) = parse_clean_source_file_memoized(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    let file = file.syntax();
+    let named_std = |name: ast::Name| name.text().trim_start_matches("r#") == "std";
+    let rebinds_std = |node: &ra_ap_syntax::SyntaxNode| {
+        crate::analysis::syntax::use_rebinds_crate_name(node, "std")
+    };
+    let uncertain_glob = |tree: ast::UseTree| {
+        tree.star_token().is_some()
+            && !(tree
+                .path()
+                .is_some_and(|path| path.syntax().text() == "super")
+                && tree.syntax().parent().is_some_and(|item| {
+                    ast::Use::can_cast(item.kind())
+                        && item
+                            .parent()
+                            .and_then(|list| list.parent())
+                            .is_some_and(|module| ast::Module::can_cast(module.kind()))
+                }))
+    };
+    // Keep even edition-2015 crate-root shadows outside the absolute-path
+    // rule. Module-local imports cannot change the absolute root.
+    if absolute {
+        return file.children().all(|item| {
+            if let Some(module) = ast::Module::cast(item.clone()) {
+                return !module.name().is_some_and(named_std);
+            }
+            if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+                return !extern_crate
+                    .rename()
+                    .and_then(|rename| rename.name())
+                    .is_some_and(named_std);
+            }
+            if ast::Use::can_cast(item.kind()) {
+                return !rebinds_std(&item)
+                    && !item
+                        .descendants()
+                        .filter_map(ast::UseTree::cast)
+                        .any(uncertain_glob);
+            }
+            !ast::MacroCall::can_cast(item.kind())
+        });
+    }
+    !rebinds_std(file)
+        && !file
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .any(named_std)
+        && !file
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(uncertain_glob)
+        && !relative_std_can_be_shadowed_by_macro(file)
+}
+
+// Statement expansions can add a binding even when the AST contains no
+// declaration for it. Permit only the comparison macros used by the reader
+// when this file has no evidence of rebinding those prelude names.
+fn relative_std_can_be_shadowed_by_macro(file: &ra_ap_syntax::SyntaxNode) -> bool {
+    const ASSERTIONS: &[&str] = &["assert", "assert_eq", "assert_ne"];
+    let can_rebind_assertion = file.descendants().any(|node| {
+        if let Some(name) = ast::Name::cast(node.clone()) {
+            return ASSERTIONS.contains(&name.text().trim_start_matches("r#"));
+        }
+        ast::Attr::cast(node).is_some_and(|attr| {
+            contains_as_whole_word(&attr.syntax().text().to_string(), "macro_use")
+        })
+    }) || ASSERTIONS
+        .iter()
+        .any(|name| crate::analysis::syntax::use_rebinds_crate_name(file, name));
+    file.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            crate::analysis::syntax::macro_call_is_statement(&call)
+                && (can_rebind_assertion
+                    || !call.path().is_some_and(|path| {
+                        ASSERTIONS.contains(&path.syntax().text().to_string().as_str())
+                    }))
+        })
+}
+
+fn is_replace_temporary(mut value: ast::Expr) -> bool {
+    while let ast::Expr::ParenExpr(paren) = &value {
+        let Some(inner) = paren.expr() else {
+            return false;
+        };
+        value = inner;
+    }
+    matches!(value, ast::Expr::CallExpr(_) | ast::Expr::Literal(_))
+}
+
 struct Reader<'a> {
     test: &'a TestSummary,
     owner: &'a str,
@@ -597,9 +748,58 @@ struct Reader<'a> {
     /// (`(boundary.retries, opts("-v").verbose)`), and a local this module
     /// cannot follow to one `let` is not read as unrelated.
     strict: bool,
+    test_index: Option<&'a RustIndex>,
+    owner_aliases: OnceCell<BTreeSet<String>>,
 }
 
 impl Reader<'_> {
+    /// Edition 2015 can resolve an absolute path through the crate root.
+    /// Relative paths also need their indexed module ancestry checked.
+    fn repo_sources_clear(&self, absolute: bool, check: impl Fn(&str) -> bool) -> bool {
+        let Some(index) = self.test_index else {
+            return false;
+        };
+        let Some(context) = index.execution_context(&self.test.file) else {
+            return false;
+        };
+        let files = index.files();
+        let clear = |path: &std::path::Path| {
+            files
+                .get(path)
+                .is_some_and(|facts| check(facts.data().source.as_ref()))
+        };
+        !context.roots.is_empty()
+            && context.roots.iter().all(|path| clear(path))
+            && (absolute
+                || (clear(&self.test.file) && context.edges.iter().all(|edge| clear(&edge.parent))))
+    }
+
+    fn replace_path_is_unshadowed(&self, absolute: bool) -> bool {
+        self.repo_sources_clear(absolute, |source| std_path_is_unshadowed(source, absolute))
+    }
+
+    // The prelude variants carry a payload without introducing a mutable
+    // place. Reuse the conservative import/macro checks and also refuse a
+    // visible binding of the variant name in any approved enclosing source.
+    fn passive_prelude_variant(&self, name: &str) -> bool {
+        matches!(name, "Some" | "Ok" | "Err")
+            && self.repo_sources_clear(false, |source| {
+                if !std_path_is_unshadowed(source, false) {
+                    return false;
+                }
+                let Some(parse) = parse_clean_source_file_memoized(source) else {
+                    return false;
+                };
+                let tree = parse.tree();
+                let root = tree.syntax();
+                !crate::analysis::syntax::use_rebinds_crate_name(root, name)
+                    && !root
+                        .descendants()
+                        .filter_map(ast::Name::cast)
+                        .any(|bound| bound.text().trim_start_matches("r#") == name)
+            })
+    }
+
     /// Whether `text` holds a call of the owner outside strings and
     /// comments: the name as a whole word, then `(` or a turbofish. A bare
     /// mention (a variable or field of the same name, the function passed
@@ -633,10 +833,32 @@ impl Reader<'_> {
         }
     }
 
-    /// `Masked` when `node` names the owner anywhere, else `Absent`: the
-    /// reading for a shape that carries no value this module can follow.
+    /// Refusal for a shape we cannot follow, including a discarded local
+    /// that may hold the owner's value. A successful operand read still
+    /// decides whether the value reaches the comparison.
     fn unfollowed(&self, node: &ra_ap_syntax::SyntaxNode) -> Sink {
-        if self.mentions(&node.text().to_string()) {
+        let names_owner = self.mentions(&node.text().to_string());
+        let names_alias = self.test_index.is_some()
+            && node.descendants().any(|child| {
+                if let Some(path) = ast::PathExpr::cast(child.clone()) {
+                    return path
+                        .path()
+                        .filter(|path| path.qualifier().is_none())
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| {
+                            self.owner_connected_locals()
+                                .contains(name.text().trim_start_matches("r#"))
+                        });
+                }
+                // Opaque macro inputs have tokens rather than parsed paths.
+                ast::TokenTree::cast(child).is_some_and(|tree| {
+                    let text = mask_comments_and_strings(&tree.syntax().text().to_string());
+                    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|word| self.owner_connected_locals().contains(word))
+                })
+            });
+        if names_owner || names_alias {
             Sink::Masked
         } else {
             Sink::Absent
@@ -670,11 +892,27 @@ impl Reader<'_> {
         }
     }
 
+    // Only the repo reader follows indexed binding initializers. An
+    // initializer may expose a write capability even for an immutable name.
+    fn follows_repo_initializer(&self, depth: usize) -> bool {
+        depth > 0 && self.test_index.is_some()
+    }
+
     fn sink(&self, expr: &ast::Expr, depth: usize) -> Sink {
         match expr {
             ast::Expr::ParenExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::PrefixExpr(inner) => self.inner(inner.expr(), depth),
-            ast::Expr::RefExpr(inner) => self.inner(inner.expr(), depth),
+            ast::Expr::RefExpr(borrow) => {
+                let value = self.inner(borrow.expr(), depth);
+                if self.follows_repo_initializer(depth)
+                    && borrow.mut_token().is_some()
+                    && value.reaches()
+                {
+                    Sink::Masked
+                } else {
+                    value
+                }
+            }
             ast::Expr::CastExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::TryExpr(inner) => self.inner(inner.expr(), depth),
             ast::Expr::AwaitExpr(inner) => self.inner(inner.expr(), depth),
@@ -743,7 +981,14 @@ impl Reader<'_> {
                     _ => self.unfollowed(expr.syntax()),
                 }
             }
-            ast::Expr::MacroExpr(invocation) => self.macro_call(invocation, expr, depth),
+            ast::Expr::MacroExpr(invocation) => {
+                let sink = self.macro_call(invocation, expr, depth);
+                if self.follows_repo_initializer(depth) && sink != Sink::Absent {
+                    Sink::Masked
+                } else {
+                    sink
+                }
+            }
             ast::Expr::PathExpr(path) => self.binding(path, depth),
             _ => self.unfollowed(expr.syntax()),
         }
@@ -764,17 +1009,35 @@ impl Reader<'_> {
     }
 
     fn binary(&self, binary: &ast::BinExpr, expr: &ast::Expr, depth: usize) -> Sink {
-        use ast::BinaryOp;
-        match binary.op_kind() {
-            // `a || b` holds whenever one side does, so neither side's value
-            // is established as deciding it.
-            Some(BinaryOp::LogicOp(ast::LogicOp::Or))
-            | Some(BinaryOp::Assignment { .. })
-            | None => self.unfollowed(expr.syntax()),
-            Some(_) => self.any_value([
-                self.inner(binary.lhs(), depth),
-                self.inner(binary.rhs(), depth),
-            ]),
+        use ast::{BinaryOp, LogicOp};
+        let lhs = binary.lhs();
+        let rhs = binary.rhs();
+        let op = binary.op_kind();
+        if let Some(BinaryOp::LogicOp(logic)) = op {
+            let lhs_literal = lhs.clone().and_then(boolean_literal);
+            let rhs_literal = rhs.clone().and_then(boolean_literal);
+            let identity = logic == LogicOp::And;
+            let forcing = Some(!identity);
+            if lhs_literal == forcing || rhs_literal == forcing {
+                return match (self.inner(lhs, depth), self.inner(rhs, depth)) {
+                    (Sink::Absent, Sink::Absent) => self.unfollowed(expr.syntax()),
+                    _ => Sink::Masked,
+                };
+            }
+            if lhs_literal == Some(identity) {
+                return self.inner(rhs, depth);
+            }
+            if rhs_literal == Some(identity) {
+                return self.inner(lhs, depth);
+            }
+            // Without a literal identity, either side of OR may decide it.
+            if logic == LogicOp::Or {
+                return self.unfollowed(expr.syntax());
+            }
+        }
+        match op {
+            Some(BinaryOp::Assignment { .. }) | None => self.unfollowed(expr.syntax()),
+            Some(_) => self.any_value([self.inner(lhs, depth), self.inner(rhs, depth)]),
         }
     }
 
@@ -807,10 +1070,47 @@ impl Reader<'_> {
             .arg_list()
             .map(|list| list.args().collect::<Vec<_>>())
             .unwrap_or_default();
+        // Only the old value of a directly borrowed temporary is tracked.
+        // The replacement may carry the owner call, but it is stored rather
+        // than returned. An arbitrary helper named replace proves nothing.
+        if name == "replace"
+            && let Some(absolute) = match callee.syntax().text().to_string().as_str() {
+                "std::mem::replace" => Some(false),
+                "::std::mem::replace" => Some(true),
+                _ => None,
+            }
+            && let [ast::Expr::RefExpr(destination), replacement] = arguments.as_slice()
+            && destination.mut_token().is_some()
+            && destination.expr().is_some_and(is_replace_temporary)
+            && self.replace_path_is_unshadowed(absolute)
+        {
+            // The borrow is consumed by replace, so the returned old value
+            // does not inherit the destination's write capability.
+            let old = self.inner(destination.expr(), depth);
+            return match (old, self.sink(replacement, depth)) {
+                (Sink::Absent, Sink::Absent) => Sink::Absent,
+                (Sink::Absent, _) => Sink::Masked,
+                (old, _) => old,
+            };
+        }
         let parts = arguments
             .iter()
             .map(|argument| self.sink(argument, depth))
             .collect::<Vec<_>>();
+        if self.follows_repo_initializer(depth) {
+            if !parts.iter().any(|part| *part != Sink::Absent) {
+                return self.unfollowed(expr.syntax());
+            }
+            if callee.qualifier().is_none()
+                && arguments.len() == 1
+                && self.passive_prelude_variant(&name)
+            {
+                return self.container(parts);
+            }
+            // Without a return-type/effect proof, a helper or constructor
+            // may return a mutable handle or ignore the owner argument.
+            return Sink::Masked;
+        }
         // `Some(x)`, `Ok(x)`, `Wrapper(x)`: a variant or tuple-struct payload.
         if name.starts_with(|first: char| first.is_ascii_uppercase()) {
             return self.container(parts);
@@ -847,6 +1147,17 @@ impl Reader<'_> {
             return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
+        if self.follows_repo_initializer(depth) {
+            let argument_names_owner = call.arg_list().is_some_and(|list| {
+                list.args()
+                    .any(|arg| self.sink(&arg, depth) != Sink::Absent)
+            });
+            return if receiver != Sink::Absent || argument_names_owner {
+                Sink::Masked
+            } else {
+                self.unfollowed(expr.syntax())
+            };
+        }
         // `masked.eq(&over(10))`: a comparing method's result depends on its
         // argument whatever the receiver is.
         if ARGUMENT_COMPARING_METHODS.contains(&name.as_str())
@@ -995,6 +1306,79 @@ impl Reader<'_> {
         }
     }
 
+    fn owner_connected_locals(&self) -> &BTreeSet<String> {
+        self.owner_aliases.get_or_init(|| {
+            parse_body(&self.test.body)
+                .map(|parse| self.collect_owner_connected_locals(parse.tree().syntax()))
+                .unwrap_or_default()
+        })
+    }
+
+    /// Refusal-only dependencies from possible initializer and assignment
+    /// sources. No scope or write order is inferred. The reverse walk visits
+    /// each owner-connected local once and is reused by every fallback.
+    fn collect_owner_connected_locals(&self, root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
+        let mut initializers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for statement in root.descendants().filter_map(ast::LetStmt::cast) {
+            let Some(pattern) = statement.pat() else {
+                continue;
+            };
+            for pattern in pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+            {
+                if let Some(bound) = pattern.name() {
+                    let sources = initializers
+                        .entry(bound.text().trim_start_matches("r#").to_string())
+                        .or_default();
+                    if let Some(initializer) = statement.initializer() {
+                        sources.push(initializer.syntax().text().to_string());
+                    }
+                }
+            }
+        }
+        // A late initialization or overwrite is a possible connection,
+        // never a proof that a later assertion still reads the assigned value.
+        for assignment in root.descendants().filter_map(ast::BinExpr::cast) {
+            if !matches!(assignment.op_kind(), Some(ast::BinaryOp::Assignment { .. })) {
+                continue;
+            }
+            let (Some(place), Some(value)) = (assignment.lhs(), assignment.rhs()) else {
+                continue;
+            };
+            let place = place.syntax().text().to_string();
+            let value = value.syntax().text().to_string();
+            for (local, sources) in &mut initializers {
+                if has_identifier(&place, local) {
+                    sources.push(value.clone());
+                }
+            }
+        }
+        let mut reverse: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        let mut pending = Vec::new();
+        for (local, sources) in &initializers {
+            for source in sources {
+                if self.mentions(source) {
+                    pending.push(local.as_str());
+                }
+                let masked = mask_comments_and_strings(source);
+                for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+                    if let Some((key, _)) = initializers.get_key_value(word) {
+                        reverse.entry(key.as_str()).or_default().push(local);
+                    }
+                }
+            }
+        }
+        let mut connected = BTreeSet::new();
+        while let Some(local) = pending.pop() {
+            if connected.insert(local.to_string()) {
+                pending.extend(reverse.get(local).into_iter().flatten().copied());
+            }
+        }
+        connected
+    }
+
     /// A bare name the test body binds exactly once with a plain `let`.
     fn binding(&self, path: &ast::PathExpr, depth: usize) -> Sink {
         let Some(name) = path
@@ -1015,17 +1399,32 @@ impl Reader<'_> {
             .count();
         // #14726: under `strict`, a local bound by a `let` this module
         // cannot follow may hold the owner's record, so it masks.
-        let unfollowed_local = if self.strict && lets > 0 {
+        let default_unfollowed = if self.strict && lets > 0 {
             Sink::Masked
         } else {
             Sink::Absent
         };
-        if depth >= LET_DEPTH || lets != 1 {
-            return unfollowed_local;
+        if self.test_index.is_none() && (depth >= LET_DEPTH || lets != 1) {
+            return default_unfollowed;
         }
         let Some(parse) = parse_body(&self.test.body) else {
-            return unfollowed_local;
+            return default_unfollowed;
         };
+        let unfollowed_local = || {
+            if default_unfollowed == Sink::Masked
+                || (self.test_index.is_some()
+                    && self
+                        .owner_connected_locals()
+                        .contains(name.trim_start_matches("r#")))
+            {
+                Sink::Masked
+            } else {
+                Sink::Absent
+            }
+        };
+        if depth >= LET_DEPTH || lets != 1 {
+            return unfollowed_local();
+        }
         let mut initializers = parse
             .tree()
             .syntax()
@@ -1040,21 +1439,23 @@ impl Reader<'_> {
                 )
             });
         let (Some(statement), None) = (initializers.next(), initializers.next()) else {
-            return unfollowed_local;
+            return unfollowed_local();
         };
-        if self.credit
-            && matches!(
-                statement.pat(),
-                Some(ast::Pat::IdentPat(pattern))
-                    if pattern.mut_token().is_some() || pattern.ref_token().is_some()
-            )
-        {
+        let mutable_binding = matches!(
+            statement.pat(),
+            Some(ast::Pat::IdentPat(pattern)) if pattern.mut_token().is_some()
+        );
+        let by_reference = matches!(
+            statement.pat(),
+            Some(ast::Pat::IdentPat(pattern)) if pattern.ref_token().is_some()
+        );
+        if self.credit && (mutable_binding || by_reference) {
             return Sink::Absent;
         }
         // A name some other pattern binds too (`if let Some(o) = ..`,
         // `for o in ..`, a closure parameter) may be a different value at
         // the read, which the one `let` cannot show.
-        if self.credit
+        if (self.credit || self.test_index.is_some())
             && parse
                 .tree()
                 .syntax()
@@ -1068,12 +1469,18 @@ impl Reader<'_> {
                 .count()
                 != 1
         {
-            return Sink::Absent;
+            return unfollowed_local();
         }
         // A write-capable initializer (`&mut opts(10)`, `.as_mut()`) lets an
         // immutable binding change the record before the read, and any
         // assignment through the name (`o.big = true`, `*o = ..`) replaces
         // the value the owner returned.
+        let write_possible = || {
+            let root = parse.tree();
+            assigns_through(root.syntax(), &name)
+                || borrows_mutably(root.syntax(), &name)
+                || (self.test_index.is_some() && binds_mutable_reference(root.syntax(), &name))
+        };
         if self.credit
             && (statement.initializer().is_some_and(|initializer| {
                 let text: String =
@@ -1089,15 +1496,29 @@ impl Reader<'_> {
                         .descendants()
                         .filter_map(ast::RefExpr::cast)
                         .any(|borrow| borrow.mut_token().is_some())
-            }) || assigns_through(parse.tree().syntax(), &name)
-                || borrows_mutably(parse.tree().syntax(), &name))
+            }) || write_possible())
         {
             return Sink::Absent;
         }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
-        self.inner(statement.initializer(), depth + 1)
+        let initial = self.inner(statement.initializer(), depth + 1);
+        // Repo grading already relates this test to the owner. Losing the
+        // initial value must therefore withhold credit, rather than return
+        // Absent and leave the original oracle grade in place.
+        // A mutable local can also be written by an implicit mutable
+        // receiver (e.g. clone_from), with no assignment or borrow node.
+        // Without receiver resolution, only follow immutable locals here.
+        if self.test_index.is_some() {
+            if initial.reaches() && (mutable_binding || write_possible()) {
+                return Sink::Masked;
+            }
+            if initial == Sink::Absent && write_possible() {
+                return unfollowed_local();
+            }
+        }
+        initial
     }
 }
 
@@ -1145,7 +1566,7 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
             generated: None,
         };
-        owner_field_value_flow(&test, assertion, "over", kept_field)
+        owner_field_value_flow(&test, assertion, "over", kept_field, None)
     }
 
     /// #14726: under the strict pairing reading, one reaching part does not

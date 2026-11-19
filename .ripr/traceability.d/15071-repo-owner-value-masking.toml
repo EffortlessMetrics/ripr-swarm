@@ -1,0 +1,22 @@
+# Repo-scope consumption of the shared owner-value sink (#15071).
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_discarded_owner_aliases_mask_both_seams",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_owner_binding_requires_a_passive_initializer",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_unresolved_owner_binding_does_not_preserve_strong_credit",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_owner_value_binding_with_write_capability_masks_both_seams",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_mutable_receiver_cannot_keep_both_seams_strong",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_binding_with_ref_mut_alias_masks_both_seams",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_binding_keeps_credit_until_a_possible_write",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_checks_legacy_root_for_out_of_line_tests",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_distinguishes_statement_macro_shadow_from_absolute_path",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_distinguishes_glob_shadow_from_absolute_path",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_mem_replace_observes_only_the_old_temporary_on_both_seams",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_masked_owner_values_cannot_strongly_grip_either_tail_seam",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_forcing_boolean_literals_mask_both_tail_seams",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_or_identity_preserves_existing_relational_credit",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observed_owner_values_keep_both_tail_seams_strong",
+  "crates/ripr/tests/predicate_owner_value_masked.rs::repo_observing_assertion_keeps_credit_beside_a_masked_assertion",
+]
+code = ["crates/ripr/src/analysis/test_grip_evidence.rs"]

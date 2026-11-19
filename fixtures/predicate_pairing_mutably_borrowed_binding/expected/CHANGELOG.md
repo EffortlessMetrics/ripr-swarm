@@ -398,3 +398,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_pairing_mutably_borrowed_binding (31)
+
+Reason:
+RIPR-SPEC-0094: a possible binding write withholds repo owner-value credit, so repair asks for an exact boundary assertion.
+
+Command:
+`cargo xtask goldens bless predicate_pairing_mutably_borrowed_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
