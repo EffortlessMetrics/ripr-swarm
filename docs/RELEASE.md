@@ -295,12 +295,16 @@ identity check; any other dirty record stays dirty
 (`crates/ripr/src/build_commit_record.rs`).
 
 The #1609-qualified producer (`release-negative-corpus` with the
-`--candidate-*` group, `candidate_harness/archive.rs`) does not use the stage
-yet: it packages `ripr` straight from the admitted source and requires every
-packaged entry to equal its committed blob, so it cannot qualify the published
-representation. It also cannot package the real `ripr` before `ripr-contract`
-is on crates.io. #15204 owns moving it onto the stage with an explicit
-committed-blob-or-exact-strip rule.
+`--candidate-*` group, `candidate_harness/archive.rs`) packages from a publish
+stage of the admitted commit too (#15204), with `ripr` and its path
+dependencies (`ripr-contract`) in one multi-package `cargo package`. Its archive
+inventory accepts an ordinary entry only when it is the committed blob or, under
+`crates/ripr/src`, exactly the inline-test strip of that blob; it accepts a dirty
+Cargo VCS record only together with the marker naming the admitted commit and at
+least one stripped entry. The qualified `cargo install --offline` of the
+extracted crate still needs `ripr-contract` from a registry, so the real
+candidate cannot be installed by this producer before `ripr-contract` is
+published.
 
 From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
 bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471

@@ -32,7 +32,7 @@ use ra_ap_syntax::ast::{self, HasAttrs};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextRange};
 
 /// The crate whose inline test modules are stripped in the stage.
-const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
+pub(crate) const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
 
 /// The marker file, relative to the `ripr` package root, that names the
 /// commit a publish stage was checked out at. Packaged by the `include` list.
