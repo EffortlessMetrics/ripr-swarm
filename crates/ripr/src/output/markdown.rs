@@ -1822,7 +1822,17 @@ mod tests {
         "gap [x](a`b) @octocat then `end` is invalid",
         "[x](a`b) @octocat <b>bold</b> `end` and `<i>` too",
         "[x](a`b) <b>bold</b> ``end`` then `more` and `x",
+        // Text that would start a block at line start stays inline.
+        "# [x](a`b) <b>h</b> `end`",
+        "> [x](a`b) @octocat `end`",
+        "1. [x](a`b) <i>i</i> `end`",
+        "- [x](a`b) <b>b</b> `end`",
+        "    [x](a`b) <b>b</b> `end`",
+        "[r]: a`b <b>b</b> `end`",
+        "[x][r] `a`b <b>b</b> `end`",
     ];
+
+    type Helper = fn(&str) -> String;
 
     /// Raw HTML events and live mentions in the parsed rendering of `rendered`.
     fn live_html_and_mentions(rendered: &str) -> (Vec<String>, Vec<String>) {
@@ -1849,7 +1859,7 @@ mod tests {
 
     #[test]
     fn single_line_prose_keeps_only_parser_confirmed_code_spans() {
-        let helpers: [(&str, fn(&str) -> String); 3] = [
+        let helpers: [(&str, Helper); 3] = [
             ("inline_prose", inline_prose),
             ("inline_prose_literal", inline_prose_literal),
             ("table_cell_text", table_cell_text),
