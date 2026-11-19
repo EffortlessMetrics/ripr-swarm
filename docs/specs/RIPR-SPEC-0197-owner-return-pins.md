@@ -515,7 +515,11 @@ wrong credits.
    `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
-   change the value through a shared handle). A `mut` binding, a second binding, a
+   change the value through a shared handle). A mention in such an
+   assertion's message arguments (`assert_eq!(v, 4, "got {}", v)`) is not
+   counted (#14158): it is formatted only after the comparison has failed,
+   so it never decides the test; the binding must still be exactly one of
+   the compared operands. A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
    unpinned. A primitive scalar result (cell-0094) is the exception: when
@@ -1836,9 +1840,12 @@ would. Such an assertion is a pin when:
    one `!`) that the test binds once with an immutable `let` to a complete
    owner call, read under the same binding rules as `assert_eq!(binding, true)`
    (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
-   operand of assertions after the `let`, once in this assertion. A `mut` or
-   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
-   other non-assertion use, or a binding named in the message refuses.
+   operand of assertions after the `let`, and it is the whole condition of
+   this assertion. A mention in this assertion's message arguments
+   (`assert!(hit, "{}", hit)`) is not counted (#14158): they are formatted
+   only after the condition has failed. A `mut` or reassigned binding, a
+   disjunction (`assert!(hit || other)`), a copy or other non-assertion
+   use, or a binding named only in the message refuses.
 4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
@@ -1926,9 +1933,8 @@ reads `assert_eq!` operands when:
    gate. The #6974 let-bound result rule reads a plain `assert!` here as
    it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
    fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
-   side of the single `==` is the binding alone, the assertion names it
-   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
-   is string text), and every #6974 binding condition holds. A guard twin
+   side of the single `==` is the binding alone, the condition names it
+   nowhere else, and every #6974 binding condition holds. A guard twin
    over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
    stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
@@ -3670,7 +3676,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/let_bound_lone_equality_pin.rs`
   (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
   `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
-  `an_equality_the_test_never_runs_stays_unrevealed`).
+  `an_equality_the_test_never_runs_stays_unrevealed`); message-argument
+  mentions (#14158): `a_binding_named_again_in_the_message_arguments_still_pins`,
+  `a_message_mention_lends_nothing_the_compared_operands_do_not`.
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,

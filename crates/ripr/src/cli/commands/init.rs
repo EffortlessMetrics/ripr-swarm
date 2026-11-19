@@ -143,7 +143,17 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
     }
     let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
     if unanalyzed.is_empty() {
-        return None;
+        // A root with no manifest and no source at all (a brand-new
+        // repository, or the parent of the real project) got `enabled =
+        // ["rust"]` and "run `ripr check`" in silence, and `ripr doctor` then
+        // failed on the missing Cargo.toml. The shared verdict `pilot` and
+        // `status` use decides; a bare Cargo.toml stays quiet.
+        return crate::analysis::root_has_no_inspectable_workspace(root).then(|| {
+            format!(
+                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet, so `ripr check` has nothing to analyze here. If the project lives in a subdirectory, run init there with `--root <dir>`. The generated configuration enables only the languages detected now; after adding source in another language, rerun init for this root with `--force`.",
+                output::path::human_path(root)
+            )
+        });
     }
     let found = unanalyzed
         .iter()
@@ -1342,6 +1352,45 @@ mod tests {
         std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
         std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
             .map_err(|err| format!("write lib.rs: {err}"))?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// A root with nothing ripr can read (a brand-new repository holding only
+    /// a README) is told so; a bare Cargo.toml, Rust source or Python source
+    /// each keep init quiet, and a Go-only root keeps its own wording.
+    #[test]
+    fn unanalyzed_root_warning_names_a_root_with_no_source() -> Result<(), String> {
+        let root = temp_root("no-source")?;
+        std::fs::write(root.join("README.md"), "demo\n")
+            .map_err(|err| format!("write README: {err}"))?;
+        let warning = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(
+            warning.contains("has no Cargo.toml and no source file ripr reads yet"),
+            "{warning}"
+        );
+        assert!(warning.contains("with `--root <dir>`"), "{warning}");
+        // No pasteable `ripr init --force`: without the selected root it
+        // would overwrite the configuration of whatever directory it runs in.
+        assert!(!warning.contains("ripr init --force"), "{warning}");
+        // A marker-only root gets its language enabled, so the warning makes
+        // no claim about which languages the configuration enables.
+        assert!(!warning.contains("Rust"), "{warning}");
+
+        std::fs::write(root.join("main.go"), "package main\n")
+            .map_err(|err| format!("write main.go: {err}"))?;
+        let go = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(go.contains("Go (1 file(s))"), "{go}");
+        assert!(!go.contains("no source file ripr reads yet"), "{go}");
+        std::fs::remove_file(root.join("main.go")).map_err(|err| format!("rm: {err}"))?;
+
+        std::fs::write(root.join("app.py"), "def f():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_file(root.join("app.py")).map_err(|err| format!("rm: {err}"))?;
+
+        write_package_manifest(&root.join("Cargo.toml"), "bare")?;
         assert_eq!(unanalyzed_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())

@@ -157,6 +157,16 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Activation and expected version:
+
+- Given a workspace folder whose root holds any project marker the extension
+  checks before analysis (Rust, `ripr.toml`, Python or TypeScript markers),
+  the manifest activates the extension for it; the `workspaceContains`
+  activation list and that marker set are the same.
+- Given `ripr.server.version` is empty, the expected server version and the
+  extension version shown in status come from the extension's own manifest,
+  never from a fixed release number.
+
 Named commands:
 
 - Given a status message, setup report or setting description tells the user
