@@ -462,7 +462,8 @@ transaction is in-memory and authorizes nothing, and the client owns the edit,
 the verification and the receipt. The workspace root is resolved once at
 process startup; analysis runs only on an explicit `ripr_refresh`, over the
 default-branch (or `base`) diff: saved tracked edits when any exist, else the
-committed diff, unless `source` forces one. See [MCP workspace session server](interop/mcp.md).
+committed diff, unless `source` forces one. See
+[MCP workspace session server](interop/mcp.md).
 
 ## CI Path
 

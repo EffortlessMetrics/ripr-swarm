@@ -134,7 +134,7 @@ one-line whole-body tail (#14815).
 
 **Python.** A changed module constant reads `static_unknown` with the
 `missing_import_graph` limit even though the test calls the function that
-reads it
+reads it, unless the test pins a literal result the constant feeds
 ([#12950](https://github.com/EffortlessMetrics/ripr-swarm/issues/12950)). A
 deleted call statement and a body replaced with `None` stay `weakly_exposed`
 even under a test that pins them.
