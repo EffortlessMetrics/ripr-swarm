@@ -78,7 +78,16 @@ impl ShortCircuitTail {
         if !is_whole_body(function, changed) {
             return None;
         }
-        Self::from_chain(parameters, changed)
+        let chain = Self::from_chain(parameters, changed)?;
+        // #15030: a string literal compares by its text only against a plain
+        // string parameter; another type may carry its own
+        // `PartialEq<&str>`, so its `==` is not text equality.
+        let types = parameter_types(function)?;
+        chain
+            .operands
+            .iter()
+            .all(|operand| operand.string_compare_is_plain(&types))
+            .then_some(chain)
     }
 
     /// The owner's parameters in declaration order.
@@ -447,6 +456,36 @@ fn top_level_operands<'a>(text: &'a str, operator: &str) -> Option<Vec<&'a str>>
 }
 
 impl Operand {
+    /// Whether a comparison with a string literal compares a parameter
+    /// declared as a plain string type (`&str`, `String`, `&String`) by
+    /// `==` or `!=`.
+    fn string_compare_is_plain(&self, types: &[String]) -> bool {
+        let OperandKind::Compare {
+            left,
+            operator,
+            right,
+        } = &self.kind
+        else {
+            return true;
+        };
+        let is_string = |atom: &Atom| match atom {
+            Atom::Literal(literal) => matches!(Value::read(literal), Some(Value::Str(_))),
+            _ => false,
+        };
+        if !is_string(left) && !is_string(right) {
+            return true;
+        }
+        // Only text equality is read; string ordering is not.
+        matches!(*operator, "==" | "!=")
+            && [left, right].into_iter().all(|atom| match atom {
+                Atom::Parameter(parameter) => types
+                    .get(*parameter)
+                    .is_some_and(|ty| super::super::infection::is_plain_string_type(ty)),
+                Atom::Literal(_) => true,
+                Atom::Arithmetic { .. } => false,
+            })
+    }
+
     fn evaluate(&self, values: &[Option<String>]) -> Option<bool> {
         let value = match &self.kind {
             OperandKind::Flag(parameter) => match values.get(*parameter)?.as_deref()? {
@@ -496,12 +535,17 @@ enum Value {
     Integer(i128),
     Bool(bool),
     Char(String),
+    /// #15030: an escape-free string literal's text.
+    Str(String),
 }
 
 impl Value {
     /// A plain integer, bool or char literal; floats are not read, so no
     /// rounding question arises.
     fn read(text: &str) -> Option<Self> {
+        if let Some(body) = plain_string_body(text) {
+            return Some(Self::Str(body.to_string()));
+        }
         let text = literal_boundary(text)?;
         match text.as_str() {
             "true" => return Some(Self::Bool(true)),
@@ -533,7 +577,9 @@ fn compare(left: &Value, operator: &str, right: &Value) -> Option<bool> {
     let ordering = match (left, right) {
         (Value::Integer(left), Value::Integer(right)) => left.cmp(right),
         (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
-        (Value::Char(left), Value::Char(right)) if matches!(operator, "==" | "!=") => {
+        (Value::Char(left), Value::Char(right)) | (Value::Str(left), Value::Str(right))
+            if matches!(operator, "==" | "!=") =>
+        {
             left.cmp(right)
         }
         _ => return None,
@@ -559,8 +605,14 @@ fn parse_operand(text: &str, parameters: &[String]) -> Option<Operand> {
         negations += 1;
         text = rest.trim_start();
     }
+    // Find the operator outside string literals, so `f == "<"` splits at
+    // its `==`.
+    let masked = mask_comments_and_strings(text);
+    if masked.len() != text.len() {
+        return None;
+    }
     for operator in COMPARISONS {
-        if let Some(at) = text.find(operator) {
+        if let Some(at) = masked.find(operator) {
             // `!x == 0` is `(!x) == 0`: the `!` binds to the atom, and on an
             // integer it is a bitwise NOT. Only a bare bool parameter takes
             // a leading `!`.
@@ -617,10 +669,35 @@ fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
             });
         }
     }
-    parameters
-        .iter()
-        .position(|name| name == text)
-        .map(Atom::Parameter)
+    if let Some(parameter) = parameters.iter().position(|name| name == text) {
+        return Some(Atom::Parameter(parameter));
+    }
+    // #15030: an escape-free string literal is read by its text.
+    plain_string_body(text).map(|_| Atom::Literal(text.to_string()))
+}
+
+/// The text of a plain string literal `"..."` with no escape and no inner
+/// quote, so its text is its value. Raw and byte strings are not read.
+fn plain_string_body(text: &str) -> Option<&str> {
+    let body = text.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!body.contains(['\\', '"'])).then_some(body)
+}
+
+/// The owner's parameter types in declaration order, as written.
+fn parameter_types(function: &str) -> Option<Vec<String>> {
+    let masked = mask_comments_and_strings(function);
+    let name_end = masked.find("fn ")? + 3;
+    let open = name_end + masked[name_end..].find('(')?;
+    let close = super::matching_close(&masked, open, b'(', b')')?;
+    top_level_arguments(&function[open + 1..close])
+        .into_iter()
+        .filter(|parameter| !parameter.trim().is_empty())
+        .map(|parameter| {
+            parameter
+                .split_once(':')
+                .map(|(_, ty)| ty.trim().to_string())
+        })
+        .collect()
 }
 
 /// Whether `changed` is all the owner's body holds between its braces,
@@ -706,6 +783,10 @@ fn argument_runs(
         let argument = argument.trim();
         let source = if let Some(literal) = literal_boundary(argument) {
             Source::Literal(literal)
+        } else if plain_string_body(argument).is_some() {
+            // #15030: only a literal written at the call reads as a string;
+            // table and helper columns keep the non-string subset.
+            Source::Literal(argument.to_string())
         } else if super::is_plain_identifier(argument) {
             let column = match loan {
                 Some(loan) => helper_column(test, loan, argument),
@@ -840,6 +921,81 @@ mod tests {
         ] {
             assert!(tail(function, changed).is_none(), "{changed}");
         }
+    }
+
+    /// #15030: a plain string parameter compared with escape-free string
+    /// literals reads by text; other types, escapes, raw strings and
+    /// ordering comparisons stay unread.
+    #[test]
+    fn reads_plain_string_equality_chains_and_refuses_the_rest() -> Result<(), String> {
+        for (function, changed) in [
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "fn f(flag: &'a str) -> bool {",
+                "\"-v\" == flag || flag == \"<\"",
+            ),
+            (
+                "fn f(flag: String, n: u8) -> bool {",
+                "flag != \"x\" && n > 1",
+            ),
+            (
+                "fn f(flag: &String) -> bool {",
+                "flag == \"a||b\" || flag == \"c\"",
+            ),
+        ] {
+            assert!(tail(function, changed).is_some(), "{function} {changed}");
+        }
+        for (function, changed) in [
+            // A type with its own `PartialEq<&str>`.
+            (
+                "fn f(flag: Flag) -> bool {",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "fn f(flag: Cow<str>) -> bool {",
+                "flag == \"-v\" || flag == \"x\"",
+            ),
+            // Escapes, raw and byte strings.
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag == \"\\n\" || flag == \"x\"",
+            ),
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag == r\"x\" || flag == \"y\"",
+            ),
+            (
+                "fn f(flag: &[u8]) -> bool {",
+                "flag == b\"x\" || flag == b\"y\"",
+            ),
+            // Ordering on strings is not read.
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag < \"m\" || flag == \"z\"",
+            ),
+            // A string literal against an integer parameter.
+            (
+                "fn f(n: u8, flag: &str) -> bool {",
+                "n == \"1\" || flag == \"x\"",
+            ),
+        ] {
+            assert!(tail(function, changed).is_none(), "{function} {changed}");
+        }
+        let chain = tail(
+            "fn f(flag: &str) -> bool {",
+            "flag == \"-v\" || flag == \"--verbose\"",
+        )
+        .ok_or("chain")?;
+        let value = |flag: &str| chain.operands[0].evaluate(&[Some(flag.to_string())]);
+        assert_eq!(value("\"-v\""), Some(true));
+        assert_eq!(value("\"--verbose\""), Some(false));
+        // A non-string or escaped argument is unreadable, not unequal.
+        assert_eq!(value("1"), None);
+        assert_eq!(value("\"-\\x76\""), None);
+        Ok(())
     }
 
     #[test]
