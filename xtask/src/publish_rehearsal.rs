@@ -61,7 +61,18 @@ pub(crate) fn run() -> Result<(), String> {
     }
     fs::create_dir_all(&scratch)
         .map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
-    let result = rehearse(&scratch, &version).and_then(|()| keep_stage(&scratch));
+    // The receipt is written last, after the stage is retained. A receipt is
+    // evidence of a completed rehearsal and `docs/RELEASE.md` trusts it as the
+    // pre-publish gate, so writing it before `keep_stage` would leave a
+    // current success receipt beside a stage that was never retained.
+    let result = rehearse(&scratch, &version).and_then(|receipt| {
+        finish_rehearsal(
+            &scratch,
+            Path::new(PUBLISH_STAGE_DIR),
+            Path::new(PUBLISH_RECEIPT),
+            &receipt,
+        )
+    });
     if result.is_ok() {
         let _ = fs::remove_dir_all(&scratch);
     } else {
@@ -74,9 +85,31 @@ pub(crate) fn run() -> Result<(), String> {
 /// publish to run from.
 pub(crate) const PUBLISH_STAGE_DIR: &str = "target/publish-stage";
 
-/// Move the rehearsed stage to [`PUBLISH_STAGE_DIR`], replacing an older one.
-fn keep_stage(scratch: &Path) -> Result<(), String> {
-    let kept = Path::new(PUBLISH_STAGE_DIR);
+/// Retain the stage, then write the receipt. The order is the contract: a
+/// receipt must never exist for a stage that was not retained, because
+/// `docs/RELEASE.md` reads it as the pre-publish gate.
+fn finish_rehearsal(
+    scratch: &Path,
+    kept: &Path,
+    receipt_path: &Path,
+    receipt: &PublishReceipt,
+) -> Result<(), String> {
+    keep_stage_at(scratch, kept)?;
+    write_publish_receipt(receipt_path, receipt)?;
+    println!(
+        "publish rehearsal ok: ripr-contract {} ({}) dry-run passed; packaged ripr {} ({}) packaged against vendored ripr-contract and checks against the packaged crate; stage kept at {}; receipt={}",
+        receipt.version,
+        receipt.contract_sha256,
+        receipt.version,
+        receipt.ripr_sha256,
+        kept.display(),
+        receipt_path.display()
+    );
+    Ok(())
+}
+
+/// Move the rehearsed stage to `kept`, replacing an older one.
+fn keep_stage_at(scratch: &Path, kept: &Path) -> Result<(), String> {
     if kept.exists() {
         fs::remove_dir_all(kept).map_err(|e| format!("cannot clear {}: {e}", kept.display()))?;
     }
@@ -92,9 +125,6 @@ fn keep_stage(scratch: &Path) -> Result<(), String> {
             kept.display()
         )
     })?;
-    println!(
-        "publish stage kept at {PUBLISH_STAGE_DIR}: run the real `cargo publish --allow-dirty -p ripr-contract` and then `cargo publish --allow-dirty -p ripr` from there"
-    );
     Ok(())
 }
 
@@ -108,6 +138,16 @@ pub(crate) fn vendored_ripr_crate(
     scratch: &Path,
     version: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
+    let (contract_crate, ripr_crate, _stage) = vendored_ripr_crate_with_report(scratch, version)?;
+    Ok((contract_crate, ripr_crate))
+}
+
+/// [`vendored_ripr_crate`], also returning the stage report so the receipt can
+/// name the source commit and the transform the archives were built from.
+fn vendored_ripr_crate_with_report(
+    scratch: &Path,
+    version: &str,
+) -> Result<(PathBuf, PathBuf, crate::publish_stage::StageReport), String> {
     let workspace =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
     // The cargo commands below run inside the stage, so every path handed to
@@ -129,11 +169,11 @@ pub(crate) fn vendored_ripr_crate(
         fs::write(&lock_path, bytes)
             .map_err(|e| format!("cannot restore {}: {e}", lock_path.display()))?;
     }
-    let crates = packaged?;
+    let (contract_crate, ripr_crate) = packaged?;
     // The packaged bytes are only as trustworthy as the stage they came from;
     // prove it is still HEAD plus the strip before anyone consumes them.
     crate::publish_stage::verify_stage(&stage)?;
-    Ok(crates)
+    Ok((contract_crate, ripr_crate, report))
 }
 
 fn package_from_stage(
@@ -188,9 +228,9 @@ fn package_from_stage(
     Ok((contract_crate, ripr_crate))
 }
 
-fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
+fn rehearse(scratch: &Path, version: &str) -> Result<PublishReceipt, String> {
     // The caller verified the lockstep pin before the contract dry-run.
-    let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
+    let (contract_crate, ripr_crate, stage) = vendored_ripr_crate_with_report(scratch, version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
     let ripr_sha = sha256_hex(&ripr_crate)?;
     // Leave the packaged crates where `cargo package` would put them, so
@@ -225,25 +265,18 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
         fs::remove_file(&lock).map_err(|e| format!("cannot remove lockfile: {e}"))?;
     }
     let verified = verify_packaged_pair(&ripr_dir)?;
-    // Only a pair that passed the packaged check gets a receipt. Writing it
-    // earlier would leave evidence for a pair that was never verified, and
-    // `docs/RELEASE.md` trusts this file as the pre-publish gate.
-    let receipt = PublishReceipt::capture(
+    // Only a pair that passed the packaged check gets a receipt. The caller
+    // writes it after the stage is retained, so a failed retention leaves no
+    // receipt for `docs/RELEASE.md` to trust.
+    PublishReceipt::capture(
         version,
+        &stage,
         &contract_crate,
         &contract_sha,
         &ripr_crate,
         &ripr_sha,
         verified,
-    )?;
-    let receipt_path = Path::new(PUBLISH_RECEIPT);
-    write_publish_receipt(receipt_path, &receipt)?;
-
-    println!(
-        "publish rehearsal ok: ripr-contract {version} ({contract_sha}) dry-run passed; packaged ripr {version} ({ripr_sha}) packaged against vendored ripr-contract and checks against the packaged crate; receipt={}",
-        receipt_path.display()
-    );
-    Ok(())
+    )
 }
 
 /// Proof that the packaged `ripr` generated a lockfile and compiled against
@@ -312,6 +345,13 @@ pub(crate) struct PublishReceipt {
     pub(crate) version: String,
     pub(crate) source_commit: String,
     pub(crate) source_dirty: bool,
+    /// The commit the retained stage was checked out from, and the transform
+    /// applied to it. A reader can tell which source tree the archives were
+    /// built from, not only which checkout ran the rehearsal.
+    pub(crate) stage_commit: String,
+    pub(crate) stage_stripped_files: usize,
+    pub(crate) stage_stripped_modules: usize,
+    pub(crate) stage_stripped_bytes: usize,
     pub(crate) contract_filename: String,
     pub(crate) contract_sha256: String,
     pub(crate) ripr_filename: String,
@@ -335,6 +375,7 @@ pub(crate) enum RehearsalVerification {
 impl PublishReceipt {
     fn capture(
         version: &str,
+        stage: &crate::publish_stage::StageReport,
         contract_crate: &Path,
         contract_sha256: &str,
         ripr_crate: &Path,
@@ -364,6 +405,10 @@ impl PublishReceipt {
             version: version.to_string(),
             source_commit,
             source_dirty,
+            stage_commit: stage.commit.clone(),
+            stage_stripped_files: stage.stripped_files,
+            stage_stripped_modules: stage.stripped_modules,
+            stage_stripped_bytes: stage.stripped_bytes,
             contract_filename: file_name(contract_crate)?,
             contract_sha256: contract_sha256.to_string(),
             ripr_filename: file_name(ripr_crate)?,
@@ -728,6 +773,10 @@ mod tests {
             version: "0.11.0".to_string(),
             source_commit: "abc".to_string(),
             source_dirty: false,
+            stage_commit: "abc".to_string(),
+            stage_stripped_files: 3,
+            stage_stripped_modules: 7,
+            stage_stripped_bytes: 1024,
             contract_filename: "ripr-contract-0.11.0.crate".to_string(),
             contract_sha256: "c".to_string(),
             ripr_filename: "ripr-0.11.0.crate".to_string(),
@@ -808,6 +857,75 @@ mod tests {
         assert!(
             written.contains("\"verification\": \"packaged-check-passed\""),
             "the written receipt must name its verification: {written}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_stage_retention_leaves_no_current_receipt() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-retain-fail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let receipt_path = dir.join("publish-receipt.json");
+        // Preseed an old receipt: the gate must not keep trusting it.
+        fs::write(&receipt_path, b"{\"version\":\"0.10.0\"}").map_err(|e| e.to_string())?;
+        clear_publish_receipt_at(&receipt_path)?;
+
+        // The rehearsal's stage exists, but a regular file sits where the kept
+        // directory must be removed, so retention fails after the archive
+        // checks would have passed. This is the boundary the early Cargo
+        // failure case never reaches.
+        let scratch = dir.join("scratch");
+        fs::create_dir_all(scratch.join("stage")).map_err(|e| e.to_string())?;
+        let kept = dir.join("publish-stage");
+        fs::write(&kept, b"not a directory").map_err(|e| e.to_string())?;
+
+        let outcome = finish_rehearsal(&scratch, &kept, &receipt_path, &sample_receipt());
+        assert!(
+            outcome.is_err(),
+            "a failed stage retention must fail the rehearsal"
+        );
+        assert!(
+            !receipt_path.exists(),
+            "a failed retention must leave no current receipt for the gate to trust"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_passed_retention_keeps_the_stage_and_records_both_digests() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-retain-ok-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scratch/stage/src")).map_err(|e| e.to_string())?;
+        fs::write(dir.join("scratch/stage/src/lib.rs"), b"// staged").map_err(|e| e.to_string())?;
+        let kept = dir.join("publish-stage");
+        let receipt_path = dir.join("publish-receipt.json");
+
+        finish_rehearsal(
+            &dir.join("scratch"),
+            &kept,
+            &receipt_path,
+            &sample_receipt(),
+        )?;
+
+        assert!(
+            kept.join("src/lib.rs").exists(),
+            "a passed retention must keep the stage the publish runs from"
+        );
+        let written = fs::read_to_string(&receipt_path).map_err(|e| e.to_string())?;
+        assert!(
+            written.contains("\"contract_sha256\": \"c\""),
+            "the receipt must record the contract archive digest: {written}"
+        );
+        assert!(
+            written.contains("\"ripr_sha256\": \"r\""),
+            "the receipt must record the ripr archive digest: {written}"
+        );
+        assert!(
+            written.contains("\"stage_commit\": \"abc\""),
+            "the receipt must name the retained stage's source commit: {written}"
         );
         let _ = fs::remove_dir_all(&dir);
         Ok(())

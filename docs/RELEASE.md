@@ -462,9 +462,11 @@ without a naming decision, and do not try to overwrite an immutable version.
 Both `cargo publish -p ripr-contract` and `cargo publish -p ripr` require the
 exact qualified ship packet (`cargo xtask release-readiness --version <version>`
 and `cargo xtask publish-dry-run` receipt recording both `.crate` filenames,
-versions, SHA-256 checksums, source commit, and the `verification` it passed)
-plus explicit per-channel authorization. A receipt exists only for a pair that
-passed the packaged check; a failed rehearsal leaves none.
+versions, SHA-256 checksums, source commit, the retained stage's commit and
+strip counts, and the `verification` it passed) plus explicit per-channel
+authorization. The receipt is written last, after the stage is retained: a
+receipt exists only for a pair that passed the packaged check and a stage that
+was kept, so a failed rehearsal or a failed retention leaves none.
 
 Publish from the stage the rehearsal just packaged and measured, not from the
 checkout: the checkout's `ripr` package is over the crates.io upload limit
