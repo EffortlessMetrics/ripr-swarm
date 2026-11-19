@@ -59,3 +59,151 @@ pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
         })
         .or(Some(first))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        ActivationEvidence, AnalysisScope, Confidence, DeltaKind, ExposureClass, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTestMiss, RelatedTestRole,
+        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
+    };
+    use std::path::PathBuf;
+
+    fn row(name: &str, file: &str, line: usize, strength: OracleStrength) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            line,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            role: RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    fn finding(rows: Vec<RelatedTest>, evidence: &[&str]) -> Finding {
+        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "s");
+        Finding {
+            analysis_scope: AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "finding:py".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:py".to_string()),
+                location: SourceLocation::new("src/app.py", 3, 1),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "x > 5".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(),
+                infect: stage(),
+                propagate: stage(),
+                reveal: RevealEvidence {
+                    observe: stage(),
+                    discriminate: stage(),
+                },
+            },
+            confidence: 0.5,
+            evidence: evidence.iter().map(|line| (*line).to_string()).collect(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: rows,
+            recommended_next_step: None,
+            language: Some(LanguageId::Python),
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn headline(finding: &Finding) -> Option<&str> {
+        python_headline_related_test(finding).map(|test| test.name.as_str())
+    }
+
+    const CHANGED_B: &str = "related_test_changed_in_diff: tests/test_b.py:20";
+
+    fn rows() -> Vec<RelatedTest> {
+        vec![
+            row("anchor", "tests/test_a.py", 10, OracleStrength::Medium),
+            row("touched", "tests/test_b.py", 20, OracleStrength::Medium),
+        ]
+    }
+
+    #[test]
+    fn a_same_tier_row_in_a_changed_test_file_leads_the_python_headline() {
+        assert_eq!(headline(&finding(rows(), &[CHANGED_B])), Some("touched"));
+        assert_eq!(
+            headline(&finding(
+                rows(),
+                &["related_test_changed_in_diff: tests\\test_b.py:20"]
+            )),
+            Some("touched")
+        );
+        assert_eq!(headline(&finding(rows(), &[])), Some("anchor"));
+        assert_eq!(headline(&finding(Vec::new(), &[CHANGED_B])), None);
+    }
+
+    #[test]
+    fn other_languages_keep_the_anchor_row() {
+        let mut subject = finding(rows(), &[CHANGED_B]);
+        subject.language = Some(LanguageId::Rust);
+        assert_eq!(headline(&subject), Some("anchor"));
+        subject.language = None;
+        assert_eq!(headline(&subject), Some("anchor"));
+    }
+
+    #[test]
+    fn a_stamp_must_match_both_file_and_line_of_a_listed_row() {
+        for stamp in [
+            "related_test_changed_in_diff: tests/test_b.py:21",
+            "related_test_changed_in_diff: tests/test_c.py:20",
+            "related_test_changed_in_diff: tests/test_b.py:twenty",
+            "related_test_changed_in_diff: tests/test_b.py",
+        ] {
+            assert_eq!(
+                headline(&finding(rows(), &[stamp])),
+                Some("anchor"),
+                "{stamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_changed_row_of_another_strength_or_observation_tier_never_leads() {
+        let mut weaker = rows();
+        weaker[1].oracle_strength = OracleStrength::Weak;
+        assert_eq!(headline(&finding(weaker, &[CHANGED_B])), Some("anchor"));
+
+        let mut unobserving = rows();
+        unobserving[1].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        assert_eq!(
+            headline(&finding(unobserving, &[CHANGED_B])),
+            Some("anchor")
+        );
+
+        // The anchor itself is the first observing row, not the first listed.
+        let mut blind_first = rows();
+        blind_first[0].miss = Some(RelatedTestMiss::NoCallPath);
+        assert_eq!(headline(&finding(blind_first, &[])), Some("touched"));
+    }
+}
