@@ -268,7 +268,9 @@ a Git work tree the uri is relative to the checkout top level, the base code
 scanning resolves it against (#15367): a root below the top level, such as a
 workspace member at `crates/app`, renders `crates/app/src/lib.rs` whether it is
 spelled `crates/app`, `"$PWD/crates/app"`, `.` from inside the member, or with a
-`..` detour, and repo-seam uris take the same prefix. Without a work tree a
+`..` detour. Root-joined Rust files and root-relative preview-language files
+(Python, TypeScript, JavaScript) take the same prefix, and so do repo-seam
+uris. Without a work tree a
 relative root keeps its spelling, since it already names a path under the
 invoking directory.
 
@@ -464,6 +466,8 @@ Implemented renderer tests:
 - `crates/ripr/src/output/path.rs::tests::anchored_display_path_names_the_file_from_the_checkout_top_level`
 - `crates/ripr/src/output/path.rs::tests::anchored_paths_never_climb_or_invent_a_location`
 - `crates/ripr/src/output/path.rs::tests::checkout_anchor_discovers_a_member_root_below_the_git_top_level`
+- `crates/ripr/tests/checkout_anchored_locations.rs::member_root_rust_findings_name_files_from_the_checkout_top_level`
+- `crates/ripr/tests/checkout_anchored_locations.rs::member_root_python_findings_name_files_from_the_checkout_top_level`
 
 Implemented policy tests (the `sarif_identity_*` controls need the Perl adapter and compile only with `cargo test -p xtask --features perl-identity`, run in the Perl lane so the shared workspace graph keeps the shipped feature set):
 

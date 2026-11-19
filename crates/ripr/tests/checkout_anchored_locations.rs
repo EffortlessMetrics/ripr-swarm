@@ -2,7 +2,8 @@
 //! checkout top level when the analyzed root is a workspace member below it
 //! (#15367). The renderer unit tests inject an anchor; these controls go
 //! through `render_check`, so they also fail if dispatch stops discovering it.
-use ripr::{CheckInput, CheckOutput, OutputFormat, check_workspace, render_check};
+use ripr::config::RiprConfig;
+use ripr::{CheckInput, CheckOutput, OutputFormat, check_workspace_with_config, render_check};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +32,8 @@ impl Drop for FixtureDir {
 
 /// The smallest directory Git's discovery accepts as a repository (`HEAD`,
 /// `objects/`, `refs/`), so the control needs no Git subprocess of its own.
+/// A marker on the member itself makes the member the top level, whatever
+/// encloses the temp directory; removing it lets discovery reach `top`.
 fn mark_git_top_level(top: &Path) -> Result<(), std::io::Error> {
     let git = top.join(".git");
     std::fs::create_dir_all(git.join("objects"))?;
@@ -39,14 +42,21 @@ fn mark_git_top_level(top: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn check(root: &Path, patch: &str) -> Result<CheckOutput, Box<dyn std::error::Error>> {
+fn check(
+    root: &Path,
+    patch: &str,
+    config: &RiprConfig,
+) -> Result<CheckOutput, Box<dyn std::error::Error>> {
     let patch_path = root.join("change.patch");
     std::fs::write(&patch_path, patch)?;
-    let output = check_workspace(CheckInput {
-        root: root.to_path_buf(),
-        diff_file: Some(patch_path),
-        ..CheckInput::default()
-    })?;
+    let output = check_workspace_with_config(
+        CheckInput {
+            root: root.to_path_buf(),
+            diff_file: Some(patch_path),
+            ..CheckInput::default()
+        },
+        config,
+    )?;
     assert!(
         !output.findings.is_empty(),
         "setup must produce an actual finding"
@@ -104,13 +114,16 @@ fn member_root_rust_findings_name_files_from_the_checkout_top_level()
     )?;
     let patch = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn accepts(value: i32) -> bool {\n-    value >= 0\n+    value > 0\n }\n";
 
-    // Control: outside any work tree the location stays root-relative.
-    let unanchored = check(&member, patch)?;
-    assert_eq!(github_files(&unanchored)?, vec!["src/lib.rs".to_string()]);
-    assert_eq!(sarif_uris(&unanchored)?, vec!["src/lib.rs".to_string()]);
+    let config = RiprConfig::default();
+    // Control: the member is its own top level, so nothing is prefixed.
+    mark_git_top_level(&member)?;
+    let own_top = check(&member, patch, &config)?;
+    assert_eq!(github_files(&own_top)?, vec!["src/lib.rs".to_string()]);
+    assert_eq!(sarif_uris(&own_top)?, vec!["src/lib.rs".to_string()]);
 
+    std::fs::remove_dir_all(member.join(".git"))?;
     mark_git_top_level(top)?;
-    let anchored = check(&member, patch)?;
+    let anchored = check(&member, patch, &config)?;
     assert_eq!(
         github_files(&anchored)?,
         vec!["crates/app/src/lib.rs".to_string()]
@@ -144,11 +157,15 @@ fn member_root_python_findings_name_files_from_the_checkout_top_level()
     )?;
     let patch = "diff --git a/src/calc.py b/src/calc.py\n--- a/src/calc.py\n+++ b/src/calc.py\n@@ -1,2 +1,2 @@\n def big(x):\n-    return x > 3\n+    return x >= 3\n";
 
-    let unanchored = check(&member, patch)?;
-    assert_eq!(github_files(&unanchored)?, vec!["src/calc.py".to_string()]);
+    let mut config = RiprConfig::default();
+    config.languages.enabled = vec![ripr::domain::LanguageId::Python];
+    mark_git_top_level(&member)?;
+    let own_top = check(&member, patch, &config)?;
+    assert_eq!(github_files(&own_top)?, vec!["src/calc.py".to_string()]);
 
+    std::fs::remove_dir_all(member.join(".git"))?;
     mark_git_top_level(top)?;
-    let anchored = check(&member, patch)?;
+    let anchored = check(&member, patch, &config)?;
     assert_eq!(
         github_files(&anchored)?,
         vec!["pkg/src/calc.py".to_string()]
