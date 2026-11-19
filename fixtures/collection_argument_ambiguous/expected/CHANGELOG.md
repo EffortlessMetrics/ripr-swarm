@@ -373,3 +373,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_argument_ambiguous (29)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_ambiguous --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

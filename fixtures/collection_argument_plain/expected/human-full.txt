@@ -29,7 +29,7 @@ Changed
   before: v.push(x)
   after:  v.push(x * 1)
 Change type
-  a call was removed
+  a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::add

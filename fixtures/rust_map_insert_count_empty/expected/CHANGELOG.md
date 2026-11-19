@@ -346,3 +346,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_map_insert_count_empty (27)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -30,7 +30,7 @@ Changed
   before: out.push(4)
   after:  out.push(3)
 Change type
-  a call was removed
+  a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/shared.rs::owner
