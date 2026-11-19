@@ -5717,6 +5717,20 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             .read_to_string(&mut binary_contents)
             .map_err(|err| format!("read ripr.exe entry: {err}"))?;
         assert_eq!(binary_contents, "binary");
+
+        // Only the executable carries an execute bit; licenses and the notice
+        // are plain data files.
+        for (name, expected) in [
+            ("ripr.exe", 0o755),
+            ("LICENSE-MIT", 0o644),
+            ("LICENSE-APACHE", 0o644),
+            ("README-server.txt", 0o644),
+        ] {
+            let entry = archive
+                .by_name(name)
+                .map_err(|err| format!("locate {name} entry: {err}"))?;
+            assert_eq!(entry.unix_mode().map(|mode| mode & 0o777), Some(expected), "{name}");
+        }
         Ok(())
     })
 }
