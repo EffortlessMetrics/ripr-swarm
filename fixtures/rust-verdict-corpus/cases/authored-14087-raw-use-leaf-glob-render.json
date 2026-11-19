@@ -1,0 +1,44 @@
+{
+  "case_id": "authored-14087-raw-use-leaf-glob-render",
+  "subject_id": "authored-14087-raw-use-leaf",
+  "diff": "cases/authored-14087-raw-use-leaf-glob-render.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "glob_namesake_shadowed_by_raw_use_leaf",
+  "hard_case": "The test module imports `crate::a::*` and `crate::b::r#render`; the explicit raw-spelled leaf shadows the glob, so the bare `render(..)` calls run `b::render`, never the changed `a::render`. Both bodies agree before the edit, so the pinned values fit either owner.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n >= 5",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent as code (`a::render(5)` becomes true), but no test calls `a::render`: the explicit `use crate::b::r#render;` binds `render` over the glob. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`r#render` and `render` are one name, so the explicit import shadows the glob of `a` (#14087). Before the fix ripr recorded the raw spelling, let the glob supply `render`, and reported this boundary change `exposed` (beside `weakly_exposed`) through a test that only runs `b::render`. The row must stay a gap or a named limit.",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
