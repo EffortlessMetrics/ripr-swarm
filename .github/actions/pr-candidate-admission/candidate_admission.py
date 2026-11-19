@@ -1682,6 +1682,9 @@ def relocation_self_test(max_files: int, max_lines: int) -> None:
     huge = fixture(body=body, head=head, changed_files=2, additions=mechanical_relocation.MAX_RELOCATION_LINES, deletions=1)
     over = decide(huge, [huge], head, False, max_files, max_lines, relocation=relocation_check(huge, listing, read))
     assert over["reason"] == "qualification_scope_oversized" and "relocation ceiling" in over["detail"], over
+    wide = fixture(body=body, head=head, changed_files=mechanical_relocation.MAX_RELOCATION_FILES + 1, additions=1, deletions=1)
+    over = decide(wide, [wide], head, False, max_files, max_lines, relocation=record)
+    assert over["reason"] == "qualification_scope_oversized" and "relocation ceiling" in over["detail"], over
     # Identity and freshness refusals still win for a verified subject.
     missing_claim = fixture(body="Mechanical relocation: inline-cfg-test-v1\n", head=head, changed_files=2)
     assert decide(missing_claim, [missing_claim], head, False, max_files, max_lines, relocation=record)["reason"] == "claim_identity_missing"

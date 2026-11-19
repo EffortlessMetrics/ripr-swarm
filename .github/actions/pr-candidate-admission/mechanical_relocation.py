@@ -819,7 +819,48 @@ def rewrite_metadata(text: str, moves: list[Move], owners_after: dict[str, str])
                 if len(parts) >= 2 and parts[1] and parts[1] in m.body and parts[1] not in after:
                     new = m.target + new[len(m.owner) :]
         out.append(new)
-    return "".join(out)
+    return "".join(_rekey_test_intent(out, moves, moved_fns))
+
+
+_INTENT_TEST = re.compile(r'\s*test\s*=\s*"([^"\\]+)"\s*')
+_INTENT_PATH = re.compile(r'(\s*path\s*=\s*)"([^"\\]+)"(\s*)')
+
+
+def _rekey_test_intent(lines: list[str], moves: list[Move], moved_fns: dict[int, list[str]]) -> list[str]:
+    """A `[[table]]` block naming a test by separate `test = "fn"` and
+    `path = "OWNER"` keys (`.ripr/test_intent.toml`) follows its test: the
+    path becomes the target when exactly one relocated module of OWNER
+    defines `fn` (and the owner no longer does). Other blocks are unchanged."""
+    out = list(lines)
+    starts = [k for k, line in enumerate(out) if line.lstrip().startswith("[")] + [len(out)]
+    if starts[0] != 0:
+        starts.insert(0, 0)
+    for a, b in zip(starts, starts[1:]):
+        tests = [m.group(1) for line in out[a:b] if (m := _INTENT_TEST.fullmatch(line.rstrip("\n")))]
+        paths = [k for k in range(a, b) if _INTENT_PATH.fullmatch(out[k].rstrip("\n"))]
+        if len(tests) != 1 or len(paths) != 1:
+            continue
+        k = paths[0]
+        pm = _INTENT_PATH.fullmatch(out[k].rstrip("\n"))
+        assert pm is not None
+        hits = [m for m in moves if m.owner == pm.group(2) and tests[0] in moved_fns[id(m)]]
+        if len(hits) > 1:
+            raise Refusal(f"`{tests[0]}` moves from {pm.group(2)} in more than one module")
+        if hits:
+            eol = out[k][len(out[k].rstrip("\n")) :]
+            out[k] = f'{pm.group(1)}"{hits[0].target}"{pm.group(3)}{eol}'
+    return out
+
+
+def indirect_after(text: str, moves: list[Move]) -> str:
+    """INDIRECT_OWNERS_PATH after `moves`: a module relocated under its own
+    name is loaded through the transform's `#[path]`, so its target joins the
+    list (sorted, as `indirect-owners --write` prints it)."""
+    named = {m.target for m in moves if m.path_attr is not None}
+    if not named:
+        return text
+    listed = {line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")}
+    return INDIRECT_OWNERS_HEADER + "".join(f"{o}\n" for o in sorted(listed | named))
 
 
 # --------------------------------------------------------------------------
@@ -886,7 +927,7 @@ def _verify(changed: list[dict[str, str]], read: Callable[[str, str], str | None
             owners.append(path)
         elif in_scope(path) and status == "added":
             added.add(path)
-        elif path == BASELINE_PATH and status == "modified":
+        elif path in (BASELINE_PATH, INDIRECT_OWNERS_PATH) and status == "modified":
             pass
         elif is_metadata(path) and status == "modified":
             metadata.append(path)
@@ -946,6 +987,13 @@ def _verify(changed: list[dict[str, str]], read: Callable[[str, str], str | None
             raise Refusal(f"{BASELINE_PATH} is not the base with one ceiling removed per relocated module")
     elif read(BASELINE_PATH, "base") is not None:
         raise Refusal(f"{BASELINE_PATH} must lower the ceilings of the relocated modules")
+
+    indirect_expected = indirect_after(indirect_text, moves)
+    if any(str(e.get("filename")) == INDIRECT_OWNERS_PATH for e in changed):
+        if indirect_expected == indirect_text or read(INDIRECT_OWNERS_PATH, "head") != indirect_expected:
+            raise Refusal(f"{INDIRECT_OWNERS_PATH} is not the base plus the targets loaded through the transform's `#[path]`")
+    elif indirect_expected != indirect_text:
+        raise Refusal(f"{INDIRECT_OWNERS_PATH} must list the targets loaded through the transform's `#[path]`")
 
     for path in metadata:
         base = read(path, "base")
@@ -1041,6 +1089,11 @@ def apply(repo: Path, owners: list[str], rustfmt: bool = True) -> list[Move]:
     baseline = repo / BASELINE_PATH
     if baseline.exists():
         baseline.write_text(baseline_after(baseline.read_text(encoding="utf-8"), removed), encoding="utf-8")
+    if indirect_file.exists():
+        before = indirect_file.read_text(encoding="utf-8")
+        after = indirect_after(before, moves)
+        if after != before:
+            indirect_file.write_text(after, encoding="utf-8")
     owners_after = {m.owner: (repo / m.owner).read_text(encoding="utf-8") for m in moves}
     meta_files = [repo / p for p in METADATA_EXACT]
     for prefix, suffix in METADATA_PREFIXES:
@@ -1475,6 +1528,30 @@ def self_test() -> None:
     assert named_move.target == "crates/ripr/src/output/foo/harness_verdict_tests.rs", named_move.target
     named_owner = owner_after(named, owner, {"harness_verdict"})
     assert '#[cfg(test)]\n#[path = "foo/harness_verdict_tests.rs"]\nmod harness_verdict;\n' in named_owner, named_owner
+    # The named target is loaded through the transform's `#[path]`, so the
+    # indirect-owner list gains exactly that target, and only then.
+    indirect_base = INDIRECT_OWNERS_HEADER + "crates/ripr/src/output/loaded.rs\n"
+    indirect_head = indirect_after(indirect_base, [named_move])
+    assert indirect_head == INDIRECT_OWNERS_HEADER + named_move.target + "\ncrates/ripr/src/output/loaded.rs\n", indirect_head
+    named_good = {
+        owner: (named, named_owner),
+        named_move.target: (None, target_text(named_move)),
+        BASELINE_PATH: (baseline, "# header\ncrates/ripr/src/a.rs|1\n"),
+        INDIRECT_OWNERS_PATH: (indirect_base, indirect_head),
+    }
+    assert run(named_good).status == "validated", run(named_good).detail
+    refused({k: v for k, v in named_good.items() if k != INDIRECT_OWNERS_PATH}, "must list the targets")
+    refused({**named_good, INDIRECT_OWNERS_PATH: (indirect_base, indirect_head + "crates/ripr/src/x.rs\n")}, "not the base plus")
+    refused({**good, INDIRECT_OWNERS_PATH: (indirect_base, indirect_head)}, "not the base plus")
+    # A test-intent block (`test` and `path` keys) follows its moved test only.
+    intent = f'[[test_intent]]\ntest = "reads"\npath = "{owner}"\nintent = "smoke"\n\n[[test_intent]]\ntest = "shown"\npath = "{owner}"\n'
+    intent_after = rewrite_metadata(intent, [move], {owner: head_owner})
+    assert intent_after == intent.replace(f'path = "{owner}"', f'path = "{target}"', 1), intent_after
+    assert run({**good, ".ripr/test_intent.toml": (intent, intent_after)}).status == "validated"
+    refused(
+        {**good, ".ripr/test_intent.toml": (intent, intent.replace(f'path = "{owner}"', f'path = "{target}"'))},
+        "not the base re-keyed",
+    )
     # mod.rs and crate-root owners resolve beside themselves; a nested lib.rs does not.
     assert target_for("crates/ripr/src/lsp/mod.rs", "tests") == ("crates/ripr/src/lsp/tests.rs", None)
     assert target_for("crates/ripr/src/lib.rs", "tests") == ("crates/ripr/src/tests.rs", None)

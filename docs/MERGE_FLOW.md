@@ -225,8 +225,13 @@ only a head that matches it:
 - `policy/inline-test-modules.txt` lowers one ceiling per relocated module, and
   every other path-keyed metadata file (traceability, allowlists) equals the
   base re-keyed by the transform's own rule: references to a moved test, or to
-  a function defined only in the moved body, name the test file, and an
-  allowlist row moves only when its pattern left the owner;
+  a function defined only in the moved body, name the test file, a
+  `.ripr/test_intent.toml` block's `path` follows its `test` only when that
+  function moved, and an allowlist row moves only when its pattern left the
+  owner;
+- a module relocated under its own name (loaded through the transform's
+  `#[path]`) adds exactly its target to `policy/relocation-indirect-owners.txt`,
+  and no other relocation changes that list;
 - every listed file's blob id is the hash of the head content read, so the
   listing and the contents describe one head.
 
