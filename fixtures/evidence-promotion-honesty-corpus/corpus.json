@@ -12442,7 +12442,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::price_cents",
           "expression": "Size::Medium =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "discrimination_unknown",
           "reach": "yes"
         },
         {
@@ -12478,6 +12478,7 @@
       "id": "rust_repo_exposure_late_assert_eq_definition_match_arms_keeps_credit",
       "language": "rust",
       "tier": "pure",
+      "reason": "#15183 owns the Small and Large rows only: an assert_eq defined after the assertions does not rebind them, so they keep the standard macro's strong oracle. The Size::Medium row is deliberately not asserted: no test selects that arm and the late macro is never invoked, but the order-insensitive read-macro rebound refusal (#15181) leaves its activation at yes and the capture reads it strongly_gripped, a known false promotion tracked separately in #15233.",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/late-assert-eq-definition-match-arms",
       "vector": "repo_exposure_an_assert_eq_defined_after_the_assertions_does_not_rebind_them",
@@ -12494,13 +12495,6 @@
           "owner": "src/lib.rs::price_cents",
           "expression": "Size::Large =>",
           "grip_class": "strongly_gripped",
-          "reach": "yes"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::price_cents",
-          "expression": "Size::Medium =>",
-          "grip_class": "weakly_gripped",
           "reach": "yes"
         },
         {
