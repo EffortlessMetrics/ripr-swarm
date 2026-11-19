@@ -17,6 +17,9 @@
 //! Non-regular files are deliberately not refused: `--diff <(git diff ...)`
 //! passes a FIFO, and stdin (`-`) is a pipe; both are legitimate and are
 //! bounded by the same cap instead.
+//! Fixed-path reads of checkout-supplied artifacts (`read_metadata_toml`,
+//! `read_repository_artifact`) are the exception: nothing legitimate puts a
+//! FIFO or device there, so they refuse non-regular files (#15275).
 
 use std::io::Read;
 use std::path::Path;
