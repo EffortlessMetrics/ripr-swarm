@@ -1698,6 +1698,12 @@ pub(super) enum DocumentStalenessReason {
     /// saved, or rewritten on disk and reloaded, after the last analysis.
     /// Saving again cannot help; the next analysis of the saved file can.
     SavedContentNotYetAnalyzed,
+    /// The document lies outside the selected workspace root, so no
+    /// analysis of that root can ever record it; saving or refreshing cannot
+    /// lift the pause. Never stored by the ledger: the backend discloses a
+    /// stored `NoAnalyzedSavedContent` under this reason when the document's
+    /// path is outside the effective root (`Backend::disclosed_quarantine`).
+    OutsideAnalyzedRoot,
 }
 
 impl DocumentStalenessReason {
@@ -1710,6 +1716,7 @@ impl DocumentStalenessReason {
             Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
             Self::SavedContentNotYetAnalyzed => "saved_content_not_yet_analyzed",
+            Self::OutsideAnalyzedRoot => "outside_analyzed_root",
         }
     }
 
@@ -1728,6 +1735,7 @@ impl DocumentStalenessReason {
             Self::SavedContentNotYetAnalyzed => {
                 "the saved file changed since ripr last analyzed it"
             }
+            Self::OutsideAnalyzedRoot => "this file is outside the analyzed workspace root",
         }
     }
 
