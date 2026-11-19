@@ -3,4 +3,5 @@
 id = "RIPR-SPEC-0352"
 tests = [
   "crates/ripr/tests/unindexed_member_own_path.rs::a_member_mounting_one_indexed_file_keeps_placement_for_the_others",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::draft_mode_names_the_limit_for_a_test_an_unindexed_member_mounts",
 ]

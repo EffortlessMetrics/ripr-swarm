@@ -54,8 +54,9 @@ an `include!` of a member file compile nothing ripr has not read. Then:
    out-of-line `mod name;`, and every `#[path` in the file must be such an
    attribute. Its target is resolved from the declaring file's directory with
    symlinks followed and must be an existing file.
-2. A target inside the member's directory is the member's own file. A target
-   outside it is a **mounted** file.
+2. A target inside the member's directory is the member's own file, read
+   under the same rules even when it is not `.rs`. A target outside it is a
+   **mounted** file.
 3. A mounted file must itself declare no `mod name;`, `#[path]` or
    `include!`, which would resolve beside it into further files outside the
    member.
@@ -65,11 +66,14 @@ an `include!` of a member file compile nothing ripr has not read. Then:
    `#[path]` or `include!` itself, because pasted text resolves them from the
    includer's context.
 5. Every crate target path the member's manifest names (`[lib]`, `[[bin]]`,
-   `[[test]]`, `[[bench]]`, `[[example]]`, `package.build`) resolves inside
-   the member.
+   `[[test]]`, `[[bench]]`, `[[example]]`, `package.build`), resolved from the
+   member's directory, lies inside the member and is read under the same
+   rules.
 
 Every mounted file is unplaced, exactly like a file no recognized target
-places, and every other file keeps placement. Anything the reading cannot
+places, and every other file keeps placement. For a test in a mounted file,
+placement counts as unavailable in the trigger below, so its receiver reads
+this limitation rather than a gap. Anything the reading cannot
 bound keeps placement unavailable workspace-wide: a symbolic link anywhere in
 the member, an unreadable or non-UTF-8 file, more than 8192 files or 64 MiB of
 source, a member with no `.rs` file, a manifest target outside the member, an

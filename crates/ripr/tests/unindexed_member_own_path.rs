@@ -225,6 +225,22 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
         .collect::<Vec<_>>();
     assert_credited("70 explicit targets, draft", &finding(Mode::Draft, &many)?);
 
+    // A manifest root is resolved from the member, never from the process's
+    // working directory (the test runs from `crates/ripr`, which has its
+    // own `src/lib.rs`).
+    let declared = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        ),
+        ("src/lib.rs", "mod support;\n"),
+        ("src/support.rs", SUPPORT),
+    ];
+    assert_credited(
+        "declared lib path, draft",
+        &finding(Mode::Draft, &declared)?,
+    );
+
     // An `include!` of the member's own file is the member's own source.
     let include = [
         ("src/lib.rs", "include!(\"../support.rs\");\n"),
@@ -263,7 +279,7 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
 fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -> Result<(), String>
 {
     let lib = |text: &'static str| [("src/lib.rs", text), ("support.rs", SUPPORT)];
-    let cases: [(&str, Vec<(&str, &str)>); 16] = [
+    let cases: [(&str, Vec<(&str, &str)>); 18] = [
         (
             "path leaves the member",
             lib("#[path = \"../../app/src/par.rs\"]\nmod par;\n").to_vec(),
@@ -362,6 +378,23 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
                 ("src/lib.rs", "include!(\"../support.rs\");\n"),
                 ("support.rs", "#[path = \"deep/leaf.rs\"]\nmod leaf;\n"),
                 ("deep/leaf.rs", SUPPORT),
+            ],
+        ),
+        (
+            "manifest root leaves the member",
+            vec![
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\npath = \"../app/src/par.rs\"\n",
+                ),
+                ("src/unused.rs", SUPPORT),
+            ],
+        ),
+        (
+            "path names a non-Rust member file that mounts",
+            vec![
+                ("src/lib.rs", "#[path = \"../mount.inc\"]\nmod mount;\n"),
+                ("mount.inc", "#[path = \"../app/src/par.rs\"]\nmod par;\n"),
             ],
         ),
         (

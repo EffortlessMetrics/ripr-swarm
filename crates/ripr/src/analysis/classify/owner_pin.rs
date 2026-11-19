@@ -94,7 +94,6 @@ use crate::analysis::syntax::{
     source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
     trusted_macro_binding_sites,
 };
-use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
@@ -1675,7 +1674,7 @@ impl OwnerPinSyntax {
             };
             let placement = if trust_unplaced_standard_root
                 && matches!(root, "std" | "core")
-                && self.target_roots(index).disabled
+                && self.target_roots(index).unplaced(&test.file)
             {
                 Vec::new()
             } else {
@@ -1754,7 +1753,8 @@ impl OwnerPinSyntax {
             }
             name
         };
-        let unplaced = trust_unplaced_standard_root && self.target_roots(index).disabled;
+        let unplaced =
+            trust_unplaced_standard_root && self.target_roots(index).unplaced(&test.file);
         let own_package = unplaced
             .then(|| self.own_package_ambiguities(test, index))
             .flatten();
@@ -3590,6 +3590,12 @@ impl TargetRoots {
         }
     }
 
+    /// Whether placement is unavailable for `file`: off for the whole
+    /// workspace, or withheld from this mounted file (#14116).
+    fn unplaced(&self, file: &Path) -> bool {
+        self.disabled || self.is_mounted(file)
+    }
+
     /// Whether an unindexed member mounts `file` (#14116).
     fn is_mounted(&self, file: &Path) -> bool {
         !self.mounted.is_empty()
@@ -3776,10 +3782,15 @@ impl OwnerPinSyntax {
             .get_or_init(|| super::out_parameter::workspace_macro_names(index))
     }
 
-    /// Whether no file can be placed in a Cargo target, because an include or
-    /// `#[path]` somewhere in the workspace cannot be resolved.
-    pub(in crate::analysis) fn target_placement_unavailable(&self, index: &RustIndex) -> bool {
-        self.target_roots(index).disabled
+    /// Whether `file` cannot be placed in a Cargo target: an include or
+    /// `#[path]` somewhere in the workspace cannot be resolved, or an
+    /// unindexed member mounts `file` itself (#14116).
+    pub(in crate::analysis) fn target_placement_unavailable(
+        &self,
+        file: &Path,
+        index: &RustIndex,
+    ) -> bool {
+        self.target_roots(index).unplaced(file)
     }
 
     /// Workspace routing inputs, computed once per run.

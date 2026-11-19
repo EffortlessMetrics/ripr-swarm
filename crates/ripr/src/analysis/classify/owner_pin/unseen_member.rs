@@ -26,9 +26,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::{
-    ModulePathTarget, RustIndex, cfg_attr_may_introduce_path,
-    declared_crate_root_paths_from_manifest, mask_comments_and_strings, module_path_targets,
-    own_path_literals, source_may_declare_file_module, whole_word_offsets,
+    ModulePathTarget, RustIndex, cfg_attr_may_introduce_path, mask_comments_and_strings,
+    module_path_targets, own_path_literals, source_may_declare_file_module, whole_word_offsets,
 };
 use crate::analysis::extract::string_literal_spans;
 
@@ -88,8 +87,10 @@ pub(super) fn unseen_member_mounts(index: &RustIndex) -> Option<BTreeSet<PathBuf
 /// mounts through a top-level literal `#[path]`, or `None` when its sources
 /// cannot be bounded.
 fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
-    manifest_targets_stay_inside(member_dir)?;
+    let roots = manifest_targets(member_dir)?;
     let mut pending = member_sources(member_dir)?;
+    // A declared root that is not `.rs` was not listed; read it too.
+    pending.extend(roots);
     if pending.is_empty() {
         // The member exists and nothing it compiles could be read.
         return None;
@@ -112,6 +113,8 @@ fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
         // read here under the same rule.
         included.extend(reading.included.iter().cloned());
         pending.extend(reading.included);
+        // So is an in-member `#[path]` module whose file is not `.rs`.
+        pending.extend(reading.modules);
         for target in reading.mounted {
             let source = read_bounded(&target, &mut bytes_read)?;
             // A mounted file's own `mod name;`, `#[path]` or `include!`
@@ -130,34 +133,52 @@ fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
     included.is_disjoint(&resolving).then_some(mounted)
 }
 
-/// Every crate target path the member's manifest names must resolve inside
-/// the member: a target rooted elsewhere compiles another package's file as
-/// a crate root.
-fn manifest_targets_stay_inside(member_dir: &Path) -> Option<()> {
+/// Every crate target path the member's manifest names (`[lib]`, `[[bin]]`,
+/// `[[test]]`, `[[bench]]`, `[[example]]` `path`, and `package.build`),
+/// resolved from the member directory. Each must lie inside the member: a
+/// target rooted elsewhere compiles another package's file as a crate root.
+/// `None` for an escaping target, a non-string path, or an unreadable or
+/// unparsable manifest. A target that does not exist compiles nothing.
+fn manifest_targets(member_dir: &Path) -> Option<Vec<PathBuf>> {
     let manifest = match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
         Ok(manifest) => manifest,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
         Err(_) => return None,
     };
-    let mut declared = declared_crate_root_paths_from_manifest(&manifest, member_dir);
-    let build = toml::from_str::<toml::Value>(&manifest)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("package")?
-                .get("build")?
-                .as_str()
-                .map(|build| member_dir.join(build.trim()))
-        });
-    declared.extend(build);
+    let value = toml::from_str::<toml::Value>(&manifest).ok()?;
+    let mut declared = Vec::new();
+    for key in ["lib", "bin", "test", "bench", "example"] {
+        let entries = match value.get(key) {
+            Some(toml::Value::Array(entries)) => entries.iter().collect::<Vec<_>>(),
+            Some(table @ toml::Value::Table(_)) => vec![table],
+            Some(_) => return None,
+            None => continue,
+        };
+        for entry in entries {
+            match entry.get("path") {
+                Some(toml::Value::String(path)) => declared.push(path.clone()),
+                Some(_) => return None,
+                None => {}
+            }
+        }
+    }
+    match value
+        .get("package")
+        .and_then(|package| package.get("build"))
+    {
+        Some(toml::Value::String(path)) => declared.push(path.clone()),
+        Some(toml::Value::Boolean(_)) | None => {}
+        Some(_) => return None,
+    }
+    let mut targets = Vec::new();
     for path in declared {
-        match path.canonicalize() {
-            Ok(target) if target.starts_with(member_dir) => {}
+        match member_dir.join(path.trim()).canonicalize() {
+            Ok(target) if target.starts_with(member_dir) => targets.push(target),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             _ => return None,
         }
     }
-    Some(())
+    Some(targets)
 }
 
 /// Every `.rs` file under `member_dir`, skipping the member's own `target/`.
@@ -202,6 +223,8 @@ fn read_bounded(path: &Path, bytes_read: &mut usize) -> Option<String> {
 struct FileReading {
     /// Member files an `include!` pastes in.
     included: Vec<PathBuf>,
+    /// Member files a top-level `#[path]` names as modules.
+    modules: Vec<PathBuf>,
     /// Files outside the member a top-level `#[path]` mounts.
     mounted: Vec<PathBuf>,
     /// Whether the file names any `#[path]` or `include!` target.
@@ -236,11 +259,13 @@ fn file_reading(path: &Path, source: &str, member_dir: &Path) -> Option<FileRead
         included.push(target);
     }
     let attributes = compact.matches("#[path").count();
+    let mut modules = Vec::new();
     let mut mounted = Vec::new();
     let resolves_paths = attributes > 0 || !included.is_empty();
     if attributes == 0 {
         return Some(FileReading {
             included,
+            modules,
             mounted,
             resolves_paths,
         });
@@ -256,7 +281,9 @@ fn file_reading(path: &Path, source: &str, member_dir: &Path) -> Option<FileRead
                 if !target.is_file() {
                     return None;
                 }
-                if !target.starts_with(member_dir) {
+                if target.starts_with(member_dir) {
+                    modules.push(target);
+                } else {
                     mounted.push(target);
                 }
             }
@@ -267,6 +294,7 @@ fn file_reading(path: &Path, source: &str, member_dir: &Path) -> Option<FileRead
     // not resolve.
     (literals == attributes).then_some(FileReading {
         included,
+        modules,
         mounted,
         resolves_paths,
     })
