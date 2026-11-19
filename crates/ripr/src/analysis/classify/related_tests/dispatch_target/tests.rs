@@ -250,3 +250,44 @@ fn a_twin_that_may_not_apply_keeps_the_relation() -> Result<(), String> {
     )?);
     Ok(())
 }
+
+/// A gate on the enclosing `impl`, a `mod` or the file may compile the
+/// override or twin out of the test build, and a private twin is skipped by
+/// callers outside its module, so each keeps the relation.
+#[test]
+fn an_enclosing_gate_or_private_twin_keeps_the_relation() -> Result<(), String> {
+    let gated_impl = COUNTER.replace(
+        "impl Counter for Fast {",
+        "#[cfg(feature = \"fast\")]\nimpl Counter for Fast {",
+    );
+    let gated_mod = "pub trait Counter {\n    fn step(&self) -> u32;\n    fn advance(&self) -> u32 { 4 * self.step() }\n}\n\
+        pub struct Fast;\n\
+        impl Counter for Fast {\n    fn step(&self) -> u32 { 2 }\n}\n\
+        #[cfg(feature = \"fast\")]\nmod fast {\n    impl super::Counter for super::Fast {\n        fn step(&self) -> u32 { 2 }\n        fn advance(&self) -> u32 { 8 }\n    }\n}\n"
+        .to_string();
+    for production in [gated_impl, gated_mod] {
+        assert!(
+            direct(
+                &production,
+                Owner::DefaultAdvance,
+                "assert_eq!(Fast.advance(), 8);"
+            )?,
+            "{production}"
+        );
+    }
+    let private_twin = SHAPE.replace(
+        "    pub fn area(&self) -> u32 { 9 }\n",
+        "    fn area(&self) -> u32 { 9 }\n",
+    );
+    let gated_twin_mod = SHAPE.replace(
+        "impl Square {\n    pub fn area(&self) -> u32 { 9 }\n}\n",
+        "#[cfg(feature = \"twin\")]\nmod twin {\n    impl super::Square {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+    );
+    for production in [private_twin, gated_twin_mod] {
+        assert!(
+            direct(&production, TRAIT_AREA, "assert_eq!(Square(3).area(), 9);")?,
+            "{production}"
+        );
+    }
+    Ok(())
+}

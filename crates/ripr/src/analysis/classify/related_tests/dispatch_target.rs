@@ -19,6 +19,11 @@ use super::{
     impl_self_type_name, impl_trait_name_from_path, mask_comments_and_strings, method_call_sites,
     owner_trait_name,
 };
+use crate::analysis::syntax::parse_clean_source_file;
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasName, HasVisibility},
+};
 
 /// Whether every call of a trait default method's name in `test` resolves
 /// to a type whose impl of that trait overrides the default, so none of them
@@ -160,7 +165,8 @@ pub(super) fn inherent_twin_takes_every_call(
         twin_ids.contains(&function.id.0.as_str())
             && function.item.has_self_param
             && receiver_kind(&function.body) == Some(owner_receiver)
-            && !is_cfg_gated(function)
+            && !is_cfg_gated(function, index)
+            && declared_pub(function, index)
             && matches!(
                 &function.item.container,
                 FunctionContainer::Inherent { self_ty: other }
@@ -189,9 +195,63 @@ pub(super) fn inherent_twin_takes_every_call(
 
 /// Whether a function or its `impl` block carries a `cfg`-family attribute,
 /// so it may be compiled out of the test build.
-fn is_cfg_gated(function: &FunctionSummary) -> bool {
+fn is_cfg_gated(function: &FunctionSummary, index: &RustIndex) -> bool {
     function.attrs.iter().any(|attr| attr.contains("cfg"))
         || function.impl_attrs.iter().any(|attr| attr.contains("cfg"))
+        || enclosed_by_cfg(function, index)
+}
+
+/// Whether any item enclosing `function` in its file's parse (its `impl`, a
+/// `mod`, or the file through an inner `#![cfg]`) carries a `cfg`-family
+/// attribute. A function this cannot find in a clean parse counts as
+/// enclosed: nothing establishes it is compiled in.
+fn enclosed_by_cfg(function: &FunctionSummary, index: &RustIndex) -> bool {
+    parsed_fn(function, index).is_none_or(|found| {
+        found.syntax().ancestors().any(|node| {
+            node.children()
+                .filter_map(ast::Attr::cast)
+                .any(|attr| attr.syntax().text().to_string().contains("cfg"))
+        })
+    })
+}
+
+/// Whether `function` declares a visibility (`pub`, `pub(crate)`, ..), so
+/// method probing from a test outside its module can see it. A private
+/// inherent twin is skipped by such callers, and the trait impl runs.
+fn declared_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
+    parsed_fn(function, index).is_some_and(|found| found.visibility().is_some())
+}
+
+/// The innermost `fn` named like `function` whose span covers its start
+/// line in a clean parse of its file. `function.body` starts at the `fn`
+/// token, so attributes and visibility are read from this parse.
+fn parsed_fn(function: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
+    let source = index
+        .files()
+        .get(&function.file)
+        .map(|facts| facts.data().source.clone())?;
+    let parse = parse_clean_source_file(&source)?;
+    let line_of = |at: usize| {
+        source
+            .get(..at)
+            .map_or(0, |prefix| prefix.matches('\n').count() + 1)
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|candidate| {
+            candidate
+                .name()
+                .is_some_and(|name| name.text() == function.name.as_str())
+        })
+        .filter(|candidate| {
+            let range = candidate.syntax().text_range();
+            line_of(usize::from(range.start())) <= function.start_line
+                && function.start_line <= line_of(usize::from(range.end()))
+        })
+        .min_by_key(|candidate| candidate.syntax().text_range().len())
 }
 
 /// [`is_cfg_gated`] for the indexed function with symbol id `id`; an id with
@@ -201,7 +261,7 @@ fn candidate_cfg_gated(id: &str, index: &RustIndex) -> bool {
         .functions()
         .iter()
         .find(|function| function.id.0 == id)
-        .is_none_or(is_cfg_gated)
+        .is_none_or(|function| is_cfg_gated(function, index))
 }
 
 /// Whether exactly one `struct`, `enum` or `union` named `name` is declared
