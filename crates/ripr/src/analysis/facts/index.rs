@@ -231,6 +231,9 @@ pub struct FileData {
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
     /// See [`FileFacts::external_docs`].
     pub(crate) external_docs: Option<bool>,
+    /// See [`FileFacts::constant_syntax`].
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -406,7 +409,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 14)?;
+        let mut state = serializer.serialize_struct("FileFacts", 15)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -424,6 +427,7 @@ impl serde::Serialize for FileFactsView<'_> {
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
         state.serialize_field("external_docs", &self.external_docs)?;
+        state.serialize_field("constant_syntax", &self.constant_syntax)?;
         state.end()
     }
 }
@@ -680,6 +684,7 @@ impl RustIndex {
             item_scopes,
             macro_candidates,
             external_docs,
+            constant_syntax,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -723,6 +728,7 @@ impl RustIndex {
                     item_scopes,
                     macro_candidates,
                     external_docs,
+                    constant_syntax,
                 },
                 functions,
                 tests,
@@ -1081,6 +1087,7 @@ impl RustIndex {
             item_scopes,
             macro_candidates,
             external_docs,
+            constant_syntax,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -1098,6 +1105,7 @@ impl RustIndex {
             item_scopes,
             macro_candidates,
             external_docs,
+            constant_syntax,
         })
     }
     #[cfg(test)]

@@ -11,6 +11,7 @@ mod macro_definition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod unchanged_code_line;
 mod verification_erased;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;

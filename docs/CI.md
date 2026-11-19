@@ -1855,7 +1855,7 @@ between two snapshots of one CI checkout, so the workflow writes no after
 snapshot, verify JSON, agent receipt, or targeted-test outcome. The
 `ripr agent repair --root . --seam-id <seam-id> --phase before` command the
 summary leads with starts the repair where the test edit happens; the
-`--attempt ... --phase after` command it prints runs verify and writes the
+`ripr continue ... --attempt` command it prints runs verify and writes the
 receipt. The summary labels the low-level verify and receipt commands as steps
 that run after the test edit.
 

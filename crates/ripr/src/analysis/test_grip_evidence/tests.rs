@@ -1,5 +1,6 @@
 mod assertion_call_kind;
 mod boolean_owner_pin;
+mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
@@ -4864,6 +4865,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         },
     );
     let seam = RepoSeam::new(
@@ -22830,6 +22832,78 @@ fn a_test_local_shadow_of_the_default_method_trait_is_not_a_direct_owner_call() 
     Ok(())
 }
 
+/// #14074: the seam-side relation refuses a test whose only call passes a
+/// value written as a sibling impl's trait argument, as the finding-level
+/// relation does. `Cents::from(2u32)` runs `impl From<u32> for Cents`, never
+/// `impl From<&str> for Cents`; the control calls the `&str` impl, so the
+/// argument's written type is the only difference.
+#[test]
+fn a_call_typed_as_a_sibling_generic_impl_argument_is_not_a_direct_owner_call() -> Result<(), String>
+{
+    let sibling_call = "#[derive(Debug, PartialEq)]\npub struct Cents(pub u64);\n\
+        impl From<u32> for Cents {\n    fn from(v: u32) -> Self {\n        Cents(v as u64 * 100)\n    }\n}\n\
+        impl From<&str> for Cents {\n    fn from(v: &str) -> Self {\n        Cents(v.len() as u64 + 3)\n    }\n}\n\n\
+        #[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn converts() {\n        assert_eq!(Cents::from(2u32), Cents(200));\n    }\n}\n";
+    let owner_call = sibling_call.replace(
+        "assert_eq!(Cents::from(2u32), Cents(200));",
+        "assert_eq!(Cents::from(\"abc\"), Cents(6));",
+    );
+    assert!(
+        owner_call.contains("Cents::from(\"abc\")") && !owner_call.contains("Cents::from(2u32)"),
+        "the control must call the `&str` impl"
+    );
+    // (direct credits for the `&str` impl, direct credits for the `u32` impl)
+    let mut direct_by_source = Vec::new();
+    for source in [sibling_call, owner_call.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams = inventory_seams_from_index(&[path], &index);
+        let context = CompactGripContext::new(&index);
+        let direct_for = |owner_suffix: &str| -> Result<usize, String> {
+            let owned: Vec<_> = seams
+                .iter()
+                .filter(|seam| seam.owner().ends_with(owner_suffix))
+                .collect();
+            if owned.is_empty() {
+                return Err(format!("`{owner_suffix}` has seams"));
+            }
+            Ok(owned
+                .iter()
+                .map(|seam| {
+                    find_related_tests_with_context(seam, &context)
+                        .iter()
+                        .filter(|(test, reason)| {
+                            test.test.name == "converts"
+                                && *reason == RelationReason::DirectOwnerCall
+                        })
+                        .count()
+                })
+                .sum())
+        };
+        direct_by_source.push((
+            direct_for("impl From<&str> for Cents::from")?,
+            direct_for("impl From<u32> for Cents::from")?,
+        ));
+    }
+    let (str_impl, u32_impl) = direct_by_source[0];
+    assert_eq!(
+        str_impl, 0,
+        "a `u32` argument must not be a direct call of the `&str` impl"
+    );
+    assert!(u32_impl > 0, "the `u32` impl keeps its own direct credit");
+    let (str_impl, u32_impl) = direct_by_source[1];
+    assert!(
+        str_impl > 0,
+        "the control keeps direct credit for the `&str` impl: {direct_by_source:?}"
+    );
+    assert_eq!(
+        u32_impl, 0,
+        "a string literal must not be a direct call of the `u32` impl"
+    );
+    Ok(())
+}
+
 fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
     let prod = PathBuf::from("src/lib.rs");
     let index = index_from_files(&[(prod.clone(), source)])?;
@@ -22954,6 +23028,56 @@ fn given_integration_test_when_local_module_shadows_library_crate_then_owner_get
         related.is_empty(),
         "#10855: a test-local module rival must not relate the production owner: {related:?}"
     );
+    Ok(())
+}
+
+/// #14087: a `const`, `static` or tuple `struct` of the owner's name in the
+/// test's own file binds the bare call to itself, with or without a glob of
+/// the library that also offers the name (an item beats a glob). The owner
+/// never runs, so the seam gets no related test. The control keeps the same
+/// item but calls the production function through its path.
+#[test]
+fn given_integration_test_when_bare_call_is_bound_by_a_local_value_item_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let stub = "fn stub(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let bare = "#[test]\nfn bare_item() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n";
+    let mut failures = Vec::new();
+    for (label, source) in [
+        (
+            "const fn pointer",
+            format!("{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"),
+        ),
+        (
+            "static fn pointer",
+            format!("{stub}static discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"),
+        ),
+        (
+            "const beside a glob of the library",
+            format!(
+                "use lib_proptest::*;\n{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"
+            ),
+        ),
+        (
+            "const at the top of the test body",
+            format!(
+                "{stub}#[test]\nfn bare_item() {{\n    const discounted_total: fn(i32, i32) -> i32 = stub;\n    assert_eq!(discounted_total(100, 100), 777);\n}}\n"
+            ),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        if !related.is_empty() {
+            failures.push(format!("{label}: {related:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#14087: a bare call bound by a local value item must not relate the owner: {failures:?}"
+    );
+    let control = format!(
+        "{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n#[test]\nfn qualified_real() {{\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&control)?;
+    assert_eq!(related, vec!["qualified_real".to_string()], "{control}");
     Ok(())
 }
 
@@ -24653,5 +24777,70 @@ fn probe_while_let_shadow_stale_environment() -> Result<(), String> {
         "a while-let shadow must not fold the parameter: {:?}",
         evidence.discriminate
     );
+    Ok(())
+}
+
+/// #15026: among otherwise equal same-file tests, the one that reaches the
+/// owner through a caller chain is named first instead of the name-order
+/// neighbour, so the repair refusal's "closest related test" points at the
+/// test that runs the code. Returns the related test names in rank order and
+/// each row's oracle strength.
+fn related_rows_for_clamp(z_assertion: &str) -> Result<Vec<(String, OracleStrength)>, String> {
+    let source = format!(
+        "fn clamp_score(x: i32) -> i32 {{\n    if x >= 10 {{ 10 }} else {{ x }}\n}}\n\
+         fn mid(x: i32) -> i32 {{\n    clamp_score(x)\n}}\n\
+         pub fn score(x: i32) -> i32 {{\n    mid(x) * 2\n}}\n\
+         pub fn bump(x: i32) -> i32 {{\n    x + 1\n}}\n\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n\
+         #[test]\n    fn a_bump() {{\n        assert_eq!(bump(1), 2);\n    }}\n\
+         #[test]\n    fn b_bump() {{\n        assert_eq!(bump(2), 3);\n    }}\n\
+         #[test]\n    fn z_score() {{\n        {z_assertion}\n    }}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), source.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    // Fixture premise: three same-file rows (the two-hop chain keeps
+    // `z_score` off the one-hop helper relation).
+    if evidence.related_tests.len() != 3
+        || evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason != RelationReason::SameTestFile)
+    {
+        let rows: Vec<_> = evidence
+            .related_tests
+            .iter()
+            .map(|test| (test.test_name.clone(), test.relation_reason))
+            .collect();
+        return Err(format!("unexpected related rows: {rows:?}"));
+    }
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| (test.test_name.clone(), test.oracle_strength.clone()))
+        .collect())
+}
+
+#[test]
+fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Result<(), String> {
+    let near = related_rows_for_clamp("assert_eq!(score(3), 6);")?;
+    assert!(
+        near.iter()
+            .all(|(_, strength)| *strength == OracleStrength::Strong),
+        "{near:?}"
+    );
+    assert_eq!(near[0].0, "z_score", "{near:?}");
+    // Discriminating negative: when that test calls nothing on the owner's
+    // caller chain, name order stands.
+    let far = related_rows_for_clamp("assert_eq!(bump(3), 4);")?;
+    assert_eq!(far[0].0, "a_bump", "{far:?}");
+    // Nearness only breaks ties: a stronger oracle still leads.
+    let weaker = related_rows_for_clamp("assert!(score(3) > 0);")?;
+    assert_ne!(weaker[0].0, "z_score", "{weaker:?}");
     Ok(())
 }

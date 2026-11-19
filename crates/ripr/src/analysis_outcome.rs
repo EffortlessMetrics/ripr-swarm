@@ -529,6 +529,33 @@ pub(crate) struct AnalysisOutcome {
     /// serialized outcome or its identity.
     #[serde(skip)]
     pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    /// Run-local index of the diff's changed new-side lines (#15039). Read
+    /// only by the `explain`/`context` location-miss diagnosis; never part of
+    /// the serialized outcome or its identity.
+    #[serde(skip)]
+    pub(crate) changed_lines: Option<ChangedLineIndex>,
+}
+
+/// Which new-side lines the analyzed diff added or modified, per changed
+/// file (#15039). Built by the diff pipeline from the same parsed diff the
+/// counts come from, so a consumer never re-derives it from Git. A file the
+/// diff only removed lines from is present with no lines.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChangedLineIndex {
+    files: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+}
+
+impl ChangedLineIndex {
+    /// Record one changed file by its stable root-relative path text.
+    pub(crate) fn record(&mut self, path: String, lines: impl IntoIterator<Item = usize>) {
+        self.files.entry(path).or_default().extend(lines);
+    }
+
+    /// The changed new-side lines of `path`, or `None` when the diff does
+    /// not touch that file.
+    pub(crate) fn lines_of(&self, path: &str) -> Option<&std::collections::BTreeSet<usize>> {
+        self.files.get(path)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -594,6 +621,7 @@ impl AnalysisOutcome {
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
             language_view: None,
+            changed_lines: None,
         })
     }
 

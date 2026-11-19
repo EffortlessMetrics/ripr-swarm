@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_exception_framework_shadow_no_credit/input --diff <cwd>/fixtures/python_exception_framework_shadow_no_credit/diff.patch --mode fast probe:fx_core.py:python_preview:64a75cf6
   ripr context --root <cwd>/fixtures/python_exception_framework_shadow_no_credit/input --diff <cwd>/fixtures/python_exception_framework_shadow_no_credit/diff.patch --mode fast --at probe:fx_core.py:python_preview:64a75cf6
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

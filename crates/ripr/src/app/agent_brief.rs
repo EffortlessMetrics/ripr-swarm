@@ -3490,7 +3490,7 @@ weakly_gripped = "off"
         );
         withheld.evidence.reach = stage(StageState::No);
         withheld.evidence.activate = stage(StageState::Unknown);
-        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        withheld.evidence.activate.summary = "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
         // Same file, off the changed lines: not changed behavior.
         let mut same_file = classified(
             "src/pricing.rs",
@@ -3570,7 +3570,7 @@ weakly_gripped = "off"
         );
         withheld.evidence.reach = stage(StageState::No);
         withheld.evidence.activate = stage(StageState::Unknown);
-        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        withheld.evidence.activate.summary = "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
         let related = withheld
             .evidence
             .related_tests

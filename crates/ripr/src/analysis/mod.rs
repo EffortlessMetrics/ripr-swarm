@@ -1170,6 +1170,10 @@ pub struct AnalysisResult {
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// The diff's changed new-side lines per file (#15039), for the
+    /// location-miss diagnosis. `None` for repo-scope runs, which have no
+    /// diff. Never serialized.
+    pub(crate) changed_lines: Option<crate::analysis_outcome::ChangedLineIndex>,
     /// Per-language persistent fact-cache admissions for this run (#10725),
     /// collected from each adapter's `LanguageDiffResult`. Rendered into the
     /// verbose disclosure line by `app::check`; empty when no adapter did

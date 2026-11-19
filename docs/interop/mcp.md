@@ -442,7 +442,11 @@ and one small summary per selected item. Each summary carries
 commit-time repair-readiness projection (`repair_packet_ready` with its typed
 `repair_ineligibility` reason, `null` when ready) — the same
 `repair_packet_ready` fact the item's `ripr_get_gap` readiness block reports,
-so actionable items sort without one evidence call per candidate. Selection
+so actionable items sort without one evidence call per candidate. `file` is
+the finding location in the one spelling every surface renders
+(`./src/lib.rs`, #5996); the path inside `canonical_id` is the plain
+repository-relative form (`src/lib.rs`), and the `file` filter accepts
+either. Selection
 is the shared CLI/LSP diagnostic-budget authority over the snapshot's
 canonical items; eligibility is the producer's candidate-actionability
 predicate captured at projection time, so non-actionable items appear as
@@ -686,9 +690,10 @@ ignored) in the server `env` beside `RIPR_MCP_TEXT_CONTENT`. Any other value,
 including the older explicit `slim`, keeps the slim default. The tool
 descriptions were also cut to purpose, when to call, safety boundary and
 failure codes. Measured over stdio (whole `tools/list` response line):
-45,938 bytes before #13803 with schemas, 11,884 by default now, and
-40,955 with `full`. With the schemas gone by default, each description names
-the failure codes an agent most needs before calling; the complete `code`
+45,938 bytes before #13803 with schemas, 11,884 by default after it, and
+40,955 with `full`. With every tool argument described (#9360) and the later
+full-listing disclosures, they measure 12,075 and 42,266. With the schemas
+gone by default, each description names the failure codes an agent most needs before calling; the complete `code`
 enum stays in the full listing's `outputSchema`. An unrecognized value
 (for example a misspelled `full`) is not diagnosed: it serves the slim
 listing, so a validating host should check that `outputSchema` is present.

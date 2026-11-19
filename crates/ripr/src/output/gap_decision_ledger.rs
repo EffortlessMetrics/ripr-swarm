@@ -1205,131 +1205,6 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
     })
 }
 
-pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
-    let mut out = String::new();
-    out.push_str("# RIPR Gap Decision Ledger\n\n");
-    out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
-    out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
-    if let Some(origin) = &report.check_output_provenance {
-        let source_root = origin
-            .get("root")
-            .and_then(Value::as_str)
-            .unwrap_or("unavailable");
-        let subject_limit = origin
-            .get("source_subject_unavailable")
-            .and_then(Value::as_str)
-            .unwrap_or("not recorded");
-        out.push_str(&format!(
-            "Check-output producer root: `{}`; producer subject limitation: `{}`. These are provenance disclosures, not complete corpus currentness.\n\n",
-            md_inline(source_root), md_inline(subject_limit)
-        ));
-    }
-    out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
-    if let Some(outcome) = &report.analysis_outcome {
-        let complete = outcome
-            .get("analysis_complete")
-            .and_then(Value::as_bool)
-            .map_or_else(|| "not_available".to_string(), |value| value.to_string());
-        let kind = outcome
-            .pointer("/outcome/kind")
-            .and_then(Value::as_str)
-            .unwrap_or("not_available");
-        out.push_str(&format!(
-            "Analysis complete: `{}`; analysis outcome: `{}`\n\n",
-            md_inline(&complete),
-            md_inline(kind)
-        ));
-        // #9010: a budget-bounded check document says so beside the verdict.
-        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
-            out.push_str(
-                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
-            );
-        }
-    }
-    // #5203: a ledger derived from a bounded run says so in the human
-    // surface too, naming each propagated run state.
-    if let Some(limitations) = report.run_limitations.as_ref().and_then(Value::as_array) {
-        let states = limitations
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .get("run_status")
-                    .and_then(Value::as_str)
-                    .or_else(|| entry.get("category").and_then(Value::as_str))
-            })
-            .collect::<Vec<_>>();
-        if !states.is_empty() {
-            out.push_str(&format!(
-                "Run limitations (propagated from the source run): `{}`\n\n",
-                md_inline(&states.join(", "))
-            ));
-        }
-    }
-
-    out.push_str("## Summary\n\n");
-    out.push_str(&format!("- Records: `{}`\n", report.summary.records_total));
-    out.push_str(&format!(
-        "- Repairable: `{}`; static limitations: `{}`; no action: `{}`; missing artifacts: `{}`\n",
-        report.summary.repairable_total,
-        report.summary.static_limitation_total,
-        report.summary.no_action_total,
-        report.summary.missing_artifact_total
-    ));
-    out.push_str(&format!(
-        "- Projections: PR comments=`{}`, gate candidates=`{}`, agent packets=`{}`\n",
-        report.summary.projection_pr_comment_eligible,
-        report.summary.projection_gate_candidate,
-        report.summary.projection_agent_packet_eligible
-    ));
-    out.push_str(&format!(
-        "- Badge targets: ripr 0=`{}`, ripr+=`{}`\n",
-        report.summary.ripr_zero_target_count, report.summary.ripr_plus_target_count
-    ));
-    out.push_str(&format!(
-        "- Receipts: improved=`{}`, unchanged_after_attempt=`{}`\n",
-        report.summary.receipt_improved_total, report.summary.receipt_unchanged_after_attempt_total
-    ));
-    out.push_str(&format!(
-        "- Output-contract gaps: `{}`; preview ineligible: `{}`\n\n",
-        report.summary.missing_output_contract_total, report.summary.preview_ineligible_total
-    ));
-
-    if !report.warnings.is_empty() {
-        out.push_str("## Warnings\n\n");
-        for warning in &report.warnings {
-            out.push_str(&format!("- {}\n", md_inline(warning)));
-        }
-        out.push('\n');
-    }
-
-    out.push_str("## Records\n\n");
-    if report.records.is_empty() {
-        // #5264: name the two different empty states. `blocked` means the
-        // input could not be read; `no_records` means the input parsed but
-        // nothing projected to gap records (the warnings section above names
-        // the route coverage when a valid check output carried findings).
-        if report.status == "blocked" {
-            out.push_str(
-                "No gap records could be read from the input; see the warnings above.\n\n",
-            );
-        } else {
-            out.push_str(
-                "No gap records were derived from the input; see the warnings above for the reason.\n\n",
-            );
-        }
-    } else {
-        for record in &report.records {
-            render_record_markdown(record, &mut out);
-        }
-    }
-
-    out.push_str("## Limits\n\n");
-    for limit in &report.limits {
-        out.push_str(&format!("- {}\n", md_inline(limit)));
-    }
-    out
-}
-
 /// Parse a persisted ledger for a CLI consumer. The CLI resolves `--root .`
 /// against its own working directory, so that directory is the selected root
 /// typed recovery binds to (#3999).
@@ -3805,101 +3680,6 @@ pub(crate) fn projection_eligible_from_value(record: &Value, projection: &str) -
         .is_some_and(|record| projection_eligible(&record, projection))
 }
 
-fn render_record_markdown(record: &GapRecord, out: &mut String) {
-    out.push_str(&format!(
-        "### `{}`\n\n",
-        md_inline(&fallback_gap_id(record))
-    ));
-    out.push_str(&format!(
-        "- Kind: `{}`; scope: `{}`; policy: `{}`; repairability: `{}`\n",
-        md_inline(&record.kind),
-        md_inline(&record.scope),
-        md_inline(&record.policy_state),
-        md_inline(&record.repairability)
-    ));
-    out.push_str(&format!(
-        "- Evidence: `{}` / `{}`; language: `{}` / `{}`\n",
-        md_inline(&record.evidence_class),
-        md_inline(&record.gap_state),
-        md_inline(&record.language),
-        md_inline(&record.language_status)
-    ));
-    if let Some(anchor) = &record.anchor {
-        out.push_str(&format!(
-            "- Anchor: `{}`{}{}\n",
-            md_inline(anchor.file.as_deref().unwrap_or("unknown")),
-            anchor
-                .line
-                .map(|line| format!(":{line}"))
-                .unwrap_or_default(),
-            anchor
-                .owner
-                .as_ref()
-                .map(|owner| format!(" owner `{}`", md_inline(owner)))
-                .unwrap_or_default()
-        ));
-    }
-    if let Some(seam_id) = record.seam_id.as_deref().and_then(non_empty) {
-        out.push_str(&format!("- Seam: `{}`\n", md_inline(seam_id)));
-    }
-    if let Some(route) = &record.repair_route {
-        out.push_str(&format!(
-            "- Repair: `{}`{}\n",
-            md_inline(&route.route_kind),
-            route
-                .target_file
-                .as_ref()
-                .map(|target| format!(" in `{}`", md_inline(target)))
-                .unwrap_or_default()
-        ));
-        if let Some(assertion) = &route.assertion_shape {
-            out.push_str(&format!(
-                "- Assertion or observer: `{}`\n",
-                md_inline(assertion)
-            ));
-        }
-        if let Some(command) = route.inspection_command.as_deref().and_then(non_empty) {
-            out.push_str(&format!("- Inspect: `{}`\n", md_inline(command)));
-        }
-    }
-    let eligible = eligible_projection_names(record);
-    if !eligible.is_empty() {
-        out.push_str(&format!(
-            "- Eligible projections: `{}`\n",
-            eligible.join("`, `")
-        ));
-    }
-    if command_displays_are_complete(&record.verification_commands) {
-        out.push_str("- Verify:\n");
-        for command in &record.verification_commands {
-            out.push_str(&format!("  - `{}`\n", md_inline(command)));
-        }
-    } else if !record.verification_commands.is_empty() {
-        out.push_str("- Verify: `unavailable_incomplete_command_list`\n");
-    }
-    if !record.regeneration_commands.is_empty() {
-        out.push_str("- Regenerate:\n");
-        for command in &record.regeneration_commands {
-            out.push_str(&format!("  - `{}`\n", md_inline(command)));
-        }
-    }
-    if let Some(command) = record
-        .receipt_command
-        .as_deref()
-        .filter(|command| command_display_is_nonblank(command))
-    {
-        out.push_str("- Receipt:\n");
-        out.push_str(&format!("  - `{}`\n", md_inline(command)));
-    }
-    if let Some(receipt) = &record.receipt {
-        out.push_str(&format!(
-            "- Receipt movement: `{}`\n",
-            md_inline(receipt.movement.as_deref().unwrap_or("unknown"))
-        ));
-    }
-    out.push('\n');
-}
-
 fn eligible_projection_names(record: &GapRecord) -> Vec<String> {
     record
         .projection_eligibility
@@ -3917,18 +3697,10 @@ fn fallback_gap_id(record: &GapRecord) -> String {
     }
 }
 
-fn md_inline(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '\r' | '\n' => escaped.push(' '),
-            '|' => escaped.push_str("\\|"),
-            '`' => escaped.push('\''),
-            _ => escaped.push(character),
-        }
-    }
-    escaped
-}
+mod markdown;
+pub(crate) use markdown::render_gap_decision_ledger_markdown;
+#[cfg(test)]
+use markdown::render_record_markdown;
 
 #[cfg(all(test, feature = "lang-python"))]
 mod python_identity_tests;
@@ -4302,10 +4074,12 @@ mod tests {
         }));
 
         let markdown = render_gap_decision_ledger_markdown(&report);
-        assert!(markdown.contains("gap:'pipe\\|line"));
-        assert!(markdown.contains("docs\\|OUTPUT_SCHEMA.md`:7"));
-        assert!(markdown.contains("owner `output::'schema'`"));
-        assert!(markdown.contains("Assertion or observer: `report contains 'start\\|here'`"));
+        // The fence outgrows the backtick inside, and the pipe stays bare: the
+        // report has no table, so a `\\|` would show its backslash.
+        assert!(markdown.contains("### ``gap:`pipe|line``\n"));
+        assert!(markdown.contains("`docs|OUTPUT_SCHEMA.md`:7"));
+        assert!(markdown.contains("owner `` output::`schema` ``"));
+        assert!(markdown.contains("Assertion or observer: `` report contains `start|here` ``"));
         assert!(markdown.contains("cargo xtask reports index"));
         assert!(markdown.contains("Receipt movement: `missing_receipt`"));
     }
@@ -4855,19 +4629,6 @@ mod tests {
             "Unknown"
         );
         assert_eq!(gap_kind_from_evidence("unknown_state", "x"), "Unknown");
-    }
-
-    // ── md_inline ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn md_inline_escapes_special_characters() {
-        assert_eq!(md_inline("plain"), "plain");
-        assert_eq!(md_inline("a|b"), "a\\|b");
-        assert_eq!(md_inline("a`b"), "a'b");
-        assert_eq!(md_inline("a\nb"), "a b");
-        assert_eq!(md_inline("a\rb"), "a b");
-        assert_eq!(md_inline("a`b|c\nd"), "a'b\\|c d");
-        assert_eq!(md_inline(""), "");
     }
 
     // ── fallback_gap_id ──────────────────────────────────────────────────────

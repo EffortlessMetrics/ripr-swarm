@@ -230,4 +230,20 @@ mod tests {
             TestCandidateNextRoute::InspectWeakCandidates
         );
     }
+
+    #[test]
+    fn an_empty_window_adds_a_new_test_only_when_discovery_was_complete() {
+        let route = |matched_total: usize, complete: bool| {
+            TestCandidateSet::from_bounded_related_tests(&[], matched_total, complete).next_route
+        };
+        assert_eq!(route(0, true), TestCandidateNextRoute::AddNewFocusedTest);
+        assert_eq!(
+            route(0, false),
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
+        assert_eq!(
+            route(3, true),
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
+    }
 }

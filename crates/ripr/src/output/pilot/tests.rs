@@ -1002,7 +1002,7 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     let mut unresolved = classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 12);
     unresolved.evidence.reach = stage(StageState::No);
     unresolved.evidence.activate = stage(StageState::Unknown);
-    unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
+    unresolved.evidence.activate.summary = "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `x > limit`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
     let entries = [unreached, quoting, limited, unresolved];
     let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(

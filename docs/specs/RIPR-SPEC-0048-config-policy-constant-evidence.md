@@ -602,7 +602,7 @@ not create a headline user test gap.
    related test observes the selected behavior, RIPR emits one actionable
    canonical item with actionability `add_behavior_discriminator`. The repair
    names the missing discriminator or target assertion shape when known.
-5. Opaque config lookup. Given a changed constant whose flow passes through an
+5. [abstain] Opaque config lookup. Given a changed constant whose flow passes through an
    unsupported helper, registry, macro, generated output, dynamic dispatch, or
    untraceable cross-file formatting, RIPR emits a static limitation. The
    limitation category is `config_policy_flow_unknown`,

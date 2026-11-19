@@ -399,6 +399,141 @@ fn gate_evaluates_the_withheld_uncalled_gap_with_its_named_reason() -> Result<()
     Ok(())
 }
 
+/// The typed limit #14951 names for the uncalled owner's computed operand.
+const BOUNDARY_INPUT_LIMIT: &str = "activation_boundary_input_unresolved";
+
+fn check_output(root: &Path, format: &str) -> Result<String, String> {
+    let output = run_ripr(
+        root,
+        &[
+            "check", "--root", ".", "--base", "HEAD~1", "--format", format,
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(diagnose(&format!("check --format {format}"), &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// The `check --format json` finding on `src/lib.rs:line`.
+fn check_finding(root: &Path, line: u64) -> Result<Value, String> {
+    let text = check_output(root, "json")?;
+    let report: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("parse check json: {error}\n{text}"))?;
+    report["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|finding| {
+            finding["probe"]["line"].as_u64() == Some(line)
+                && finding["probe"]["file"]
+                    .as_str()
+                    .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .cloned()
+        .ok_or_else(|| format!("check json has no finding at src/lib.rs:{line}: {report:#}"))
+}
+
+/// The `#ripr agent` header line of `check --format agent`.
+fn agent_header(root: &Path) -> Result<String, String> {
+    let text = check_output(root, "agent")?;
+    text.lines()
+        .find(|line| line.starts_with("#ripr agent "))
+        .map(str::to_string)
+        .ok_or_else(|| format!("check --format agent printed no header:\n{text}"))
+}
+
+fn static_limitation_entry(comments: &Value, line: u64) -> Option<Value> {
+    comments["suppressed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            item["file"] == "src/lib.rs"
+                && item["line"] == line
+                && item["reason"] == "static_limitation"
+        })
+        .cloned()
+}
+
+#[test]
+fn check_json_review_guidance_and_agent_header_agree_on_the_withheld_boundary_input()
+-> Result<(), String> {
+    // #14951: one seam, three surfaces. The typed kind is the authority: the
+    // finding must carry it, guidance must still withhold the seam under it,
+    // and the agent header must read it as a named limit, not a gap.
+    let fixture = build_repo("agreement", "cents % 100 > 50", "cents % 100 > 49")?;
+    let finding = check_finding(&fixture.0, UNCALLED_LINE)?;
+    if finding["classification"] != "no_static_path" {
+        return Err(format!("the class must not move: {finding:#}"));
+    }
+    if finding["static_limit_kind"] != BOUNDARY_INPUT_LIMIT {
+        return Err(format!(
+            "check json must carry the typed `{BOUNDARY_INPUT_LIMIT}` kind: {finding:#}"
+        ));
+    }
+    // Fixture construction: this is the uncalled-owner shape the header
+    // otherwise counts as a gap (#14820).
+    let reach = finding["ripr"]["reach"]["summary"]
+        .as_str()
+        .unwrap_or_default();
+    if finding["ripr"]["reach"]["state"] != "no" || !reach.ends_with("(unreferenced in workspace)")
+    {
+        return Err(format!(
+            "fixture must be an unreferenced owner: {finding:#}"
+        ));
+    }
+
+    let comments = review_comments(&fixture.0)?;
+    let withheld = static_limitation_entry(&comments, UNCALLED_LINE)
+        .ok_or_else(|| format!("seam must stay withheld as static_limitation: {comments:#}"))?;
+    let message = withheld["message"].as_str().unwrap_or_default();
+    if !message.contains(BOUNDARY_INPUT_LIMIT) {
+        return Err(format!(
+            "withheld entry must name the typed kind: {withheld}"
+        ));
+    }
+
+    let header = agent_header(&fixture.0)?;
+    if !header.contains(" gaps=0 ") {
+        return Err(format!(
+            "agent header must not count the limit as a gap: {header}"
+        ));
+    }
+    let agent = check_output(&fixture.0, "agent")?;
+    if agent.contains("no test calls `uncalled_rounding`") {
+        return Err(format!(
+            "agent output must not route the limit as a gap: {agent}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_parameter_operand_on_the_uncalled_owner_is_a_gap_on_every_surface() -> Result<(), String> {
+    // Discriminating control: the same uncalled owner comparing its parameter
+    // with a literal has no unresolved boundary input, so no surface names
+    // the limit and the header counts the gap.
+    let fixture = build_repo("param", "cents % 100 > 50", "cents > 49")?;
+    let finding = check_finding(&fixture.0, UNCALLED_LINE)?;
+    if finding["classification"] != "no_static_path" || !finding["static_limit_kind"].is_null() {
+        return Err(format!(
+            "a parameter operand must not carry a static limit: {finding:#}"
+        ));
+    }
+    let comments = review_comments(&fixture.0)?;
+    if let Some(entry) = static_limitation_entry(&comments, UNCALLED_LINE) {
+        return Err(format!(
+            "a parameter operand must not be withheld as a static limitation: {entry}"
+        ));
+    }
+    let header = agent_header(&fixture.0)?;
+    if !header.contains(" gaps=1 ") {
+        return Err(format!("the uncalled owner must count as a gap: {header}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn well_tested_change_lists_nothing_and_the_gate_passes() -> Result<(), String> {
     // Negative control: the changed boundary keeps both sides pinned by

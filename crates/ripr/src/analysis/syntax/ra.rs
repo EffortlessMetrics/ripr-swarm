@@ -1056,6 +1056,7 @@ fn summarize_file_with_collectors(
         external_docs: Some(super::external_docs::parsed_source_includes_external_docs(
             text, &source,
         )),
+        constant_syntax: Some(super::constant_items::constant_syntax(text, &source)),
     })
 }
 
@@ -1926,7 +1927,14 @@ fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
     scope
         .descendants()
         .filter_map(ast::IdentPat::cast)
-        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+        .any(|pattern| {
+            // `name` is a plain path segment; a raw-spelled binding
+            // (`r#name`) is the same name.
+            pattern.name().is_some_and(|bound| {
+                let bound = bound.text();
+                bound.strip_prefix("r#").unwrap_or(bound) == name
+            })
+        })
 }
 
 /// The item scopes around `node`, innermost first: enclosing statement lists
@@ -4834,6 +4842,7 @@ pub fn wrapped(input: &str, depth: usize) -> bool {
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

@@ -629,6 +629,12 @@ jobs:
           HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
+          # Keeps this lane's pre-#12940 ceiling. The CLI default rose to 5000
+          # files, which admits this workspace into a run that needs more than
+          # this lane's 60 s budget, so without the pin every PR would spend
+          # 60 s to reach analysis_timeout instead of refusing in under a
+          # second. Raise both together only with a deliberate CI-cost change.
+          RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES: "1200"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
           # #3674 (#3555 PR C, 4,321-line review-hardened capability diff),
@@ -652,12 +658,13 @@ jobs:
           # Large analyzer PRs need more than the 120s default for the
           # evidence producer's ripr check subprocess; #3709's 5,104-line
           # diff measured ~3,100s locally and exceeded 1,800s on CI, so
-          # the ceiling is 3,600s (measured locally per the raise rule;
-          # a hung producer wastes at most one hour — the scope guard
-          # still caps memory).
+          # the ceiling is 3,600s (measured locally per the raise rule).
+          # A failed run cost 64.1m here, 113.2m in gates and 216.2m overall,
+          # plus fresh analysis/rebuild costs for its successor (#13577).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
-          # Align ripr check's own 600s budget (#5369) with the step ceiling.
-          RIPR_CHECK_TIMEOUT: "3600"
+          # Fire the typed analysis timeout first: the inner 3,300s budget plus
+          # its 2s grace exits around 3,302s, before the 3,600s wrapper.
+          RIPR_CHECK_TIMEOUT: "3300"
           EVENT_NAME: ${{ github.event_name }}
           ADMISSION_REASON: ${{ inputs.admission-reason }}
           ADMISSION_HEAD: ${{ inputs.admission-head }}

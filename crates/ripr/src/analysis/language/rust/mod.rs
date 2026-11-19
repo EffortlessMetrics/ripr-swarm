@@ -16,6 +16,7 @@
 //! diff, dispatches to this adapter, and applies sort + summary on the
 //! returned findings.
 
+mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
@@ -1827,8 +1828,14 @@ fn apply_probe_and_oracle_limits(
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
-    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    let literal_only_related = finding.class == ExposureClass::ReachableUnrevealed
+        && related_tests_assert_only_dropped_literals(finding, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe, literal_only_related);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    // #14951: after every reach-witness limit (an uncalled owner has none) and
+    // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
+    // limit-free, whichever related-test roles the finding carries.
+    boundary_input::apply_limit(finding, probe, index);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
@@ -2124,7 +2131,13 @@ fn apply_rust_proximity_reach_limit(
     // or defining its own function of the owner's name). A test that reaches
     // the owner through a wrapper crate has no helper-transfer chain, so the
     // name-token relation alone must not read as an actionable gap (#10127).
-    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // #14968: a finding whose every related test asserts only literals
+    // (`assert!(true)`) read `weakly_exposed` from that literal alone, and
+    // that reading admitted any witness. Dropping the literal's credit
+    // lowers the class, never the limitation it named, so such a finding
+    // keeps the weak reading's admission.
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed
+        && !related_tests_assert_only_dropped_literals(finding, index);
     // The owner as the index spells it, the same form a witness's test file
     // has (the probe's own path may carry the checkout root).
     let owner = probe
@@ -2182,6 +2195,29 @@ fn apply_rust_proximity_reach_limit(
             &owner_name,
         );
     }
+}
+
+/// Whether every related test of `finding` supplied no oracle row and is an
+/// indexed test whose assertions are all dropped literal-only assertions
+/// (#14968). A row the index cannot match, an oracle row, or a list at the
+/// render cap (which may hide rows) answers `false`.
+fn related_tests_assert_only_dropped_literals(finding: &Finding, index: &RustIndex) -> bool {
+    !finding.related_tests.is_empty()
+        && finding.related_tests.len() < classify::RELATED_TESTS_RENDER_CAP
+        && finding.related_tests.iter().all(|related| {
+            let mut matching = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.name == related.name
+                        && test.start_line == related.line
+                        && (test.file == related.file || related.file.ends_with(&test.file))
+                })
+                .peekable();
+            related.oracle.is_none()
+                && matching.peek().is_some()
+                && matching.all(classify::asserts_only_dropped_literals)
+        })
 }
 
 /// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
@@ -4507,8 +4543,11 @@ mod tests {
             ).map_err(|error| error.to_string())?;
             let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
             let count = if named && !ignored { 8 } else { 9 };
+            // Each crowd row also calls a foreign `add`, so it ranks as near the
+            // owner by name just like `zz_named` (#15026). The tie keeps name
+            // order, and `zz_named` stays behind the cap.
             for n in 0..count {
-                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        let one = 0i64.add(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(one, 1);\n    }}\n"));
             }
             if named {
                 source.push_str("    #[test]\n");

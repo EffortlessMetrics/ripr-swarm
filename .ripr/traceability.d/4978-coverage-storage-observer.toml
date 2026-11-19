@@ -1,6 +1,9 @@
 [[extend]]
 id = "RIPR-SPEC-0266"
 tests = [
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::oversized_summary_keeps_bounded_memory_in_partial_record",
+  "tools/repo-policy/src/coverage_diagnostics/memory.rs::allowlisted_values_and_negative_inputs",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::live_observer_wires_memory_and_preserves_failure",
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::allocation_buckets_distinguish_profiles_builds_and_native_fixture_storage",
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::scan_limits_unavailable_roots_and_overlap_are_explicit",
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::free_space_preserves_zero_and_rejects_invalid_or_overflowed_capacity",

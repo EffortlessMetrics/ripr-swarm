@@ -190,6 +190,13 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+The block ends with one blank line. A trailing `Note:` after it (an empty
+range caveat, a working-tree or preview-language disclosure) opens directly
+after that blank line, so exactly one blank line separates them; a report
+with no trailing note keeps its final blank line (#14318).
+`--format human-full` follows the same rule: its last finding block ends
+with one blank line, and a trailing `Note:` opens directly after it.
+
 Hidden finding locations use the same shared location renderer as selected
 and full findings: paths under the analysis root carry `./` and a
 workspace-relative path. Outside-root paths, parent-traversal remainders and
@@ -543,9 +550,14 @@ of the same self type, beside the owner's impl in the same module, that takes
 no `self`, has no type or const generics, is not `async`, `unsafe` or
 cfg-gated, and returns `Self` or the type. No receiver is built when the
 target test module declares or imports another item of the type's name,
-including a module, a glob import or an import in a nested module; only
-`use super::Type;` and `use super::*;` outside a nested module are known to
-name the owner.
+including a module or `extern crate`, or holds any glob import other than
+`use super::*;`, an import of that name or a glob inside a nested module, an
+item-position macro call (including `include!`), or a macro definition that
+mentions the name (a macro call inside a function body, such as `assert!`,
+does not count); only `use super::Type;` and `use super::*;` outside a nested
+module are known to name the owner. The check is syntactic: a statement macro
+defined outside the test module, or an attribute macro, that emits an item of
+the type's name inside the scope is not seen.
 In order:
 
 1. the first call in the target test module to such a constructor whose
@@ -604,7 +616,10 @@ an entry, edition-2015 packages whose explicit entries disable discovery,
 `harness = false`, a name-only entry whose `tests/<n>.rs` and
 `tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
 `required-features`, which is omitted conservatively without default-feature
-resolution) the command is `null` and the human output says so.
+resolution) the command is `null` and the human output says so. A
+`tests/*.rs` file left undeclared under `autotests = false` is not a Cargo
+target at all, so its tests are not related tests (RIPR-SPEC-0356, #14972)
+and the stub is placed as if the file were absent.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -707,7 +722,9 @@ cannot donate shared content. Existing evidence-window disclosures stay local.
 When a visible finding contains multiline literal content, the CLI keeps the
 complete unshared layout so source text and whitespace cannot collide with
 catalogue/reference structure. Without CLI navigation, the public library preserves the previous complete
-per-finding report bytes, including repeated evidence and guidance.
+per-finding report bytes, including repeated evidence and guidance; only the
+blank line before a trailing `Note:` follows the one-blank-line rule above
+(#14318).
 
 When `ripr check` renders `human-full` itself, each rendered finding ends with
 a `Drill in:` block holding the same `ripr explain` / `ripr context --at`

@@ -33,10 +33,12 @@ use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::run_memo::{self, Product};
 use ra_ap_syntax::{
     AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasName, ast::RangeItem,
 };
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 /// The fixed disclosure a contradicted oracle carries in every evidence
@@ -1757,76 +1759,141 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
 
 /// Keep the parser's result type so the narrow boolean caller can inspect it.
 /// Existing integer callers still reject a boolean through `fold_function_text`.
+///
+/// Everything that does not depend on `arguments` (the parse, the parameter
+/// list, the range tail or the masked and tokenized block) is read once per
+/// body in a run scope: one owner is folded once per related assertion of
+/// every changed line it holds, and re-reading the body each time made a
+/// long owner cost its length squared (#11738).
 fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
-    let parse = parse_clean_source_file(body)?;
-    let function = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .find_map(ast::Fn::cast)?;
-    for ancestor in function.syntax().ancestors().skip(1) {
-        if ast::Impl::can_cast(ancestor.kind())
-            || ast::Trait::can_cast(ancestor.kind())
-            || ast::Fn::can_cast(ancestor.kind())
-        {
+    let plan = run_memo::memoize(Product::OwnerFoldPlan, 0, body, || {
+        Rc::new(FoldPlan::read(body))
+    });
+    plan.as_ref().as_ref()?.fold(arguments)
+}
+
+/// The argument-independent reading of one function text for the fold.
+struct FoldPlan {
+    names: Vec<String>,
+    widths: Vec<Option<(i128, i128)>>,
+    fold_range: Option<(i128, i128)>,
+    block: FoldPlanBlock,
+}
+
+/// What the owner's block folds through: its range-shaped tail when it is
+/// one, else its tokens.
+enum FoldPlanBlock {
+    Tail(RangeTail),
+    Tokens(Vec<Token>),
+}
+
+impl FoldPlan {
+    fn read(body: &str) -> Option<Self> {
+        #[cfg(test)]
+        FOLD_PLAN_READS.with(|reads| reads.set(reads.get() + 1));
+        let parse = parse_clean_source_file(body)?;
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)?;
+        for ancestor in function.syntax().ancestors().skip(1) {
+            if ast::Impl::can_cast(ancestor.kind())
+                || ast::Trait::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+            {
+                return None;
+            }
+        }
+        let param_list = function.param_list()?;
+        if param_list.self_param().is_some() {
             return None;
         }
-    }
-    let param_list = function.param_list()?;
-    if param_list.self_param().is_some() {
-        return None;
-    }
-    let mut names = Vec::new();
-    let mut widths = Vec::new();
-    for param in param_list.params() {
-        let ast::Pat::IdentPat(ident) = param.pat()? else {
-            return None;
+        let mut names = Vec::new();
+        let mut widths = Vec::new();
+        for param in param_list.params() {
+            let ast::Pat::IdentPat(ident) = param.pat()? else {
+                return None;
+            };
+            // A subpattern (`x @ (a, b)`) does not bind the written name alone.
+            if ident.pat().is_some() {
+                return None;
+            }
+            names.push(ident.name()?.text().to_string());
+            // A declared-width parameter bounds the inputs the real function
+            // accepts; an argument outside it names a call that cannot compile.
+            let width = param
+                .ty()
+                .and_then(|ty| declared_integer_range(&ty.syntax().text().to_string()));
+            widths.push(width);
+        }
+        // The fold uses the return type's declared width when it is a
+        // recognized integer type: release builds wrap at that width, so a
+        // mathematical result outside it does not describe a value the owner
+        // can return and the pair stays not evaluable instead of contradicting
+        // a passing wrapping assertion (#6701 review).
+        // No recognized return type: the fold keeps exact i128 arithmetic,
+        // which can only withhold credit.
+        let fold_range = function
+            .ret_type()
+            .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
+        let block = function.body()?;
+        let block = match RangeTail::of_block(&block) {
+            Some(tail) => FoldPlanBlock::Tail(tail),
+            None => {
+                // Comments and strings carry no arithmetic; masking them first
+                // keeps the tokenizer away from brace-bearing content inside
+                // either.
+                let masked = crate::analysis::extract::mask_comments_and_strings(
+                    &block.syntax().text().to_string(),
+                );
+                FoldPlanBlock::Tokens(tokenize(&masked)?)
+            }
         };
-        // A subpattern (`x @ (a, b)`) does not bind the written name alone.
-        if ident.pat().is_some() {
+        Some(Self {
+            names,
+            widths,
+            fold_range,
+            block,
+        })
+    }
+
+    fn fold(&self, arguments: &[i128]) -> Option<Value> {
+        if self.names.len() != arguments.len() {
             return None;
         }
-        names.push(ident.name()?.text().to_string());
-        // A declared-width parameter bounds the inputs the real function
-        // accepts; an argument outside it names a call that cannot compile.
-        let width = param
-            .ty()
-            .and_then(|ty| declared_integer_range(&ty.syntax().text().to_string()));
-        widths.push(width);
-    }
-    if names.len() != arguments.len() {
-        return None;
-    }
-    for (width, value) in widths.iter().zip(arguments.iter().copied()) {
-        if let Some((low, high)) = width
-            && !(*low..=*high).contains(&value)
-        {
-            return None;
+        for (width, value) in self.widths.iter().zip(arguments.iter().copied()) {
+            if let Some((low, high)) = width
+                && !(*low..=*high).contains(&value)
+            {
+                return None;
+            }
+        }
+        let environment: BTreeMap<String, i128> = self
+            .names
+            .iter()
+            .cloned()
+            .zip(arguments.iter().copied())
+            .collect();
+        match &self.block {
+            FoldPlanBlock::Tail(tail) => tail.fold(&environment, self.fold_range),
+            FoldPlanBlock::Tokens(tokens) => {
+                let uniform = self
+                    .fold_range
+                    .filter(|range| self.widths.iter().all(|width| *width == Some(*range)));
+                fold_block(tokens, &environment, self.fold_range, uniform)
+            }
         }
     }
-    // The fold uses the return type's declared width when it is a
-    // recognized integer type: release builds wrap at that width, so a
-    // mathematical result outside it does not describe a value the owner
-    // can return and the pair stays not evaluable instead of contradicting
-    // a passing wrapping assertion (#6701 review).
-    // No recognized return type: the fold keeps exact i128 arithmetic,
-    // which can only withhold credit.
-    let fold_range = function
-        .ret_type()
-        .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
-    let block = function.body()?;
-    let environment: BTreeMap<String, i128> =
-        names.into_iter().zip(arguments.iter().copied()).collect();
-    if let Some(tail) = RangeTail::of_block(&block) {
-        return tail.fold(&environment, fold_range);
-    }
-    // Comments and strings carry no arithmetic; masking them first keeps the
-    // tokenizer away from brace-bearing content inside either.
-    let masked =
-        crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
-    let tokens = tokenize(&masked)?;
-    let uniform = fold_range.filter(|range| widths.iter().all(|width| *width == Some(*range)));
-    fold_block(&tokens, &environment, fold_range, uniform)
+}
+
+#[cfg(test)]
+mod fold_plan;
+
+#[cfg(test)]
+thread_local! {
+    /// How many function texts this thread has read for the fold.
+    static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// #14419: an owner whose whole body is one range-shaped tail the token fold
