@@ -14196,6 +14196,20 @@ fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<()
             "prusti-contracts = \"0.3\"\n",
             "use prusti_contracts::*;\n",
         ),
+        (
+            "proptest",
+            "1.12.0",
+            "proptest",
+            "proptest = \"1\"\n",
+            "use proptest::prelude::*;\n",
+        ),
+        (
+            "rayon",
+            "1.12.0",
+            "rayon",
+            "rayon = \"1\"\n",
+            "use rayon::prelude::*;\n",
+        ),
     ];
     for (name, version, label, dependencies, glob) in audited {
         let at = |label: &str, lock: Option<String>| {

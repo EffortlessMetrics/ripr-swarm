@@ -112,6 +112,8 @@ is exactly one of:
 | `creusot_std::prelude::*` | creusot-std 0.14.0 |
 | `vstd::prelude::*` | vstd 0.0.0-2026-10-25-0158 |
 | `prusti_contracts::*` | prusti-contracts 0.3.3 |
+| `proptest::prelude::*` | proptest 1.12.0 |
+| `rayon::prelude::*` | rayon 1.12.0 |
 
 and the crate name resolves to its plain registry package for the importing
 file's manifest (the existing drop-in manifest authority, RIPR-SPEC-0197: no
@@ -135,6 +137,16 @@ sources (the clones are not vendored):
   `prusti_assert_eq!`, `prusti_assert_ne!`, `map!`, `seq!`, `set!`,
   `closure!` and `ghost!`. None is named `assert_eq`, `assert_ne` or any
   other trusted assertion.
+- `proptest::prelude` (#14116) re-exports `any`, `any_with`, `Arbitrary`,
+  strategy types, `ProptestConfig`, `TestCaseError`, `ProptestResultExt`,
+  the `rand` traits `Rng`, `RngExt` and `RngCore`, a `prop` module of
+  submodules, and the macros `prop_assert!`, `prop_assert_eq!`,
+  `prop_assert_ne!`, `prop_assume!`, `prop_compose!`, `prop_oneof!` and
+  `proptest!`. None is named like a trusted assertion.
+- `rayon::prelude` (#14116) is only `pub use` of thirteen parallel-iterator
+  traits (`ParallelIterator`, `IntoParallelIterator`, `ParallelSlice`, ...)
+  and exports no macro at all. On ripr's own repository these two globs were
+  the cited refusal on 68 of 72 uncredited assertions across three commits.
 
 The audit is of the listed versions only. The glob keeps assertion credit only
 when the nearest `Cargo.lock` at or above the analysis root locks the crate
