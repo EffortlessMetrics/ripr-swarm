@@ -2026,7 +2026,7 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
     let visible = visible_first_run(&manual);
     assert!(
         visible.starts_with(
-            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; the repository-wide reports in this summary still ran.\n\
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
              - Next step: open or update a pull request to get changed-behavior findings for it.\n"
         ),
         "{visible}"
@@ -2043,12 +2043,23 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
     assert!(!local.contains("No pull request in this run"), "{local}");
     assert_eq!(
         manual.replace(
-            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; the repository-wide reports in this summary still ran.\n\
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
              - Next step: open or update a pull request to get changed-behavior findings for it.\n",
             ""
         ),
         local,
         "the note is the only difference"
     );
+
+    // The event says what kind of run this is, not which stages finished: a
+    // manual run that produced no reports gets the same note, and the note
+    // claims nothing about reports having run.
+    let empty = Fixture::new("no-pull-request-no-reports")?;
+    let bare = render_event(&empty, "workflow_dispatch")?;
+    assert!(
+        visible_first_run(&bare).starts_with("- No pull request in this run: "),
+        "{bare}"
+    );
+    assert!(!bare.contains("still ran"), "{bare}");
     Ok(())
 }

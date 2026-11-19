@@ -5508,10 +5508,10 @@ fn a_manual_run_summary_says_there_is_no_pull_request() -> Result<(), Box<dyn Er
         }
         Ok(String::from_utf8(output.stdout)?)
     };
-    let manual = summary("workflow_dispatch");
-    let pull_request = summary("pull_request");
+    // The directory is kept when a run fails, for inspection.
+    let manual = summary("workflow_dispatch")?;
+    let pull_request = summary("pull_request")?;
     let _ = fs::remove_dir_all(&root);
-    let (manual, pull_request) = (manual?, pull_request?);
     assert!(
         manual.contains("#### First-run status\n- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced."),
         "{manual}"

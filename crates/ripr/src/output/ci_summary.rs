@@ -467,7 +467,7 @@ impl Summary {
             return;
         }
         self.line(&format!(
-            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; the repository-wide reports in this summary still ran.",
+            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.",
             code_span(event_name)
         ));
         self.line(

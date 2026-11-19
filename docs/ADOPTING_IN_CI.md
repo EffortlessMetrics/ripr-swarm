@@ -125,8 +125,8 @@ lines:
   workflow checks out with `fetch-depth: 0`; a shallow checkout (a lower
   `fetch-depth`, or another checkout action) cannot compare against the base.
 - `No pull request in this run` appears on a manual run (`workflow_dispatch`).
-  The repository-wide reports still run; the changed-behavior findings need a
-  pull request.
+  Repository-wide reports do not need a pull request; the changed-behavior
+  findings do.
 
 ## Fork and Dependabot pull requests
 
