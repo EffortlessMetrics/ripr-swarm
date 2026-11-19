@@ -1,5 +1,6 @@
 use super::super::owner_call_is_direct;
 use crate::analysis::RustIndex;
+use crate::analysis::facts::{FunctionContainer, FunctionFact};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use std::path::{Path, PathBuf};
 
@@ -29,16 +30,39 @@ fn parsed_index(production: &str, test_body: &str) -> Result<RustIndex, String> 
     Ok(index)
 }
 
+/// Which owner a case means.
+#[derive(Clone, Copy)]
+enum Owner {
+    /// The `Counter` trait declaration's default `advance`. Its symbol id
+    /// carries no `impl` segment, so it is selected by its container.
+    DefaultAdvance,
+    /// The function whose symbol id ends in this suffix.
+    IdSuffix(&'static str),
+}
+
+fn is_owner(function: &FunctionFact, owner: Owner) -> bool {
+    match owner {
+        Owner::DefaultAdvance => {
+            function.name == "advance"
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::Trait { trait_name } if trait_name == "Counter"
+                )
+        }
+        Owner::IdSuffix(suffix) => function.id.0.ends_with(suffix),
+    }
+}
+
 /// Whether `ripr check`'s owner-call relation credits the one test as a
-/// direct call of the owner whose symbol id ends in `owner_suffix`.
-fn direct(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool, String> {
+/// direct call of `owner`.
+fn direct(production: &str, owner: Owner, test_body: &str) -> Result<bool, String> {
     let index = parsed_index(production, test_body)?;
     let functions = index.functions();
     let mut owners = functions
         .iter()
-        .filter(|function| function.id.0.ends_with(owner_suffix));
+        .filter(|function| is_owner(function, owner));
     let (Some(owner), None) = (owners.next(), owners.next()) else {
-        return Err(format!("exactly one owner ends in `{owner_suffix}`"));
+        return Err("exactly one owner matches".to_string());
     };
     let tests = index.tests();
     let (Some(test), None) = (tests.iter().next(), tests.iter().nth(1)) else {
@@ -50,23 +74,34 @@ fn direct(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool,
     Ok(owner_call_is_direct(test, owner, &index))
 }
 
-const DEFAULT_ADVANCE: &str = "trait Counter::advance";
-
-/// The parsed id of the default method, so a renamed id fails loudly instead
-/// of every case below passing on a missing owner.
+/// The parsed index holds exactly the default and `Fast`'s override, so a
+/// changed container or id fails loudly instead of every case below passing
+/// on a missing owner.
 #[test]
 fn the_default_method_owner_is_the_trait_declaration() -> Result<(), String> {
     let index = parsed_index(COUNTER, "Unit.advance();")?;
-    let ids: Vec<String> = index
-        .functions()
+    let functions = index.functions();
+    let advances: Vec<&FunctionFact> = functions
         .iter()
         .filter(|function| function.name == "advance")
-        .map(|function| function.id.0.clone())
         .collect();
-    assert_eq!(ids.len(), 2, "{ids:?}");
+    assert_eq!(advances.len(), 2);
+    assert_eq!(
+        advances
+            .iter()
+            .filter(|function| is_owner(function, Owner::DefaultAdvance))
+            .count(),
+        1
+    );
     assert!(
-        ids.iter().any(|id| id.ends_with(DEFAULT_ADVANCE)),
-        "{ids:?}"
+        advances
+            .iter()
+            .any(|function| function.id.0.ends_with("impl Counter for Fast::advance")),
+        "{:?}",
+        advances
+            .iter()
+            .map(|function| function.id.0.as_str())
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
@@ -77,18 +112,17 @@ fn the_default_method_owner_is_the_trait_declaration() -> Result<(), String> {
 fn calls_on_an_overriding_type_do_not_reach_the_default() -> Result<(), String> {
     for body in [
         "assert_eq!(Fast.advance(), 8);",
-        "let f = Fast; assert_eq!(f.advance(), 8);",
         "assert_eq!(Counter::advance(&Fast), 8);",
         "assert_eq!(<Fast as Counter>::advance(&Fast), 8);",
         "assert_eq!(Fast.advance(), 8); assert_eq!(Counter::advance(&Fast), 8);",
     ] {
-        assert!(!direct(COUNTER, DEFAULT_ADVANCE, body)?, "{body}");
+        assert!(!direct(COUNTER, Owner::DefaultAdvance, body)?, "{body}");
     }
     Ok(())
 }
 
-/// A call on a type that keeps the default, one ripr cannot type, or a mix
-/// keeps the direct relation: the default may run.
+/// A call on a type that keeps the default, one ripr cannot type, a mix, or
+/// a path value keeps the direct relation: the default may run.
 #[test]
 fn a_call_that_may_run_the_default_keeps_the_relation() -> Result<(), String> {
     for body in [
@@ -97,13 +131,14 @@ fn a_call_that_may_run_the_default_keeps_the_relation() -> Result<(), String> {
         "assert_eq!(Fast.advance(), 8); assert_eq!(Unit.advance(), 8);",
         "let c = make(); assert_eq!(c.advance(), 8);",
         "fn run<C: Counter>(c: &C) -> u32 { c.advance() } assert_eq!(run(&Unit), 8);",
+        "assert_eq!(Fast.advance(), 8); let f = Counter::advance; assert_eq!(f(&Unit), 8);",
     ] {
-        assert!(direct(COUNTER, DEFAULT_ADVANCE, body)?, "{body}");
+        assert!(direct(COUNTER, Owner::DefaultAdvance, body)?, "{body}");
     }
     Ok(())
 }
 
-const TRAIT_AREA: &str = "impl Shape for Square::area";
+const TRAIT_AREA: Owner = Owner::IdSuffix("impl Shape for Square::area");
 
 /// #15273: method-call syntax on `Square` runs the inherent `area` first.
 #[test]
@@ -118,10 +153,9 @@ fn method_calls_taken_by_an_inherent_twin_do_not_reach_the_trait_impl() -> Resul
 }
 
 /// A test that names the trait may dispatch through it (`Shape::area`,
-/// `<Square as Shape>`, `dyn Shape`), and an inherent twin with no `self`
-/// cannot take a method call, so both keep the relation.
+/// `<Square as Shape>`, `dyn Shape`), so it keeps the relation.
 #[test]
-fn a_trait_spelling_or_an_associated_twin_keeps_the_relation() -> Result<(), String> {
+fn a_trait_spelling_keeps_the_relation() -> Result<(), String> {
     for body in [
         "assert_eq!(Shape::area(&Square(3)), 9);",
         "assert_eq!(<Square as Shape>::area(&Square(3)), 9);",
@@ -129,9 +163,30 @@ fn a_trait_spelling_or_an_associated_twin_keeps_the_relation() -> Result<(), Str
     ] {
         assert!(direct(SHAPE, TRAIT_AREA, body)?, "{body}");
     }
-    let associated = SHAPE.replace("pub fn area(&self)", "pub fn area()");
+    Ok(())
+}
+
+/// A twin with no `self`, or with another receiver kind, does not take the
+/// method call first: method probing reaches a trait impl's `&self` step
+/// before an inherent `&mut self`, and a by-value trait impl before an
+/// inherent `&self`.
+#[test]
+fn a_twin_with_another_receiver_kind_keeps_the_relation() -> Result<(), String> {
+    for twin in ["pub fn area()", "pub fn area(&mut self)"] {
+        let production = SHAPE.replace("pub fn area(&self)", twin);
+        assert!(
+            direct(&production, TRAIT_AREA, "assert_eq!(Square(3).area(), 9);")?,
+            "{twin}"
+        );
+    }
+    let by_value = SHAPE
+        .replace("fn area(&self) -> u32;", "fn area(self) -> u32;")
+        .replace(
+            "fn area(&self) -> u32 { self.0 * self.0 }",
+            "fn area(self) -> u32 { self.0 * self.0 }",
+        );
     assert!(direct(
-        &associated,
+        &by_value,
         TRAIT_AREA,
         "assert_eq!(Square(3).area(), 9);"
     )?);

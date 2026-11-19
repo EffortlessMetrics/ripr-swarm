@@ -44,6 +44,9 @@ pub(super) fn every_call_runs_an_override(
     }
     let masked = mask_comments_and_strings(&test.body);
     let name = owner.name.as_str();
+    if !every_mention_is_a_call(&masked, name) {
+        return false;
+    }
     let mut sites = method_call_sites(&masked, name).peekable();
     if sites.peek().is_none() {
         return false;
@@ -123,13 +126,21 @@ pub(super) fn inherent_twin_takes_every_call(
     if twin_ids.is_empty() {
         return false;
     }
+    // Method probing tries each receiver step (by value, `&`, `&mut`) in
+    // turn, inherent before trait only within one step, so the twin takes the
+    // call only when it has the same receiver kind. Its self type must be the
+    // same spelling, so `impl Square<u8>` never stands for `Square<u16>`.
+    let Some(owner_receiver) = receiver_kind(&owner.body) else {
+        return false;
+    };
     let twin_has_self_receiver = index.functions().iter().any(|function| {
         twin_ids.contains(&function.id.0.as_str())
             && function.item.has_self_param
+            && receiver_kind(&function.body) == Some(owner_receiver)
             && matches!(
                 &function.item.container,
                 FunctionContainer::Inherent { self_ty: other }
-                    if compact_impl_type_name(other).as_deref() == Some(base.as_str())
+                    if compact_spelling(other) == compact_spelling(self_ty)
             )
     });
     if !twin_has_self_receiver {
@@ -140,6 +151,9 @@ pub(super) fn inherent_twin_takes_every_call(
         return false;
     }
     let name = owner.name.as_str();
+    if !every_mention_is_a_call(&masked, name) {
+        return false;
+    }
     let mut sites = method_call_sites(&masked, name).peekable();
     if sites.peek().is_none() {
         return false;
@@ -151,8 +165,57 @@ pub(super) fn inherent_twin_takes_every_call(
 
 /// Whether `ident` appears in `text` as a whole identifier.
 fn mentions_identifier(text: &str, ident: &str) -> bool {
+    identifier_mentions(text, ident) > 0
+}
+
+/// How many times `ident` appears in `text` as a whole identifier.
+fn identifier_mentions(text: &str, ident: &str) -> usize {
     text.match_indices(ident)
-        .any(|(at, _)| ident_boundary(text, at, at + ident.len()))
+        .filter(|(at, _)| ident_boundary(text, *at, at + ident.len()))
+        .count()
+}
+
+/// Whether every mention of `name` is a call: a path value such as
+/// `.map(Counter::advance)` may run the owner through a receiver this
+/// reading never types.
+fn every_mention_is_a_call(text: &str, name: &str) -> bool {
+    identifier_mentions(text, name) == method_call_sites(text, name).count()
+}
+
+/// The kind of a method's `self` receiver read from its `fn` text: by value
+/// (`self`, `mut self`), shared (`&self`, `&'a self`) or exclusive
+/// (`&mut self`). `None` for a typed receiver (`self: Box<Self>`) or a
+/// signature this cannot read.
+fn receiver_kind(body: &str) -> Option<ReceiverKind> {
+    let open = body.find('(')?;
+    let rest = &body[open + 1..];
+    let end = rest.find([',', ')'])?;
+    let receiver = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    if receiver == "self" || receiver == "mut self" {
+        return Some(ReceiverKind::Value);
+    }
+    let after_ref = receiver.strip_prefix('&')?.trim_start();
+    let after_lifetime = match after_ref.strip_prefix('\'') {
+        Some(lifetime) => lifetime.split_once(' ').map_or("", |(_, tail)| tail),
+        None => after_ref,
+    };
+    match after_lifetime.trim_start() {
+        "self" => Some(ReceiverKind::Shared),
+        "mut self" => Some(ReceiverKind::Exclusive),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReceiverKind {
+    Value,
+    Shared,
+    Exclusive,
+}
+
+/// A type spelling with its whitespace removed.
+fn compact_spelling(ty: &str) -> String {
+    ty.split_whitespace().collect()
 }
 
 #[cfg(test)]
