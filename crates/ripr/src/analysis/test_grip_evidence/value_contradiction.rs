@@ -1895,7 +1895,7 @@ mod fold_plan;
 #[cfg(test)]
 thread_local! {
     /// How many function texts this thread has read for the fold.
-    static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::analysis::test_grip_evidence) static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// #14419: an owner whose whole body is one range-shaped tail the token fold
