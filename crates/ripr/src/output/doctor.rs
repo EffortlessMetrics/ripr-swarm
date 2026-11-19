@@ -189,6 +189,13 @@ impl DoctorFirstCommand {
             .any(|check| check.name == "config" && check.status == DoctorCheckStatus::Fail)
         {
             Self::InvalidConfig
+        } else if report.checks.iter().any(|check| {
+            check.name == OUTPUT_LOCATION_CHECK && check.status == DoctorCheckStatus::Fail
+        }) {
+            // #14114: every analysis command, whole-repository pilot
+            // included, refuses this output location, so it outranks the
+            // git-state routes that would recommend one of them.
+            Self::FailedPrerequisites
         } else if !git_tool_can_run(report) {
             // `--diff PATH` still loads the same crate and required
             // runtimes. A named cargo_toml / runtime failure outranks the
@@ -7139,6 +7146,45 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// #14114: pilot refuses the same output location, so a root outside
+    /// Git or with an unborn `HEAD` must not be sent to pilot exploration.
+    #[test]
+    fn output_location_failure_outranks_the_pilot_routes() {
+        for name in ["git_repository", "git_head"] {
+            let mut report = DoctorReport::new(".");
+            for passing in ["root_directory", "cargo_toml", "tool_git"] {
+                report.add_check(passing, DoctorStatus::Pass, None);
+            }
+            if name == "git_head" {
+                report.add_check("git_repository", DoctorStatus::Pass, None);
+                report.add_advisory_check("git_head", "unborn HEAD".to_string());
+            } else {
+                report.add_check("git_repository", DoctorStatus::Fail, None);
+            }
+            let without = DoctorFirstCommand::resolve_for_report(&report, || false);
+            assert!(
+                matches!(
+                    without,
+                    DoctorFirstCommand::OutsideGit | DoctorFirstCommand::UnbornHead
+                ),
+                "{name}: {without:?}"
+            );
+            report.add_check(
+                OUTPUT_LOCATION_CHECK,
+                DoctorStatus::Fail,
+                Some("refused".to_string()),
+            );
+            let first = DoctorFirstCommand::resolve_for_report(&report, || false);
+            assert_eq!(first, DoctorFirstCommand::FailedPrerequisites, "{name}");
+            assert_eq!(
+                doctor_recovery_for_first_command(first, &report)
+                    .map(|recovery| recovery.check_name),
+                Some(OUTPUT_LOCATION_CHECK.to_string()),
+                "{name}"
+            );
+        }
     }
 
     /// #14114: a regular file named `target` is refused on Unix because

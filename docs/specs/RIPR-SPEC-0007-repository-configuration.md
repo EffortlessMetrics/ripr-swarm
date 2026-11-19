@@ -139,6 +139,14 @@ see skips ignored records inside a `target/ripr` tree, at the repository top
 or under a nested root: ripr's own output is not source, so it costs no walk
 of the cache and cannot fail a check through that probe's git calls.
 
+Doctor runs the same output containment guard without writing (#14114).
+When `ripr check` and `ripr pilot` would refuse the default output location,
+because `target` is a regular file or a link that dangles, loops or leaves the
+workspace, doctor fails an `output_location` check with the guard's reason,
+recommends no analysis command, including whole-repository pilot, and drops its
+`✓ Cache` line. `RIPR_CACHE_DIR` waives the check exactly as it waives the guard,
+and a usable output location adds no check.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
