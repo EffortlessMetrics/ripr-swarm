@@ -17,8 +17,7 @@
 
 use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
-    AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
-    bounded_document,
+    AttemptFailure, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession, bounded_document,
 };
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
@@ -399,6 +398,11 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if let Some(limitation) =
+        crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
+    {
+        limitations.push(limitation.to_string());
+    }
     // Ordinary next-action displays bind the portable root, like the repair
     // card: presentation only, never execution authority (ADR 0022).
     // Trust-bound or store-qualified continuations keep the persisted
@@ -581,10 +585,16 @@ pub(super) fn durable_receipt_document(
         }
         RepairAttemptState::ReadyToFinish => match load_attempt_terminal_receipt(root, manifest) {
             AttemptTerminalReceipt::NotRetained => {
-                let receipt = json!({
-                    "status": "not_retained",
-                    "note": "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository",
-                });
+                let note = if manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+                {
+                    "no focused terminal receipt is retained; inspect `ripr agent status --attempt <id>` and the original after-phase outcome before retrying or starting a new attempt"
+                } else {
+                    "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository"
+                };
+                let receipt = json!({ "status": "not_retained", "note": note });
                 ("verification_pending", receipt)
             }
             AttemptTerminalReceipt::Unavailable { path, reason } => {
@@ -690,9 +700,8 @@ pub(super) fn durable_receipt_document(
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
-/// default `ripr_refresh` analyses the committed diff and does not see an
-/// uncommitted edit, so the re-check names `source: "worktree"` (audit
-/// finding 2).
+/// re-check names `source: "worktree"` (audit finding 2) so it reads the saved
+/// edit explicitly instead of relying on the default selection (#13096).
 ///
 /// The re-check must analyse the same scope as the snapshot the agent read, so
 /// it carries that snapshot's explicit base (#13196). A snapshot analysed
@@ -709,7 +718,7 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
             "tool": "ripr_refresh",
             "arguments": arguments,
         },
-        "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
+        "note": "run the project's tests yourself (ripr executes nothing); source worktree reads your saved test edit",
     })
 }
 
@@ -748,8 +757,8 @@ fn refusal_next(
         ),
         "worktree_source_not_committed" => (
             "commit_then_refresh",
-            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with the default committed source",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with source committed",
+            json!({ "tool": "ripr_refresh", "arguments": { "source": "committed" } }),
             Value::Null,
         ),
         // A producer readiness fact is read from the committed source and
@@ -842,13 +851,8 @@ impl WorkspaceSession {
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -954,7 +958,10 @@ impl WorkspaceSession {
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
                 "oracle_strength": fix_site.oracle_strength,
-                "established_by": if fix_site.oracle_strength != "strong" {
+                "new_test_kind": fix_site.new_test_kind,
+                "established_by": if fix_site.new_test_kind.is_some() {
+                    "the producer-owned new-test proposal the shared repair gate admitted as this seam's one repair target (the same target `ripr agent repair --phase before` confines the edit to); no existing test is extended, so `test_name`, `line` and `oracle` are empty"
+                } else if fix_site.oracle_strength != "strong" {
                     "the high-confidence directly-related producer test that reaches the changed behavior without pinning the named missing discriminator; extend this test, as `ripr repair` does, rather than adding a new one"
                 } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
@@ -975,10 +982,7 @@ impl WorkspaceSession {
             },
             "command_routes": Value::Array(Vec::new()),
             "command_route_limitation": "concrete typed CommandSpec routes are published only by the durable CLI before phase (`ripr agent repair --phase before`); this session never executes commands and never reconstructs argv from display prose",
-            "limitations": [
-                "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target",
-                "the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt",
-            ],
+            "limitations": prepare_limitations(&fix_site),
             "non_claims": NON_CLAIMS,
             "links": {
                 "gap": format!("ripr://gap/{}", item.canonical_id),
@@ -1201,6 +1205,20 @@ impl WorkspaceSession {
     }
 }
 
+/// The packet's limitations. The target-admission caveat applies only to an
+/// existing-test fix site; a proposal fix site is the shared gate's own
+/// admitted target, whose file-exists, symlink and manifest preflight runs at
+/// the CLI start (`ripr agent repair --phase before`), not here.
+fn prepare_limitations(fix_site: &RepairFixSite) -> Vec<&'static str> {
+    let mut limitations = vec![if fix_site.new_test_kind.is_none() {
+        "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target"
+    } else {
+        "the fix site is the new-test proposal the shared repair gate admitted; the file-exists, symlink and owning-manifest preflight runs at the CLI start (`ripr agent repair --phase before`), not in this session"
+    }];
+    limitations.push("the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt");
+    limitations
+}
+
 /// The module confinement of an inline-test fix site (#5516), or null for a
 /// test-surface fix site. New test functions go inside the governed module
 /// only; the CLI before phase captures the same module and the after phase
@@ -1282,7 +1300,7 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::workspace::CODE_STALE_SNAPSHOT;
+    use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
     use crate::domain::DiscriminatorShape;
@@ -1333,8 +1351,11 @@ pub(super) mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -1355,6 +1376,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1549,6 +1571,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1582,6 +1605,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -2614,7 +2638,8 @@ pub(super) mod tests {
             RECEIPT_FIXTURE_SEAM,
             &retained_packet_path,
             Some(finished.repair_attempt_id.as_str()),
-        )?;
+        )
+        .map_err(|error| error.message())?;
         let reading = AgentReceiptReading::from_value(&receipt);
         if reading.status.as_deref() != Some(case.producer_status)
             || reading.movement.as_deref() != Some(case.movement)
@@ -3433,5 +3458,83 @@ pub(super) mod tests {
         ] {
             assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
+    }
+
+    fn fix_site(inline_module: Option<&str>, new_test_kind: Option<&'static str>) -> RepairFixSite {
+        RepairFixSite {
+            test_name: String::new(),
+            file: "src/lib.rs".to_string(),
+            line: 0,
+            oracle: None,
+            oracle_kind: "none",
+            oracle_strength: "none",
+            inline_test_module: inline_module.map(str::to_string),
+            new_test_kind,
+        }
+    }
+
+    #[test]
+    fn prepare_limitations_distinguish_existing_test_grip_from_an_admitted_proposal() {
+        let existing = prepare_limitations(&fix_site(None, None));
+        assert_eq!(existing.len(), 2);
+        assert!(existing[0].contains("target-admission authority has not run"));
+        assert!(!existing[0].contains("new-test proposal"));
+        let proposal = prepare_limitations(&fix_site(None, Some("integration")));
+        assert_eq!(proposal.len(), 2);
+        assert!(proposal[0].contains("new-test proposal the shared repair gate admitted"));
+        assert!(!proposal[0].contains("target-admission authority has not run"));
+        // Both always state that the transaction dies with the session.
+        for limitations in [&existing, &proposal] {
+            assert!(limitations[1].contains("the transaction is in-memory"));
+            assert!(limitations[1].contains("ripr_get_repair_attempt"));
+        }
+    }
+
+    #[test]
+    fn inline_test_module_boundary_confines_new_tests_to_the_governed_module() {
+        assert_eq!(
+            inline_test_module_boundary(&fix_site(None, None)),
+            Value::Null
+        );
+        let boundary = inline_test_module_boundary(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(boundary["file"], "src/lib.rs");
+        assert_eq!(boundary["module"], "tests");
+        let text = boundary["boundary"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("inside this inline test module only"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "production code, the module declaration and existing tests stay unchanged"
+            )
+        );
+        assert_eq!(boundary.as_object().map(serde_json::Map::len), Some(3));
+    }
+
+    #[test]
+    fn must_not_change_swaps_the_production_statement_for_the_inline_module_cage() {
+        use crate::output::agent_seam_packets::{
+            EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING,
+            inline_test_module_edit_statement,
+        };
+        assert_eq!(
+            must_not_change(&fix_site(None, None)),
+            vec![
+                EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        let inline = must_not_change(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(
+            inline,
+            vec![
+                inline_test_module_edit_statement("src/lib.rs", "tests"),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        assert!(inline[0].contains("src/lib.rs"));
+        assert!(inline[0].contains("mod tests"));
+        assert!(!inline.contains(&EDIT_CAGE_PRODUCTION_STATEMENT.to_string()));
     }
 }

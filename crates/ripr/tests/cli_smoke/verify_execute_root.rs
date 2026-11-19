@@ -97,9 +97,16 @@ fn root_failure_can_recover_with_a_producer_packet_and_usage_stays_empty() -> Te
         &["agent", "verify-execute", "--root", ".", "--json"],
     )?;
     assert_eq!(malformed.status.code(), Some(2));
-    assert!(
-        malformed.stdout.is_empty(),
-        "argv errors must not invent an attempt"
+    // Argv errors must not invent an attempt: under `--json` the only stdout
+    // is the minimal `cli_refusal` document (#14877), never a result.
+    let refusal: Value = serde_json::from_slice(&malformed.stdout)?;
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["error"]["code"], "missing_required", "{refusal}");
+    assert_eq!(refusal["error"]["token"], "--packet", "{refusal}");
+    assert_eq!(
+        refusal.as_object().map(|keys| keys.len()),
+        Some(4),
+        "argv errors must not invent an attempt: {refusal}"
     );
     assert!(String::from_utf8_lossy(&malformed.stderr).contains("requires --packet"));
     assert!(!root.join("result.json").exists());

@@ -527,3 +527,61 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (32)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (33)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (34)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (35)
+
+Reason:
+RIPR-SPEC-0094: a literal-only assertion reads no value and supplies no oracle (#14968)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (36)
+
+Reason:
+RIPR-SPEC-0094: an unconditional literal-only assertion reads as absent, so the row names no oracle text (#14968)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`

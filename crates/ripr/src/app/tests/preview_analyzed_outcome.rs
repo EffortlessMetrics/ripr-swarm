@@ -66,6 +66,7 @@ fn shared_preview_completion_predicate_fails_closed_for_every_non_success_status
         sample_paths: vec!["src/app.py".to_string()],
         javascript_file_count: 0,
         enabled: true,
+        nested_packages: Vec::new(),
     };
     if !advisory.analyzed(&[]) {
         return Err("an enabled routed run without a failure record must be analyzed".to_string());
@@ -555,7 +556,7 @@ fn excluded_only_typescript_diff_discloses_skipped_scope_in_human_and_json() -> 
         }
         let human = crate::render_check(&output, &crate::OutputFormat::Human)?;
         if !human.contains("Analysis outcome: limitations below (analysis incomplete)")
-            || !human.contains("Limitation: some changed files were not analyzed during language analysis; affected items: 1;")
+            || !human.contains("Limitation: some files were not fully analyzed during language analysis; affected items: 1;")
             || !human.contains("vendor/lib.ts")
             || human.contains("analyzed under preview support")
         {

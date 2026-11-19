@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `base == 0`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `computePrice`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `base == 0`.", "related test tests/pricing.test.ts:3 computePrice returns expected uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator base == 0: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],

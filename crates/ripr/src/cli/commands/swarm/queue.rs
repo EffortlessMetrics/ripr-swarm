@@ -27,7 +27,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --root requires a non-empty path; pass a value right after --root".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--root", "swarm queue --root requires a non-empty path; pass a value right after --root"));
                 }
                 let reconciled = reconcile_root(&root, root_explicit, value, "swarm queue")?;
                 root = reconciled;
@@ -37,7 +37,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--gap-ledger", "swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger"));
                 }
                 gap_ledger = PathBuf::from(value);
             }
@@ -45,7 +45,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--language")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --language requires a non-empty language; pass a value right after --language".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--language", "swarm queue --language requires a non-empty language; pass a value right after --language"));
                 }
                 language = value.to_string();
             }

@@ -221,9 +221,9 @@ pub(crate) fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::AllFeaturesCheck,
             ProductGateRole::Required,
             rust.clone(),
-            "cargo check -p ripr --all-targets --all-features",
-            "feature-gated ripr targets, including tests, type-check",
-            "does not run or lint feature-gated tests",
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            "all-feature ripr targets, including tests, type-check and satisfy the configured lint contract",
+            "does not execute feature-gated tests or check every feature combination",
         ),
         gate(
             ProductGateId::Clippy,
@@ -548,8 +548,8 @@ mod tests {
     }
 
     /// The one condition a declared runner step may carry (#10507): the hosted caller
-    /// passes `test-shards: 4` and `rust-test-shards.yml` runs the same selection as
-    /// four partitions. Only the nextest row may carry it, spelled exactly, so the
+    /// passes `test-shards: 2` and `rust-test-shards.yml` runs the same selection as
+    /// two partitions. Only the nextest row may carry it, spelled exactly, so the
     /// doctest row and every other `if:` spelling stay rejected.
     const SANCTIONED_SHARD_CONDITION: &str = "        if: inputs.test-shards == 1";
 
@@ -604,11 +604,25 @@ mod tests {
         let lines = workflow_command_lines(workflow);
         let mut violations = Vec::new();
         for gate in product_gate_definitions() {
-            if !lines.contains(&gate.command) {
+            // The canonical leaf commands remain valid focused reruns. The
+            // required workflow executes these predicates inside ci-policy,
+            // whose original leaf owners and failure propagation are retained.
+            let command = match gate.id {
+                ProductGateId::Dependencies
+                | ProductGateId::ProcessPolicy
+                | ProductGateId::NetworkPolicy => "cargo xtask ci-policy",
+                _ => gate.command,
+            };
+            // The shared producer preserves two obligations, not a blanket
+            // credit for other evidence gates or an earlier report on disk.
+            let joint_fixture_producer =
+                matches!(gate.id, ProductGateId::Goldens | ProductGateId::Fixtures)
+                    && lines.contains(&"cargo xtask goldens check-with-fixtures");
+            if !lines.contains(&command) && !joint_fixture_producer {
                 violations.push(format!(
                     "{} command `{}` is not executed by the required workflow",
                     gate.id.as_str(),
-                    gate.command
+                    command
                 ));
             }
         }
@@ -796,6 +810,58 @@ mod tests {
         assert_eq!(
             required_workflow_runner_violations(REQUIRED_WORKFLOW),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn collected_policy_predicates_require_their_workflow_owner() {
+        let missing = REQUIRED_WORKFLOW.replace("run: cargo xtask ci-policy", "run: echo omitted");
+        assert_ne!(missing, REQUIRED_WORKFLOW);
+        let violations = required_workflow_runner_violations(&missing);
+        for id in [
+            ProductGateId::Precommit,
+            ProductGateId::Dependencies,
+            ProductGateId::ProcessPolicy,
+            ProductGateId::NetworkPolicy,
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|message| message.starts_with(id.as_str()))
+            );
+        }
+    }
+
+    #[test]
+    fn joint_fixture_command_preserves_both_required_obligations() {
+        let joint = "cargo xtask goldens check-with-fixtures";
+        for (replacement, missing) in [
+            ("cargo xtask goldens check", ProductGateId::Fixtures),
+            ("cargo xtask fixtures", ProductGateId::Goldens),
+            ("true", ProductGateId::Goldens),
+            ("true", ProductGateId::Fixtures),
+            (
+                "cargo xtask goldens check-with-fixtures || true",
+                ProductGateId::Fixtures,
+            ),
+        ] {
+            let changed = REQUIRED_WORKFLOW.replace(joint, replacement);
+            assert_ne!(changed, REQUIRED_WORKFLOW);
+            assert!(
+                required_workflow_runner_violations(&changed)
+                    .iter()
+                    .any(|violation| violation.starts_with(missing.as_str()))
+            );
+        }
+        let missing = REQUIRED_WORKFLOW.replace(
+            "run: cargo xtask check-evidence-promotion-honesty",
+            "run: true",
+        );
+        assert_ne!(missing, REQUIRED_WORKFLOW);
+        assert!(
+            required_workflow_runner_violations(&missing)
+                .iter()
+                .any(|violation| violation.contains("check-evidence-promotion-honesty"))
         );
     }
 

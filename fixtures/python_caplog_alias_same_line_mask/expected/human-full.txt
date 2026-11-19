@@ -59,5 +59,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_caplog_alias_same_line_mask/input --diff <cwd>/fixtures/python_caplog_alias_same_line_mask/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
   ripr context --root <cwd>/fixtures/python_caplog_alias_same_line_mask/input --diff <cwd>/fixtures/python_caplog_alias_same_line_mask/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

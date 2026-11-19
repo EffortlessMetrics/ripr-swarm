@@ -46,7 +46,7 @@ impl Drop for Fixture {
     }
 }
 
-fn rendered(source: &str, generator: bool) -> Result<(), String> {
+fn rendered(source: &str, generator: bool, allowed: &[ExposureClass]) -> Result<(), String> {
     let fixture = Fixture::new(source)?;
     let output = check_workspace(CheckInput {
         root: fixture.0.clone(),
@@ -59,15 +59,13 @@ fn rendered(source: &str, generator: bool) -> Result<(), String> {
         !output.findings.is_empty(),
         "changed subject remains visible"
     );
-    let expected = if generator {
-        ExposureClass::StaticUnknown
-    } else {
-        ExposureClass::NoStaticPath
-    };
-    assert!(output.findings.iter().all(|f| f.class == expected));
+    assert!(output.findings.iter().all(|f| allowed.contains(&f.class)));
     for format in [OutputFormat::Json, OutputFormat::HumanFull] {
         let text = render_check(&output, &format)?;
-        assert!(text.contains(expected.as_str()), "{text}");
+        assert!(
+            allowed.iter().any(|class| text.contains(class.as_str())),
+            "{text}"
+        );
         assert_eq!(
             text.contains("test-input generator changes test stimulus"),
             generator,
@@ -96,7 +94,7 @@ fn verified_generator_remains_visible_in_json_and_human() -> Result<(), String> 
     compiler_environment::plain(
         module_path!(),
         "verified_generator_remains_visible_in_json_and_human",
-        || rendered(SOURCE, true),
+        || rendered(SOURCE, true, &[ExposureClass::StaticUnknown]),
     )
 }
 
@@ -113,10 +111,11 @@ fn lookalike_and_ordinary_arbitrary_keep_production_gap_in_rendered_output() -> 
                 )
                 .replace("impl quickcheck::Arbitrary", "impl Arbitrary")
                 .replace("u8::arbitrary(g)", "0u8");
-            rendered(&lookalike, false)?;
+            rendered(&lookalike, false, &[ExposureClass::NoStaticPath])?;
             rendered(
                 "pub fn arbitrary(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
                 false,
+                &[ExposureClass::NoStaticPath],
             )
         },
     )
@@ -128,6 +127,14 @@ fn compiler_wrapper_keeps_generator_as_a_product_gap() -> Result<(), String> {
         module_path!(),
         "compiler_wrapper_keeps_generator_as_a_product_gap",
         "verified_generator_remains_visible_in_json_and_human",
-        || rendered(SOURCE, false),
+        // An `Arbitrary` impl is a method of a foreign trait, which generic
+        // code may run, so its product gap may read undecided.
+        || {
+            rendered(
+                SOURCE,
+                false,
+                &[ExposureClass::NoStaticPath, ExposureClass::InfectionUnknown],
+            )
+        },
     )
 }

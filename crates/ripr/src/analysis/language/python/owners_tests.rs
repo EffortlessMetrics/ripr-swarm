@@ -23,6 +23,9 @@ use rustpython_parser::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod route_body;
+use route_body::{bare_dict_annotation, body_returning_annotation, route_returns_body};
+
 #[cfg(test)]
 pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
     extract_source_facts(file, source).owners
@@ -169,24 +172,36 @@ pub(super) fn collect_owners_from_statements(
 
 fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut Vec<PythonOwner>) {
     match stmt {
-        Stmt::FunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            false,
-        )),
-        Stmt::AsyncFunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            true,
-        )),
+        Stmt::FunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                false,
+            );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                true,
+            );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
         _ => {}
     }
 }
@@ -561,6 +576,12 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    let route_returns_body = !route_paths.is_empty()
+        && route_returns_body(decorators, body)
+        && !super::module_constants::mentions_identifier(
+            &text_for_range(context.source, range),
+            "yield",
+        );
     let route_methods = collect_static_route_methods(context.source, decorators);
     let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
@@ -620,6 +641,7 @@ fn owner_from_function(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
             context.module_constants,
@@ -633,6 +655,7 @@ fn owner_from_function(
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
             direct_statements: direct_expression_statements(context.source, body),
+            direct_class_return: direct_class_return(body),
             bound_names: super::module_constants::function_bound_names(
                 args,
                 body,
@@ -646,6 +669,32 @@ fn owner_from_function(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body,
+        route_dict_annotation: false,
+    }
+}
+
+/// The bare class constructed by a function with no statements beyond an
+/// optional docstring and `return Class(...)`. Any other body or return shape
+/// is unknown rather than evidence that the function returns that class.
+fn direct_class_return(body: &[Stmt]) -> Option<String> {
+    let body = match body {
+        [Stmt::Expr(docstring), rest @ ..]
+            if matches!(docstring.value.as_ref(), Expr::Constant(_)) && !rest.is_empty() =>
+        {
+            rest
+        }
+        all => all,
+    };
+    let [Stmt::Return(returned)] = body else {
+        return None;
+    };
+    let Some(Expr::Call(call)) = returned.value.as_deref() else {
+        return None;
+    };
+    match call.func.as_ref() {
+        Expr::Name(name) => Some(name.id.to_string()),
+        _ => None,
     }
 }
 
@@ -740,6 +789,7 @@ fn owner_from_class(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -753,6 +803,8 @@ fn owner_from_class(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -782,6 +834,7 @@ pub(super) fn module_owner(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -795,6 +848,8 @@ pub(super) fn module_owner(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -831,6 +886,9 @@ pub(super) struct TestImportContext<'a> {
     /// Another local class lists this one as a base, so a subclass may replace
     /// its setup hooks.
     pub(super) subclassed: bool,
+    /// The class names `IsolatedAsyncioTestCase` as a direct base, so
+    /// unittest also runs its `asyncSetUp` hook before each test.
+    pub(super) async_case: bool,
 }
 
 /// Preserve each assertion's native byte position inside the exact test slice.
@@ -894,6 +952,7 @@ pub(super) fn collect_tests_from_statements(
     };
     let local_classes = LocalTestClasses::of(
         file,
+        source,
         statements,
         import_context.definition,
         base_parametrize_scope,
@@ -904,6 +963,7 @@ pub(super) fn collect_tests_from_statements(
             statements,
             import_context.subclassed,
             in_unittest_class,
+            import_context.async_case,
         )
     } else {
         Vec::new()
@@ -1009,28 +1069,32 @@ pub(super) fn collect_tests_from_statements(
                     simple_literal_parametrize: simple_literal_parametrize(
                         &function.decorator_list,
                     ),
-                    activation_controls: super::test_activation::activation_controls(
+                    activation_controls: super::test_activation::with_wrapping_decorator_marker(
                         &function.decorator_list,
                         &definition_imports,
-                        super::test_activation::DeclarationSite::Function,
-                    )
-                    .into_iter()
-                    .chain(super::test_activation::empty_parametrize_control(
-                        &function.decorator_list,
-                    ))
-                    .chain(
-                        (framework == PythonFramework::Pytest
-                            && super::parametrize::collection_error(
-                                &function.decorator_list,
-                                parametrize_scope,
-                            ))
-                        .then(|| {
-                            super::test_activation::parametrize_collection_error_control(
-                                super::test_activation::DeclarationSite::Function,
-                            )
-                        }),
-                    )
-                    .collect(),
+                        super::test_activation::activation_controls(
+                            &function.decorator_list,
+                            &definition_imports,
+                            super::test_activation::DeclarationSite::Function,
+                        )
+                        .into_iter()
+                        .chain(super::test_activation::empty_parametrize_control(
+                            &function.decorator_list,
+                        ))
+                        .chain(
+                            (framework == PythonFramework::Pytest
+                                && super::parametrize::collection_error(
+                                    &function.decorator_list,
+                                    parametrize_scope,
+                                ))
+                            .then(|| {
+                                super::test_activation::parametrize_collection_error_control(
+                                    super::test_activation::DeclarationSite::Function,
+                                )
+                            }),
+                        )
+                        .collect(),
+                    ),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -1142,28 +1206,32 @@ pub(super) fn collect_tests_from_statements(
                     simple_literal_parametrize: simple_literal_parametrize(
                         &function.decorator_list,
                     ),
-                    activation_controls: super::test_activation::activation_controls(
+                    activation_controls: super::test_activation::with_wrapping_decorator_marker(
                         &function.decorator_list,
                         &definition_imports,
-                        super::test_activation::DeclarationSite::Function,
-                    )
-                    .into_iter()
-                    .chain(super::test_activation::empty_parametrize_control(
-                        &function.decorator_list,
-                    ))
-                    .chain(
-                        (framework == PythonFramework::Pytest
-                            && super::parametrize::collection_error(
-                                &function.decorator_list,
-                                parametrize_scope,
-                            ))
-                        .then(|| {
-                            super::test_activation::parametrize_collection_error_control(
-                                super::test_activation::DeclarationSite::Function,
-                            )
-                        }),
-                    )
-                    .collect(),
+                        super::test_activation::activation_controls(
+                            &function.decorator_list,
+                            &definition_imports,
+                            super::test_activation::DeclarationSite::Function,
+                        )
+                        .into_iter()
+                        .chain(super::test_activation::empty_parametrize_control(
+                            &function.decorator_list,
+                        ))
+                        .chain(
+                            (framework == PythonFramework::Pytest
+                                && super::parametrize::collection_error(
+                                    &function.decorator_list,
+                                    parametrize_scope,
+                                ))
+                            .then(|| {
+                                super::test_activation::parametrize_collection_error_control(
+                                    super::test_activation::DeclarationSite::Function,
+                                )
+                            }),
+                        )
+                        .collect(),
+                    ),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -1214,6 +1282,7 @@ pub(super) fn collect_tests_from_statements(
                                     &definition_imports,
                                 ),
                             subclassed: class_is_listed_as_base(statements, class_name),
+                            async_case: names_isolated_async_case(class),
                         },
                         out,
                     );
@@ -1245,6 +1314,7 @@ pub(super) fn collect_tests_from_statements(
                                 standard_unittest_list: false,
                                 // A consumer class runs the mixin's tests under its own hooks.
                                 subclassed: true,
+                                async_case: false,
                             },
                             &mut from_mixin,
                         );
@@ -1258,6 +1328,8 @@ pub(super) fn collect_tests_from_statements(
                                     == qualified_test_name(Some(&nested_class_context), &test.name)
                         }));
                     }
+                    let unresolved_base =
+                        !class_is_unittest && has_unresolved_base(statements, class);
                     for test in &mut out[first_class_test..] {
                         test.activation_controls.extend(
                             local_classes
@@ -1316,6 +1388,11 @@ pub(super) fn collect_tests_from_statements(
                                 }
                             }
                         }
+                        // After every class control, the collection error
+                        // included, so the marker sees the final controls.
+                        if unresolved_base {
+                            super::test_activation::mark_unresolved_class_base(test);
+                        }
                         test.decorators.extend(
                             local_classes
                                 .class_decorators
@@ -1341,10 +1418,33 @@ pub(super) fn collect_tests_from_statements(
         if let Some(defined) = defined
             && later_bindings.rebound_later(statements, index, defined, source)
         {
+            // A loop may bind nothing, and any other mention of the name (an
+            // alias taken before the rebinding) may keep the definition
+            // collected under another name: both leave the control
+            // unestablished.
+            // A decorator other than a pytest or unittest mark may store the
+            // earlier definition (a registry) and run it later.
+            let decorators = match stmt {
+                Stmt::FunctionDef(function) => function.decorator_list.as_slice(),
+                Stmt::AsyncFunctionDef(function) => function.decorator_list.as_slice(),
+                Stmt::ClassDef(class) => class.decorator_list.as_slice(),
+                _ => &[],
+            };
+            let custom_decorator = decorators.iter().any(|decorator| {
+                !expr_full_name(decorator).is_some_and(|name| {
+                    name.starts_with("pytest.mark.")
+                        || name.starts_with("mark.")
+                        || name.starts_with("unittest.")
+                })
+            });
+            let in_loop_only = custom_decorator
+                || !later_bindings.rebound_later_outside_loops(statements, index, defined, source)
+                || !super::test_activation::only_bindings_mention(source, statements, defined);
             for test in &mut out[first_pushed..] {
                 test.activation_controls.push(
                     super::test_activation::shadowed_by_later_binding_control(
                         super::test_activation::DeclarationSite::Function,
+                        in_loop_only,
                     ),
                 );
             }
@@ -1526,7 +1626,7 @@ pub(super) fn collect_imports_from_statements(
     imports
 }
 
-fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
+pub(super) fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
     let module = import
         .module
         .as_ref()
@@ -1563,11 +1663,70 @@ fn is_parametrized(decorators: &[Expr]) -> bool {
     })
 }
 
+/// Whether `class` reaches a base that is neither `object` nor a class
+/// defined earlier in `statements` (followed through those definitions).
+fn has_unresolved_base(statements: &[Stmt], class: &ast::StmtClassDef) -> bool {
+    fn walk(statements: &[Stmt], class: &ast::StmtClassDef, depth: usize) -> bool {
+        if depth > 32 {
+            return true;
+        }
+        class.bases.iter().any(|base| {
+            let Expr::Name(name) = base else {
+                return true;
+            };
+            if name.id.as_str() == "object" {
+                return false;
+            }
+            // A name bound more than once (`Base = unittest.TestCase`, an
+            // import) is not resolved to one local class.
+            if super::test_activation::binding_count(statements, name.id.as_str()) != 1 {
+                return true;
+            }
+            let local = statements.iter().rev().find_map(|stmt| match stmt {
+                Stmt::ClassDef(def)
+                    if def.name.as_str() == name.id.as_str()
+                        && def.range.start() < class.range.start() =>
+                {
+                    Some(def)
+                }
+                _ => None,
+            });
+            local.is_none_or(|def| walk(statements, def, depth + 1))
+        })
+    }
+    walk(statements, class, 0)
+}
+
+/// A class that names a unittest case base directly: `TestCase` or the
+/// standard library's `IsolatedAsyncioTestCase` (async `test*` methods run on
+/// an event loop), bare or through a module (`unittest.`, `django.test.`).
 fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
     class.bases.iter().any(|base| {
-        expr_full_name(base).is_some_and(|name| name == "TestCase" || name.ends_with(".TestCase"))
+        expr_full_name(base).is_some_and(|name| {
+            UNITTEST_CASE_BASES.iter().any(|case| {
+                name == *case
+                    || name
+                        .strip_suffix(case)
+                        .is_some_and(|module| module.ends_with('.'))
+            })
+        })
     })
 }
+
+/// The class names the standard library's `IsolatedAsyncioTestCase` as a
+/// direct base (bare or through a module), so unittest awaits its
+/// `asyncSetUp` before each test.
+fn names_isolated_async_case(class: &ast::StmtClassDef) -> bool {
+    class.bases.iter().any(|base| {
+        expr_full_name(base).is_some_and(|name| {
+            name == "IsolatedAsyncioTestCase" || name.ends_with(".IsolatedAsyncioTestCase")
+        })
+    })
+}
+
+/// The standard unittest case bases a collected class names directly; neither
+/// defines a `test*` member of its own.
+const UNITTEST_CASE_BASES: [&str; 2] = ["TestCase", "IsolatedAsyncioTestCase"];
 
 /// Which same-scope classes pytest or unittest collects (#4562).
 ///
@@ -1606,6 +1765,7 @@ struct LocalTestClasses<'a> {
 impl<'a> LocalTestClasses<'a> {
     fn of(
         file: &Path,
+        source: &str,
         statements: &'a [Stmt],
         initial_imports: &[PythonImport],
         parametrize_scope: ParametrizeScope<'_>,
@@ -1744,8 +1904,9 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
-                .chain(class_switched_off(&scope, name).then(|| {
+                .chain(class_switched_off(&scope, name, source).and_then(|switch| {
                     super::test_activation::test_switch_control(
+                        switch,
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
@@ -1819,8 +1980,8 @@ impl<'a> ScopeClasses<'a> {
     }
 
     /// The bases of `name` in order, local when the scope defines the base
-    /// exactly once and before `name`. `object` and `TestCase` define no
-    /// `test*` member and are left out.
+    /// exactly once and before `name`. `object` and the
+    /// [`UNITTEST_CASE_BASES`] define no `test*` member and are left out.
     fn bases(&self, name: &str) -> Vec<MroEntry<'a>> {
         let Some((index, class)) = self.defs.get(name) else {
             return Vec::new();
@@ -1829,7 +1990,12 @@ impl<'a> ScopeClasses<'a> {
             .bases
             .iter()
             .filter_map(expr_full_name)
-            .filter(|base| !matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase"))
+            .filter(|base| {
+                base != "object"
+                    && !UNITTEST_CASE_BASES
+                        .iter()
+                        .any(|case| base == *case || base.strip_prefix("unittest.") == Some(*case))
+            })
             .map(|base| match self.defs.get_key_value(base.as_str()) {
                 Some((&key, (base_index, _)))
                     if base_index < index && !self.redefined.contains(key) =>
@@ -1925,14 +2091,24 @@ impl<'a> ScopeClasses<'a> {
     }
 }
 
-/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
-/// pytest reads the attribute through the class hierarchy, so the first class
-/// along the MRO that binds it decides, and an intermediate literal `True`
-/// re-enables collection for its subclasses. When the MRO is unavailable or an
-/// external base precedes any binding, any ancestor that is not provably
-/// `True` counts (fail-closed).
-fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
-    use super::test_activation::{TestSwitch, test_switch};
+/// The `__test__` binding that decides whether pytest collects `name`, when
+/// it may not: pytest reads the attribute through the class hierarchy, so the
+/// first class along the MRO that binds it decides, and an intermediate
+/// literal `True` re-enables collection for its subclasses. When the MRO is
+/// unavailable or an external base precedes any binding, any ancestor that is
+/// not provably `True` counts, as an unresolved binding (fail-closed): only a
+/// fully local MRO whose deciding binding is a literal `False` is `Off`.
+///
+/// A deciding literal `False` is `Off` only when nothing on the hierarchy can
+/// rebind `__test__` at class creation (no class decorator, metaclass keyword,
+/// `__init_subclass__` or external base anywhere on the MRO) and every
+/// `__test__` mention in the module is a direct binding (`settle_switch`).
+fn class_switched_off<'a>(
+    scope: &ScopeClasses<'a>,
+    name: &'a str,
+    source: &str,
+) -> Option<super::test_activation::TestSwitch> {
+    use super::test_activation::{TestSwitch, settle_switch, test_switch};
     let switch_of = |key: &str| {
         scope
             .defs
@@ -1940,13 +2116,26 @@ fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
             .map(|(_, class)| test_switch(&class.body))
     };
     if let Some(mro) = scope.mro(name, &mut Vec::new()) {
+        let hierarchy_is_static = mro.iter().all(|entry| match entry {
+            MroEntry::Local(key) => scope.defs.get(key).is_some_and(|(_, class)| {
+                class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && !class.body.iter().any(|stmt| {
+                        matches!(stmt, Stmt::FunctionDef(def) if def.name.as_str() == "__init_subclass__")
+                    })
+            }),
+            MroEntry::External(base) => base == "object",
+        });
         for entry in &mro {
             let MroEntry::Local(key) = entry else {
                 break;
             };
             match switch_of(key) {
-                Some(TestSwitch::Enabled) => return false,
-                Some(TestSwitch::Disabled) => return true,
+                Some(TestSwitch::Enabled) => return None,
+                Some(TestSwitch::Off) if hierarchy_is_static => {
+                    return Some(settle_switch(TestSwitch::Off, source));
+                }
+                Some(TestSwitch::Off | TestSwitch::Disabled) => return Some(TestSwitch::Disabled),
                 _ => {}
             }
         }
@@ -1957,8 +2146,11 @@ fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
         .filter_map(|ancestor| switch_of(ancestor))
         .collect();
     match switches.first() {
-        Some(TestSwitch::Enabled) => false,
-        _ => switches.contains(&TestSwitch::Disabled),
+        Some(TestSwitch::Enabled) => None,
+        _ => switches
+            .iter()
+            .any(|switch| matches!(switch, TestSwitch::Off | TestSwitch::Disabled))
+            .then_some(TestSwitch::Disabled),
     }
 }
 
@@ -2030,7 +2222,6 @@ fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {
     decorators.iter().filter_map(expr_full_name).collect()
 }
-
 fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> {
     decorators
         .iter()

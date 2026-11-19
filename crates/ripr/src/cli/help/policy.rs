@@ -17,7 +17,7 @@ testing, edit source files, configure CI policy, or make gate decisions.
 "#;
 pub(super) const REVIEW_COMMENTS_HELP: &str = r#"Write advisory PR test guidance on changed lines (does not post to GitHub).
 
-Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--out PATH] [--timeout-ms MS]
+Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--suppression-policy PATH] [--out PATH] [--timeout-ms MS]
 
 Options:
   --root PATH    Workspace root. Defaults to current directory.
@@ -30,10 +30,20 @@ Options:
   --check-output PATH
                  Optional producer-generated `ripr check --json` artifact.
                  Its typed analysis outcome is projected without rerunning the
-                 producer; incomplete input remains incomplete guidance.
+                 producer; incomplete input remains incomplete guidance. Findings
+                 that artifact marks `suppressed` stay in the `suppressed` array
+                 (not `comments`), so `gate evaluate` does not block on them.
+  --suppression-policy PATH
+                 Explicit opt-in suppression policy (same file and semantics as
+                 `ripr check --suppression-policy`, root-relative when not
+                 absolute; a missing or malformed file is an error). Matching
+                 seams move to the `suppressed` array with reason
+                 `suppressed_by_policy`, which `gate evaluate` treats as
+                 non-blocking. Not combinable with `--gap-ledger`. The default
+                 `.ripr/suppressions.toml` is never applied implicitly.
   --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
   --timeout-ms MS
-                 Cooperative analysis budget (default 120000ms), checked at
+                 Cooperative analysis budget (default 600000ms), checked at
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
@@ -45,7 +55,7 @@ Environment variables:
                                  owner indexing or loading the workspace corpus.
                                  Receipt status is failed with the named
                                  limitation; no guidance artifacts are published.
-                                 Default: 1200. Must be a positive integer.
+                                 Default: 5000. Must be a positive integer.
   RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
                                  Byte budget for those inputs plus changed diff
                                  text. Same named refusal; default: 268435456
@@ -67,8 +77,34 @@ CI blocking by default.
 pub(super) const GATE_HELP: &str = r#"Evaluate the optional pass/fail gate against existing PR guidance (advisory unless explicitly enabled).
 
 Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH] [further inputs: see Options below]
+       ripr gate check --base REV [--head REV] [--mode MODE] [--label LABEL]... [--labels-json PATH] [check options: see below]
 
-Options:
+`gate check` is the one-command CI gate: it runs `ripr review-comments` for
+--base..--head, then `gate evaluate` over the guidance it wrote, and exits like
+`gate evaluate`: 0 pass/advisory/acknowledged, 3 blocked, 2 config_error. It
+defaults to --mode acknowledgeable, so an eligible new gap blocks unless the PR
+carries the waiver label. If review-comments cannot complete, the previous
+guidance document is not reused: the decision is config_error (exit 2).
+
+Check options:
+  --base REV                          Required. Base revision of the change, for example origin/main.
+  --head REV                          Head revision. Defaults to HEAD.
+  --timeout-ms N                      Passed to review-comments.
+  --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+                                      Any existing file there (and its .md) is removed before the
+                                      run, and again if review-comments fails.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
+  --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
+  --acknowledgements, --baseline, --out, --out-md
+                                      As for gate evaluate.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
+
+Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
   --repo-exposure PATH                Optional repo-exposure JSON input.
   --pr-guidance PATH                  Optional PR guidance JSON from `ripr review-comments`.
@@ -91,8 +127,7 @@ Options:
                                       ledger is a config_error (fail-closed).
   --acknowledgements PATH             Optional structured acknowledgement ledger (TOML,
                                       schema_version = 1). Scoped rows bind to canonical_gap_id;
-                                      legacy labels retain global compatibility disclosure
-                                      (#1966).
+                                      legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
   --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.
@@ -114,6 +149,14 @@ not the JSON report. Capture the report files for machine consumers. When
 the visible-only default records evidence without blocking, after a completed
 evaluation. Missing-input usage errors and `config_error` reports stay quiet.
 An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
+
+Reading the status: visible-only never blocks on findings, so a completed
+visible-only run reads `advisory` (or `blocked` on an exception-policy
+violation), including a run that recorded nothing; the Markdown report says so
+when that is the case. `pass` is reachable only in an enforcing mode
+(acknowledgeable, baseline-check, calibrated-gate). In visible-only, read the
+`summary` counts and `warnings`, not `status`, to tell whether anything was
+found.
 "#;
 pub(super) const BASELINE_HELP: &str = r#"Create, diff, and shrink a reviewed baseline of acknowledged test gaps.
 
@@ -286,22 +329,31 @@ Suppression health options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 "#;

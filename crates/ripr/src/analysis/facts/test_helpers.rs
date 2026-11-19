@@ -94,12 +94,23 @@
 //!   are copied.
 //!   The parameter's own call is not added to the test. A helper that
 //!   invokes two or more closure parameters earns no credit. Boxed or
-//!   by-reference closures and callbacks forwarded to another function
-//!   (tracing's `with_default(subscriber, fun)`) are not credited by this
-//!   rule. A plain helper (one that invokes no parameter, so it never runs a
-//!   closure or only forwards it) lends nothing to a test that passes any
-//!   call-making closure literal to it, at any position (#9997): its
-//!   assertions cannot be shown to observe what the closure called.
+//!   by-reference closures are not credited by this rule. A plain helper (one
+//!   that invokes no parameter, so it never runs a closure or only forwards
+//!   it) lends nothing to a test that passes any call-making closure literal
+//!   to it, at any position (#9997): its assertions cannot be shown to
+//!   observe what the closure called.
+//!
+//! - forwarded closure callback (#9981 forwarding residual): the one
+//!   exception is a plain helper that hands exactly one closure parameter, as
+//!   a bare argument of an eagerly reached statement call, to a same-file
+//!   function of the same module whose own plain body eagerly invokes it
+//!   (one hop, [`forwarded_callback_params`] + [`invoked_callback_params`]).
+//!   The helper's assertions after the forwarding statement and the target's
+//!   assertions after its invocation are credited. When the receiving call
+//!   is anything else (tracing's `with_default(subscriber, fun)`), nothing is
+//!   credited; if the helper still asserts after forwarding, a transient
+//!   [`ForwardedCallbackLimit`] is recorded so the classifier can name that
+//!   limit instead of reading the test as having no assertion.
 //!
 //! The credited calls sit outside the test's line span. Value resolution
 //! reads only [`TestFact::body_calls`], because a helper call's arguments
@@ -112,9 +123,11 @@
 
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
 use crate::analysis::syntax::{
-    InvokedCallbackParam, ModuleItemScopes, closure_argument_positions, invoked_callback_params,
-    macro_call_columns, module_item_scopes, parser_oracles_for_function,
-    passes_call_making_closure,
+    ForwardedCallbackParam, InvokedCallbackParam, ModuleItemScopes, call_making_closure_positions,
+    closure_argument_positions, closure_argument_positions_many, forwarded_callback_params,
+    invoked_callback_params, invoked_callback_params_many, macro_call_columns, module_item_scopes,
+    param_never_mentioned, parser_oracles_for_function, parser_oracles_for_functions_many,
+    passes_call_making_closure, passes_call_making_closure_many,
 };
 use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use rayon::prelude::*;
@@ -123,6 +136,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
+    // A run memo for at least this pass (#12947): a caller's run scope is
+    // shared, and a caller without one (the review-stage workspace index)
+    // still gets the prefetch below and drops its products when the pass
+    // ends. Every product is pure in its key, so a scope changes no answer.
+    let _pass_memo = crate::analysis::syntax::run_memo::enter();
     // Only files that hold a test can credit a helper, so only those are
     // parsed, and the parses run on the rayon pool: every indexed file was
     // parsed serially here before, which dominated warm diff-scoped checks.
@@ -204,6 +222,21 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         (PathBuf, usize, String),
         Option<Vec<InvokedCallbackParam>>,
     > = BTreeMap::new();
+    let mut helper_forwards: BTreeMap<
+        (PathBuf, usize, String),
+        Option<Vec<ForwardedCallbackParam>>,
+    > = BTreeMap::new();
+    let mut forwarded_limits: BTreeMap<(PathBuf, usize, String), ForwardedCallbackLimit> =
+        BTreeMap::new();
+    prefetch_helper_products(
+        index,
+        &helpers_by_file,
+        &scopes_by_file,
+        workspace_root,
+        &mut manifests,
+    );
+    #[cfg(test)]
+    let fold_parses_before = crate::analysis::syntax::nesting_parse_calls();
     for test in index.tests().iter() {
         let (Some(functions_by_name), Some(scopes)) = (
             helpers_by_file.get(&test.file),
@@ -212,47 +245,38 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             continue;
         };
         let test_key = (test.start_line, test.name.clone());
-        // A `use` in the test body may import a same-named function over
-        // the module's helper.
-        // A cfg attribute in the test may disable the call being credited.
-        if scopes.fns_with_local_use.contains(&test_key) || scopes.fns_with_cfg.contains(&test_key)
-        {
-            continue;
-        }
-        let Some(test_module) = scopes.item_fns.get(&test_key) else {
+        let Some(test_module) = admitted_test_module(scopes, &test_key) else {
             continue;
         };
         let mut credited: Option<TestFact> = None;
         let mut credited_helpers: Vec<&str> = Vec::new();
+        let mut forwarded_limit: Option<ForwardedCallbackLimit> = None;
         for call in &test.calls {
             if credited_helpers.contains(&call.name.as_str()) {
                 continue;
             }
-            let Some(helper) = unique_assertion_helper(
+            let Some((helper, helper_key)) = admitted_helper(
                 functions_by_name,
+                scopes,
+                test,
+                &test_key,
+                test_module,
                 &call.name,
                 workspace_root,
                 &mut manifests,
             ) else {
                 continue;
             };
-            let helper_key = (helper.start_line, helper.name.clone());
-            if scopes.item_fns.get(&helper_key) != Some(test_module)
-                || !calls_directly(scopes, &test_key, &call.name)
-                || test_shadows(test, &call.name)
-                || scopes
-                    .bound_names
-                    .get(&test_key)
-                    .is_none_or(|bound| bound.contains(&call.name))
-                || spans_overlap(helper, test)
-            {
-                continue;
-            }
             // #9981: a helper that invokes a closure parameter is not
             // plain, but it is credited when this test passes a closure
             // literal at exactly such a parameter.
             let mut callback_names: Vec<String> = Vec::new();
             let mut first_callback_end = (0, 0);
+            // #9981 forwarding: the closure runs inside this same-file
+            // function, whose observing assertions are credited too; or the
+            // receiving call is not one this pass can show runs it.
+            let mut forward_target: Option<(&FunctionFact, InvokedCallbackParam)> = None;
+            let mut unestablished_callee: Option<String> = None;
             if !helper_body_is_plain(scopes, &helper_key, helper, &[]) {
                 let invoked = helper_callbacks
                     .entry((test.file.clone(), helper.start_line, helper.name.clone()))
@@ -295,8 +319,70 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             } else if passes_call_making_closure(&test.body, &call.name) {
                 // #9997: a plain helper invokes no parameter, so a call-making
                 // closure handed to it is never run or only forwarded, and its
-                // assertions cannot observe what the closure called.
-                continue;
+                // assertions cannot observe what the closure called. The one
+                // exception is the forwarded closure parameter (#9981):
+                // credited when a same-file callee eagerly invokes it,
+                // otherwise only named as a limitation below.
+                //
+                // Every call-making closure the test hands this helper sits at
+                // one position, and one such call is reached. The forwarded
+                // parameter at that position is the closure's; other
+                // parameters the helper forwards bare (a span, a subscriber)
+                // receive no call-making closure and are ordinary values.
+                let Some(closure_position) = call_making_closure_positions(&test.body, &call.name)
+                    .and_then(|positions| {
+                        let mut positions = positions.into_iter();
+                        match (positions.next(), positions.next()) {
+                            (Some(position), None) => Some(position),
+                            _ => None,
+                        }
+                    })
+                else {
+                    continue;
+                };
+                let forwarded = helper_forwards
+                    .entry((test.file.clone(), helper.start_line, helper.name.clone()))
+                    .or_insert_with(|| forwarded_callback_params(&helper.body))
+                    .as_deref()
+                    .unwrap_or_default();
+                let Some(param) = forwarded
+                    .iter()
+                    .find(|param| param.position == closure_position)
+                else {
+                    continue;
+                };
+                let reached = closure_argument_positions(&test.body, &call.name)
+                    .is_some_and(|positions| positions.contains(&param.position));
+                if !reached {
+                    continue;
+                }
+                first_callback_end = (helper.start_line + param.end_line - 1, param.end_column);
+                callback_names = vec![param.name.clone()];
+                let target = param.local_callee.as_deref().map(|callee| {
+                    same_file_forward_target(
+                        functions_by_name,
+                        scopes,
+                        &helper_key,
+                        test_module,
+                        test,
+                        callee,
+                        param.argument_position,
+                        workspace_root,
+                        &mut manifests,
+                    )
+                });
+                match target {
+                    Some(ForwardTarget::Invokes(target, invoked)) => {
+                        forward_target = Some((target, invoked));
+                    }
+                    // The receiver never names its parameter, so it never
+                    // runs the closure: as for a helper that never invokes
+                    // it (#9997), nothing is credited and nothing is named.
+                    Some(ForwardTarget::NeverRuns) => continue,
+                    Some(ForwardTarget::Unestablished) | None => {
+                        unestablished_callee = Some(param.callee.clone());
+                    }
+                }
             }
             // Parser-backed oracles only, as for ordinary tests: a
             // commented-out `assert_eq!` must not count.
@@ -308,39 +394,58 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             else {
                 continue;
             };
-            // The closure runs at the helper's first invocation, so only an
-            // assertion at or after it can observe what the closure did.
+            // The closure runs at the helper's first invocation (or when its
+            // forwarding statement ends), so only an assertion at or after it
+            // can observe what the closure did.
             let assertions = if callback_names.is_empty() {
                 assertions
             } else {
-                let observing = assertions
+                assertions
                     .into_iter()
                     .filter(|assertion| starts_after(helper, assertion, first_callback_end))
-                    .collect::<Vec<_>>();
-                if observing.is_empty() {
+                    .collect::<Vec<_>>()
+            };
+            let mut assertions = role_admitted_assertions(helper, assertions);
+            if let Some(callee) = unestablished_callee {
+                // #9981: the helper asserts after forwarding the closure, but
+                // whether the receiving call runs it is not established. No
+                // credit; the classifier names this limit instead of reading
+                // the test as having no assertion.
+                if !assertions.is_empty() && forwarded_limit.is_none() {
+                    forwarded_limit = Some(ForwardedCallbackLimit {
+                        helper: helper.name.clone(),
+                        callee,
+                    });
+                }
+                continue;
+            }
+            // The forwarded closure runs at the target's invocation, so the
+            // target's own assertions after it observe it as well (one hop).
+            let mut target_calls: Vec<super::CallFact> = Vec::new();
+            if let Some((target, invoked)) = &forward_target {
+                let Some(target_assertions) = helper_oracles
+                    .entry((test.file.clone(), target.start_line, target.name.clone()))
+                    .or_insert_with(|| parser_oracles_for_function(&target.body, target.start_line))
+                    .clone()
+                else {
                     continue;
-                }
-                observing
-            };
-            // #7125 Production integration helpers are the check-helper
-            // cell: copy `assert_eq!` only. `assert!` / `.contains()` in
-            // `tests/*.rs` must not rewrite RIPR-SPEC-0114's last
-            // established edge or RIPR-SPEC-0155 harness oracles.
-            // CfgTestModule keeps every parser-backed oracle (#6482
-            // remaining cells).
-            let assertions = match helper.source_role {
-                FunctionSourceRole::Production => {
-                    let eq = assertions
-                        .into_iter()
-                        .filter(is_assert_eq_oracle)
-                        .collect::<Vec<_>>();
-                    if eq.is_empty() {
-                        continue;
-                    }
-                    eq
-                }
-                _ => assertions,
-            };
+                };
+                let end = (target.start_line + invoked.end_line - 1, invoked.end_column);
+                let observing = target_assertions
+                    .into_iter()
+                    .filter(|assertion| starts_after(target, assertion, end))
+                    .collect::<Vec<_>>();
+                assertions.extend(role_admitted_assertions(target, observing));
+                target_calls = target
+                    .calls
+                    .iter()
+                    .filter(|call| call.name != invoked.name)
+                    .cloned()
+                    .collect();
+            }
+            if assertions.is_empty() {
+                continue;
+            }
             credited_helpers.push(&helper.name);
             // Idempotent credit (#8547): a reused index has already been
             // through this pass once, so a helper fact already on the test
@@ -348,7 +453,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             // helper's lines, outside the test's span, so an exact fact
             // already present can only be this credit.
             let credited = credited.get_or_insert_with(|| test.clone());
-            for call in helper.calls.iter().cloned() {
+            for call in helper.calls.iter().cloned().chain(target_calls) {
                 // The callback parameter's own call names no function.
                 if callback_names.contains(&call.name) {
                     continue;
@@ -370,8 +475,22 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                 (test.file.clone(), test.start_line, test.name.clone()),
                 credited,
             );
+        } else if let Some(limit) = forwarded_limit {
+            // A test some helper did credit has an assertion; the limit
+            // describes only a test left with none from this pass.
+            forwarded_limits.insert(
+                (test.file.clone(), test.start_line, test.name.clone()),
+                limit,
+            );
         }
     }
+    #[cfg(test)]
+    LAST_FOLD_PARSES.with(|parses| {
+        parses
+            .set(crate::analysis::syntax::nesting_parse_calls().saturating_sub(fold_parses_before));
+    });
+    // Rebuilt whole on every run of this pass (fresh and cached indexes).
+    index.forwarded_callback_limits = forwarded_limits;
     if widened.is_empty() {
         return;
     }
@@ -384,6 +503,295 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             *test = credited.clone();
         }
     });
+}
+
+/// The module of a test this pass may credit at all: a `use` in the test
+/// body may import a same-named function over the module's helper, and a cfg
+/// attribute in the test may disable the call being credited.
+fn admitted_test_module<'s>(
+    scopes: &'s ModuleItemScopes,
+    test_key: &(usize, String),
+) -> Option<&'s Option<(usize, usize)>> {
+    if scopes.fns_with_local_use.contains(test_key) || scopes.fns_with_cfg.contains(test_key) {
+        return None;
+    }
+    scopes.item_fns.get(test_key)
+}
+
+/// The one same-file assertion helper `name` reaches from `test`, with its
+/// scope key, when the parse-free gate admits it: an item of the test's own
+/// module that the test calls directly, never shadows or binds, and whose
+/// span stays clear of the test's. The serial fold and its prefetch both ask
+/// this, so the prefetch warms products only for helper calls the fold
+/// admits, and asks the gate only about helpers the fold asks about too.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the direct-helper gate's resolution inputs, shared by the fold and its prefetch"
+)]
+fn admitted_helper<'facts>(
+    functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
+    scopes: &ModuleItemScopes,
+    test: &TestFact,
+    test_key: &(usize, String),
+    test_module: &Option<(usize, usize)>,
+    name: &str,
+    workspace_root: Option<&Path>,
+    manifests: &mut HelperGate,
+) -> Option<(&'facts FunctionFact, (usize, String))> {
+    let helper = unique_assertion_helper(functions_by_name, name, workspace_root, manifests)?;
+    let helper_key = (helper.start_line, helper.name.clone());
+    if scopes.item_fns.get(&helper_key) != Some(test_module)
+        || !calls_directly(scopes, test_key, name)
+        || test_shadows(test, name)
+        || scopes
+            .bound_names
+            .get(test_key)
+            .is_none_or(|bound| bound.contains(name))
+        || spans_overlap(helper, test)
+    {
+        return None;
+    }
+    Some((helper, helper_key))
+}
+
+/// Warms the run memo with the pure syntax products the serial credit fold
+/// asks for (#12947): each is a parse of a test or helper body, and the fold
+/// asked for them one at a time on the analysis thread. The fold still owns
+/// every decision and reads each product through its ordinary memoized call;
+/// this only computes the scope's misses ahead of it on the rayon pool, so
+/// the credit is the same with or without it.
+///
+/// It warms only what the fold reads on its common paths: the #9997 closure
+/// check for each admitted plain helper call; for a helper that invokes a
+/// parameter, its invoked parameters and, when exactly one, the test's
+/// closure positions; and the parser oracles of each helper the fold can
+/// then reach. Forwarding targets stay with the fold. The pass always holds a
+/// scope; the check stays so a product is never computed with nowhere to
+/// keep it. A pool worker would compute the batch serially, so it skips the
+/// warm-up.
+fn prefetch_helper_products(
+    index: &RustIndex,
+    helpers_by_file: &BTreeMap<PathBuf, BTreeMap<String, Vec<&FunctionFact>>>,
+    scopes_by_file: &BTreeMap<PathBuf, Cow<'_, ModuleItemScopes>>,
+    workspace_root: Option<&Path>,
+    manifests: &mut HelperGate,
+) {
+    if !crate::analysis::syntax::run_memo::active() || rayon::current_thread_index().is_some() {
+        return;
+    }
+    #[cfg(test)]
+    if PREFETCH_DISABLED.with(std::cell::Cell::get) {
+        return;
+    }
+    #[cfg(test)]
+    PREFETCH_RUNS.with(|runs| runs.set(runs.get() + 1));
+    // (test body, helper name) for admitted plain helpers, and for helpers
+    // that invoke a parameter; each such helper's body once.
+    let mut plain_calls: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut plain_helpers: BTreeSet<(&str, usize)> = BTreeSet::new();
+    let mut callback_calls: BTreeSet<(&str, &str, &str, usize)> = BTreeSet::new();
+    for test in index.tests().iter() {
+        let (Some(functions_by_name), Some(scopes)) = (
+            helpers_by_file.get(&test.file),
+            scopes_by_file.get(&test.file),
+        ) else {
+            continue;
+        };
+        let test_key = (test.start_line, test.name.clone());
+        let Some(test_module) = admitted_test_module(scopes, &test_key) else {
+            continue;
+        };
+        for call in &test.calls {
+            let Some((helper, helper_key)) = admitted_helper(
+                functions_by_name,
+                scopes,
+                test,
+                &test_key,
+                test_module,
+                &call.name,
+                workspace_root,
+                manifests,
+            ) else {
+                continue;
+            };
+            if helper_body_is_plain(scopes, &helper_key, helper, &[]) {
+                plain_calls.insert((test.body.as_str(), call.name.as_str()));
+                plain_helpers.insert((helper.body.as_str(), helper.start_line));
+            } else {
+                callback_calls.insert((
+                    test.body.as_str(),
+                    call.name.as_str(),
+                    helper.body.as_str(),
+                    helper.start_line,
+                ));
+            }
+        }
+    }
+    let plain_calls = plain_calls.into_iter().collect::<Vec<_>>();
+    passes_call_making_closure_many(&plain_calls);
+    let callback_helpers = callback_calls
+        .iter()
+        .map(|(_, _, body, _)| *body)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let invoked = callback_helpers
+        .iter()
+        .copied()
+        .zip(invoked_callback_params_many(&callback_helpers))
+        .collect::<BTreeMap<_, _>>();
+    // The fold reads closure positions only for a helper with exactly one
+    // invoked parameter, and that helper's oracles only after them.
+    let mut positions_calls: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut oracle_helpers = plain_helpers;
+    for (test_body, name, helper_body, start_line) in &callback_calls {
+        if invoked
+            .get(helper_body)
+            .and_then(Option::as_deref)
+            .is_some_and(|params| params.len() == 1)
+        {
+            positions_calls.insert((test_body, name));
+            oracle_helpers.insert((helper_body, *start_line));
+        }
+    }
+    closure_argument_positions_many(&positions_calls.into_iter().collect::<Vec<_>>());
+    parser_oracles_for_functions_many(&oracle_helpers.into_iter().collect::<Vec<_>>());
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Prefetch passes that warmed the memo on this thread.
+    static PREFETCH_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Clean parses the serial fold itself made on this thread in the last
+    /// pass, the prefetch excluded.
+    static LAST_FOLD_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Set by [`with_fold_alone`]: the fold alone, the equivalence oracle.
+    static PREFETCH_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Clean parses the serial fold made on this thread in the last pass.
+#[cfg(test)]
+pub(crate) fn last_fold_parses() -> usize {
+    LAST_FOLD_PARSES.with(std::cell::Cell::get)
+}
+
+/// `work` with the prefetch skipped on this thread, so a test can compare
+/// the fold alone against the prefetched fold.
+#[cfg(test)]
+pub(crate) fn with_fold_alone<T>(work: impl FnOnce() -> T) -> T {
+    let previous = PREFETCH_DISABLED.with(|disabled| disabled.replace(true));
+    let result = work();
+    PREFETCH_DISABLED.with(|disabled| disabled.set(previous));
+    result
+}
+
+/// Helper-credit prefetch passes that ran on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_prefetch_runs() -> usize {
+    PREFETCH_RUNS.with(|runs| runs.replace(0))
+}
+
+/// A test whose same-file helper asserts after forwarding the test's closure
+/// to a call this pass cannot show runs it (#9981). Not oracle credit: the
+/// classifier reads it only to replace a false "has no assertion" miss with
+/// a named analyzer limit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ForwardedCallbackLimit {
+    /// The helper the test calls.
+    pub(crate) helper: String,
+    /// The receiving callee as written in the helper (`with_default`).
+    pub(crate) callee: String,
+}
+
+/// #7125 Production integration helpers are the check-helper cell: copy
+/// `assert_eq!` only. `assert!` / `.contains()` in `tests/*.rs` must not
+/// rewrite RIPR-SPEC-0114's last established edge or RIPR-SPEC-0155 harness
+/// oracles. CfgTestModule keeps every parser-backed oracle (#6482 remaining
+/// cells).
+fn role_admitted_assertions(
+    function: &FunctionFact,
+    assertions: Vec<OracleFact>,
+) -> Vec<OracleFact> {
+    match function.source_role {
+        FunctionSourceRole::Production => {
+            assertions.into_iter().filter(is_assert_eq_oracle).collect()
+        }
+        _ => assertions,
+    }
+}
+
+/// What the same-file receiver of a forwarded closure does with it (#9981).
+enum ForwardTarget<'facts> {
+    /// Its plain body eagerly invokes the forwarded parameter.
+    Invokes(&'facts FunctionFact, InvokedCallbackParam),
+    /// Its body never names the parameter (`_`, or a name it never mentions),
+    /// so the closure never runs.
+    NeverRuns,
+    /// Not resolved, or resolved but not shown to run it.
+    Unestablished,
+}
+
+/// The same-file function a helper forwards its closure parameter to, with
+/// the parameter it eagerly invokes, when that call can only reach it (#9981):
+/// the callee name is defined once in the file, is an assertion-helper role
+/// item of the test's own module, is neither the helper nor bound by the
+/// helper, shares no line with the test, and its plain body eagerly invokes
+/// exactly one parameter, the one at the forwarded argument position. One
+/// hop: a callee that forwards again is not followed. A receiver that passes
+/// every resolution check but never names the parameter at that position is
+/// [`ForwardTarget::NeverRuns`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the same resolution inputs the direct-helper gate reads"
+)]
+fn same_file_forward_target<'facts>(
+    functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
+    scopes: &ModuleItemScopes,
+    helper_key: &(usize, String),
+    test_module: &Option<(usize, usize)>,
+    test: &TestFact,
+    callee: &str,
+    argument_position: usize,
+    workspace_root: Option<&Path>,
+    manifests: &mut HelperGate,
+) -> ForwardTarget<'facts> {
+    let Some(target) =
+        unique_assertion_helper(functions_by_name, callee, workspace_root, manifests)
+    else {
+        return ForwardTarget::Unestablished;
+    };
+    let target_key = (target.start_line, target.name.clone());
+    if target_key == *helper_key
+        || target.name == test.name
+        || scopes.item_fns.get(&target_key) != Some(test_module)
+        || scopes
+            .bound_names
+            .get(helper_key)
+            .is_none_or(|bound| bound.contains(callee))
+        || spans_overlap(target, test)
+    {
+        return ForwardTarget::Unestablished;
+    }
+    if param_never_mentioned(&target.body, argument_position) == Some(true) {
+        return ForwardTarget::NeverRuns;
+    }
+    let Some(invoked) = invoked_callback_params(&target.body) else {
+        return ForwardTarget::Unestablished;
+    };
+    let [invoked] = invoked.as_slice() else {
+        return ForwardTarget::Unestablished;
+    };
+    if invoked.position != argument_position
+        || !helper_body_is_plain(
+            scopes,
+            &target_key,
+            target,
+            std::slice::from_ref(&invoked.name),
+        )
+    {
+        return ForwardTarget::Unestablished;
+    }
+    ForwardTarget::Invokes(target, invoked.clone())
 }
 
 /// The pass's one manifest inventory plus the per-file answer for
@@ -670,7 +1078,7 @@ fn spans_overlap(helper: &FunctionFact, test: &TestFact) -> bool {
 
 mod assertion_macros;
 pub(super) use assertion_macros::credit_same_file_assertion_macros;
-pub(crate) use assertion_macros::expanded_assertion_view;
+pub(crate) use assertion_macros::{expanded_assertion_view, imported_forwarding_calls};
 
 #[cfg(test)]
 mod tests;

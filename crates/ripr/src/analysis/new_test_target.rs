@@ -250,7 +250,49 @@ fn declares_package(manifest: &Path) -> Result<bool, String> {
     let table = text
         .parse::<toml::Table>()
         .map_err(|error| error.to_string())?;
-    Ok(table.contains_key("package"))
+    let Some(value) = table.get("package") else {
+        return Ok(false);
+    };
+    let package = value
+        .as_table()
+        .ok_or_else(|| "`package` must be a table".to_string())?;
+    // Stable Cargo 1.95: Unicode XID start (or underscore), then XID
+    // continuation or hyphen. This is package identity, not cargo-new or
+    // registry naming policy; namespaces remain unstable.
+    if package
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .is_none_or(|name| {
+            let mut chars = name.chars();
+            !chars
+                .next()
+                .is_some_and(|c| c == '_' || unicode_ident::is_xid_start(c))
+                || !chars.all(|c| c == '-' || unicode_ident::is_xid_continue(c))
+        })
+    {
+        return Err("`package.name` must be a valid Cargo package name".to_string());
+    }
+    Ok(true)
+}
+
+/// Filesystem-free part of the preflight: the path is non-empty, relative, and
+/// every component is a plain name (no `..`, root, prefix or `.`).
+pub(crate) fn is_plain_relative_path(file: &str) -> bool {
+    !file.is_empty()
+        && Path::new(file)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// Filesystem-free part of the preflight: an integration proposal is exactly
+/// `<dir>/tests/<name>.rs` (the `tests` directory is the file's parent).
+pub(crate) fn is_integration_test_file_shape(file: &str) -> bool {
+    let relative = Path::new(file);
+    let parts: Vec<_> = relative.components().collect();
+    parts.len() >= 2
+        && parts[parts.len() - 2].as_os_str() == "tests"
+        && file.ends_with(".rs")
+        && relative.file_name().is_some_and(|name| name != ".rs")
 }
 
 /// Read-only preflight of a proposed new-test target (#13205): the path stays
@@ -263,11 +305,7 @@ pub(crate) fn preflight_new_test_target(
 ) -> ProposedTargetPreflight {
     let refuse = |reason: String| ProposedTargetPreflight::Refused(reason);
     let relative = Path::new(file);
-    if file.is_empty()
-        || !relative
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-    {
+    if !is_plain_relative_path(file) {
         return refuse(format!(
             "the proposed test path `{file}` is not a plain path inside the repository; re-run the before phase to get a current proposal"
         ));
@@ -313,12 +351,7 @@ pub(crate) fn preflight_new_test_target(
     if let Some(reason) = proposal_premise_error(kind, file, exists) {
         return refuse(reason);
     }
-    if kind == NewTestKind::Integration
-        && !(parts.len() >= 2
-            && parts[parts.len() - 2].as_os_str() == "tests"
-            && file.ends_with(".rs")
-            && relative.file_name().is_some_and(|name| name != ".rs"))
-    {
+    if kind == NewTestKind::Integration && !is_integration_test_file_shape(file) {
         return refuse(format!(
             "the proposed integration test `{file}` is not a `tests/<name>.rs` file; re-run the before phase to get a current proposal"
         ));

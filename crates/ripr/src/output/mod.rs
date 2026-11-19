@@ -1,4 +1,5 @@
 pub(crate) mod agent_brief;
+pub(crate) mod agent_card;
 pub(crate) mod agent_receipt;
 #[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;
@@ -11,6 +12,7 @@ pub(crate) mod badge;
 pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
+pub(crate) mod check_file_fact_cache;
 pub(crate) mod ci_summary;
 pub(crate) mod compact_json;
 pub(crate) mod count_noun;
@@ -43,6 +45,7 @@ pub(crate) mod language_capabilities;
 pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
+pub(crate) mod missed_txt;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
@@ -79,9 +82,12 @@ pub(crate) mod preview_actionability;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;
 pub(crate) mod receipt_write;
+pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
+#[cfg(test)]
+mod repo_exposure_limitation_tests;
 pub(crate) mod repo_seams;
 pub(crate) mod report_packet_index;
 pub(crate) mod review_comments;
@@ -89,6 +95,7 @@ pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
 pub(crate) mod schemas;
+pub(crate) mod stage_rows;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;
@@ -157,5 +164,38 @@ pub(crate) mod test_support {
     pub(crate) fn read_file(path: &Path) -> Result<String, String> {
         std::fs::read_to_string(path)
             .map_err(|err| format!("read {} failed: {err}", path.display()))
+    }
+
+    /// Text of every table cell in `markdown` as a CommonMark renderer shows
+    /// it, one `Vec` per row, read back through a parser rather than by
+    /// matching emitted bytes. Raw HTML found anywhere is an error.
+    pub(crate) fn rendered_markdown_table_rows(markdown: &str) -> Result<Vec<Vec<String>>, String> {
+        use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+        let mut rows = Vec::new();
+        let mut row: Option<Vec<String>> = None;
+        let mut cell: Option<String> = None;
+        for event in Parser::new_ext(markdown, Options::ENABLE_TABLES) {
+            match event {
+                Event::Start(Tag::TableHead | Tag::TableRow) => row = Some(Vec::new()),
+                Event::End(TagEnd::TableHead | TagEnd::TableRow) => {
+                    rows.push(row.take().ok_or("row end without start")?);
+                }
+                Event::Start(Tag::TableCell) => cell = Some(String::new()),
+                Event::End(TagEnd::TableCell) => {
+                    let text = cell.take().ok_or("cell end without start")?;
+                    row.as_mut().ok_or("cell outside a row")?.push(text);
+                }
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    return Err(format!("raw HTML reached the report: {html}"));
+                }
+                Event::Text(text) | Event::Code(text) => {
+                    if let Some(cell) = cell.as_mut() {
+                        cell.push_str(&text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(rows)
     }
 }

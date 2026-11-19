@@ -666,4 +666,95 @@ mod tests {
         assert!(!first.contains("recorded_at"));
         assert!(!first.contains("unix_ms"));
     }
+
+    fn closed_reason_payload() -> FeedbackPayload {
+        FeedbackPayload {
+            identity: identity("snap-1", Some("item-1")),
+            actor_kind: ActorKind::Agent,
+            review_status: ReviewStatus::Unreviewed,
+            review_actor_kind: None,
+            reason: FeedbackReason::TooSlow,
+            judgment_override: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn one_control_character_in_an_identity_is_refused_by_flag() -> Result<(), String> {
+        let refusal = |edit: fn(&mut ResultIdentity)| {
+            let mut subject = identity("snap-1", Some("item-1"));
+            edit(&mut subject);
+            subject
+                .validate()
+                .err()
+                .ok_or_else(|| "a control character was accepted".to_string())
+        };
+        assert!(
+            refusal(|subject| subject.snapshot_id = "snap\u{7}1".to_string())?
+                .contains("--snapshot must not contain control")
+        );
+        assert!(
+            refusal(|subject| subject.canonical_item = Some("item\n1".to_string()))?
+                .contains("feedback --item must be")
+        );
+        assert!(
+            refusal(|subject| subject.attempt_id = Some(" ".to_string()))?
+                .contains("feedback --attempt must be")
+        );
+        assert!(
+            refusal(|subject| subject.receipt_id = Some("r\t1".to_string()))?
+                .contains("feedback --receipt must be")
+        );
+        assert_eq!(identity("snap-1", Some("item-1")).validate(), Ok(()));
+        Ok(())
+    }
+
+    #[test]
+    fn normalized_drops_only_a_matching_override_on_a_closed_reason() {
+        let mut matching = closed_reason_payload();
+        matching.judgment_override = Some(FeedbackJudgment::Expensive);
+        assert_eq!(matching.normalized().judgment_override, None);
+
+        let mut mismatched = closed_reason_payload();
+        mismatched.judgment_override = Some(FeedbackJudgment::Useful);
+        assert_eq!(
+            mismatched.normalized().judgment_override,
+            Some(FeedbackJudgment::Useful)
+        );
+
+        let mut other = closed_reason_payload();
+        other.reason = FeedbackReason::Other;
+        other.judgment_override = Some(FeedbackReason::Other.judgment());
+        assert_eq!(
+            other.normalized().judgment_override,
+            Some(FeedbackReason::Other.judgment())
+        );
+    }
+
+    #[test]
+    fn note_limit_admits_exactly_the_maximum_and_one_nul_is_refused() -> Result<(), String> {
+        let mut at_limit = closed_reason_payload();
+        at_limit.note = Some("n".repeat(FEEDBACK_NOTE_MAX_BYTES));
+        assert_eq!(at_limit.validate(), Ok(()));
+
+        let mut over_limit = closed_reason_payload();
+        over_limit.note = Some("n".repeat(FEEDBACK_NOTE_MAX_BYTES + 1));
+        assert!(
+            over_limit
+                .validate()
+                .err()
+                .ok_or_else(|| "an oversized note was accepted".to_string())?
+                .contains("--note exceeds")
+        );
+
+        let mut nul = closed_reason_payload();
+        nul.note = Some("a\0b".to_string());
+        assert!(
+            nul.validate()
+                .err()
+                .ok_or_else(|| "a NUL in the note was accepted".to_string())?
+                .contains("must not contain NUL")
+        );
+        Ok(())
+    }
 }

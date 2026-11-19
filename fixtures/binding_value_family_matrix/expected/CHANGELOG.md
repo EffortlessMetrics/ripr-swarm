@@ -504,3 +504,52 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_family_matrix (#12118)
+
+Reason:
+#12118: the `binding_predicate_relation` evidence on a finding retargeted from a changed `let` now names the changed `let` declaration line; only that evidence string in check.json changes, human output, classes and ids are unchanged.
+
+Operation:
+Manual edit: appended ` (changed `let <binding>` declared at line N)` to each `binding_predicate_relation` evidence string, N taken from the fixture diff.patch.
+
+Execution:
+Source-only edit; native `cargo xtask goldens bless` could not run because the local container is out of memory (SIGKILL compiling `ripr`); hosted `goldens check` is the proof.
+
+Updated:
+- `expected/check.json`
+
+## Pending — binding_value_family_matrix (35)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_family_matrix (36)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_family_matrix (37)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/human.txt`

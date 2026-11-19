@@ -17,6 +17,7 @@ fn context_assignments_are_singletons_even_when_values_agree() -> Result<(), Str
         run_id: "7".to_string(),
         shards: 4,
         out: PathBuf::new(),
+        all_features: false,
     };
     let valid = format!(
         "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard=2/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:2/4\nnextest_exit=0\n",
@@ -271,6 +272,7 @@ fn attempt_options(root: &Path, attempt: u32) -> Options {
         run_id: "7".to_string(),
         shards: 2,
         out: root.join("out"),
+        all_features: false,
     }
 }
 
@@ -301,6 +303,96 @@ fn put_attempt(root: &Path, shard: u32, attempt: u32) -> Result<PathBuf, String>
         put("list-all.txt", "b1 case\nb2 case\n".to_string())?;
     }
     Ok(dir)
+}
+
+/// Reused receipts must bind to the verifier's independently resolved inputs,
+/// not merely agree with one another. Exercise the retained command entry point
+/// and ensure a refusal removes the aggregate accepted by its previous call.
+#[test]
+fn reused_consensus_cannot_replace_expected_identity_or_leave_green_output() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let root = crate::tests::temp_dir("reused-consensus-authority");
+    let sha = git(Path::new("."), &["rev-parse", "HEAD"])?;
+    let blobs = expected_input_blobs(Path::new("."), &sha)?;
+    let mut receipts = Vec::new();
+    for shard in 1..=2 {
+        let dir = put_attempt(&root, shard, 1)?;
+        let path = dir.join("run-context.txt");
+        let original = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        let mut valid = original.replace(&"a".repeat(40), &sha);
+        for (old, new) in attempt_blobs().iter().zip(&blobs) {
+            valid = valid.replace(old, new);
+        }
+        receipts.push((path, valid));
+    }
+    let mut changes = vec![
+        (
+            "repository=o/r".to_string(),
+            "repository=other/repo".to_string(),
+            "run-context repository".to_string(),
+        ),
+        (
+            format!("checkout_sha={sha}"),
+            format!("checkout_sha={}", "f".repeat(40)),
+            "run-context checkout_sha".to_string(),
+        ),
+        (
+            "run_id=7".to_string(),
+            "run_id=8".to_string(),
+            "run-context run_id".to_string(),
+        ),
+    ];
+    for (path, blob) in INPUT_PATHS.iter().zip(&blobs) {
+        changes.push((blob.clone(), "e".repeat(40), format!("input blob `{path}`")));
+    }
+    let args = vec![
+        "--dir".to_string(),
+        root.join("in").display().to_string(),
+        "--artifact".to_string(),
+        "integration".to_string(),
+        "--attempt".to_string(),
+        "2".to_string(),
+        "--repository".to_string(),
+        "o/r".to_string(),
+        "--sha".to_string(),
+        sha,
+        "--run-id".to_string(),
+        "7".to_string(),
+        "--shards".to_string(),
+        "2".to_string(),
+        "--out".to_string(),
+        root.join("out").display().to_string(),
+    ];
+    for (old, wrong, diagnostic) in changes {
+        for (path, valid) in &receipts {
+            fs::write(path, valid).map_err(|err| err.to_string())?;
+        }
+        run(&args)?;
+        let accepted =
+            fs::read_to_string(root.join("out/run-context.txt")).map_err(|err| err.to_string())?;
+        assert!(accepted.lines().any(|line| line == "run_attempt=2"));
+        assert!(accepted.lines().any(|line| line == "verified_attempts=1"));
+        assert!(root.join("out/junit.xml").is_file());
+        for (path, valid) in &receipts {
+            let changed = valid.replace(&old, &wrong);
+            assert_ne!(changed, *valid, "fixture did not change {diagnostic}");
+            fs::write(path, changed).map_err(|err| err.to_string())?;
+        }
+        assert!(
+            run(&args).is_err(),
+            "common wrong evidence passed: {diagnostic}"
+        );
+        assert!(
+            !root.join("out/run-context.txt").exists(),
+            "stale context: {diagnostic}"
+        );
+        assert!(
+            !root.join("out/junit.xml").exists(),
+            "stale JUnit: {diagnostic}"
+        );
+    }
+    fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 #[test]

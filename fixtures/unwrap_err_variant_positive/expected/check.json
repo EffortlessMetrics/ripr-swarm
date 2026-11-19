@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: negative_input_rejects_with_negative_error", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 8)", "related test tests/errors.rs:4 negative_input_rejects_with_negative_error uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);", "source function argument value x = -1 at line 5", "source enum variant value CalcError::Negative at line 6"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":8}
@@ -134,6 +141,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: negative_input_rejects_with_negative_error", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 8)", "related test tests/errors.rs:4 negative_input_rejects_with_negative_error uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);", "source function argument value x = -1 at line 5", "source enum variant value CalcError::Negative at line 6"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":8}

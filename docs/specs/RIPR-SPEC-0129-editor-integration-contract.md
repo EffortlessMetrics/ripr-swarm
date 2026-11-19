@@ -94,8 +94,8 @@ fix-instruction summaries, and no retrieval references — those belong to
 `codeAction/resolve` (#1751). Disabled reasons are a closed vocabulary in
 `lsp/action_contract.rs`; only reasons with a real producer are emitted —
 today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
-`verification_route_unavailable`, `receipt_route_unavailable`, and
-`preview_or_static_limitation` — while the reserved members
+`verification_route_unavailable`, `receipt_route_unavailable`,
+`preview_or_static_limitation`, and `repair_route_not_ready` — while the reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
 `exact_replacement_unavailable`, `ambiguous_fix_site`,
 `outside_allowed_edit_surface`, `configuration_invalid`) stay unemittable
@@ -139,6 +139,19 @@ relay plus an explicit tree-kill fallback. The real
 packaged proof stages the worktree-built server through the release archive
 shape, extracts it, verifies digest identity, and probes that extracted member;
 an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
+
+A managed server download is inspected before anything is extracted. After
+the SHA-256 check, the tar archive is listed and the zip central directory is
+read; extraction is refused for absolute, drive-qualified, UNC, `..` or NUL
+member paths, symlink, hard-link, reparse-point or other non-file/directory
+members, and more than 1000 members. Zip members are additionally refused for
+empty names, any `:` (alternate data streams), trailing dot/space segments and
+reserved Windows device names, and zip archives for ZIP64, multi-disk, split
+entry counts, malformed directories, or an end record whose comment does not
+end the file (#13640, #13904). The containment
+walk after extraction remains a second check, not the first. Checksum and
+inspection detect corruption and unsafe shape; they are not provenance
+(#1879).
 
 ### Layer 3 — Headless `riprAgent`
 
@@ -304,7 +317,10 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   under `context.only`, and the named suppression reasons (`stale_snapshot`,
   `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
-  `preview_or_static_limitation`).
+  `preview_or_static_limitation`, `repair_route_not_ready`).
+  `tests.rs::seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary`
+  pins the truthful reason, and the repair-start tests build their seam
+  diagnostics with the production producer (no injected fix-instruction).
 - `tests.rs::retained_code_actions_disclose_health_on_the_public_handler`
   verifies inert action identity/diagnostic preservation across shared health
   states, kind filtering, active refresh recovery and fail-closed resolve.
@@ -467,7 +483,18 @@ client supports:
   `stale_snapshot` (stale gap diagnostic),
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
-  `preview_or_static_limitation` (cross-language unresolved target). The
+  `preview_or_static_limitation` (a static limitation; the human text names a
+  language boundary only for a cross-language unresolved target, #13797), and
+  `repair_route_not_ready` (a same-language seam that fails the
+  repair-packet flip only because ripr has no complete repair route yet,
+  meaning a test target plus the exact discriminator it must check, or an
+  actionable gap with no fix site, #13716). A seam-addressed
+  action reads its readiness from the seam's own producer-owned
+  repair-packet flip, the same gate the seam hover and
+  `repair_start_command_for` use, so a seam past the flip is offered the
+  repair start without any injected fix-instruction. `ripr agent repair`
+  still re-checks start-time facts (dirty premise, proposal identity, held
+  inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions
   inert as `analysis_not_current` when the root is valid and the client
   supports disabled actions (#7458). It names queued/running as a wait state

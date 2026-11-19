@@ -7,8 +7,9 @@ use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
-    oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
-    owner_method_bound_locals, owner_module_callees, owner_result_locals, setup_bound_receivers,
+    exception_body_calls, exception_body_observes_token, oracle_operand_calls,
+    oracle_operand_names, oracle_operand_protocol_entry, owner_method_bound_locals,
+    owner_module_callees, owner_result_locals, setup_bound_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -25,6 +26,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+
+mod route_json;
+use route_json::{json_equivalent_keys, reads_response_json};
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
 /// coverage is that a strong oracle credits `exposed` only when it *observes the
 /// changed sink*, not merely reaches the owner. This carries which token
@@ -1289,6 +1293,53 @@ fn sink_alignment_and_rows(
                     .is_some_and(|test| function_scope_stand_in(test, token, owner))
         })
     };
+    // For a free-function owner, an exception assertion's bare-name and
+    // changed-token credit reads only the code its `with` body (or rule 13
+    // callable) runs: the error it pins is raised there, so a name spelled
+    // only in the item's `match=`, before the `with`, in the rule 14
+    // comparison after it, or inside a body string does not observe the
+    // changed raise (#14267). Method owners, non-exception assertions, and
+    // units whose gate text carries no separable body keep the whole-text
+    // probe; the module-call branch already reads the body on its own.
+    let exception_body_scoped = |unit: &AlignmentUnit<'_>| -> bool {
+        !is_method_owner
+            && matches!(unit.kind, OracleKind::ExactErrorVariant)
+            && unit
+                .text
+                .strip_prefix(&unit.reported)
+                .is_some_and(|rest| rest.starts_with('\n'))
+    };
+    let observes_body_scoped = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+        if exception_body_scoped(unit) {
+            group.iter().any(|token| {
+                exception_body_observes_token(
+                    &unit.text,
+                    &unit.reported,
+                    unit.exception_body_end,
+                    token,
+                )
+            })
+        } else {
+            observes(unit, group)
+        }
+    };
+    let observes_imported_owner_body_scoped =
+        |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+            if exception_body_scoped(unit) {
+                group.iter().any(|token| {
+                    exception_body_observes_token(
+                        &unit.text,
+                        &unit.reported,
+                        unit.exception_body_end,
+                        token,
+                    ) && !unit
+                        .test
+                        .is_some_and(|test| function_scope_stand_in(test, token, owner))
+                })
+            } else {
+                observes_imported_owner(unit, group)
+            }
+        };
     // Receiver identity for a method owner: the test holding the assertion must
     // call the owner's method on a receiver statically bound to the owner class
     // (inline construct, local binding, or a classmethod/direct call on the
@@ -1332,6 +1383,8 @@ fn sink_alignment_and_rows(
         is_method_owner
             && !strong_tests_import_only_rival_modules(owner, &[unit.related], test_lookup)
     });
+    // A coroutine owner's result is what `await` hands back.
+    let owner_is_coroutine = owner.decorators.iter().any(|name| name == "async_def");
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
@@ -1347,12 +1400,23 @@ fn sink_alignment_and_rows(
                     return observes;
                 }
                 let callees = owner_module_callees(test, owner);
-                callees
+                // An exception assertion compares no operand: the owner call
+                // it observes is the one its `with` body (or rule 13
+                // callable) makes (RIPR-SPEC-0238 rule 4).
+                let raised_in_body = |callee: &String| {
+                    matches!(unit.kind, OracleKind::ExactErrorVariant)
+                        && exception_body_calls(
+                            &unit.text,
+                            &unit.reported,
+                            unit.exception_body_end,
+                            callee,
+                        )
+                };
+                callees.iter().any(|callee| {
+                    oracle_operand_calls(&unit.text, callee) || raised_in_body(callee)
+                }) || owner_result_locals(test, &callees, owner_is_coroutine)
                     .iter()
-                    .any(|callee| oracle_operand_calls(&unit.text, callee))
-                    || owner_result_locals(test, &callees)
-                        .iter()
-                        .any(|local| oracle_operand_names(&unit.text, local))
+                    .any(|local| oracle_operand_names(&unit.text, local))
             })
     };
     // Dunder owner invoked through a builtin protocol entry (`reversed(Range(0))`
@@ -1558,9 +1622,53 @@ fn sink_alignment_and_rows(
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
     };
-    let branches: [CreditBranch<'_, '_>; 7] = [
+    // A route handler returning a changed dict literal is observed by an
+    // identified client's response (#13869, #10237 gap 5): the JSON body of
+    // `response = client.get("/path")` is the returned dict. The response
+    // names come from the test body alone and only for the owner's own
+    // application; the changed-key gate in `gates_ok` still decides which
+    // response field observes the edit.
+    // `detail` is the error-envelope key of FastAPI's `HTTPException` and
+    // request-validation (422) bodies, so a keyed `detail` read may observe
+    // an error response that never reached the changed return.
+    // The response operand itself must read a changed key: the shared
+    // changed-key gate also accepts a whole-collection comparison or a
+    // changed-key subscript on the expected side, which an unchanged sibling
+    // field (`response.json()["meta"] == {...}`) would pass. A key whose old
+    // and new values serialize to the same JSON is not changed in the body.
+    let json_equivalent = json_equivalent_keys(gate_old, gate_new);
+    let changed_response_keys: Vec<String> = dict_change
+        .as_ref()
+        .map(|(keys, _)| {
+            keys.iter()
+                .map(|key| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+                .filter(|key| !json_equivalent.contains(key))
+                .collect()
+        })
+        .unwrap_or_default();
+    // An old line is required (repo mode has none, so it never earns this).
+    let returns_changed_dict = owner.route_returns_body
+        && gate_old.is_some()
+        && line_text.trim_start().starts_with("return ")
+        && !changed_response_keys.is_empty()
+        && dict_change.as_ref().is_some_and(|(keys, _)| {
+            !keys
+                .iter()
+                .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
+        });
+    let route_response_observed = |unit: &AlignmentUnit<'_>| {
+        returns_changed_dict
+            && unit.kind == OracleKind::ExactValue
+            && unit.test.is_some_and(|test| {
+                super::related_tests::identified_route_response_names(test, owner)
+                    .iter()
+                    .any(|name| reads_response_json(&unit.text, name, &changed_response_keys))
+            })
+            && gates_ok(unit)
+    };
+    let branches: [CreditBranch<'_, '_>; 8] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
-            observes_imported_owner(unit, &identity_tokens)
+            observes_imported_owner_body_scoped(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
                 && result_gates_ok(unit)
         }),
@@ -1581,8 +1689,10 @@ fn sink_alignment_and_rows(
             // `from m import owner as quote` does not make this test's `quote`
             // the owner (#8247). Without source facts the pooled set stands.
             let own_aliases = unit.test.map(owner_aliases_in);
-            observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
-                && result_gates_ok(unit)
+            observes_imported_owner_body_scoped(
+                unit,
+                own_aliases.as_deref().unwrap_or(&alias_tokens),
+            ) && result_gates_ok(unit)
         }),
         (
             "direct",
@@ -1598,6 +1708,11 @@ fn sink_alignment_and_rows(
             "strong_oracle_observes_owner_call_through_module",
             &|unit| module_call_observed(unit) && result_gates_ok(unit),
         ),
+        (
+            "direct",
+            "strong_oracle_observes_route_response",
+            &route_response_observed,
+        ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a
         // different module must not credit `exposed` via this sibling branch
@@ -1606,7 +1721,7 @@ fn sink_alignment_and_rows(
             "changed_sink_token",
             "strong_oracle_observes_changed_sink_token",
             &|unit| {
-                observes(unit, &delta_tokens)
+                observes_body_scoped(unit, &delta_tokens)
                     && change_only_credit_ok(unit)
                     && gates_ok(unit)
                     && (method_owner_identity(unit) || free_fn_module_identity(unit))
@@ -1634,7 +1749,6 @@ fn sink_alignment_and_rows(
         row_alignments,
     )
 }
-
 /// Receivers of `.attr` reads in an assertion text: the trailing
 /// identifier chain before each `.{attr}` (`conn.status` -> `conn`,
 /// `self.session.status` -> `self.session`), plus the first argument of a
@@ -1721,6 +1835,8 @@ struct AlignmentUnit<'a> {
     test: Option<&'a PythonTest>,
     /// The text every gate reads ([`super::PythonAssertion::gate_text`]).
     text: String,
+    /// Where the exception body ends in `text`, before the rule 14 comparison.
+    exception_body_end: Option<usize>,
     /// The assertion text a crediting finding reports.
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
@@ -1764,6 +1880,7 @@ fn alignment_units<'a>(
                     related,
                     test: Some(test),
                     text: assertion.gate_text.clone(),
+                    exception_body_end: assertion.exception_body_end,
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
                     source_range: assertion.source_range,
@@ -1786,6 +1903,7 @@ fn alignment_units<'a>(
                 related,
                 test,
                 text: text.clone(),
+                exception_body_end: None,
                 reported: text.clone(),
                 line: None,
                 source_range: None,
@@ -1863,7 +1981,7 @@ pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &Pyt
     if name.is_empty() {
         return false;
     }
-    let Some((parameter_names, body)) = parse_test_function_scope(test) else {
+    let Some((parameter_names, body)) = parse_test_function_scope(&test.body_text) else {
         return false;
     };
     parameter_names.iter().any(|parameter| parameter == name)
@@ -1915,8 +2033,8 @@ pub(super) fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
     }
 }
 
-fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
-    let source = dedent_python(&test.body_text);
+pub(super) fn parse_test_function_scope(body_text: &str) -> Option<(Vec<String>, Vec<Stmt>)> {
+    let source = dedent_python(body_text);
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("<python-test-body>"), &source)
     else {
         return None;
@@ -2230,6 +2348,7 @@ mod row_sink_alignment_tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
@@ -2243,6 +2362,8 @@ mod row_sink_alignment_tests {
             nested_called_by_parent: false,
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
+            route_returns_body: false,
+            route_dict_annotation: false,
         }
     }
 

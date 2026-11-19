@@ -1397,6 +1397,46 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0443"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md"
+status = "accepted"
+owner = "product-analysis"
+standalone_reason = "Pins that a branch-local `return_value` seam keeps strong grip only from an oracle whose call the fold establishes reaches that branch; unresolved shapes keep today's credit, so the gate only removes an established false promotion. The compared operands are resolved through their `let` initializers, every enclosing `if` on the path must be taken, a parameter rebound, destructured, mutably borrowed or assigned in the body keeps today's credit, identical arms stay ambiguous, and a sibling duplicate `return` keeps the call's grip (#14496)."
+
+[[artifact]]
+id = "RIPR-SPEC-0438"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0438-long-flag-equals-value.md"
+status = "accepted"
+owner = "product-cli"
+standalone_reason = "Pins the CLI-wide `--name=value` spelling owned by one argv rewrite before dispatch and the MCP route, including which tokens stay as typed: documented and global switches, value-position tokens, top-level flags before the command and tokens after a literal `--` (#14292)."
+
+[[artifact]]
+id = "RIPR-SPEC-0437"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0437-managed-server-archive-inspection.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins the managed server download's pre-extraction contract for the VS Code extension: the tar and Windows zip archive members are listed independently of the extractor and the whole archive is refused before extraction when any member is a symlink, a reparse point or escapes the target (#13640, #13904)."
+
+[[artifact]]
+id = "RIPR-SPEC-0440"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0440-output-never-replaces-own-input.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins the cross-command rule that an artifact report's --out/--out-md never replaces one of that command's own inputs: refusal by filesystem identity before any write, with the documented in-place, rolling and dry-run flows named as the only exceptions (#14312)."
+
+[[artifact]]
+id = "RIPR-SPEC-0429"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0429-structured-stage-evidence-rows.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Defines the machine-readable staged-evidence row form: additive check-JSON evidence_stages rows (stage, state, confidence, stage-named basis; no test attribution, which #13453 owns) and the agent surfaces' compact stages= line, with the human rendering unchanged (agent-efficiency study, #13162)."
+
+[[artifact]]
 id = "RIPR-SPEC-0411"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md"
@@ -1946,3 +1986,11 @@ path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."
+
+[[artifact]]
+id = "RIPR-SPEC-0450"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins which enclosing #[mutants::skip] scopes (fn, impl, trait, inline module, file) withhold a finding the way cargo-mutants skips it, the fail-closed parser rules, and the scope disclosure and explain line (#14135, #14133)."

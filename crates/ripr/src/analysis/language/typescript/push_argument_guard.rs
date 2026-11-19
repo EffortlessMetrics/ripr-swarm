@@ -233,8 +233,18 @@ fn test_binding(
         if require_jest_registration && identifier(&registration.callee) != Some("test") {
             let Expression::StaticMemberExpression(member) = &registration.callee else { return None };
             if member.optional || member.property.name != "only" || identifier(&member.object) != Some("test")
-                || only_replaced || registration.arguments.len() != 2
+                || only_replaced
                 || !matches!(registration.arguments.first(), Some(Argument::StringLiteral(_))) { return None }
+            // A literal timeout cannot run user code before registration. Do not
+            // admit computed timeouts or additional arguments with side effects.
+            let inert_timeout = match registration.arguments.as_slice() {
+                [_, _] => true,
+                [_, _, Argument::NumericLiteral(timeout)] => {
+                    timeout.value.is_finite() && (0.0..=2_147_483_647.0).contains(&timeout.value)
+                }
+                _ => false,
+            };
+            if !inert_timeout { return None }
         }
         let Some(Argument::ArrowFunctionExpression(callback)) = registration.arguments.get(1) else { return None };
         if callback.r#async || callback.expression || !callback.params.items.is_empty() || callback.params.rest.is_some() { return None }

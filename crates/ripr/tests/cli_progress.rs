@@ -21,7 +21,10 @@ fn ripr() -> Command {
 /// The binary exactly as a script runs it: no progress switches set.
 fn ripr_default() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.env_remove("RIPR_PROGRESS").env_remove("RIPR_QUIET");
+    command
+        .env_remove("RIPR_PROGRESS")
+        .env_remove("RIPR_QUIET")
+        .env_remove("RIPR_VERBOSE");
     command
 }
 
@@ -459,6 +462,227 @@ fn machine_format_stdout_is_unchanged(format: &str) -> Result<(), String> {
                 && line.contains("title=ripr ")
         }),
         "GitHub must emit a finding annotation, not an empty-result notice: {stdout}"
+    );
+    Ok(())
+}
+
+/// The `-v` diagnostics line that names the run's effort profile and scope.
+fn verbose_mode_lines(output: &Output) -> Vec<String> {
+    stderr_text(output)
+        .lines()
+        .filter(|line| line.starts_with("ripr: mode = "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `-v` used to print `ripr: mode = Diff`: the scope under the word the report
+/// header uses for the effort profile (`mode: draft`), spelled as a Rust enum
+/// variant. The line now carries both values under their own names, with the
+/// same tokens the report and the progress lines print.
+#[test]
+fn verbose_check_names_the_effort_mode_and_the_scope_separately() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let default_mode = run_check(&fixture, &["-v", "--format", "json"])?;
+    assert!(
+        default_mode.status.success(),
+        "{}",
+        stderr_text(&default_mode)
+    );
+    assert_eq!(
+        verbose_mode_lines(&default_mode),
+        ["ripr: mode = draft; scope = diff"],
+        "{}",
+        stderr_text(&default_mode)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&default_mode.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    assert_eq!(
+        report["mode"], "draft",
+        "the stderr line and the report must agree on the mode"
+    );
+
+    let ready = run_check(&fixture, &["-v", "--mode", "ready", "--format", "json"])?;
+    assert!(ready.status.success(), "{}", stderr_text(&ready));
+    assert_eq!(
+        verbose_mode_lines(&ready),
+        ["ripr: mode = ready; scope = diff"],
+        "{}",
+        stderr_text(&ready)
+    );
+
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert!(
+        verbose_mode_lines(&plain).is_empty(),
+        "the line is verbose-only: {}",
+        stderr_text(&plain)
+    );
+    Ok(())
+}
+
+/// `RIPR_VERBOSE` turns on the stderr diagnostics only: phase timings and
+/// per-finding verdict lines appear on stderr, no notice is printed, and the
+/// JSON stdout stays byte-identical to a plain run (the `-v` flag's stdout
+/// widenings never ride on an ambient variable).
+#[test]
+fn ripr_verbose_env_adds_stderr_diagnostics_and_keeps_json_stdout_identical() -> Result<(), String>
+{
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let args = [
+        "check",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        "--format",
+        "json",
+    ];
+    let traced = ripr()
+        .env("RIPR_VERBOSE", "1")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run traced check: {error}"))?;
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(traced.status.success(), "{}", stderr_text(&traced));
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert_eq!(
+        traced.stdout, plain.stdout,
+        "RIPR_VERBOSE must not change machine stdout"
+    );
+    let err = stderr_text(&traced);
+    for needle in [
+        "ripr: mode = draft; scope = diff",
+        "ripr: timing [diff] analyzing took ",
+        "ripr: timing [diff] completed after ",
+        "ripr: verdict ",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+    assert!(
+        !err.contains("verbose mode enabled"),
+        "the variable prints no notice: {err}"
+    );
+    let plain_err = stderr_text(&plain);
+    assert!(
+        !plain_err.contains("ripr: timing") && !plain_err.contains("ripr: verdict"),
+        "diagnostics are off by default: {plain_err}"
+    );
+
+    let off = ripr()
+        .env("RIPR_VERBOSE", "0")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run check with RIPR_VERBOSE=0: {error}"))?;
+    assert!(
+        !stderr_text(&off).contains("ripr: verdict"),
+        "RIPR_VERBOSE=0 leaves diagnostics off: {}",
+        stderr_text(&off)
+    );
+    Ok(())
+}
+
+/// Suppressed findings stay in the check output with their ids recorded, so
+/// the verdict trace must filter them: with a policy that suppresses the
+/// fixture's finding, stderr names the withheld count and prints no verdict
+/// line; without the policy the same run prints the verdict line.
+#[test]
+fn ripr_verbose_env_verdict_lines_skip_suppressed_findings() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let policy = fixture.0.join("ripr-suppressions.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"**\"\nreason = \"accepted for this test\"\nowner = \"repo-owner\"\n",
+    )
+    .map_err(|error| format!("write suppression policy: {error}"))?;
+    let policy_arg = policy.display().to_string();
+    let mut suppressed = ripr();
+    suppressed.env("RIPR_VERBOSE", "1");
+    let suppressed = run_check_as(
+        suppressed,
+        &fixture,
+        &[
+            "--format",
+            "json",
+            "--suppression-policy",
+            policy_arg.as_str(),
+        ],
+    )?;
+    let mut plain = ripr();
+    plain.env("RIPR_VERBOSE", "1");
+    let plain = run_check_as(plain, &fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let plain_err = stderr_text(&plain);
+    assert!(
+        plain_err.contains("ripr: verdict "),
+        "control run traces its finding: {plain_err}"
+    );
+    let err = stderr_text(&suppressed);
+    assert!(
+        err.contains(
+            "withheld by suppressions or owner opt-outs; verdict lines cover the 0 reported"
+        ),
+        "the withheld count is named: {err}"
+    );
+    assert!(
+        !err.contains("ripr: verdict "),
+        "a suppressed finding gets no verdict line: {err}"
+    );
+    Ok(())
+}
+
+/// The machine-discovery route and version queries keep a silent stderr
+/// under an exported `RIPR_VERBOSE`.
+#[test]
+fn ripr_verbose_env_leaves_help_json_and_version_stderr_silent() -> Result<(), String> {
+    for args in [
+        ["help", "--json"].as_slice(),
+        ["--version"].as_slice(),
+        ["lsp", "--version"].as_slice(),
+    ] {
+        let output = ripr_default()
+            .env("RIPR_VERBOSE", "1")
+            .args(args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            stderr_text(&output)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?} must keep stderr silent: {}",
+            stderr_text(&output)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn verbose_worktree_check_names_the_worktree_scope() -> Result<(), String> {
+    let root = sample_crate_root();
+    let output = ripr()
+        .args(["-v", "check", "--root", root.as_str(), "--worktree"])
+        .args(["--format", "json"])
+        .output()
+        .map_err(|error| format!("run verbose worktree check: {error}"))?;
+    // Same tolerance as the worktree progress test below: a checkout where
+    // the worktree read fails stops before the line, and says so.
+    if !output.status.success() {
+        assert!(
+            stderr_text(&output).contains("ripr progress: failed [worktree]"),
+            "{}",
+            stderr_text(&output)
+        );
+        return Ok(());
+    }
+    assert_eq!(
+        verbose_mode_lines(&output),
+        ["ripr: mode = draft; scope = worktree"],
+        "{}",
+        stderr_text(&output)
     );
     Ok(())
 }
@@ -1340,6 +1564,72 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
+/// `ripr explain --format agent` is the compact report a coding agent reads,
+/// and the agent loop follows `ripr check`'s printed `next=ripr explain ...`
+/// line, which carries no `--quiet`. On a piped stderr it is silent by default
+/// like `check --format agent`; the human explain keeps its progress (negative
+/// control) and `RIPR_PROGRESS=1` restores the stream.
+#[test]
+fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check_as(ripr_default(), &fixture, &["--format", "json"])?;
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let human = [
+        "explain",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        finding_id.as_str(),
+    ];
+    let mut agent = human.to_vec();
+    agent.extend_from_slice(&["--format", "agent"]);
+    let default = ripr_default()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(default.status.success(), "{}", stderr_text(&default));
+    assert!(
+        String::from_utf8_lossy(&default.stdout).starts_with("#ripr explain agent"),
+        "explain must still render the agent report: {}",
+        String::from_utf8_lossy(&default.stdout)
+    );
+    assert!(
+        !stderr_text(&default).contains("ripr progress:"),
+        "explain --format agent on a pipe is silent by default: {}",
+        stderr_text(&default)
+    );
+    let forced = ripr()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: loading_input [diff]"),
+        "RIPR_PROGRESS=1 restores explain progress (control): {}",
+        stderr_text(&forced)
+    );
+    assert_eq!(default.stdout, forced.stdout);
+    let human_default = ripr_default()
+        .args(human)
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert!(
+        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
+        "the human explain keeps progress on a pipe: {}",
+        stderr_text(&human_default)
+    );
+    Ok(())
+}
+
 /// Catalog paths whose production path can emit progress or `wrote` narration.
 /// A path not in this list or [`NO_NARRATION`] fails so a new command cannot
 /// rot into an unclassified default (#12103). Runtime lives here because a new
@@ -1385,6 +1675,7 @@ const NO_NARRATION: &[&str] = &[
     "calibrate",
     "calibrate cargo-mutants",
     "capabilities",
+    "completions",
     "config",
     "config validate",
     "coverage-grip",
@@ -1397,6 +1688,7 @@ const NO_NARRATION: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate check",
     "gate evaluate",
     "help",
     "impacted-evidence",

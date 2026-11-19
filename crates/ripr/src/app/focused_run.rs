@@ -10,16 +10,16 @@
 //! the governed module). Failures the file does not explain are refused.
 //! Anything refused records nothing.
 //!
-//! This slice validates binding and per-test outcomes only. It does not yet
-//! refuse the same test reporting both `ok` and `failed`, a `started` test
-//! with no terminal event, or a missing terminal suite event; the custody
-//! change checks stream completeness. The retained record is the normalized
-//! record, not the caller's bytes. It states what was checked and what was
-//! not: ripr did not observe the run.
+//! Reported completion is checked too: a test reporting both `ok` and `failed`,
+//! a `started` test with no terminal event, and unclosed or mismatched suites
+//! are refused. The retained record is the normalized record, not the caller's
+//! bytes. It states what was checked and what was not: ripr did not observe the
+//! run. Whether a result is required to finish is decided by the caller of
+//! this module: only an attempt that follows a new-test proposal needs one.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const FOCUSED_RUN_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const FOCUSED_RUN_INPUT_KIND: &str = "focused_test_result";
@@ -41,6 +41,102 @@ struct FocusedRunInput {
     test_file: String,
     /// Libtest JSON events, one object per element.
     libtest_events: Vec<Value>,
+}
+
+/// Check completion obligations explicitly reported by the caller. Terminal-only
+/// claims remain supported; suite framing and progress events cannot be truncated.
+fn validate_reported_completion(events: &[Value]) -> Result<(), String> {
+    let refuse = || {
+        "the focused result is not complete or has contradictory libtest summaries; pass the complete focused test events with `--test-result FILE`".to_string()
+    };
+    let mut announced = None;
+    let mut framed = false;
+    let mut pending = BTreeSet::new();
+    let mut outcomes = BTreeMap::new();
+    for value in events {
+        let object = value.as_object().ok_or_else(refuse)?;
+        let kind = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(refuse)?;
+        let event = object.get("event").and_then(Value::as_str).unwrap_or("");
+        if kind == "suite" {
+            let number = |key: &str| object.get(key).and_then(Value::as_u64).ok_or_else(refuse);
+            if event == "started" {
+                if announced.is_some() || !pending.is_empty() || (!framed && !outcomes.is_empty()) {
+                    return Err(refuse());
+                }
+                announced = Some(number("test_count")?);
+                framed = true;
+                outcomes.clear();
+            } else {
+                let count = announced.take().ok_or_else(refuse)?;
+                if !pending.is_empty() {
+                    return Err(refuse());
+                }
+                let mut total = 0u64;
+                for (field, outcome) in [
+                    ("passed", "ok"),
+                    ("failed", "failed"),
+                    ("ignored", "ignored"),
+                    ("measured", "bench"),
+                ] {
+                    let reported = number(field)?;
+                    if reported
+                        != outcomes.values().filter(|found| **found == outcome).count() as u64
+                    {
+                        return Err(refuse());
+                    }
+                    total = total.checked_add(reported).ok_or_else(refuse)?;
+                }
+                number("filtered_out")?;
+                if total != count || (event == "ok") != (number("failed")? == 0) {
+                    return Err(refuse());
+                }
+                outcomes.clear();
+            }
+            continue;
+        }
+        if framed && announced.is_none() {
+            return Err(refuse());
+        }
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(refuse)?;
+        let outcome = if kind == "bench" {
+            for field in ["median", "deviation"] {
+                if object
+                    .get(field)
+                    .and_then(Value::as_f64)
+                    .is_none_or(|n| !n.is_finite() || n < 0.0)
+                {
+                    return Err(refuse());
+                }
+            }
+            "bench"
+        } else {
+            event
+        };
+        if matches!(outcome, "started" | "timeout") {
+            if outcomes.contains_key(name) {
+                return Err(refuse());
+            }
+            pending.insert(name);
+        } else {
+            pending.remove(name);
+            if outcomes
+                .insert(name, outcome)
+                .is_some_and(|previous| previous != outcome)
+            {
+                return Err(refuse());
+            }
+        }
+    }
+    if announced.is_some() || !pending.is_empty() {
+        return Err(refuse());
+    }
+    Ok(())
 }
 
 /// What the attempt authority knows and the caller's claim must match.
@@ -75,6 +171,10 @@ pub(crate) struct FocusedRunRecord {
 }
 
 impl FocusedRunRecord {
+    pub(crate) fn failed_count(&self) -> usize {
+        self.failed
+    }
+
     pub(crate) fn counted(&self) -> usize {
         self.ran_tests.len()
     }
@@ -86,6 +186,18 @@ impl FocusedRunRecord {
         Ok(bytes)
     }
 
+    /// The counts status and the finish summary report for this record
+    /// (#14079): the same reading `read_retained_focused_run` gives back
+    /// from the retained text.
+    pub(crate) fn reported(&self) -> crate::output::agent_receipt::ReportedTestRun {
+        crate::output::agent_receipt::ReportedTestRun {
+            file: self.file.clone(),
+            ran: self.counted(),
+            passed: self.passed,
+            failed: self.failed,
+        }
+    }
+
     pub(crate) fn summary(&self) -> String {
         format!(
             "{} test(s) ran in `{}` ({} passed, {} failed)",
@@ -95,6 +207,36 @@ impl FocusedRunRecord {
             self.failed
         )
     }
+}
+
+/// Read back a retained focused run record for status (#14079). The record
+/// is the canonical text the finish committed for `attempt_id`; a record of
+/// another schema, kind or attempt, or one whose counts do not parse, reads
+/// as absent, so status never reports a run it cannot attribute.
+pub(crate) fn read_retained_focused_run(
+    record: &str,
+    attempt_id: &str,
+) -> Option<crate::output::agent_receipt::ReportedTestRun> {
+    let value: Value = serde_json::from_str(record).ok()?;
+    let text = |key: &str| value.get(key).and_then(Value::as_str);
+    let count = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok())
+    };
+    if text("schema_version") != Some(FOCUSED_RUN_SCHEMA_VERSION)
+        || text("kind") != Some(FOCUSED_RUN_RECORD_KIND)
+        || text("attempt_id") != Some(attempt_id)
+    {
+        return None;
+    }
+    Some(crate::output::agent_receipt::ReportedTestRun {
+        file: text("file")?.to_string(),
+        ran: value.get("ran_tests").and_then(Value::as_array)?.len(),
+        passed: count("passed")?,
+        failed: count("failed")?,
+    })
 }
 
 /// Validate a caller-supplied focused result against the attempt's scope.
@@ -145,12 +287,11 @@ pub(crate) fn validate_focused_run(
     }
 
     let defined = executable_test_names(scope.file, scope.file_source)?;
-    let name_scope = name_scope(scope);
+    let name_scope = name_scope(scope)?;
     let mut ran_in_scope = BTreeSet::new();
     let mut failed_in_scope = BTreeSet::new();
     let mut uncounted = BTreeSet::new();
     let mut unattributed_failed = BTreeSet::new();
-    let mut suite_failed = false;
     for (index, event) in input.libtest_events.iter().enumerate() {
         let object = event.as_object().ok_or_else(|| {
             format!("libtest_events[{index}] is not a JSON object; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`")
@@ -160,13 +301,35 @@ pub(crate) fn validate_focused_run(
             .and_then(Value::as_str)
             .ok_or_else(|| format!("libtest_events[{index}] has no string `type`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         if kind != "test" {
-            // Suite and bench events carry no per-test outcome, but a suite
-            // that reports `failed` is remembered so a failure nothing in the
-            // file explains is not passed over.
-            if kind == "suite" && object.get("event").and_then(Value::as_str) == Some("failed") {
-                suite_failed = true;
+            // Suite and bench events carry no per-test outcome.
+            match kind {
+                "suite" => {
+                    let outcome = object.get("event").and_then(Value::as_str);
+                    if !matches!(outcome, Some("started" | "ok" | "failed")) {
+                        return Err(format!(
+                            "libtest_events[{index}] has an invalid suite event; pass libtest JSON events from the focused test"
+                        ));
+                    }
+                    continue;
+                }
+                "bench" => {
+                    if object
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                    {
+                        return Err(format!(
+                            "libtest_events[{index}] has no bench name; pass libtest JSON events from the focused test"
+                        ));
+                    }
+                    continue;
+                }
+                _ => {
+                    return Err(format!(
+                        "libtest_events[{index}] has unknown type `{kind}`; pass libtest JSON events from the focused test"
+                    ));
+                }
             }
-            continue;
         }
         let outcome = object
             .get("event")
@@ -199,20 +362,6 @@ pub(crate) fn validate_focused_run(
             }
         }
     }
-    if !unattributed_failed.is_empty() {
-        let names: Vec<&str> = unattributed_failed.iter().map(String::as_str).collect();
-        return Err(format!(
-            "the caller-reported result has failed test(s) not defined in `{}`: {}; fix them or rerun only the focused test and pass its events with `--test-result FILE`",
-            scope.file,
-            names.join(", ")
-        ));
-    }
-    if suite_failed && failed_in_scope.is_empty() {
-        return Err(format!(
-            "the caller-reported result has a suite that failed, but no failed test in `{}` explains it; rerun only the focused test and pass its events with `--test-result FILE`",
-            scope.file
-        ));
-    }
     if ran_in_scope.is_empty() {
         let place = match scope.inline_module {
             Some(module) => format!("the `{module}` module of `{}`", scope.file),
@@ -220,6 +369,15 @@ pub(crate) fn validate_focused_run(
         };
         return Err(format!(
             "no test ran in {place}: the result is not counted; run the focused test (for example `cargo test --test <stem>` or `cargo test <module>::`) and pass its libtest JSON events"
+        ));
+    }
+    validate_reported_completion(&input.libtest_events)?;
+    if !unattributed_failed.is_empty() {
+        let names: Vec<&str> = unattributed_failed.iter().map(String::as_str).collect();
+        return Err(format!(
+            "the caller-reported result has failed test(s) not defined in `{}`: {}; fix them or rerun only the focused test and pass its events with `--test-result FILE`",
+            scope.file,
+            names.join(", ")
         ));
     }
     let failed = failed_in_scope.len();
@@ -234,19 +392,25 @@ pub(crate) fn validate_focused_run(
         failed,
         uncounted_ran: uncounted.len(),
         ran_tests: ran_in_scope.into_iter().collect(),
-        claim: "caller-supplied; ripr checked shape, attempt and HEAD binding, file membership and per-test outcomes, not stream completeness; ripr did not run or observe the tests",
+        claim: "caller-supplied; ripr checked shape, attempt and HEAD binding, file membership, per-test outcomes and reported completion; ripr did not run or observe the tests",
     })
 }
 
-/// A ran test counts only when its final path segment names an executable
-/// test defined in the file, and, for an inline module, when its path passes
-/// through that module.
 /// The libtest path prefix a test inside `file`'s inline module `module` must
 /// carry: the file's own module path, then the module. `None` when the file's
 /// module path cannot be derived (a bin target, a non-`src` file, a nested
 /// `tests/` file); nothing is then counted rather than guessed. A `#[path]`
 /// module is not detectable from the file alone and stays a caller's claim.
 fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
+    let mut path = file_module_path(file)?;
+    path.push(module.to_string());
+    Some(path)
+}
+
+/// The module path `file` itself contributes to a libtest name: empty for a
+/// crate root or an integration-test file, `a::b` for `src/a/b.rs`. `None`
+/// when it cannot be derived from the file alone.
+fn file_module_path(file: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = file.split('/').collect();
     let mut path: Vec<String> = Vec::new();
     if let Some(at) = parts.iter().position(|part| *part == "src") {
@@ -267,8 +431,19 @@ fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
             _ => return None,
         }
     }
-    path.push(module.to_string());
     Some(path)
+}
+
+/// A libtest name with the file's own module path removed: the
+/// file-internal path `analysis::executable_test_function_names` reports
+/// (`tests::adds`). `None` when the name does not carry that prefix.
+fn file_internal_path<'a>(name: &'a str, file_prefix: &str) -> Option<&'a str> {
+    if file_prefix.is_empty() {
+        Some(name)
+    } else {
+        name.strip_prefix(file_prefix)
+            .and_then(|rest| rest.strip_prefix("::"))
+    }
 }
 
 enum NameScope {
@@ -280,32 +455,143 @@ enum NameScope {
     Nothing,
 }
 
-fn name_scope(scope: &FocusedRunScope<'_>) -> NameScope {
+fn name_scope(scope: &FocusedRunScope<'_>) -> Result<NameScope, String> {
     match scope.inline_module {
-        None => NameScope::AnyPath,
-        Some(module) => match inline_scope_path(scope.file, module) {
-            Some(prefix) => NameScope::Prefix(prefix),
-            None => NameScope::Nothing,
-        },
+        None => Ok(NameScope::AnyPath),
+        Some(module) => {
+            let region = crate::edit_cage::inline_test_region::observe_inline_test_region(
+                scope.file_source, module,
+            ).map_err(|error| format!("cannot identify the governed inline test module `{module}`: {error:?}; fix the selected file to retain one governed module, then rerun the after phase"))?;
+            Ok(match inline_scope_path(scope.file, &region.module_path) {
+                Some(prefix) => NameScope::Prefix(prefix),
+                None => NameScope::Nothing,
+            })
+        }
     }
 }
 
 fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -> bool {
-    let mut segments: Vec<&str> = name.split("::").collect();
-    let Some(function) = segments.pop() else {
-        return false;
-    };
-    if !defined.contains(function) {
-        return false;
-    }
     match scope {
         NameScope::Prefix(prefix) => {
-            segments.len() >= prefix.len()
-                && segments.iter().zip(prefix).all(|(a, b)| *a == b.as_str())
+            // The full suffix includes every in-file module, including the
+            // governed module. Compare the event to that parser-owned path.
+            let Some((module, file_parts)) = prefix.split_last() else {
+                return false;
+            };
+            let file_prefix = file_parts.join("::");
+            file_internal_path(name, &file_prefix).is_some_and(|path| {
+                path.strip_prefix(module)
+                    .is_some_and(|rest| rest.starts_with("::"))
+                    && defined.contains(path)
+            })
         }
-        NameScope::AnyPath => true,
+        NameScope::AnyPath => defined.contains(name),
         NameScope::Nothing => false,
     }
+}
+
+/// The full-proof finish gate for an attempt that follows a new-test proposal
+/// (#13203 slice C): a finish needs a recorded focused result with at least one
+/// counted test and no failed test. The result's attribution stays the
+/// caller's claim; a failed test counts as having run, so it is refused here.
+pub(crate) fn require_passing_run(
+    record: Option<&FocusedRunRecord>,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(record) = record else {
+        return Err(format!(
+            "attempt `{attempt_id}` follows a new-test proposal, so finishing needs a focused test result; run the new test (`cargo test -- --format json -Z unstable-options`) and pass its events with `--test-result FILE`"
+        ));
+    };
+    if record.counted() == 0 {
+        return Err(format!(
+            "attempt `{attempt_id}` has a focused test result with no counted test; run the new test and pass its events with `--test-result FILE`"
+        ));
+    }
+    if record.failed_count() > 0 {
+        return Err(format!(
+            "the focused test result reports {} failed test(s) for attempt `{attempt_id}`; fix the test or the code, rerun it and pass the new events with `--test-result FILE`",
+            record.failed_count()
+        ));
+    }
+    require_new_test(&record.ran_tests, attempt_id, baseline)
+}
+
+/// The selected file's tests when an inline-proposal attempt began: the input
+/// of the inline-proposal gate, which must not credit a test that already
+/// existed.
+#[derive(Debug)]
+pub(crate) struct ProposalBaseline {
+    /// The module path the file contributes to libtest names; `None` when it
+    /// cannot be derived, and then no ran test is credited as new.
+    file_prefix: Option<String>,
+    /// File-internal test paths (`tests::adds`).
+    tests: BTreeSet<String>,
+}
+
+/// Test names defined by the selected file when the attempt began.
+pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<ProposalBaseline, String> {
+    Ok(ProposalBaseline {
+        file_prefix: file_module_path(file).map(|parts| parts.join("::")),
+        tests: executable_test_names(file, source)?,
+    })
+}
+
+/// An inline proposal adds a test to a file that already holds tests, so a
+/// passing run must include a test the baseline did not define. A ran name is
+/// new only when, with the file's module path removed, its file-internal path
+/// is not a baseline path; a name whose path cannot be derived is not new.
+fn require_new_test(
+    ran: &[String],
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(baseline) = baseline else {
+        return Ok(());
+    };
+    let is_new = |name: &str| {
+        baseline.file_prefix.as_deref().is_some_and(|prefix| {
+            file_internal_path(name, prefix).is_some_and(|path| !baseline.tests.contains(path))
+        })
+    };
+    if !ran.iter().any(|name| is_new(name)) {
+        return Err(format!(
+            "attempt `{attempt_id}` follows an inline new-test proposal, but every counted test already existed in the file when the attempt began; run the newly added test and pass its events with `--test-result FILE`"
+        ));
+    }
+    Ok(())
+}
+
+/// Apply C's gate to a normalized claim committed by an older B producer.
+/// This checks the retained claim's outcome; it does not attest execution.
+pub(crate) fn require_passing_recorded_run(
+    raw: &str,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Outcome {
+        schema_version: String,
+        kind: String,
+        attempt_id: String,
+        ran_tests: Vec<String>,
+        passed: usize,
+        failed: usize,
+    }
+    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| {
+        format!("the retained focused result cannot be read: {error}; inspect the retained attempt")
+    })?;
+    if outcome.schema_version != FOCUSED_RUN_SCHEMA_VERSION
+        || outcome.kind != FOCUSED_RUN_RECORD_KIND
+        || outcome.attempt_id != attempt_id
+        || outcome.ran_tests.is_empty()
+        || outcome.failed != 0
+        || outcome.passed != outcome.ran_tests.len()
+    {
+        return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
+    }
+    require_new_test(&outcome.ran_tests, attempt_id, baseline)
 }
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
@@ -316,6 +602,56 @@ fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #14079: status reads a retained record back as the counts the finish
+    /// recorded, and reads a record of another attempt, another kind, or
+    /// without parseable counts as absent.
+    #[test]
+    fn a_retained_record_reads_back_only_for_its_own_attempt_and_kind() -> Result<(), String> {
+        let record = FocusedRunRecord {
+            schema_version: FOCUSED_RUN_SCHEMA_VERSION,
+            kind: FOCUSED_RUN_RECORD_KIND,
+            attempt_id: "attempt-1".to_string(),
+            head: "abc123".to_string(),
+            file: "tests/math.rs".to_string(),
+            module: None,
+            ran_tests: vec!["adds".to_string(), "subtracts".to_string()],
+            passed: 1,
+            failed: 1,
+            uncounted_ran: 3,
+            claim: "caller-supplied",
+        };
+        let text = String::from_utf8(record.render()?).map_err(|error| error.to_string())?;
+        let reading = read_retained_focused_run(&text, "attempt-1");
+        assert_eq!(reading, Some(record.reported()));
+        let reading = reading.ok_or("the record did not read back")?;
+        assert_eq!(
+            (
+                reading.file.as_str(),
+                reading.ran,
+                reading.passed,
+                reading.failed
+            ),
+            ("tests/math.rs", 2, 1, 1)
+        );
+        assert_eq!(read_retained_focused_run(&text, "attempt-2"), None);
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace(FOCUSED_RUN_RECORD_KIND, FOCUSED_RUN_INPUT_KIND),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace("\"failed\": 1", "\"failed\": \"1\""),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(read_retained_focused_run("not json", "attempt-1"), None);
+        Ok(())
+    }
 
     const SOURCE: &str = "#[test]\nfn adds() {}\n\n#[test]\nfn subtracts() {}\n\nfn helper() {}\n";
 
@@ -475,6 +811,44 @@ mod tests {
         assert!(error.contains("no test ran"), "{error}");
     }
 
+    #[test]
+    fn inline_result_requires_the_named_test_to_be_in_the_governed_module() {
+        let source = "#[test] fn outside() {}\n#[cfg(test)] mod tests { #[test] fn inside() {} mod nested { #[test] fn deeper() {} } }\n";
+        let inline = FocusedRunScope {
+            attempt_id: "attempt-1",
+            head: "abc123",
+            file: "src/lib.rs",
+            file_source: source,
+            inline_module: Some("tests"),
+        };
+        for name in [
+            "tests::outside",
+            "tests::nested::inside",
+            "tests::inside::deeper",
+        ] {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "src/lib.rs",
+                serde_json::json!([ok(name)]),
+            );
+            assert!(refusal(&raw, &inline).contains("no test ran"), "{name}");
+        }
+        for name in ["tests::inside", "tests::nested::deeper"] {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "src/lib.rs",
+                serde_json::json!([ok(name)]),
+            );
+            assert_eq!(
+                validate_focused_run(&raw, &inline).map(|r| r.counted()),
+                Ok(1),
+                "{name}"
+            );
+        }
+    }
+
     fn inline_counted(file: &str, name: &str) -> Result<usize, String> {
         let source =
             "fn production() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() {}\n}\n";
@@ -555,22 +929,6 @@ mod tests {
     }
 
     #[test]
-    fn a_non_rust_selected_file_is_refused_up_front() {
-        let raw = document(
-            "attempt-1",
-            "abc123",
-            "tests/test_math.py",
-            serde_json::json!([ok("test_adds")]),
-        );
-        let python = FocusedRunScope {
-            file: "tests/test_math.py",
-            ..scope(None)
-        };
-        let error = refusal(&raw, &python);
-        assert!(error.contains("Rust test files only"), "{error}");
-    }
-
-    #[test]
     fn a_failure_the_file_does_not_explain_is_refused() {
         let foreign = document(
             "attempt-1",
@@ -599,28 +957,121 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
-        // A failed suite with only passing tests in the file has no explanation.
-        let suite = serde_json::json!({"type": "suite", "event": "failed", "failed": 1});
-        let unexplained = document(
-            "attempt-1",
-            "abc123",
-            "tests/math.rs",
-            serde_json::json!([ok("adds"), suite.clone()]),
+    }
+
+    #[test]
+    fn the_finish_gate_needs_a_counted_passing_run() {
+        let ran = |events: Value| {
+            validate_focused_run(
+                &document("attempt-1", "abc123", "tests/math.rs", events),
+                &scope(None),
+            )
+        };
+        let passing = ran(serde_json::json!([ok("adds")]));
+        assert!(
+            passing
+                .as_ref()
+                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1", None).is_ok()),
+            "{passing:?}"
         );
-        let error = refusal(&unexplained, &scope(None));
-        assert!(error.contains("suite that failed"), "{error}");
-        // A failed suite explained by a failed test in the file is recorded.
-        let explained = document(
-            "attempt-1",
-            "abc123",
-            "tests/math.rs",
-            serde_json::json!([{"type": "test", "event": "failed", "name": "adds"}, suite]),
+        let failing = ran(serde_json::json!([
+            ok("adds"),
+            {"type": "test", "event": "failed", "name": "subtracts"}
+        ]));
+        let failing = failing.as_ref().map_err(String::clone);
+        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1", None));
+        assert!(
+            verdict
+                .as_ref()
+                .is_ok_and(|v| v.as_ref().err().is_some_and(|e| e.contains("1 failed"))),
+            "{verdict:?}"
         );
-        let record = validate_focused_run(&explained, &scope(None));
+        let missing = require_passing_run(None, "attempt-1", None)
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("needs a focused test result"), "{missing}");
+        let baseline = ProposalBaseline {
+            file_prefix: Some(String::new()),
+            tests: ["adds".to_string()].into(),
+        };
+        let old_only = ran(serde_json::json!([ok("adds")]));
+        let old_only = old_only.as_ref().map_err(String::clone);
+        let verdict = old_only.map(|r| require_passing_run(Some(r), "attempt-1", Some(&baseline)));
+        assert!(
+            verdict.as_ref().is_ok_and(|v| v
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("already existed"))),
+            "{verdict:?}"
+        );
+        let with_new = ran(serde_json::json!([ok("adds"), ok("subtracts")]));
+        assert!(
+            with_new.as_ref().is_ok_and(|r| {
+                require_passing_run(Some(r), "attempt-1", Some(&baseline)).is_ok()
+            }),
+            "{with_new:?}"
+        );
+    }
+
+    #[test]
+    fn the_new_test_check_compares_file_internal_paths_exactly() {
+        let before = "fn production() {}\n\n#[test]\nfn existing_discount() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn old() {}\n}\n";
+        let check = |file: &str, names: &[&str]| {
+            let baseline = baseline_test_names(file, before)?;
+            let ran: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+            require_new_test(&ran, "attempt-1", Some(&baseline))
+        };
+        let refused = |result: Result<(), String>| {
+            result
+                .err()
+                .is_some_and(|error| error.contains("already existed"))
+        };
+        let in_math = baseline_test_names("src/math.rs", before);
         assert_eq!(
-            record.as_ref().map(FocusedRunRecord::counted),
-            Ok(1),
-            "{record:?}"
+            in_math
+                .as_ref()
+                .map(|b| (b.file_prefix.clone(), b.tests.clone())),
+            Ok((
+                Some("math".to_string()),
+                ["existing_discount".to_string(), "tests::old".to_string()].into()
+            )),
+            "{in_math:?}"
         );
+        // A governed `tests::existing_discount` is new even though a
+        // top-level `existing_discount` already existed.
+        assert_eq!(
+            check("src/math.rs", &["math::tests::existing_discount"]),
+            Ok(())
+        );
+        assert!(refused(check("src/math.rs", &["math::tests::old"])));
+        assert_eq!(
+            check("src/math.rs", &["math::tests::old", "math::tests::added"]),
+            Ok(())
+        );
+        // A name without the file's module path is not credited.
+        assert!(refused(check("src/math.rs", &["tests::added"])));
+        assert!(refused(check("src/math.rs", &["other::tests::added"])));
+        // A crate root contributes no prefix.
+        assert_eq!(check("src/lib.rs", &["tests::existing_discount"]), Ok(()));
+        assert!(refused(check("src/lib.rs", &["tests::old"])));
+        assert!(refused(check("src/lib.rs", &["existing_discount"])));
+        // A file whose module path cannot be derived credits nothing.
+        assert!(refused(check("src/bin/tool.rs", &["tests::added"])));
+    }
+
+    #[test]
+    fn a_non_rust_selected_file_is_refused_up_front() {
+        let raw = document(
+            "attempt-1",
+            "abc123",
+            "tests/test_math.py",
+            serde_json::json!([ok("test_adds")]),
+        );
+        let python = FocusedRunScope {
+            file: "tests/test_math.py",
+            ..scope(None)
+        };
+        let error = refusal(&raw, &python);
+        assert!(error.contains("Rust test files only"), "{error}");
     }
 }

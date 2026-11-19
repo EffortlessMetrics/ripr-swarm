@@ -78,9 +78,60 @@ decoy-write watchdog observing no matching writes outside the selected root.
 - Every negative control keeps its own non-positive terminal result; no
   aggregate converts them into success.
 
+## Optional real-runtime preparation control
+
+The ordinary installed-language integration tests use shell stand-ins for
+deterministic argv/CWD checks. A separate ignored test runs real pytest with
+the workspace-built binary. Supply an isolated Python environment containing
+pytest and its console script on PATH, then run:
+
+```bash
+cargo test --locked -p ripr --features lang-python \
+  --test installed_python_typescript_journeys \
+  python_real_pytest_replays_printed_verify_and_discriminates_boundary \
+  -- --ignored --exact --nocapture
+```
+
+The test installs nothing and does not activate an environment. Supply Python
+and the pytest console script from the same isolated environment's executable
+directory. Their observed paths, the console shebang, module location and
+versions are recorded; different executable directories or versions refuse the
+comparison. This routes the comparison to one environment; it does not
+authenticate custom wrapper contents or SDK bytes. Missing Python,
+pytest, or its console script fails this explicitly requested control; default
+test execution reports it ignored. It removes inherited Python path overrides
+and pytest plugin/options overrides, disables plugin autoload and bytecode
+writes, clears child Python/pytest shell functions and disables BASH_ENV, and
+otherwise uses the caller's PATH. It records interpreter and pytest
+identity, replays the exact printed module-form action from a foreign CWD,
+requires a nonzero passing selector, and checks that the bare console-script
+replacement fails to import the fixture package. In the disposable fixture it
+then adds the equality assertion, requires it to pass, rejects the exclusive
+boundary with an assertion failure, restores the source and reruns successfully.
+The intentional wrong-source experiment is outside the repair edit cage and is
+never an admitted edit. The decoy repository must remain untouched.
+
+The product check and runtime subprocesses in this optional control reuse
+`common/boundary_gap.rs::run_program_recorded`:
+each has a 30-second deadline, a combined 4 MiB capture-admission limit and
+isolated process ownership. Termination and primary reap occur before the
+shared runner returns a terminal result. A separate default Linux control
+deliberately hangs a shell with a TERM-ignoring descendant, requires the
+deadline refusal, inspects the shared terminal record and verifies primary
+reap and descendant stoppage before fixture cleanup. A default metadata control
+rejects a console script selected from another environment directory. Run them
+without a Python prerequisite using the `python_runtime_` test filter.
+
+This is fixture/runtime and workspace-command preparation evidence. It does
+not connect the installed archive custody handle to a language journey, record
+static closure or a receipt, qualify an immutable candidate, or supply a blind
+operator observation. Those remain separate downstream obligations.
+
 ## Must Not
 
-- Do not run a candidate, launch a process, or decide a release verdict.
+- The scripted executor must not launch candidate processes or decide a release
+  verdict. The optional preparation control above executes workspace-built
+  commands only and supplies no candidate qualification.
 - Do not record any production edit as admitted: `pricing/core.py`,
   `pricing/__init__.py` and `pyproject.toml` stay forbidden in every
   positive row.

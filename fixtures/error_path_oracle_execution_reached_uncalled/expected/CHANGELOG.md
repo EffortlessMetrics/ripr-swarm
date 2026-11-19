@@ -541,3 +541,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_reached_uncalled (41)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_reached_uncalled (42)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/human.txt`

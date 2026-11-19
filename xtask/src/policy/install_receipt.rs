@@ -1,32 +1,44 @@
-//! `cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`:
+//! `cargo xtask install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]`:
 //! the checked-in receipt behind the "install to first useful result" release-ladder
 //! row (docs/METRICS.md, R0).
 //!
-//! `.github/workflows/published-install-matrix.yml` uploads one small JSON file per
-//! matrix cell (channel x platform): its status, the installed version and the
-//! install seconds. This command merges a downloaded set of those files with the
-//! hand-kept channel dispositions in `metrics/install/dispositions.json` into
-//! `metrics/install/receipt.json` (and a Markdown view), refusing a set that is
-//! missing a cell or carries an unknown status. `--check` re-validates the
-//! checked-in receipt without a network or a run. The R0 verdict is derived, never
-//! typed: `met` only when every cell works within the threshold and no channel
-//! disposition is left unprobed.
+//! `.github/workflows/published-install-matrix.yml` (cargo, PyPI, npm, binstall) and
+//! `.github/workflows/first-run-archive.yml` (release archive) upload one small JSON
+//! file per cell (channel x platform): its status, the installed version and the
+//! install seconds. This command merges one or more downloaded runs of those files,
+//! each named by its run id, with the hand-kept dispositions for channels no
+//! workflow installs (`metrics/install/dispositions.json`) into
+//! `metrics/install/receipt.json` (and a Markdown view). Every channel x platform
+//! cell must appear in at least one run; a run may not carry the same cell twice.
+//!
+//! Each cell is judged on all its samples. Any failed or broken sample fails it. A
+//! working cell is timed by the median of its working samples: prebuilt channels
+//! against the 300 s first-value bar, and `cargo install` (a source build) against
+//! its own 900 s bar with at least three samples, because one noisy runner can double
+//! a cold compile. `--check` re-derives the whole receipt from its own samples
+//! without a network or a run. The R0 verdict is derived, never typed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 const USAGE: &str =
-    "usage: cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]";
+    "usage: cargo xtask install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]";
 const RECEIPT: &str = "metrics/install/receipt.json";
 const RECEIPT_MD: &str = "metrics/install/receipt.md";
 const DISPOSITIONS: &str = "metrics/install/dispositions.json";
-const SCHEMA: &str = "ripr-install-receipt-v1";
-/// The R0 ceiling in docs/METRICS.md: install to first useful result.
-const THRESHOLD_SECONDS: f64 = 300.0;
-const CHANNELS: [&str; 3] = ["cargo", "pypi", "npm"];
+const SCHEMA: &str = "ripr-install-receipt-v2";
+/// The R0 first-value bar in docs/METRICS.md for prebuilt channels.
+const PREBUILT_THRESHOLD_SECONDS: f64 = 300.0;
+/// The R0 bar for `cargo install`, which compiles from source.
+const SOURCE_BUILD_THRESHOLD_SECONDS: f64 = 900.0;
+/// A source-build cell is judged only on a median of at least this many samples.
+const SOURCE_BUILD_MIN_SAMPLES: usize = 3;
+const CHANNELS: [&str; 5] = ["archive", "binstall", "cargo", "npm", "pypi"];
+/// Channels that compile ripr on the user's machine.
+const SOURCE_BUILD_CHANNELS: [&str; 1] = ["cargo"];
 const PLATFORMS: [&str; 5] = [
     "ubuntu-latest",
     "ubuntu-24.04-arm",
@@ -37,14 +49,8 @@ const PLATFORMS: [&str; 5] = [
 /// A cell is one of these; `known_gap` is a documented unavailable combination,
 /// `broken` an installed package that does not start.
 const CELL_STATUSES: [&str; 4] = ["works", "known_gap", "broken", "failed"];
-/// Channels outside the matrix that the checked-in dispositions must each account for.
-const OTHER_CHANNELS: [&str; 5] = [
-    "archive",
-    "binstall",
-    "vscode_extension",
-    "ci_init",
-    "homebrew",
-];
+/// Channels no workflow installs; the checked-in dispositions must each account for them.
+const OTHER_CHANNELS: [&str; 3] = ["vscode_extension", "ci_init", "homebrew"];
 const DISPOSITION_STATUSES: [&str; 3] = ["tested_elsewhere", "not_tested", "not_shipped"];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +60,7 @@ pub(super) struct Cell {
     pub(super) status: String,
     pub(super) version: Option<String>,
     pub(super) install_seconds: Option<f64>,
+    pub(super) run_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,8 +74,7 @@ pub(super) struct Disposition {
 pub(super) enum Mode {
     Check,
     Build {
-        cells: PathBuf,
-        run_id: Option<String>,
+        runs: Vec<(PathBuf, String)>,
         write: bool,
     },
 }
@@ -76,21 +82,14 @@ pub(super) enum Mode {
 pub(crate) fn install_receipt(args: &[String]) -> Result<(), String> {
     match parse_args(args)? {
         Mode::Check => check_receipt(Path::new(".")),
-        Mode::Build {
-            cells,
-            run_id,
-            write,
-        } => {
+        Mode::Build { runs, write } => {
             let root = Path::new(".");
-            if write && run_id.as_deref().is_none_or(str::is_empty) {
-                return Err(
-                    "--write needs --run-id <matrix run id> so the receipt names its source"
-                        .to_string(),
-                );
+            let mut cells = Vec::new();
+            for (dir, run_id) in &runs {
+                cells.extend(read_cells(dir, run_id)?);
             }
-            let cells = read_cells(&cells)?;
             let dispositions = read_dispositions(&root.join(DISPOSITIONS))?;
-            let receipt = build_receipt(&cells, &dispositions, run_id.as_deref())?;
+            let receipt = build_receipt(&cells, &dispositions)?;
             let json_text = serde_json::to_string_pretty(&receipt)
                 .map_err(|error| format!("render receipt: {error}"))?
                 + "\n";
@@ -112,8 +111,8 @@ pub(super) fn parse_args(args: &[String]) -> Result<Mode, String> {
     if args.is_empty() || args == ["--check"] {
         return Ok(Mode::Check);
     }
-    let mut cells = None;
-    let mut run_id = None;
+    let mut dirs = Vec::new();
+    let mut run_ids = Vec::new();
     let mut write = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -122,7 +121,7 @@ pub(super) fn parse_args(args: &[String]) -> Result<Mode, String> {
                 let value = iter
                     .next()
                     .ok_or_else(|| format!("--cells needs a directory\n{USAGE}"))?;
-                cells = Some(PathBuf::from(value));
+                dirs.push(PathBuf::from(value));
             }
             "--run-id" => {
                 let value = iter
@@ -131,16 +130,30 @@ pub(super) fn parse_args(args: &[String]) -> Result<Mode, String> {
                 if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
                     return Err(format!("--run-id must be a numeric run id\n{USAGE}"));
                 }
-                run_id = Some(value.clone());
+                run_ids.push(value.clone());
             }
             "--write" => write = true,
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let cells = cells.ok_or_else(|| format!("--run-id and --write need --cells\n{USAGE}"))?;
+    if dirs.is_empty() {
+        return Err(format!("--run-id and --write need --cells\n{USAGE}"));
+    }
+    if dirs.len() != run_ids.len() {
+        return Err(format!(
+            "each --cells needs its own --run-id ({} --cells, {} --run-id) so every sample names its run\n{USAGE}",
+            dirs.len(),
+            run_ids.len()
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for run_id in &run_ids {
+        if !seen.insert(run_id) {
+            return Err(format!("run {run_id} given twice\n{USAGE}"));
+        }
+    }
     Ok(Mode::Build {
-        cells,
-        run_id,
+        runs: dirs.into_iter().zip(run_ids).collect(),
         write,
     })
 }
@@ -161,7 +174,8 @@ fn string_field(value: &Value, key: &str, origin: &str) -> Result<String, String
         .ok_or_else(|| format!("{origin}: missing string field `{key}`"))
 }
 
-pub(super) fn parse_cell(text: &str, origin: &str) -> Result<Cell, String> {
+/// Parse one uploaded cell file; `run_id` names the run it was downloaded from.
+pub(super) fn parse_cell(text: &str, origin: &str, run_id: &str) -> Result<Cell, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("{origin}: not JSON: {error}"))?;
     let status = string_field(&value, "status", origin)?;
@@ -200,10 +214,11 @@ pub(super) fn parse_cell(text: &str, origin: &str) -> Result<Cell, String> {
         status,
         version,
         install_seconds,
+        run_id: run_id.to_string(),
     })
 }
 
-fn read_cells(dir: &Path) -> Result<Vec<Cell>, String> {
+fn read_cells(dir: &Path, run_id: &str) -> Result<Vec<Cell>, String> {
     let mut files = Vec::new();
     collect_json(dir, &mut files)?;
     files.sort();
@@ -214,7 +229,7 @@ fn read_cells(dir: &Path) -> Result<Vec<Cell>, String> {
     for file in files {
         let text = fs::read_to_string(&file)
             .map_err(|error| format!("read {}: {error}", file.display()))?;
-        cells.push(parse_cell(&text, &file.display().to_string())?);
+        cells.push(parse_cell(&text, &file.display().to_string(), run_id)?);
     }
     Ok(cells)
 }
@@ -294,13 +309,22 @@ fn read_dispositions(path: &Path) -> Result<Vec<Disposition>, String> {
     Ok(parsed)
 }
 
-/// Merge matrix cells with channel dispositions into the receipt value.
-pub(super) fn build_receipt(
-    cells: &[Cell],
-    dispositions: &[Disposition],
-    run_id: Option<&str>,
-) -> Result<Value, String> {
-    let mut by_cell: BTreeMap<(String, String), &Cell> = BTreeMap::new();
+/// The median of a sample set; `None` when it is empty.
+pub(super) fn median(samples: &[f64]) -> Option<f64> {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let middle = sorted.len() / 2;
+    match sorted.len() {
+        0 => None,
+        len if len % 2 == 1 => sorted.get(middle).copied(),
+        _ => Some((sorted.get(middle - 1)? + sorted.get(middle)?) / 2.0),
+    }
+}
+
+/// Merge cell samples from one or more runs with channel dispositions into the receipt value.
+pub(super) fn build_receipt(cells: &[Cell], dispositions: &[Disposition]) -> Result<Value, String> {
+    let mut by_cell: BTreeMap<(String, String), Vec<&Cell>> = BTreeMap::new();
+    let mut seen = BTreeSet::new();
     for cell in cells {
         if !CHANNELS.contains(&cell.channel.as_str()) {
             return Err(format!("unknown channel `{}`", cell.channel));
@@ -308,13 +332,22 @@ pub(super) fn build_receipt(
         if !PLATFORMS.contains(&cell.platform.as_str()) {
             return Err(format!("unknown platform `{}`", cell.platform));
         }
-        let key = (cell.channel.clone(), cell.platform.clone());
-        if by_cell.insert(key, cell).is_some() {
+        if cell.run_id.is_empty() || !cell.run_id.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(format!(
-                "duplicate cell {} on {}",
-                cell.channel, cell.platform
+                "{} on {}: run id `{}` is not a numeric run id",
+                cell.channel, cell.platform, cell.run_id
             ));
         }
+        if !seen.insert((&cell.channel, &cell.platform, &cell.run_id)) {
+            return Err(format!(
+                "duplicate cell {} on {} in run {}",
+                cell.channel, cell.platform, cell.run_id
+            ));
+        }
+        by_cell
+            .entry((cell.channel.clone(), cell.platform.clone()))
+            .or_default()
+            .push(cell);
     }
     let mut missing = Vec::new();
     for channel in CHANNELS {
@@ -332,37 +365,81 @@ pub(super) fn build_receipt(
     let mut not_met = false;
     let mut not_established = false;
     let mut rows = Vec::new();
-    for ((channel, platform), cell) in &by_cell {
-        match cell.status.as_str() {
-            "works" => {
-                if cell
-                    .install_seconds
-                    .is_some_and(|seconds| seconds > THRESHOLD_SECONDS)
-                {
-                    not_met = true;
-                    reasons.push(format!(
-                        "{channel} on {platform} took {:.0} s, over {THRESHOLD_SECONDS:.0} s",
-                        cell.install_seconds.unwrap_or_default()
-                    ));
-                }
-            }
-            "known_gap" => {
-                not_established = true;
+    for ((channel, platform), samples) in &mut by_cell {
+        // Run ids are all digits, so length then text is numeric order.
+        samples.sort_by(|a, b| (a.run_id.len(), &a.run_id).cmp(&(b.run_id.len(), &b.run_id)));
+        let source_build = SOURCE_BUILD_CHANNELS.contains(&channel.as_str());
+        let (threshold, min_samples) = if source_build {
+            (SOURCE_BUILD_THRESHOLD_SECONDS, SOURCE_BUILD_MIN_SAMPLES)
+        } else {
+            (PREBUILT_THRESHOLD_SECONDS, 1)
+        };
+        let bad: Vec<&&Cell> = samples
+            .iter()
+            .filter(|cell| cell.status == "failed" || cell.status == "broken")
+            .collect();
+        let working: Vec<&&Cell> = samples
+            .iter()
+            .filter(|cell| cell.status == "works")
+            .collect();
+        // Only samples of the newest working version judge the row; samples of
+        // an older release stay listed as history but cannot carry its median.
+        let version = working.last().and_then(|cell| cell.version.clone());
+        let seconds: Vec<f64> = working
+            .iter()
+            .filter(|cell| cell.version == version)
+            .filter_map(|cell| cell.install_seconds)
+            .collect();
+        let median_seconds = median(&seconds);
+        let status = if let Some(first) = bad.first() {
+            not_met = true;
+            for cell in &bad {
                 reasons.push(format!(
-                    "{channel} on {platform} is an unavailable platform"
+                    "{channel} on {platform}: {} in run {}",
+                    cell.status, cell.run_id
                 ));
             }
-            _ => {
+            first.status.clone()
+        } else if working.is_empty() {
+            not_established = true;
+            reasons.push(format!(
+                "{channel} on {platform} is an unavailable platform"
+            ));
+            "known_gap".to_string()
+        } else {
+            let median_seconds = median_seconds.unwrap_or_default();
+            if median_seconds > threshold {
                 not_met = true;
-                reasons.push(format!("{channel} on {platform}: {}", cell.status));
+                reasons.push(format!(
+                    "{channel} on {platform}: median {median_seconds:.0} s over {} sample(s), over {threshold:.0} s",
+                    seconds.len()
+                ));
+            } else if seconds.len() < min_samples {
+                not_established = true;
+                reasons.push(format!(
+                    "{channel} on {platform} has {} of the {min_samples} samples of its newest version a source build is judged on",
+                    seconds.len()
+                ));
             }
-        }
+            "works".to_string()
+        };
         rows.push(json!({
             "channel": channel,
             "platform": platform,
-            "status": cell.status,
-            "version": cell.version,
-            "install_seconds": cell.install_seconds,
+            "build": if source_build { "source" } else { "prebuilt" },
+            "status": status,
+            "version": version,
+            "install_seconds": median_seconds,
+            "threshold_seconds": threshold,
+            "samples": samples
+                .iter()
+                .map(|cell| json!({
+                    "run_id": cell.run_id,
+                    "status": cell.status,
+                    "version": cell.version,
+                    "install_seconds": cell.install_seconds,
+                }))
+                .collect::<Vec<_>>(),
         }));
     }
     for disposition in dispositions {
@@ -378,10 +455,18 @@ pub(super) fn build_receipt(
     } else {
         "met"
     };
+    let runs: BTreeSet<(usize, &str)> = cells
+        .iter()
+        .map(|cell| (cell.run_id.len(), cell.run_id.as_str()))
+        .collect();
     Ok(json!({
         "schema_version": SCHEMA,
-        "source_run_id": run_id,
-        "threshold_seconds": THRESHOLD_SECONDS,
+        "source_run_ids": runs.into_iter().map(|(_, run)| run).collect::<Vec<_>>(),
+        "thresholds": {
+            "prebuilt_seconds": PREBUILT_THRESHOLD_SECONDS,
+            "source_build_seconds": SOURCE_BUILD_THRESHOLD_SECONDS,
+            "source_build_min_samples": SOURCE_BUILD_MIN_SAMPLES,
+        },
         "r0_install": { "status": r0, "reasons": reasons },
         "cells": rows,
         "channel_dispositions": dispositions
@@ -397,21 +482,52 @@ pub(super) fn render_markdown(receipt: &Value) -> String {
         .as_str()
         .unwrap_or("unknown");
     out.push_str(&format!("R0 install row: **{status}**"));
-    if let Some(run) = receipt["source_run_id"].as_str() {
-        out.push_str(&format!(" (matrix run {run})"));
+    let runs: Vec<&str> = receipt["source_run_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !runs.is_empty() {
+        out.push_str(&format!(" (runs {})", runs.join(", ")));
     }
-    out.push_str("\n\n| channel | platform | status | version | install seconds |\n| --- | --- | --- | --- | ---: |\n");
+    out.push_str(&format!(
+        "\n\nPrebuilt channels are judged against {:.0} s. `cargo install` builds from source and is judged on the median of at least {} samples against {:.0} s.\n",
+        receipt["thresholds"]["prebuilt_seconds"]
+            .as_f64()
+            .unwrap_or_default(),
+        receipt["thresholds"]["source_build_min_samples"]
+            .as_u64()
+            .unwrap_or_default(),
+        receipt["thresholds"]["source_build_seconds"]
+            .as_f64()
+            .unwrap_or_default(),
+    ));
+    out.push_str("\n| channel | build | platform | status | version | median seconds | samples |\n| --- | --- | --- | --- | --- | ---: | --- |\n");
     for cell in receipt["cells"].as_array().into_iter().flatten() {
         let seconds = cell["install_seconds"]
             .as_f64()
             .map_or_else(|| "-".to_string(), |s| format!("{s:.0}"));
+        let samples: Vec<String> = cell["samples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|sample| {
+                sample["install_seconds"].as_f64().map_or_else(
+                    || sample["status"].as_str().unwrap_or("").to_string(),
+                    |s| format!("{s:.0}"),
+                )
+            })
+            .collect();
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
             cell["channel"].as_str().unwrap_or(""),
+            cell["build"].as_str().unwrap_or(""),
             cell["platform"].as_str().unwrap_or(""),
             cell["status"].as_str().unwrap_or(""),
             cell["version"].as_str().unwrap_or("-"),
-            seconds
+            seconds,
+            samples.join(", ")
         ));
     }
     out.push_str("\n| other channel | disposition | reason |\n| --- | --- | --- |\n");
@@ -430,7 +546,11 @@ pub(super) fn render_markdown(receipt: &Value) -> String {
     if let Some(reasons) = receipt["r0_install"]["reasons"].as_array()
         && !reasons.is_empty()
     {
-        out.push_str("\nWhy not met:\n\n");
+        let heading = match receipt["r0_install"]["status"].as_str() {
+            Some("not_established") => "Why not established",
+            _ => "Why not met",
+        };
+        out.push_str(&format!("\n{heading}:\n\n"));
         for reason in reasons {
             out.push_str(&format!("- {}\n", reason.as_str().unwrap_or("")));
         }
@@ -438,13 +558,13 @@ pub(super) fn render_markdown(receipt: &Value) -> String {
     out
 }
 
-/// Re-derive the receipt's verdict from its own rows and dispositions; fails when
-/// the checked-in file is malformed, incomplete, or states a verdict its rows do not.
+/// Re-derive the whole receipt from its own samples and the dispositions file; fails
+/// when the checked-in JSON or Markdown differs in any field from that derivation.
 pub(super) fn check_receipt(root: &Path) -> Result<(), String> {
     let path = root.join(RECEIPT);
     let text = fs::read_to_string(&path).map_err(|error| {
         format!(
-            "read {}: {error}; record one with `cargo xtask install-receipt --cells <dir> --write`",
+            "read {}: {error}; record one with `cargo xtask install-receipt --cells <dir> --run-id <id> --write`",
             path.display()
         )
     })?;
@@ -455,36 +575,37 @@ pub(super) fn check_receipt(root: &Path) -> Result<(), String> {
     }
     let mut cells = Vec::new();
     for row in value["cells"].as_array().into_iter().flatten() {
-        let text = json!({
-            "channel": row["channel"],
-            "os": row["platform"],
-            "status": row["status"],
-            "version": row["version"],
-            "install_seconds": row["install_seconds"],
-        })
-        .to_string();
-        cells.push(parse_cell(&text, RECEIPT)?);
-    }
-    let run_id = value["source_run_id"]
-        .as_str()
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| format!("{RECEIPT}: source_run_id must name the matrix run"))?;
-    if value["threshold_seconds"] != json!(THRESHOLD_SECONDS) {
-        return Err(format!(
-            "{RECEIPT}: threshold_seconds must be {THRESHOLD_SECONDS}"
-        ));
+        for sample in row["samples"].as_array().into_iter().flatten() {
+            let run_id = sample["run_id"]
+                .as_str()
+                .ok_or_else(|| format!("{RECEIPT}: a sample has no run_id"))?;
+            let text = json!({
+                "channel": row["channel"],
+                "os": row["platform"],
+                "status": sample["status"],
+                "version": sample["version"],
+                "install_seconds": sample["install_seconds"],
+            })
+            .to_string();
+            cells.push(parse_cell(&text, RECEIPT, run_id)?);
+        }
     }
     let dispositions = read_dispositions(&root.join(DISPOSITIONS))?;
-    let rebuilt = build_receipt(&cells, &dispositions, Some(run_id))?;
-    if rebuilt["r0_install"] != value["r0_install"] {
-        return Err(format!(
-            "{RECEIPT}: recorded r0_install {} does not match the verdict its rows and {DISPOSITIONS} give ({})",
-            value["r0_install"], rebuilt["r0_install"]
-        ));
-    }
+    let rebuilt = build_receipt(&cells, &dispositions)?;
     if rebuilt["channel_dispositions"] != value["channel_dispositions"] {
         return Err(format!(
             "{RECEIPT}: channel_dispositions are stale against {DISPOSITIONS}; re-run install-receipt --write"
+        ));
+    }
+    if rebuilt["r0_install"] != value["r0_install"] {
+        return Err(format!(
+            "{RECEIPT}: recorded r0_install {} does not match the verdict its samples and {DISPOSITIONS} give ({})",
+            value["r0_install"], rebuilt["r0_install"]
+        ));
+    }
+    if rebuilt != value {
+        return Err(format!(
+            "{RECEIPT}: a recorded field (threshold, median, run list or row) does not match what its samples give; re-run install-receipt --write"
         ));
     }
     let markdown_path = root.join(RECEIPT_MD);
@@ -496,8 +617,9 @@ pub(super) fn check_receipt(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "install-receipt: {} cells, R0 install row `{}`",
+        "install-receipt: {} samples over {} cells, R0 install row `{}`",
         cells.len(),
+        rebuilt["cells"].as_array().map_or(0, Vec::len),
         rebuilt["r0_install"]["status"]
             .as_str()
             .unwrap_or("unknown")

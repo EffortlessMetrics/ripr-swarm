@@ -16,7 +16,7 @@ use super::sink_alignment::{perl_row_observation_unconfirmed, sink_aligned_obser
 use crate::analysis::diff::ChangedFile;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
+pub(in super::super) fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
     packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     })
@@ -33,7 +33,7 @@ pub(crate) fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::
 /// basis: if two disagree, no change gets a line. A change left out keeps its
 /// finding on the owner's declaration, as before. This only places the finding;
 /// named-owner probe identity and canonical gap identity do not use it.
-pub(crate) fn change_lines_from_diff(
+pub(in super::super) fn change_lines_from_diff(
     packet: &PerlFactPacket,
     changed_files: &[ChangedFile],
 ) -> BTreeMap<String, usize> {
@@ -164,7 +164,7 @@ fn diff_line_covered_by_packet_range(
 /// line inside the change's range whose text matches the source at that line.
 /// Anything else, including fixture-only packets, stale diffs and changes the
 /// diff does not touch, stays the explicit unknown.
-pub(crate) fn perl_change_currentness(
+pub(in super::super) fn perl_change_currentness(
     root: &std::path::Path,
     changed_files: &[ChangedFile],
     file: &FileFact,
@@ -177,7 +177,7 @@ pub(crate) fn perl_change_currentness(
 
 /// Whether the diff's added line within `lines` of `file` is the line on disk
 /// under `root` (see [`perl_change_currentness`]).
-pub(crate) fn perl_lines_currentness(
+fn perl_lines_currentness(
     root: &std::path::Path,
     changed_files: &[ChangedFile],
     file: &FileFact,
@@ -231,7 +231,7 @@ pub(crate) fn perl_lines_currentness(
 /// The producer emits no change for top-level code such as the table a glob
 /// assignment turns into subs, so without this the line is silent, and silence
 /// reads as "nothing to check".
-pub(crate) fn unowned_change_findings(
+pub(in super::super) fn unowned_change_findings(
     packet: &PerlFactPacket,
     changed_files: &[ChangedFile],
     root: &std::path::Path,
@@ -342,7 +342,7 @@ pub(crate) fn unowned_change_findings(
     }
     findings
 }
-pub(crate) fn packet_to_findings_with_currentness(
+pub(in super::super) fn packet_to_findings_with_currentness(
     packet: &PerlFactPacket,
     change_lines: &BTreeMap<String, usize>,
     currentness: impl Fn(&FileFact, &ChangeFact) -> crate::domain::SourceCurrentness,
@@ -351,8 +351,8 @@ pub(crate) fn packet_to_findings_with_currentness(
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
         FindingCanonicalGap, LanguageId as DomainLanguageId, LanguageStatus,
         MissingDiscriminatorFact, OracleKind as DomainOracleKind,
-        OracleStrength as DomainOracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        OracleStrength as DomainOracleStrength, Probe, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
     };
 
     let mut findings = Vec::new();
@@ -556,8 +556,6 @@ pub(crate) fn packet_to_findings_with_currentness(
                 packet,
                 change,
                 &class,
-                class_blocked,
-                actionability_blocked,
                 packet_admitted,
                 &mut related,
                 &related_evidence,

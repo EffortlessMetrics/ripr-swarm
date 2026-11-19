@@ -141,6 +141,121 @@ fn digest_missing_label(finding: &Finding, missing: &str) -> &'static str {
     }
 }
 
+/// The digest's one missing-evidence line as `(label, value)`.
+fn digest_missing_entry(finding: &Finding) -> Option<(String, String)> {
+    // #9033: the digest names the first entry the full form's Weakness list
+    // would also show, so a one-line pointer never names an entry that
+    // `--format human-full` dropped as a restatement of its Evidence block.
+    let missing = finding
+        .missing
+        .iter()
+        .find(|missing| !restates_no_static_path_evidence(finding, missing))?;
+    // #2273: preview-language classifiers record an observation rationale
+    // (not a missing discriminator) in this field for `exposed` findings;
+    // label it as observed advisory evidence so the header does not
+    // contradict the machine state. Rust `exposed` findings never carry a
+    // `missing` entry, so this switch only affects advisory preview output.
+    // #3317 follow-up: the unknown-class `missing` entry is
+    // analyzer-limitation prose ("No clear propagation path…"), not a
+    // discriminator a test could supply. Label it as the limitation it
+    // is when no real discriminator is missing; keep the
+    // discriminator label whenever one exists.
+    // #7071: a weak finding whose reach witness ripr could not trace
+    // carries the limit's prose here, not a discriminator.
+    // A typed static limitation is the analyzer naming what it could not
+    // bind, never an assertion a test could add.
+    let label = digest_missing_label(finding, missing);
+    // `decision.rs` builds these entries as `Missing check value:
+    // <value>`, which restates the label the renderer is about to print:
+    // `Missing check: Missing check value: X`. Print the
+    // value alone. Entries that are not value-shaped ("No strong
+    // discriminator was detected") carry no such prefix and are unchanged.
+    // `evidence_lines.rs` strips the same prefix for the same reason.
+    let missing = missing
+        .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
+        .unwrap_or(missing);
+    let missing = &super::evidence_lines::plain_default_missing_for(
+        finding,
+        &super::evidence_lines::plain_internal_wording(missing),
+    );
+    // #4320: the digest renders one entry while the exhaustive form's
+    // Weakness section may carry several; disclose the window the same way
+    // the evidence window below does, so the reader knows more
+    // missing-discriminator evidence exists in `--format human-full`.
+    let total_weakness_entries = weakness_lines(finding).len();
+    let label = if label == "Missing check" && total_weakness_entries > 1 {
+        format!("Missing check (1 of {total_weakness_entries})")
+    } else {
+        label.to_string()
+    };
+    // #4323 parity: this prose names what is missing and why, and it ends
+    // with the operative classification — a hard `one_line` cut drops that
+    // tail silently (the old clipped card ended "but helper-derived…"
+    // with no pointer to the rest). Wrap like the next-step and
+    // not-credited lines instead of truncating; `--format human-full`
+    // keeps the same text in its Weakness section.
+    let plain_missing = if missing == "No strong discriminator was detected" {
+        "No strong check was detected"
+    } else {
+        missing.as_str()
+    };
+    let value = trim_field_period(
+        &plain_missing
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+    .to_string();
+    Some((label, value))
+}
+
+/// The plain-language `Why <class>: <reason>` line for a finding, shared by
+/// the check digest and the `ripr explain` verdict so both give the same
+/// reason in the same words. `None` when no hint applies or the digest's own
+/// `Analyzer limit` line already states the reason.
+pub(super) fn why_class_line(finding: &Finding) -> Option<String> {
+    let refused_macro = refused_assertion_macro(finding);
+    // #11519: an owner reached without a placeable call prints an `Analyzer
+    // limit` line and a Next step that already say why ripr could not
+    // decide; the generic "could not determine a static exposure state"
+    // hint restates them and spends a line of the first-view read budget.
+    // Specific hints (unresolved fixture, guard refusal) are never dropped.
+    let limit_names_the_reason = finding.class == ExposureClass::StaticUnknown
+        && finding.static_limit_kind
+            == Some(crate::domain::StaticLimitKind::RustIndirectOwnerCallUnresolved)
+        && finding
+            .missing
+            .iter()
+            .find(|missing| !restates_no_static_path_evidence(finding, missing))
+            .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
+    let digest_missing = digest_missing_entry(finding);
+    // #14308: an `Analyzer limit` line that repeats the Why hint word for
+    // word states the fact once; the hint is dropped, the limit line stays.
+    let limit_restates_hint = |hint: &str| {
+        digest_missing.as_ref().is_some_and(|(label, value)| {
+            label == "Analyzer limit" && restates_digest_fact(hint, value)
+        })
+    };
+    unresolved_fixture_hint(finding)
+        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
+        .or_else(|| {
+            classification_hint(&finding.class, &finding.ripr, refused_macro)
+                .filter(|_| !limit_names_the_reason)
+        })
+        .filter(|hint| !limit_restates_hint(hint))
+        .map(|hint| format!("Why {}: {hint}", finding.class.plain_label()))
+}
+
+/// Two digest values state the same fact: equal after collapsing whitespace,
+/// dropping one terminal period and ignoring ASCII case.
+fn restates_digest_fact(left: &str, right: &str) -> bool {
+    let normalize = |value: &str| {
+        trim_field_period(&value.split_whitespace().collect::<Vec<_>>().join(" "))
+            .to_ascii_lowercase()
+    };
+    normalize(left) == normalize(right)
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -173,28 +288,9 @@ pub(crate) fn render_finding_digest_with_config(
     }
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    let refused_macro = refused_assertion_macro(finding);
-    // #11519: an owner reached without a placeable call prints an `Analyzer
-    // limit` line and a Next step that already say why ripr could not
-    // decide; the generic "could not determine a static exposure state"
-    // hint restates them and spends a line of the first-view read budget.
-    // Specific hints (unresolved fixture, guard refusal) are never dropped.
-    let limit_names_the_reason = finding.class == ExposureClass::StaticUnknown
-        && finding.static_limit_kind
-            == Some(crate::domain::StaticLimitKind::RustIndirectOwnerCallUnresolved)
-        && finding
-            .missing
-            .iter()
-            .find(|missing| !restates_no_static_path_evidence(finding, missing))
-            .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
-    if let Some(hint) = unresolved_fixture_hint(finding)
-        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
-        .or_else(|| {
-            classification_hint(&finding.class, &finding.ripr, refused_macro)
-                .filter(|_| !limit_names_the_reason)
-        })
-    {
-        out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
+    let digest_missing = digest_missing_entry(finding);
+    if let Some(line) = why_class_line(finding) {
+        out.push_str(&format!("  {line}\n"));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
     // so it wraps like the next step instead of truncating.
@@ -209,7 +305,10 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  Gap ID (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  Gap ID (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
     let changed = finding
         .probe
@@ -217,76 +316,14 @@ pub(crate) fn render_finding_digest_with_config(
         .as_deref()
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
-    // #9033: the digest names the first entry the full form's Weakness list
-    // would also show, so a one-line pointer never names an entry that
-    // `--format human-full` dropped as a restatement of its Evidence block.
-    let first_missing = finding
-        .missing
-        .iter()
-        .find(|missing| !restates_no_static_path_evidence(finding, missing));
-    if let Some(missing) = first_missing {
-        // #2273: preview-language classifiers record an observation rationale
-        // (not a missing discriminator) in this field for `exposed` findings;
-        // label it as observed advisory evidence so the header does not
-        // contradict the machine state. Rust `exposed` findings never carry a
-        // `missing` entry, so this switch only affects advisory preview output.
-        // #3317 follow-up: the unknown-class `missing` entry is
-        // analyzer-limitation prose ("No clear propagation path…"), not a
-        // discriminator a test could supply. Label it as the limitation it
-        // is when no real discriminator is missing; keep the
-        // discriminator label whenever one exists.
-        // #7071: a weak finding whose reach witness ripr could not trace
-        // carries the limit's prose here, not a discriminator.
-        // A typed static limitation is the analyzer naming what it could not
-        // bind, never an assertion a test could add.
-        let label = digest_missing_label(finding, missing);
-        // `decision.rs` builds these entries as `Missing check value:
-        // <value>`, which restates the label the renderer is about to print:
-        // `Missing check: Missing check value: X`. Print the
-        // value alone. Entries that are not value-shaped ("No strong
-        // discriminator was detected") carry no such prefix and are unchanged.
-        // `evidence_lines.rs` strips the same prefix for the same reason.
-        let missing = missing
-            .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
-            .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_default_missing_for(
-            finding,
-            &super::evidence_lines::plain_internal_wording(missing),
-        );
-        // #4320: the digest renders one entry while the exhaustive form's
-        // Weakness section may carry several; disclose the window the same way
-        // the evidence window below does, so the reader knows more
-        // missing-discriminator evidence exists in `--format human-full`.
-        let total_weakness_entries = weakness_lines(finding).len();
-        let label = if label == "Missing check" && total_weakness_entries > 1 {
-            format!("Missing check (1 of {total_weakness_entries})")
-        } else {
-            label.to_string()
-        };
-        // #4323 parity: this prose names what is missing and why, and it ends
-        // with the operative classification — a hard `one_line` cut drops that
-        // tail silently (the old clipped card ended "but helper-derived…"
-        // with no pointer to the rest). Wrap like the next-step and
-        // not-credited lines instead of truncating; `--format human-full`
-        // keeps the same text in its Weakness section.
-        let plain_missing = if missing == "No strong discriminator was detected" {
-            "No strong check was detected"
-        } else {
-            missing.as_str()
-        };
-        let value = trim_field_period(
-            &plain_missing
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
-        .to_string();
+    let changed = crate::output::flow_sink_line::with_arm_result(finding, changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
+    if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{value}\n"));
         } else {
-            out.push_str(&wrap_human_prose(&value, &prefix, "    "));
+            out.push_str(&wrap_human_prose(value, &prefix, "    "));
             out.push('\n');
         }
     }
@@ -410,15 +447,26 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             out.push_str(HUMAN_EVIDENCE_LEGEND);
         }
-        for line in evidence.iter().take(2) {
+        // A stage detail that repeats the missing-evidence line above adds
+        // no fact to the two-line window; the full form keeps it.
+        let details: Vec<String> = evidence
+            .iter()
+            .map(|line| super::evidence_lines::plain_internal_wording(line))
+            .filter(|line| {
+                !digest_missing.as_ref().is_some_and(|(_, value)| {
+                    line.split_once(": ")
+                        .is_some_and(|(_, detail)| restates_digest_fact(detail, value))
+                })
+            })
+            .collect();
+        for line in details.iter().take(2) {
             // #7756: list-item values carry no trailing period.
-            let line = super::evidence_lines::plain_internal_wording(line);
-            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(&line))));
+            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
         }
-        if evidence.len() > 2 {
+        if details.len() > 2 {
             out.push_str(&format!(
                 "    - {} more detail line(s) in --format human-full\n",
-                evidence.len() - 2
+                details.len() - 2
             ));
         }
     }
@@ -693,7 +741,10 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!("  owner:  {owner}\n"));
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  gap id (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  gap id (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
 
     if should_render_language_metadata(finding) {
@@ -720,6 +771,15 @@ pub(super) fn render_finding_with_shared_sections(
         severity,
         finding.confidence
     ));
+    // `ripr explain` is where a reader asks "why this verdict"; give the
+    // plain-language reason the check digest gives, in the same words, next
+    // to the internal token instead of leaving the token unexplained.
+    // `--format human-full` keeps its integrator-facing block unchanged.
+    if wording == JsonPointerWording::ExplainNamesCheck
+        && let Some(line) = why_class_line(finding)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
     if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
     {
         out.push_str(&format!("  {line}\n"));
@@ -1474,11 +1534,6 @@ struct RepairPlacement<'a> {
 /// (#4379 rewalk W4): "partially complete — see full form" told a reader
 /// nothing they could act on from the digest.
 fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
-    // #7003: callee-only reach evidence disclaims owner invocation in its own
-    // summary, so no branch below may claim a reaching test for it.
-    if is_callee_only_reach(&ripr.reach) {
-        return NO_CALLING_TEST_HINT;
-    }
     let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
     // An Unknown stage is not established, so its hint says so rather than
     // stating the gap as fact (#4411 review).
@@ -1513,6 +1568,7 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
 /// with the reach line printed beneath it (F5-10) the way the
 /// `NoStaticPath` hints do.
 const NO_CALLING_TEST_HINT: &str = "no test is seen calling this change";
+const UNESTABLISHED_REACH_HINT: &str = "test reach to this change is not established";
 
 /// Whether the reach stage is callee-only evidence: every related test
 /// exercises the seam's converted callee and none invokes the changed
@@ -1576,14 +1632,28 @@ fn classification_hint(
     refused_macro: Option<&str>,
 ) -> Option<String> {
     let reveal = &ripr.reveal;
-    // #7003: "reaches this change" is a reach claim — a callee-only finding
-    // has no test seen calling the owner, so every claim site below falls
-    // back to the no-calling-test hint for it (mirror of the #6796
-    // propagation guard for `InfectionUnknown`).
+    // Every hint in these two classes can claim a reaching test. A weak or
+    // otherwise unestablished reach cannot support that claim, including the
+    // weak-discriminator shortcut (#7330). Callee-only evidence explicitly
+    // disclaims owner invocation even if its state were inconsistent (#7003).
     let callee_only = is_callee_only_reach(&ripr.reach);
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && (ripr.reach.state != StageState::Yes || callee_only)
+    {
+        return Some(
+            if callee_only {
+                NO_CALLING_TEST_HINT
+            } else {
+                UNESTABLISHED_REACH_HINT
+            }
+            .to_string(),
+        );
+    }
     match class {
         ExposureClass::WeaklyExposed => {
-            if reveal.discriminate.state == StageState::Weak && !callee_only {
+            if reveal.discriminate.state == StageState::Weak {
                 // #4381: the shared missing-discriminator sentence lives in
                 // output::gap_vocabulary; quote the constant, never re-type it.
                 Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE.to_string())
@@ -1592,9 +1662,7 @@ fn classification_hint(
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
-                && !callee_only
-            {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
                 // A compound oracle can carry no established assertion
                 // identity. Do not infer one from its probe family.
                 let standard_macro = refused_macro.map_or_else(
@@ -1604,16 +1672,11 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
-            } else if reveal.observe.state == StageState::No
-                && !callee_only
-                && ripr.reach.state != StageState::Weak
-            {
+            } else if reveal.observe.state == StageState::No {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
                 )
-            } else if reveal.observe.state == StageState::No {
-                Some(NO_CALLING_TEST_HINT.to_string())
             } else {
                 Some(partial_path_hint(ripr).to_string())
             }
@@ -1916,12 +1979,38 @@ mod classification_hint_tests {
         assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
     }
 
-    // #7003 negative: the no-calling-test fallback is scoped to callee-only
-    // reach evidence. Any other weak reach keeps its established hint,
-    // quoted from the shared constant (#4381): the
-    // `shared_sentence_is_quoted_not_retyped` audit forbids re-typing it.
+    // #7330: generic weak reach must not produce a "reaches this change" hint
+    // through partial_path_hint (trait-shadow and similar weak_token_substring
+    // witnesses).
     #[test]
-    fn non_callee_weak_reach_keeps_the_established_hint() {
+    fn generic_weak_reach_never_claims_reaching_test_in_partial_path_hint() {
+        let mut evidence = ripr(StageState::Weak, StageState::No);
+        evidence.reach = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "No test is seen calling render; tests share only its file or a name token: render_is_empty",
+        );
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+        ] {
+            let hint = classification_hint(&class, &evidence);
+            assert_eq!(
+                hint.as_deref(),
+                Some("test reach to this change is not established"),
+                "{class:?}"
+            );
+            assert!(
+                hint.as_deref()
+                    .is_none_or(|hint| !hint.contains("reaches this change")),
+                "{class:?}: {hint:?}"
+            );
+        }
+    }
+
+    // #7330: weak discriminator evidence must not bypass weak reach.
+    #[test]
+    fn non_callee_weak_reach_with_weak_discriminator_does_not_claim_reach() {
         let mut evidence = ripr(StageState::Weak, StageState::Yes);
         evidence.reach = StageEvidence::new(
             StageState::Weak,
@@ -1932,7 +2021,7 @@ mod classification_hint_tests {
         let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
         assert_eq!(
             hint.as_deref(),
-            Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
+            Some("test reach to this change is not established")
         );
     }
 }
