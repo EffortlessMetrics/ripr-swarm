@@ -20,6 +20,7 @@ pub(crate) use closure_callbacks::{
 };
 pub(crate) use owner_scopes::{EnclosingScopeKind, enclosing_scopes};
 use probe_shapes::extract_parser_probe_shapes;
+pub(crate) use probe_shapes::inline_branch_edit;
 #[cfg(test)]
 mod probe_shape_walk_tests;
 

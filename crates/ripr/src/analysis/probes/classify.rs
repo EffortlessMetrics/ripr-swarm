@@ -297,6 +297,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             selected.push((candidate, candidate_key));
         }
     }
+    if let Some(removed) = removed_text {
+        retarget_inline_branch_value_edit(&facts.source, line, removed, &mut selected, &mut parsed);
+    }
     for (shape, _) in &mut selected {
         shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
     }
@@ -315,6 +318,97 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+type SelectedShape<'a> = (ParserProbeShape<'a>, Option<(u8, bool, usize)>);
+
+/// F1: an edit on an `if`'s condition line that misses the condition and
+/// lies inside a branch block (`if price > 100 { 10 } else { 0 }` to
+/// `{ 15 }`) did not change the predicate, so the predicate's boundary is not
+/// the discriminator for it: a `price == 100` test passes on both sides. The
+/// unchanged predicate shape leaves the line. When the edit is inside a value
+/// the owner returns, that value is the line's `return_value` shape, as it is
+/// when it sits on its own line (#14385). Otherwise another selected shape
+/// that spans the edit (`return 15`) stands for it, or, with none, the
+/// changed value or block is a `static_unknown` shape, so the change stays
+/// visible without an actionable boundary claim.
+fn retarget_inline_branch_value_edit<'a>(
+    source: &'a str,
+    line: usize,
+    removed: &str,
+    selected: &mut Vec<SelectedShape<'a>>,
+    parsed: &mut Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>>,
+) {
+    let Some(position) = selected
+        .iter()
+        .position(|(shape, _)| shape.family == ProbeFamily::Predicate && !shape.unsafe_boundary)
+    else {
+        return;
+    };
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return;
+    };
+    let Some(head) = source.get(line_range.clone()) else {
+        return;
+    };
+    let lead = line_range.start + (head.len() - head.trim_start().len());
+    let (head, removed) = (head.trim(), removed.trim());
+    if head == removed {
+        return;
+    }
+    let (prefix, suffix) = super::diff::common_prefix_suffix(head, removed);
+    let edit = lead + prefix..lead + head.len() - suffix;
+    let Some(parse) = parsed
+        .get_or_insert_with(|| last_file_parse(source))
+        .as_ref()
+    else {
+        return;
+    };
+    let Some(branch) = crate::analysis::syntax::ra::inline_branch_edit(
+        &parse.tree(),
+        source,
+        selected[position].0.start_byte,
+        edit.clone(),
+    ) else {
+        return;
+    };
+    let shape_at = |family: ProbeFamily, range: Range<usize>| -> Option<SelectedShape<'a>> {
+        Some((
+            ParserProbeShape {
+                family,
+                start_line: line,
+                start_byte: range.start,
+                text: source.get(range)?.trim(),
+                standalone_call: true,
+                unsafe_boundary: false,
+            },
+            None,
+        ))
+    };
+    let spans_edit = |shape: &ParserProbeShape<'_>| {
+        shape.start_byte <= edit.start && edit.end <= shape.start_byte + shape.text.len()
+    };
+    let replacement = match &branch.value {
+        Some((value, true)) => shape_at(ProbeFamily::ReturnValue, value.clone()),
+        Some((value, false)) => shape_at(ProbeFamily::StaticUnknown, value.clone()),
+        None => shape_at(ProbeFamily::StaticUnknown, branch.block.clone()),
+    };
+    let Some(replacement) = replacement else {
+        return;
+    };
+    selected.remove(position);
+    if replacement.0.family == ProbeFamily::ReturnValue {
+        // A returned-value shape elsewhere on the line is not this edit's.
+        selected.retain(|(shape, _)| shape.family != ProbeFamily::ReturnValue || spans_edit(shape));
+        if !selected
+            .iter()
+            .any(|(shape, _)| shape.family == ProbeFamily::ReturnValue)
+        {
+            selected.push(replacement);
+        }
+    } else if !selected.iter().any(|(shape, _)| spans_edit(shape)) {
+        selected.push(replacement);
+    }
 }
 
 thread_local! {
