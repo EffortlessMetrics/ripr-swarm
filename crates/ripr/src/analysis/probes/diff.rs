@@ -1083,11 +1083,14 @@ pub(crate) fn probes_for_file_with_relations(
             }
             // #7807: the same holds for any removed line that reads only the
             // catch-all because it is classified without its context (a tail
-            // `x * 5` or `input`), when its block replacement's modeled probe
+            // `x * 5` or `input`), when its block replacement's probe models
+            // the value at that position (`return_value`, `error_path`) and
             // carries the WHOLE removed text as `before`. That probe already
             // judges the replaced code; the base-side twin only repeats it.
+            // Any other replacement family (an operator swap read as
+            // `call_deletion`) is a weaker model, so the twin stays.
             if family == ProbeFamily::StaticUnknown
-                && replaced_literal_is_paired(removed, text, text, changed, &probes)
+                && replaced_value_is_paired(removed, text, changed, &probes)
             {
                 continue;
             }
@@ -1143,6 +1146,29 @@ fn replaced_literal_is_paired(
                         .before
                         .as_deref()
                         .is_some_and(|before| before == text || before == literal)
+            })
+    })
+}
+
+/// Whether the added line that `replaced_line_counterpart` pairs with
+/// `removed` carries a `return_value` or `error_path` probe whose `before` is
+/// the whole removed text (#7807).
+fn replaced_value_is_paired(
+    removed: &ChangedLine,
+    text: &str,
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> bool {
+    changed.added_lines.iter().any(|added| {
+        changed
+            .replaced_line_counterpart(added.new_side_line)
+            .is_some_and(|counterpart| counterpart.line == removed.line)
+            && probes.iter().any(|seeded| {
+                matches!(
+                    seeded.probe.family,
+                    ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
+                ) && seeded.probe.location.line == added.new_side_line
+                    && seeded.probe.before.as_deref() == Some(text)
             })
     })
 }
