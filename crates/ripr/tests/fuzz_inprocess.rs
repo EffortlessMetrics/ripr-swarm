@@ -623,10 +623,13 @@ fn python_long_line_regression_finishes_within_the_deadline() -> Result<(), Stri
     Ok(())
 }
 
-/// A one-line change beside a large test module (#15185): 4,000 tests in one
+/// A one-line change beside a large test module (#15185): tests in one
 /// `#[cfg(test)]` module, each calling the changed function. Each test's name
-/// scopes re-read the whole file, so the check took 38 seconds in a release
-/// build and several minutes in a debug build.
+/// scopes re-read the whole file, so 4,000 tests took 38 seconds in a release
+/// build and several minutes in a debug build. The case keeps 2,000 tests:
+/// 4,000 took 50 of the 60 deadline seconds on a hosted debug runner even
+/// when fixed. The linear-time bound itself is held by
+/// `index_answers_every_test_of_a_large_module_in_linear_time`.
 ///
 /// The case must finish in time with the answer the analysis exists to give:
 /// the changed predicate is `weakly_exposed` through the module's tests. A
@@ -634,7 +637,7 @@ fn python_long_line_regression_finishes_within_the_deadline() -> Result<(), Stri
 /// finding.
 #[test]
 fn large_test_module_regression_finishes_within_the_deadline() -> Result<(), String> {
-    const TESTS: usize = 4_000;
+    const TESTS: usize = 2_000;
     let mut source = String::from(
         "pub fn price(amount: u64, years: u32) -> u64 {\n    if years > 3 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n",
     );
