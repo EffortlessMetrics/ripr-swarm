@@ -401,6 +401,20 @@ mod tests {
         );
     }
 
+    /// #15162: `first-pr` and `pr-comments` spell the directory flag
+    /// `--out-dir`; `check` spells it `--output-dir`. The other command's
+    /// spelling names the flag this one accepts.
+    #[test]
+    fn the_other_commands_out_dir_spelling_names_check_output_dir() {
+        let message = unknown_argument("check", "--out-dir");
+        assert_eq!(
+            message,
+            "unknown check argument \"--out-dir\". Did you mean `--output-dir`? Run `ripr check --help --all`."
+        );
+        let message = unknown_argument("first-pr", "--output-dir");
+        assert!(message.contains("Did you mean `--out-dir`?"), "{message}");
+    }
+
     /// #8158 item 2: the default `check --help` is a short summary, but typo
     /// suggestions keep mining the exhaustive reference, so a mistyped
     /// advanced flag is still named even though the summary omits it (the
