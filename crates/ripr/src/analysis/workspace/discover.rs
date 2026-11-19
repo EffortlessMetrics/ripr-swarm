@@ -65,27 +65,62 @@ pub(crate) fn changed_source_files_absent_from_worktree<'a>(
 
 /// Shared admission disclosure for a changed source path with no regular worktree file.
 pub(crate) fn limitations_for_absent_changed_files(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
     paths
         .iter()
         .map(|path| {
             let display = super::classify::normalize_path(path);
+            let (recovery, detail) = match unread_side_prefix(root, path) {
+                Some(prefix) => (
+                    format!(
+                        "If the patch was written with a custom side prefix ({prefix}), ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
+                    ),
+                    format!(
+                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component ({prefix}) is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
+                    ),
+                ),
+                None => (
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.".to_string(),
+                    "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld".to_string(),
+                ),
+            };
             AnalysisLimitation::new(
                 AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
-                )?,
+                AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
             )
             .with_path(&display)?
             .with_affected_items(1)?
-            .with_detail(
-                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
-            )
+            .with_detail(detail)
         })
         .collect()
+}
+
+/// The first component of an absent changed path, quoted for display, when
+/// the path without it is a regular source file under `root` (#15103). A
+/// patch written with custom side prefixes (`--src-prefix=old/
+/// --dst-prefix=new/`) keeps the prefix in every path ripr reads; git's
+/// default and mnemonic prefixes are already stripped by the diff parser.
+/// A long first component is not echoed.
+fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
+    let mut components = path.components();
+    let first = match components.next()? {
+        std::path::Component::Normal(first) => first.to_str()?,
+        _ => return None,
+    };
+    let rest = components.as_path();
+    // The exact stripped path only: the crate-subdirectory suffix matching
+    // of `worktree_regular_source_file` would let a real directory pass.
+    if rest.as_os_str().is_empty() || !is_regular_source_below_root(root, rest) {
+        return None;
+    }
+    Some(if first.chars().count() <= 32 {
+        format!("`{first}/`")
+    } else {
+        "its first path component".to_string()
+    })
 }
 
 /// Absent-file disclosure for a consumer that keeps earlier evidence, such as
@@ -95,9 +130,10 @@ pub(crate) fn limitations_for_absent_changed_files(
 /// canonical per-file limitations, or one bounded, path-less limitation
 /// naming the refusal so the withheld coverage stays disclosed.
 pub(crate) fn supplement_absent_file_limitations(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
-    match limitations_for_absent_changed_files(paths) {
+    match limitations_for_absent_changed_files(root, paths) {
         Ok(limitations) => Ok(limitations),
         Err(error) => {
             // `bounded_detail` rejects over-long text instead of truncating,
@@ -891,7 +927,10 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>
     {
-        let limitations = supplement_absent_file_limitations(&[PathBuf::from("src/z_hidden.rs")])?;
+        let limitations = supplement_absent_file_limitations(
+            Path::new("/nonexistent-ripr-root"),
+            &[PathBuf::from("src/z_hidden.rs")],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
         assert_eq!(
@@ -910,7 +949,8 @@ mod tests {
         // running instead of failing, so the refused disclosure degrades to
         // one bounded, path-less stand-in naming the refusal (#6976).
         let absent = [PathBuf::from("src/kept.rs"), PathBuf::from("C:missing.rs")];
-        let limitations = supplement_absent_file_limitations(&absent)?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &absent)?;
         assert_eq!(limitations.len(), 1, "one bounded stand-in, not an error");
         let fallback = &limitations[0];
         assert_eq!(fallback.path, None, "the refused name cannot be a path");
@@ -927,7 +967,8 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_names_nothing_when_no_file_is_absent()
     -> Result<(), String> {
-        let limitations = supplement_absent_file_limitations(&[])?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &[])?;
         assert!(limitations.is_empty());
         Ok(())
     }
