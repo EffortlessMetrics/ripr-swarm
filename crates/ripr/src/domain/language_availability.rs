@@ -270,6 +270,40 @@ pub(crate) fn availability_report_for_detected(
     enabled_languages: Option<&[LanguageId]>,
     auto_defaulted: bool,
 ) -> LanguageAvailabilityReport {
+    availability_report_for_detected_with(
+        language,
+        file_count,
+        enabled_languages,
+        auto_defaulted,
+        true,
+    )
+}
+
+/// Pilot variant: absence from a built-in default set is not an explicit
+/// disable, so an auto-defaulted config resolves absent languages to
+/// `Unspecified` rather than `Disabled`.
+pub(crate) fn availability_report_for_detected_pilot(
+    language: LanguageId,
+    file_count: usize,
+    enabled_languages: Option<&[LanguageId]>,
+    auto_defaulted: bool,
+) -> LanguageAvailabilityReport {
+    availability_report_for_detected_with(
+        language,
+        file_count,
+        enabled_languages,
+        auto_defaulted,
+        !auto_defaulted,
+    )
+}
+
+fn availability_report_for_detected_with(
+    language: LanguageId,
+    file_count: usize,
+    enabled_languages: Option<&[LanguageId]>,
+    auto_defaulted: bool,
+    absent_is_disabled: bool,
+) -> LanguageAvailabilityReport {
     let config_language = config_entry_language(language);
     let enabled = enabled_languages.map(|list| list.contains(&config_language));
     let auto_enabled = auto_defaulted
@@ -280,9 +314,7 @@ pub(crate) fn availability_report_for_detected(
         file_count,
         configured: match enabled {
             Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
-            // Absence from a built-in default set is not an explicit disable:
-            // only a loaded `ripr.toml` can turn a language off.
-            Some(false) if !auto_defaulted => ConfiguredIntent::Disabled,
+            Some(false) if absent_is_disabled => ConfiguredIntent::Disabled,
             _ => ConfiguredIntent::Unspecified,
         },
         auto_policy: if auto_enabled {

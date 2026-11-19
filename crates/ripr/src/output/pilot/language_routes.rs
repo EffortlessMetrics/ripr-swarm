@@ -287,9 +287,9 @@ fn route_for(
     enabled_languages: &[LanguageId],
     auto_defaulted: bool,
 ) -> PilotLanguageRoute {
-    use crate::domain::language_availability::availability_report_for_detected;
+    use crate::domain::language_availability::availability_report_for_detected_pilot;
 
-    let report = availability_report_for_detected(
+    let report = availability_report_for_detected_pilot(
         language,
         file_count,
         Some(enabled_languages),
