@@ -113,8 +113,10 @@ list every case with its old and new value:
 - **Exit codes.** 0.10 exited `0` or `2`; 0.11 adds `3` for a completed run
   that reached a blocking decision or typed refusal (`ripr gate evaluate`,
   `ripr doctor` with a failed check, `ripr reports ci-packet` on a blocked
-  gate). An oversized diff now degrades to a partial run that exits `0`
-  instead of refusing with `2`. Branch on `0`/`3` for completed runs and keep
+  gate). An oversized diff in which at least one changed file fits its
+  language's changed-line limit now degrades to a partial run that exits `0`
+  instead of refusing with `2`; a diff with no file that fits, or one past the
+  language-neutral parse or index guards, still refuses with `2`. Branch on `0`/`3` for completed runs and keep
   `2` for runs that could not complete; `docs/EXIT_CODES.md` is the contract.
 - **Schema versions.** Several JSON documents moved (for example
   repo-exposure 0.3 to 0.5 and agent receipt 0.3 to 0.5). A consumer that pins
