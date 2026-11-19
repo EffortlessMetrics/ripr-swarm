@@ -265,6 +265,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         pilot_complete_summary_timeout(options.timeout_ms, extension_ms, deadline_extended.get());
     let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
     else {
+        close_timed_out_progress(progress.as_deref());
         // #7425: a timeout overwrites only the two summaries. Remove leftover
         // repo-exposure and seam-packet files from an earlier complete run so
         // the packet directory does not present them as this run's outputs.
@@ -806,6 +807,20 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
     )))
 }
 
+/// Close the progress run of a pilot analysis that hit its deadline (#5444).
+///
+/// The controller owns the timed-out run's terminal. The detached worker
+/// reaches its own `cancelled` only when it hits a cancellation checkpoint
+/// inside `PILOT_CANCEL_GRACE`, so leaving the line to it made the same
+/// timeout print it on some runs and not others. Exactly one
+/// `cancelled [repo]` line now ends the run, and a worker that wakes later
+/// cannot add to it.
+fn close_timed_out_progress(progress: Option<&CliProgressSink>) {
+    if let Some(sink) = progress {
+        sink.abandon_with_scope(crate::app::AnalysisProgressScope::Repo);
+    }
+}
+
 /// Run the pilot repo inventory through the shared app-layer
 /// progress-bearing entry point (#5019): the same producer-owned
 /// `loading_input`/`analyzing`/`building_output`/`completed` boundaries
@@ -1137,12 +1152,10 @@ where
         }
     }
     cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-    // #5019: the detached worker owns its progress run's terminal
-    // (`cancelled`), and the caller exits soon after this return.
-    // Give the worker a bounded window to reach a cancellation
-    // checkpoint and finish, so the terminal is not lost to process
-    // exit. A worker stuck past the window cannot be forced (it is
-    // a detached thread): a known, bounded limitation.
+    // #5019: give the worker a bounded window to reach a cancellation
+    // checkpoint and finish. A worker stuck past the window cannot be
+    // forced (it is a detached thread); the caller closes the progress
+    // run itself (#5444), so its `cancelled` line does not depend on it.
     let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
     Ok(PilotAnalysisResult::TimedOut)
 }
@@ -1848,6 +1861,65 @@ mod tests {
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
         assert!(!extended.get());
+    }
+
+    /// #5444: a worker stuck past the cancel grace (no checkpoint reached)
+    /// used to leave the run without its `cancelled` line. The controller now
+    /// closes it, and the worker's later events add nothing.
+    #[test]
+    fn a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line() {
+        use crate::app::{
+            AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink,
+            AnalysisProgressStage,
+        };
+        let event = |stage| AnalysisProgressEvent {
+            stage,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: None,
+            total_units: None,
+            elapsed_ms: 0,
+        };
+        let buffer = ProgressBuffer::new();
+        let sink = std::sync::Arc::new(CliProgressSink::with_writer(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+        ));
+        sink.hold_success_terminal();
+        let worker_sink = std::sync::Arc::clone(&sink);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            20,
+            None,
+            || {},
+            move || {
+                worker_sink.emit(event(AnalysisProgressStage::Analyzing));
+                // Never reaches a checkpoint: only the test releases it, after
+                // the controller has given up.
+                let _ignored = release_rx.recv();
+                worker_sink.emit(event(AnalysisProgressStage::Cancelled));
+                worker_sink.emit(event(AnalysisProgressStage::Completed));
+                let _ignored = done_tx.send(());
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        assert!(
+            !buffer.text().contains("cancelled"),
+            "precondition: the stuck worker projected no terminal: {}",
+            buffer.text()
+        );
+        close_timed_out_progress(Some(&*sink));
+        let closed = buffer.text();
+        assert_eq!(
+            closed.matches("ripr progress: cancelled [repo]").count(),
+            1,
+            "{closed}"
+        );
+        let _ignored = release_tx.send(());
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(()));
+        assert_eq!(buffer.text(), closed, "a late worker must add nothing");
     }
 
     #[derive(Clone)]
