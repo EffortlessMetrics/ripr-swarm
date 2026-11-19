@@ -18,11 +18,16 @@
 //!   chain of `mod` blocks ending in a `mod`, `impl` or `trait` block, read
 //!   from the block headers with their attributes. Item order means nothing
 //!   there; it does inside a function body, an `enum` or a `struct`;
-//! - neither file can make item order observable: no textual macro scope
-//!   (`macro_rules!`, `#[macro_use]`) and no source position macro
-//!   (`line!`, `column!`) anywhere in it. A move shifts the lines of every
-//!   item between its two positions, so a position macro in an unchanged
-//!   item would change value with no line of that item in the diff.
+//! - neither owner block opens with an inner attribute (`#![cfg(...)]`
+//!   gates the whole block, and the header alone does not show it);
+//! - neither file can make item order or source position observable: no
+//!   textual macro scope (`macro_rules!`, `#[macro_use]`), no
+//!   `std::panic::Location`, no `line`/`column` imported under another
+//!   name, and no macro invocation outside a short list of standard macros
+//!   whose expansion does not depend on where it is written. A move shifts
+//!   the lines of every item between its two positions, so a `line!()` or
+//!   a logging macro in an unchanged item would change value with no line
+//!   of that item in the diff.
 //!
 //! Anything else (a move with an edit, a fragment of a body, a move into
 //! another `impl`) stays probed.
@@ -34,8 +39,50 @@ use std::collections::BTreeSet;
 /// Spellings that make item order observable somewhere in a file.
 const ORDER_OBSERVERS_IN_FILE: [&str; 2] = ["macro_rules", "macro_use"];
 
-/// Macros that make a block's position observable.
+/// Words that make source position observable wherever they appear as a
+/// whole word: the caller-location API.
+const POSITION_OBSERVERS_IN_FILE: [&str; 1] = ["Location"];
+
+/// Position macros; importing one under another name hides its spelling.
 const POSITION_MACROS: [&str; 2] = ["line", "column"];
+
+/// Standard macros whose expansion does not depend on the line or column it
+/// is written at. Any other macro (`line!`, `column!`, `dbg!`, a logging
+/// macro that records its call site, an imported alias) may, so its
+/// presence keeps every move in the file probed.
+const POSITION_FREE_MACROS: [&str; 31] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "compile_error",
+    "concat",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "include",
+    "include_bytes",
+    "include_str",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
 
 /// Block keywords under which item order carries no meaning.
 const UNORDERED_OWNERS: [&str; 3] = ["mod", "impl", "trait"];
@@ -119,7 +166,8 @@ impl<'a> Side<'a> {
         }
         // The block starts where an item can start: nothing but blanks and
         // comments since the last item ended or the owner opened.
-        if grouping != 0 || !self.masked.get(item_start..block_start)?.trim().is_empty() {
+        let prefix = without_inner_attributes(self.masked.get(item_start..block_start)?)?;
+        if grouping != 0 || !prefix.trim().is_empty() {
             return None;
         }
         // The block is balanced, never closes its owner, and ends with the
@@ -149,6 +197,11 @@ impl<'a> Side<'a> {
             if keyword != "mod" && !(innermost && UNORDERED_OWNERS.contains(&keyword)) {
                 return None;
             }
+            // An inner attribute gates the whole block without showing in
+            // its header, so two blocks with the same header may differ.
+            if self.masked.get(open + 1..)?.trim_start().starts_with("#!") {
+                return None;
+            }
             // The header as written, attributes and string contents included
             // (`#[cfg(feature = "a")]` differs from `"b"`).
             let header = self.source.get(*header_start..*open)?;
@@ -174,9 +227,53 @@ fn owner_keyword(masked_header: &str) -> Option<&str> {
         })?;
         rest = attribute.get(end + 1..)?.trim_start();
     }
-    rest.split_whitespace()
-        .find(|word| !word.starts_with("pub") && *word != "unsafe")
-        .map(|word| word.split(['<', '(']).next().unwrap_or(word))
+    // Qualifiers: `pub`, `pub(crate)`, `pub(in some::path)`, `unsafe`.
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = strip_word(rest, "pub") {
+            let after = after.trim_start();
+            rest = match after.strip_prefix('(') {
+                Some(inside) => inside.get(inside.find(')')? + 1..)?,
+                None => after,
+            };
+        } else if let Some(after) = strip_word(rest, "unsafe") {
+            rest = after;
+        } else {
+            break;
+        }
+    }
+    let word = rest.split_whitespace().next()?;
+    Some(word.split(['<', '(']).next().unwrap_or(word))
+}
+
+/// `text` after `word` when `text` starts with `word` as a whole word.
+fn strip_word<'t>(text: &'t str, word: &str) -> Option<&'t str> {
+    let after = text.strip_prefix(word)?;
+    let continues = after
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    (!continues).then_some(after)
+}
+
+/// `masked` without the complete inner attributes (`#![...]`) at its start;
+/// `None` when one does not close.
+fn without_inner_attributes(masked: &str) -> Option<&str> {
+    let mut rest = masked.trim_start();
+    while let Some(attribute) = rest.strip_prefix("#!") {
+        let attribute = attribute.trim_start().strip_prefix('[')?;
+        let mut depth = 1usize;
+        let end = attribute.char_indices().find_map(|(at, character)| {
+            match character {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(at)
+        })?;
+        rest = attribute.get(end + 1..)?.trim_start();
+    }
+    Some(rest)
 }
 
 /// The source lines `first..=last` of `side`.
@@ -189,21 +286,49 @@ fn masked_text<'s>(side: &'s Side<'_>, (first, last): (usize, usize)) -> Option<
     (first..=last).map(|line| side.masked_text(line)).collect()
 }
 
-/// Whether `masked` code invokes `line!` or `column!`. Rust allows blanks
-/// and comments (blanked here) between the name and its `!`, also across
+/// Whether `masked` code can observe where its items are written: it names
+/// the caller-location API, imports a position macro under another name, or
+/// invokes a macro outside [`POSITION_FREE_MACROS`]. Rust allows blanks and
+/// comments (blanked here) between a macro's name and its `!`, also across
 /// lines.
-fn invokes_position_macro(masked: &str) -> bool {
+fn observes_source_position(masked: &str) -> bool {
     let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    POSITION_MACROS.iter().any(|name| {
+    let bytes = masked.as_bytes();
+    let whole_word = |at: usize, len: usize| {
+        !at.checked_sub(1)
+            .and_then(|before| bytes.get(before))
+            .is_some_and(|byte| is_word(*byte))
+            && !bytes.get(at + len).is_some_and(|byte| is_word(*byte))
+    };
+    let named = POSITION_OBSERVERS_IN_FILE.iter().any(|name| {
+        masked
+            .match_indices(name)
+            .any(|(at, _)| whole_word(at, name.len()))
+    });
+    let aliased = POSITION_MACROS.iter().any(|name| {
         masked.match_indices(name).any(|(at, _)| {
-            let before = at.checked_sub(1).and_then(|at| masked.as_bytes().get(at));
-            let after = &masked[at + name.len()..];
-            let after = after.trim_start();
-            !before.is_some_and(|byte| is_word(*byte))
-                && after.starts_with('!')
-                && !after.starts_with("!=")
+            whole_word(at, name.len())
+                && strip_word(masked[at + name.len()..].trim_start(), "as").is_some()
         })
-    })
+    });
+    // Every `!` that ends a macro name and opens its arguments: not `!=`,
+    // not a negation (`return !done`), not a negative impl, not an inner
+    // attribute.
+    let unvetted_macro = masked.match_indices('!').any(|(at, _)| {
+        if !masked[at + 1..].trim_start().starts_with(['(', '[', '{']) {
+            return false;
+        }
+        let name_end = masked[..at].trim_end().len();
+        let name_start = masked[..name_end]
+            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .map_or(0, |before| before + 1);
+        let name = &masked[name_start..name_end];
+        !name.is_empty()
+            && !name.starts_with(|character: char| character.is_ascii_digit())
+            && !POSITION_FREE_MACROS.contains(&name)
+            && name != "macro_rules"
+    });
+    named || aliased || unvetted_macro
 }
 
 /// Maximal runs of consecutive line numbers, as `(first, last)`.
@@ -238,7 +363,7 @@ pub(super) fn moved_item_lines(
         ORDER_OBSERVERS_IN_FILE
             .iter()
             .any(|observer| side.masked.contains(observer))
-            || invokes_position_macro(&side.masked)
+            || observes_source_position(&side.masked)
     }) {
         return moved;
     }
@@ -395,6 +520,45 @@ mod tests {
         let old = "fn f(line: bool, outline: bool) -> bool {\n    line != outline\n}\n\nfn other() {}\n\nfn last() {}\n";
         let (new, changed) = moved(old, 1, 4, 7);
         assert_eq!(counts(old, &new, &changed), (3, 3));
+
+        // A position macro imported under another name, the caller-location
+        // API, and a macro that may record its call site.
+        for observer in [
+            "use std::line as source_line;\n\nfn early() -> u32 {\n    source_line!()\n}\n",
+            "use std::{column as here};\n\nfn early() {}\n",
+            "fn early() -> u32 {\n    std::panic::Location::caller().line()\n}\n",
+            "fn early() {\n    tracing::info!(\"start\");\n}\n",
+            "fn early() {\n    dbg!(1);\n}\n",
+        ] {
+            let old = format!("{observer}\nfn a() {{}}\n\nfn b() {{}}\n\nfn c() {{}}\n");
+            let first = observer.lines().count() + 2;
+            let (new, changed) = moved(&old, first, first + 1, first + 4);
+            assert_eq!(counts(&old, &new, &changed), (0, 0), "{observer}");
+        }
+        // Standard position-free macros, negation and a negative impl do not
+        // block a neutral move.
+        let old = "fn early(done: bool) -> bool {\n    assert!(true);\n    println!(\"{}\", vec![1].len());\n    return !done;\n}\n\nfn a() {}\n\nfn b() {}\n\nfn c() {}\n";
+        let (new, changed) = moved(old, 7, 8, 11);
+        assert_eq!(counts(old, &new, &changed), (1, 1));
+    }
+
+    #[test]
+    fn owner_qualifiers_and_inner_attributes() {
+        // Two `impl S` blocks gated by different inner attributes.
+        let old = "struct S;\n\nimpl S {\n    #![cfg(feature = \"a\")]\n    fn moved(&self) {}\n\n    fn anchor_a(&self) {}\n}\n\nimpl S {\n    #![cfg(feature = \"b\")]\n    fn anchor_b(&self) {}\n}\n";
+        let (new, changed) = moved(old, 5, 6, 13);
+        assert_eq!(counts(old, &new, &changed), (0, 0));
+
+        // A crate-level inner attribute before the first item is not part
+        // of that item.
+        let old = "#![forbid(unsafe_code)]\npub fn a(n: u32) -> bool {\n    n > 10\n}\n\npub fn b() {}\n\npub fn c() {}\n";
+        let (new, changed) = moved(old, 2, 5, 8);
+        assert_eq!(counts(old, &new, &changed), (3, 3));
+
+        // A module with restricted visibility is still a module.
+        let old = "mod outer {\n    pub(in crate::outer) mod m {\n        fn a() {}\n\n        fn b() {}\n\n        fn c() {}\n    }\n}\n";
+        let (new, changed) = moved(old, 3, 4, 7);
+        assert_eq!(counts(old, &new, &changed), (1, 1));
     }
 
     #[test]

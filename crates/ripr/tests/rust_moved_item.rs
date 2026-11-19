@@ -282,6 +282,26 @@ fn a_move_that_changes_the_program_keeps_its_finding() -> Result<(), String> {
         ));
     }
 
+    // A function that reads its own line through an imported alias of
+    // `line!` moves below `tax`: its result changes, so the move keeps
+    // reporting changed behavior.
+    let mut aliased = vec![
+        "use std::line as source_line;",
+        "",
+        "pub fn early(total: u32) -> bool {",
+        "    total > source_line!()",
+        "}",
+        "",
+    ];
+    aliased.extend(TOP_LEVEL);
+    let (source, diff) = moved(&aliased, 3, 6, 23, str::to_owned);
+    let aliased_move = check(&source, &diff)?;
+    if aliased_move.0 != "complete_with_findings" || aliased_move.2.is_empty() {
+        failures.push(format!(
+            "a move of a function reading an aliased line!() was reported as no change: {aliased_move:?}"
+        ));
+    }
+
     if failures.is_empty() {
         Ok(())
     } else {
