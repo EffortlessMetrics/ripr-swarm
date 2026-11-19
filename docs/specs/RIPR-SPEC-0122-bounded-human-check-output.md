@@ -749,7 +749,12 @@ finding whose repair packet is blocked by an unresolved expected value or a
 moved assertion selection, which says ripr has no complete repair packet for the
 finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
-its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
+its file to bind it to and sends the reader to the Next step above; a finding
+whose changed line holds several same-kind seams, none more specific than the
+others (one per comparison in `a < b && c == d`), says the changed line holds
+N spots, names up to three of them (`and N more` beyond that), says ripr will not
+pick one, and sends the reader to the Next step above, instead of claiming no
+spot could be tied to the line (#15157); several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
 producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
