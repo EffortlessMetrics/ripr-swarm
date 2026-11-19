@@ -141,6 +141,10 @@ fn other_shapes_keep_the_absence_claim() -> Result<(), String> {
         "    #[test]\n    fn holds() {\n        let v = vec![bump(1)];\n        println!(\"{v:?}\");\n    }\n",
         // The assertion-like spelling only in a comment or a string.
         "    #[test]\n    fn holds() {\n        // assert_near!(bump(1), 3);\n        let _ = \"assert_near!(x, y)\";\n        let _ = bump(1);\n    }\n",
+        // Inside another macro's input, which never runs it as code.
+        "    #[test]\n    fn holds() {\n        let _ = bump(1);\n        let _ = stringify!(assert_near!(bump(1), 3));\n    }\n",
+        // Only inside a `macro_rules!` the test defines and never invokes.
+        "    #[test]\n    fn holds() {\n        macro_rules! unused {\n            () => { assert_near!(bump(1), 3) };\n        }\n        let _ = bump(1);\n    }\n",
     ] {
         let (miss, named, _) = read(tests)?;
         if named || miss != Some("no_assertion") {
