@@ -6708,7 +6708,9 @@ impl OwnerReturnPin {
             || indexes
             || (!claims_eq
                 && !is_guard
-                && if spelling == "assert_eq" {
+                // #8637: the `debug_` spelling takes the same `std`/`core`
+                // root, under the same root proof (#7857).
+                && if spelling == "assert_eq" || spelling == "debug_assert_eq" {
                     is_plain_or_std_macro(&assertion.text, spelling)
                 } else {
                     is_plain_macro(&assertion.text, spelling)

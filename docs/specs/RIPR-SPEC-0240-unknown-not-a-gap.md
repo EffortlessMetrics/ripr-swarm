@@ -318,11 +318,11 @@ checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
 `async` owners), withholding gaps the `assert_eq!` twin keeps. The
 `debug_assertion_limit` tests pin the twin contract: for each body, the
 `debug_assert_eq!` spelling reads as a profile limit exactly where the
-`assert_eq!` twin is credited, and keeps a gap otherwise, with one declared
-exception: a `std::`/`core::`-qualified `debug_assert_eq!` is not recognized,
-because the `std`-root proof (#7857) is spelled for `assert_eq` only, so it
-keeps its gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are
-not read.
+`assert_eq!` twin is credited, and keeps a gap otherwise. A `std::`/`core::`
+(or `::std::`/`::core::`) qualified `debug_assert_eq!` is read like its
+qualified `assert_eq!` twin, under the same `std`-root proof (#7857): a root
+the file rebinds, or any other path, is not the standard macro and keeps its
+gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are not read.
 
 ### Call-fact budget of a related test line (#8600)
 
