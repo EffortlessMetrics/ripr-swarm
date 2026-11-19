@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Extension changes since 0.10.0. Server and CLI changes, which the extension
+shows through its diagnostics and commands, are in the
+[ripr changelog](https://github.com/EffortlessMetrics/ripr/blob/main/CHANGELOG.md).
+
 ### Added
 
 - `ripr: Show Repair Attempt Status` projects the shared CLI repair-attempt
@@ -16,6 +20,39 @@
   command) and otherwise delegates to the existing start path
   ([#4647](https://github.com/EffortlessMetrics/ripr-swarm/issues/4647),
   advances [#2928](https://github.com/EffortlessMetrics/ripr-swarm/issues/2928)).
+
+- A Get Started walkthrough: trust the workspace, open a Rust file, check
+  that the server started (runs `ripr: Diagnose Setup` and lists the fixes
+  for a missing server), read ripr diagnostics and try a ripr code action
+  ([#2066](https://github.com/EffortlessMetrics/ripr-swarm/issues/2066), [#13638](https://github.com/EffortlessMetrics/ripr-swarm/issues/13638)).
+- `ripr: Copy Repair Packet at Cursor` copies the repair packet for the
+  diagnostic under the cursor ([#2603](https://github.com/EffortlessMetrics/ripr-swarm/issues/2603)).
+- Right-click menu entries for the main ripr actions, and default key
+  bindings in a focused editor: `Ctrl+Alt+R` (`Cmd+Alt+R` on macOS) shows
+  status, `Ctrl+Alt+P` copies the top repair packet and `Ctrl+Alt+Shift+P`
+  copies the packet at the cursor ([#2199](https://github.com/EffortlessMetrics/ripr-swarm/issues/2199), [#2603](https://github.com/EffortlessMetrics/ripr-swarm/issues/2603)).
+- When a multi-root window has more than one candidate folder, the extension
+  asks which one to analyze instead of picking one ([#2180](https://github.com/EffortlessMetrics/ripr-swarm/issues/2180)).
+
+### Changed
+
+- Command titles all start with a lowercase `ripr:` prefix, and the two
+  result-record copy commands have distinct names ([#2052](https://github.com/EffortlessMetrics/ripr-swarm/issues/2052), [#2471](https://github.com/EffortlessMetrics/ripr-swarm/issues/2471)).
+- The status bar is colored by state: red for errors, yellow for warnings
+  ([#2053](https://github.com/EffortlessMetrics/ripr-swarm/issues/2053)). A limited or deferred run says so instead of showing a
+  completed run, and a limited run names the component that degraded, whether
+  its findings can be trusted and how to recover ([#4338](https://github.com/EffortlessMetrics/ripr-swarm/issues/4338), [#5046](https://github.com/EffortlessMetrics/ripr-swarm/issues/5046)).
+- ripr warnings offer a Show Output action, and an error popup shows the
+  server's real failure instead of a generic message ([#2062](https://github.com/EffortlessMetrics/ripr-swarm/issues/2062), [#2167](https://github.com/EffortlessMetrics/ripr-swarm/issues/2167)).
+- The managed server download shows progress and says which release it
+  fetches ([#2065](https://github.com/EffortlessMetrics/ripr-swarm/issues/2065)). Managed servers are installed atomically: the archive
+  checksum, the staged binary and an install receipt are checked before the
+  new server replaces the cached one ([#3184](https://github.com/EffortlessMetrics/ripr-swarm/issues/3184)).
+- Changing `ripr.trace.server` applies right away instead of restarting the
+  server ([#2168](https://github.com/EffortlessMetrics/ripr-swarm/issues/2168)).
+- Agent-loop copy commands run from the Command Palette, without a ripr
+  diagnostic to act on, explain how to reach them from a code action instead
+  of a generic "not available" message ([#2152](https://github.com/EffortlessMetrics/ripr-swarm/issues/2152)).
 
 ### Fixed
 
@@ -81,6 +118,67 @@
   the selected absolute workspace root; reject cross-root, relative, or unsafe
   artifact redirects instead of leaving the previous clipboard text unchanged
   ([#4396](https://github.com/EffortlessMetrics/ripr-swarm/issues/4396)).
+
+- The extension starts in more workspaces: one whose only project marker is
+  `tsconfig.json`, `jsconfig.json`, `ripr.toml`, `pyproject.toml`, `setup.py`,
+  `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini` or `noxfile.py`
+  ([#13615](https://github.com/EffortlessMetrics/ripr-swarm/issues/13615), [#14647](https://github.com/EffortlessMetrics/ripr-swarm/issues/14647), [#14659](https://github.com/EffortlessMetrics/ripr-swarm/issues/14659)).
+- A `ripr` on PATH that is older than the extension expects no longer skips
+  the managed download. If no managed server can be obtained, the older binary
+  is still used, with one warning that names both versions and how to update.
+  The `ripr: server missing` status item stays visible after its notification
+  is dismissed ([#13638](https://github.com/EffortlessMetrics/ripr-swarm/issues/13638)).
+- A managed download that cannot reach its host (offline, DNS, proxy or
+  timeout) says so and names the offline route, `ripr.server.path`
+  ([#13638](https://github.com/EffortlessMetrics/ripr-swarm/issues/13638)).
+- `ripr.server.path` accepts a leading `~` for the home directory, and a
+  relative path is refused with a message that asks for the full path
+  ([#15075](https://github.com/EffortlessMetrics/ripr-swarm/issues/15075)). On Windows it also accepts a `.cmd` or `.bat` shim such as
+  npm's `ripr.cmd` ([#14659](https://github.com/EffortlessMetrics/ripr-swarm/issues/14659)).
+- A `ripr.server.downloadBaseUrl` that is not a plain `https://` folder address
+  skips the managed download, and the message names the setting and what is
+  wrong with the value instead of a bare "Invalid URL" ([#15163](https://github.com/EffortlessMetrics/ripr-swarm/issues/15163)).
+- Status messages and setting descriptions name the refresh command by its
+  Command Palette title, `ripr: Refresh Full Analysis` ([#15094](https://github.com/EffortlessMetrics/ripr-swarm/issues/15094)). A failed
+  refresh points at that command, or at `ripr.baseRef` when the base does not
+  resolve ([#4346](https://github.com/EffortlessMetrics/ripr-swarm/issues/4346)).
+- A missing server is reported as missing, not as unresponsive ([#5156](https://github.com/EffortlessMetrics/ripr-swarm/issues/5156)),
+  and the retry action runs the registered `ripr: Restart Server` command
+  ([#2059](https://github.com/EffortlessMetrics/ripr-swarm/issues/2059)).
+- A restart racing a start no longer leaves an extra server process running
+  ([#2125](https://github.com/EffortlessMetrics/ripr-swarm/issues/2125)).
+- `ripr: Show Output` activates the extension when it has not started yet ([#2164](https://github.com/EffortlessMetrics/ripr-swarm/issues/2164)), and
+  on Windows the PATH fallback is probed through the shell ([#2166](https://github.com/EffortlessMetrics/ripr-swarm/issues/2166)).
+- The Get Started "Trust this workspace" step completes when the workspace is
+  already trusted ([#5207](https://github.com/EffortlessMetrics/ripr-swarm/issues/5207)).
+- `ripr: Show Repair Route Summary` renders the server's structured summary
+  ([#1842](https://github.com/EffortlessMetrics/ripr-swarm/issues/1842)).
+- Before use, a resolved server must answer a standard LSP initialize and
+  shutdown with the capabilities the extension needs; a server that offers
+  unsupported document sync options is refused with the field that failed
+  ([#3191](https://github.com/EffortlessMetrics/ripr-swarm/issues/3191), [#4173](https://github.com/EffortlessMetrics/ripr-swarm/issues/4173)).
+- Copied first-PR, gap-queue and agent-loop commands must match the server's
+  rendering and stay inside the workspace ([#4222](https://github.com/EffortlessMetrics/ripr-swarm/issues/4222), [#4236](https://github.com/EffortlessMetrics/ripr-swarm/issues/4236), [#4272](https://github.com/EffortlessMetrics/ripr-swarm/issues/4272)).
+
+### Security
+
+- The server is not downloaded or started until the workspace is trusted, and
+  the settings that choose which binary runs are restricted in untrusted
+  workspaces ([#1825](https://github.com/EffortlessMetrics/ripr-swarm/issues/1825), [#1867](https://github.com/EffortlessMetrics/ripr-swarm/issues/1867)).
+- Before extracting a managed server archive, the extension lists it and
+  refuses absolute or `..` member paths, symlinks, hard links, reparse points,
+  unsafe Windows names and archives over 1000 members, for both the tar and
+  the Windows zip downloads ([#13656](https://github.com/EffortlessMetrics/ripr-swarm/issues/13656), [#13904](https://github.com/EffortlessMetrics/ripr-swarm/issues/13904)).
+
+## 0.10.0
+
+- Version aligned with ripr 0.10.0. Editor notes for this release are in the
+  [ripr changelog](https://github.com/EffortlessMetrics/ripr/blob/main/CHANGELOG.md).
+
+## 0.9.0
+
+- Version aligned with ripr 0.9.0. Editor notes for this release are in the
+  [ripr changelog](https://github.com/EffortlessMetrics/ripr/blob/main/CHANGELOG.md).
 
 ## 0.8.0
 
