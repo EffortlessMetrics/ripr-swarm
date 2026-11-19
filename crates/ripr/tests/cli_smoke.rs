@@ -37352,6 +37352,63 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
     Ok(())
 }
 
+/// docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with one
+/// exit, `3`, on `agent repair --phase before` too. A stale cross-namespace
+/// id (`probe:`, `gap:`, `file:line`) used to exit `2` there while a plain
+/// unknown seam id and every sibling surface exited `3` (#15311).
+#[test]
+fn agent_repair_stale_cross_namespace_seam_id_is_a_typed_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _diff) = agent_brief_sample_workspace("agent-repair-stale-seam-id")?;
+    let root_path = root.display().to_string();
+    for seam_id in [
+        "probe:src_lib.rs:predicate:566edf6b",
+        "gap:0123456789abcdef",
+        "src/lib.rs:999",
+        "f3c9e4d21a0b7c88",
+    ] {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--root",
+                &root_path,
+                "--seam-id",
+                seam_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{seam_id} (json={json}) must take the refusal exit: {stderr}"
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "agent repair --phase before refusals keep stdout empty: {:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+    // The attempts directory may hold only its dot-named lock files.
+    let attempts = root.join("target/ripr/repair-attempts");
+    if attempts.exists() {
+        for entry in std::fs::read_dir(&attempts)? {
+            let name = entry?.file_name();
+            assert!(
+                name.to_string_lossy().starts_with('.'),
+                "a refused seam id starts no attempt: {name:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `ripr reports ci-summary` writes its Markdown bytes through its own
 /// writer; a closed reader must still get the shared quiet exit 2, not a
 /// "could not write the summary ... summary path" report.
