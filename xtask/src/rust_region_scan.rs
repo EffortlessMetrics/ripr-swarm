@@ -180,8 +180,8 @@ pub(crate) struct DeclaredModuleFiles {
 /// repository-relative path) to the files Rust would read for them:
 /// `#[path = ".."]` relative to the declaring file's directory, otherwise
 /// `<base>/name.rs` and `<base>/name/mod.rs`, where `<base>` is the file's
-/// directory for `mod.rs`/`lib.rs`/`main.rs` and `<dir>/<stem>` for any other
-/// file. Test gating honors the same exact `#[cfg(test)]` spelling as
+/// directory for `mod.rs` and the crate roots `src/lib.rs`/`src/main.rs`, and
+/// `<dir>/<stem>` for any other file. Test gating honors the same exact `#[cfg(test)]` spelling as
 /// [`production_text_regions`]. Declarations nested in inline modules are
 /// not resolved (their files then stay fully scanned, the over-report
 /// direction), and an unparsed file declares nothing.
@@ -202,7 +202,10 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
             format!("{left}/{right}")
         }
     };
-    let base = if matches!(stem, "mod" | "lib" | "main") {
+    // `mod.rs` and the crate roots `src/lib.rs`/`src/main.rs` own their
+    // directory; any other file (a nested `lib.rs` too) owns `<dir>/<stem>`.
+    let crate_root = matches!(stem, "lib" | "main") && (dir == "src" || dir.ends_with("/src"));
+    let base = if stem == "mod" || crate_root {
         dir.to_string()
     } else {
         join(dir, stem)
@@ -257,6 +260,58 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
         }
     }
     declared
+}
+
+/// Out-of-line test files and directories among `sources` (#15193): the file
+/// of each top-level `#[cfg(test)] mod name;` declaration that is tracked,
+/// and that module's child directory (each prefix ends in `/`). Fail closed:
+/// a candidate that an ordinary declaration from a non-candidate file also
+/// reaches stays scanned, and so does a directory holding such a target.
+pub(crate) fn out_of_line_test_exemptions(
+    tracked: &[String],
+    sources: &[(String, String)],
+) -> (std::collections::BTreeSet<String>, Vec<String>) {
+    let tracked: std::collections::BTreeSet<&str> = tracked.iter().map(String::as_str).collect();
+    let mut gated: Vec<(String, Option<String>)> = Vec::new();
+    let mut ordinary: Vec<(&str, String)> = Vec::new();
+    for (file, source) in sources {
+        let declared = declared_module_files(file, source);
+        gated.extend(declared.test_gated);
+        ordinary.extend(
+            declared
+                .ordinary
+                .into_iter()
+                .map(|target| (file.as_str(), target)),
+        );
+    }
+    let mut exempt_files = std::collections::BTreeSet::new();
+    let mut exempt_dirs = Vec::new();
+    for (target, children) in gated {
+        if !tracked.contains(target.as_str()) {
+            continue;
+        }
+        exempt_files.insert(target);
+        if let Some(children) = children {
+            exempt_dirs.push(format!("{children}/"));
+        }
+    }
+    let reached: Vec<String> = ordinary
+        .into_iter()
+        .filter(|(declarer, _)| {
+            !exempt_files.contains(*declarer)
+                && !exempt_dirs
+                    .iter()
+                    .any(|dir| declarer.starts_with(dir.as_str()))
+        })
+        .map(|(_, target)| target)
+        .collect();
+    exempt_files.retain(|file| !reached.contains(file));
+    exempt_dirs.retain(|dir| {
+        !reached
+            .iter()
+            .any(|target| target.starts_with(dir.as_str()))
+    });
+    (exempt_files, exempt_dirs)
 }
 
 #[cfg(test)]
@@ -651,6 +706,68 @@ mod cfg_test_spelling_tests {
                     "crates/ripr/src/a/unix_tests/mod.rs".to_string(),
                 ]
             );
+        }
+
+        #[test]
+        fn crate_roots_own_their_directory_but_a_nested_lib_rs_does_not() {
+            let root =
+                declared_module_files("crates/ripr/src/lib.rs", "#[cfg(test)]\nmod tests;\n");
+            assert_eq!(
+                root.test_gated.first().map(|(file, _)| file.as_str()),
+                Some("crates/ripr/src/tests.rs")
+            );
+            let nested =
+                declared_module_files("crates/ripr/src/a/main.rs", "#[cfg(test)]\nmod r#tests;\n");
+            assert_eq!(
+                nested.test_gated.first().map(|(file, _)| file.as_str()),
+                Some("crates/ripr/src/a/main/tests.rs")
+            );
+        }
+
+        #[test]
+        fn a_production_declaration_vetoes_a_test_exemption() {
+            let tracked: Vec<String> = [
+                "src/a.rs",
+                "src/a/tests.rs",
+                "src/a/tests/helper.rs",
+                "src/b.rs",
+                "src/c.rs",
+                "src/c/tests.rs",
+                "src/c/tests/shared.rs",
+            ]
+            .iter()
+            .map(|file| file.to_string())
+            .collect();
+            let source = |file: &str, text: &str| (file.to_string(), text.to_string());
+            let sources = vec![
+                source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                // A child the test file itself declares stays exempt.
+                source("src/a/tests.rs", "mod helper;\n"),
+                source("src/c.rs", "#[cfg(test)]\nmod tests;\n"),
+                // Production code reaching into c's test directory vetoes it.
+                source("src/b.rs", "#[path = \"c/tests/shared.rs\"]\nmod shared;\n"),
+            ];
+            let (files, dirs) = super::super::out_of_line_test_exemptions(&tracked, &sources);
+            assert!(files.contains("src/a/tests.rs"), "{files:?}");
+            assert!(files.contains("src/c/tests.rs"), "{files:?}");
+            assert_eq!(dirs, vec!["src/a/tests/".to_string()]);
+
+            // An untracked target is never exempted.
+            let (files, _) = super::super::out_of_line_test_exemptions(
+                &["src/a.rs".to_string()],
+                &[source("src/a.rs", "#[cfg(test)]\nmod tests;\n")],
+            );
+            assert!(files.is_empty(), "{files:?}");
+
+            // A production declaration of the test file itself vetoes it.
+            let (files, _) = super::super::out_of_line_test_exemptions(
+                &tracked,
+                &[
+                    source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                    source("src/b.rs", "#[path = \"a/tests.rs\"]\nmod shared;\n"),
+                ],
+            );
+            assert!(!files.contains("src/a/tests.rs"), "{files:?}");
         }
 
         #[test]
