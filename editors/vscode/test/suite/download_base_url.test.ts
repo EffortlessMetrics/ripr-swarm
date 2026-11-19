@@ -39,6 +39,8 @@ suite('Download mirror address', () => {
       ['file:///srv/ripr', 'uses file; only https:// downloads are allowed'],
       ['https://mirror.example/ripr?token=abc', 'carries a query or fragment'],
       ['https://mirror.example/ripr#v0.10.0', 'carries a query or fragment'],
+      ['https://mirror.example/ripr?', 'carries a query or fragment'],
+      ['https://mirror.example/ripr/#', 'carries a query or fragment'],
       ['https://mirror.example/ripr/ripr-manifest.json', 'names a file'],
       ['https://mirror.example/ripr/MANIFEST.JSON', 'names a file']
     ];

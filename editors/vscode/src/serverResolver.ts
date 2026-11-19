@@ -56,7 +56,9 @@ export function downloadBaseUrlProblem(value: string): string | undefined {
   if (parsed.protocol !== 'https:') {
     return `uses ${parsed.protocol.replace(/:$/, '')}; only https:// downloads are allowed`;
   }
-  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+  // A bare trailing `?` or `#` leaves `search`/`hash` empty but still turns
+  // the appended manifest name into a query or fragment, so check the text.
+  if (/[?#]/.test(base)) {
     return 'carries a query or fragment; ripr appends the manifest file name, so it needs a plain folder address';
   }
   if (/\.json$/i.test(parsed.pathname)) {
