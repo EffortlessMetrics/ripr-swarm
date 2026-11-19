@@ -9286,6 +9286,86 @@ mod tests {
         assert!(!is_workspace_relative_value("/var/tmp"));
     }
 
+    /// #14114: end to end through evaluation and the human screen, a root
+    /// outside a Git work tree with a refused output location prints the
+    /// `output_location` failure and no `ripr pilot --root` command. The same
+    /// root with a usable output location keeps the pilot route as control.
+    /// The fixture is a broken `.git` gitfile, which Git refuses the same way
+    /// as a plain directory outside any checkout.
+    #[cfg(unix)]
+    #[test]
+    fn outside_git_root_with_refused_output_prints_no_pilot_command() -> Result<(), String> {
+        let screen = |root: &Path| -> (output::doctor::DoctorReport, String) {
+            let evaluation = output::doctor::evaluate_doctor_core_with_config(root, &[]);
+            let config = evaluation.config.clone();
+            let environment = empty_environment();
+            let binary = quiet_binary();
+            let text = render_doctor_human_screen(DoctorHumanScreen {
+                root,
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &evaluation.report,
+                config: &config,
+                environment: &environment,
+                binary: &binary,
+                verbose: false,
+                passed: false,
+            })
+            .join("\n");
+            (evaluation.report, text)
+        };
+        let has_check = |report: &output::doctor::DoctorReport, name: &str| {
+            report.checks.iter().any(|check| {
+                check.name == name && check.status == output::doctor::DoctorCheckStatus::Fail
+            })
+        };
+
+        let usable = unique_command_test_dir("outside-git-usable-output");
+        let refused = unique_command_test_dir("outside-git-refused-output");
+        for root in [&usable, &refused] {
+            std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+            std::fs::write(root.join(".git"), "not a gitfile\n")
+                .map_err(|error| error.to_string())?;
+        }
+        std::os::unix::fs::symlink(refused.join("no-such-directory"), refused.join("target"))
+            .map_err(|error| error.to_string())?;
+
+        let (usable_report, usable_text) = screen(&usable);
+        let (refused_report, refused_text) = screen(&refused);
+
+        // Fixture premises: both roots are outside Git; only one is refused.
+        assert!(has_check(&usable_report, "git_repository"), "{usable_text}");
+        assert!(
+            has_check(&refused_report, "git_repository"),
+            "{refused_text}"
+        );
+        assert!(
+            !has_check(&usable_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{usable_text}"
+        );
+        assert!(
+            has_check(&refused_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{refused_text}"
+        );
+
+        assert!(usable_text.contains("ripr pilot --root"), "{usable_text}");
+        assert!(
+            refused_text.contains("not inside a Git work tree"),
+            "{refused_text}"
+        );
+        assert!(
+            refused_text.contains("! `ripr check` and `ripr pilot` refuse to run here"),
+            "{refused_text}"
+        );
+        assert!(
+            !refused_text.contains("ripr pilot --root"),
+            "{refused_text}"
+        );
+        for root in [&usable, &refused] {
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     /// #14114: the verbose start-here block follows the same rule as the
     /// compact screen. A present packet is the next artifact only while no
     /// `!` check blocks every command; a refused output location gets the

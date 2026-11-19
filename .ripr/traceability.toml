@@ -1355,6 +1355,7 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::outside_work_tree_evidence_withholds_pilot_when_output_is_refused",
   "crates/ripr/src/cli/commands/doctor.rs::tests::refused_output_location_replaces_the_cache_lines_with_a_failure",
   "crates/ripr/src/cli/commands/doctor.rs::tests::verbose_packet_advice_yields_to_a_refused_output_location",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::outside_git_root_with_refused_output_prints_no_pilot_command",
   "crates/ripr/src/analysis/seam_cache.rs::tests::production_entry_dirs_match_every_production_cache_constructor",
   "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters",
   "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
