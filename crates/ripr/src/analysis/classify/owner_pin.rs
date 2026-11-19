@@ -14615,15 +14615,16 @@ fn let_bound_owner_call<'a>(
                     })
                     .count()
                     == 1
-                    && in_text == 1
+                    && compared_mentions(&operands, operand) == 1
             })
-            || lone_equality_names_operand_once(&other.text, operand, projection, in_text);
+            || lone_equality_names_operand_once(&other.text, operand, projection);
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
         // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
         // as the whole condition, which is the `assert_eq!(operand, bool)`
-        // operand once; the scalar check below bounds it to one mention.
+        // operand once; a further mention can only sit in its message
+        // arguments, which are formatted after the condition has failed.
         let whole_operand = whole_operand || (reviewed && bare_condition);
         let read_only = scalar
             && !reviewed
@@ -14640,9 +14641,10 @@ fn let_bound_owner_call<'a>(
         return None;
     }
     if scalar {
-        let reviewed = mask_comments_and_strings(&assertion.text);
+        // The loop above bounded the reviewed assertion to one compared
+        // mention; a mention in its message arguments is formatted only
+        // when the assertion already fails.
         return (assertion.line > let_line
-            && whole_word_offsets(&reviewed, operand).len() == 1
             && same_block_after(&masked, binding_at, test.start_line, assertion))
         .then(|| let_initializer(binding))
         .flatten();
@@ -14683,23 +14685,29 @@ fn let_bound_owner_call<'a>(
 
 /// Whether `text` is one plain `assert!(lhs == rhs)` (RIPR-SPEC-0197
 /// lone-equality pins) with `operand` as exactly one whole side and named
-/// nowhere else in it, message arguments included. It reads `operand` as
-/// the `assert_eq!` with the same two sides does.
-fn lone_equality_names_operand_once(
-    text: &str,
-    operand: &str,
-    projection: &str,
-    mentions: usize,
-) -> bool {
-    mentions == 1
-        && is_plain_macro(text, "assert")
+/// nowhere else in the condition. It reads `operand` as the `assert_eq!`
+/// with the same two sides does.
+fn lone_equality_names_operand_once(text: &str, operand: &str, projection: &str) -> bool {
+    is_plain_macro(text, "assert")
         && equality_condition_operands(text).is_some_and(|sides| {
             sides
                 .iter()
                 .filter(|side| side.trim().strip_suffix(projection).map(str::trim) == Some(operand))
                 .count()
                 == 1
+                && compared_mentions(&sides, operand) == 1
         })
+}
+
+/// Whole-word mentions of `operand` among an assertion's compared operands.
+/// The message arguments are left out: they are formatted only once the
+/// comparison has already failed, so a binding named there
+/// (`assert_eq!(v, 4, "got {}", v)`) is never what decides the test.
+fn compared_mentions<S: AsRef<str>>(compared: &[S], operand: &str) -> usize {
+    compared
+        .iter()
+        .map(|side| whole_word_offsets(&mask_comments_and_strings(side.as_ref()), operand).len())
+        .sum()
 }
 
 /// cell-0094 review: whether the line `assertion_line` starts with a
