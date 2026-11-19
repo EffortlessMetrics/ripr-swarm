@@ -1680,6 +1680,19 @@ fn macro_binding_sites_in_tree(
                     let name = name.trim_start_matches("r#");
                     let kind = if !trusted.contains(&name) {
                         None
+                    } else if item.rename().is_none()
+                        && standard_root
+                        && is_standard_macro_import(&item, name)
+                        && !drop_in_shadowed(root, external)
+                        && drop_in_verified(if root == "alloc" {
+                            crate::analysis::facts::drop_in::ALLOC_MACRO_IMPORT_ROOT
+                        } else {
+                            root
+                        })
+                    {
+                        // #15263: `use std::vec;` / `use alloc::vec;` names
+                        // the standard macro itself, like a standard-root glob.
+                        None
                     } else if !is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external)
                     {
                         Some(MacroBindingKind::Import)
@@ -1905,6 +1918,28 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
     ASSERTION_FREE_PRELUDE_GLOBS
         .iter()
         .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
+}
+
+/// Whether a plain `use` names a standard-library macro at its own path
+/// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`), so the name
+/// it binds is the standard macro (#15263). Only the crates that export the
+/// macro at their root count.
+fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
+    let exporters: &[&str] = match name {
+        "vec" | "format" => &["std", "alloc"],
+        "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
+        | "debug_assert_ne" | "matches" | "panic" | "unreachable" => &["std", "core"],
+        _ => &[],
+    };
+    let segments = use_tree_segments(item);
+    let segments: Vec<&str> = segments
+        .iter()
+        .map(|segment| segment.trim_start_matches("r#"))
+        .collect();
+    matches!(
+        segments.as_slice(),
+        [root, imported] if exporters.contains(root) && *imported == name
+    )
 }
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
