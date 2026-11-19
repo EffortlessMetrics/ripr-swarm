@@ -960,6 +960,11 @@ general combinator, callback or mutation adequacy.
    and refuses the pin. Only bare standard names qualify, plus a
    `std`/`core`-rooted `assert_eq!` whose root rule 1 proves unrebound;
    other qualified paths stay unknown because their roots can be rebound.
+   `env!` and `option_env!` are in the set (#14116): each expands to a
+   literal read from the build environment, so neither can leave the test.
+   `use std::env;` (or `core::env`) binds that standard macro too, so it is
+   not a rebinding while the standard root is unbound; any other import,
+   definition or macro-argument mention of the name still refuses.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!`, `format!` or `vec!` expands to one call

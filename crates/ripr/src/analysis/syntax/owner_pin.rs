@@ -523,6 +523,11 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert",
     "debug_assert_eq",
     "debug_assert_ne",
+    // `env!` and `option_env!` expand to a literal read from the build
+    // environment (#14116); neither evaluates its operands as code, so
+    // neither can return or skip a later assertion. `use std::env;` binds
+    // the standard macro too, so only a non-standard import is a rebinding.
+    "env",
     "eprint",
     "eprintln",
     // expect-test's `expect!` and `expect_file!` build a value and cannot
@@ -536,6 +541,7 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "line",
     "matches",
     "module_path",
+    "option_env",
     "panic",
     "print",
     "println",
@@ -1843,6 +1849,10 @@ fn nested_call_name(tree: &ast::TokenTree) -> Option<String> {
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
+/// The standard crates whose root exports `env!` and `option_env!`; a
+/// `use std::env;` import is the standard macro when the root is unbound.
+const STANDARD_ROOTS: &[&str] = &["std", "core"];
+
 /// #6578: `expect_test` exports `expect!` and `expect_file!`, which only
 /// build an `Expect` / `ExpectFile` value; importing one under its own name
 /// is the one binding that makes the bare macro expect-test's.
@@ -1860,6 +1870,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
+        // `use std::env;` names the module and, in the macro namespace, the
+        // standard `env!` itself.
+        "env" | "option_env" => STANDARD_ROOTS,
         _ => &[],
     }
 }
