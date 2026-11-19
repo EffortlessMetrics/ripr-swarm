@@ -660,16 +660,23 @@ const MACRO_DROP_TARGET: &str = "$";
 /// A rename `use guard::Cfg as Config;` and an alias `type Config = Cfg;`
 /// (generics dropped) each yield `(Cfg, Config)`.
 fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
-    // A plain path's last segment (`guard::Cfg<T>` reads `Cfg`); anything
-    // else (`<Cfg as T>::Out`, `self`) names no type. An alias's tuple or
-    // reference type (`(Cfg, u8)`, `&Cfg`) is not a path and is not read.
-    let last_segment = |text: &str| -> Option<String> {
-        let text = squeeze(text);
-        let text = text.split('<').next().unwrap_or(&text);
-        let last = text.rsplit("::").next().unwrap_or(text);
-        let last = last.strip_prefix("r#").unwrap_or(last);
+    // A plain path's last segment, read from the tree so comments and
+    // generics do not matter (`guard::/* c */Cfg<T>` reads `Cfg`). A
+    // qualified path (`<Cfg as T>::Out`) or a keyword segment (`self`) names
+    // no type. An alias's tuple or reference type (`(Cfg, u8)`, `&Cfg`) is
+    // not a path and is not read.
+    let last_segment = |path: &ast::Path| -> Option<String> {
+        if path
+            .segments()
+            .any(|segment| segment.type_anchor().is_some())
+        {
+            return None;
+        }
+        let name = path.segment()?.name_ref()?;
+        let text = name.text();
+        let last = text.strip_prefix("r#").unwrap_or(&text);
         (!last.is_empty()
-            && last != "self"
+            && !matches!(last, "self" | "Self" | "super" | "crate")
             && last.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
         .then(|| last.to_string())
     };
@@ -683,7 +690,7 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
                 .parent()
                 .and_then(ast::UseTree::cast)
                 .and_then(|use_tree| use_tree.path())
-            && let Some(original) = last_segment(&path.syntax().text().to_string())
+            && let Some(original) = last_segment(&path)
         {
             pairs.push((original, ident(name.text())));
         } else if let Some(alias) = ast::TypeAlias::cast(node)
@@ -696,7 +703,8 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
                 .is_none()
             && let Some(name) = alias.name()
             && let Some(ast::Type::PathType(ty)) = alias.ty().map(unparenthesized)
-            && let Some(original) = last_segment(&ty.syntax().text().to_string())
+            && let Some(path) = ty.path()
+            && let Some(original) = last_segment(&path)
         {
             pairs.push((original, ident(name.text())));
         }
@@ -2260,6 +2268,21 @@ mod tests {
                 "mod guard;\npub type Config = (guard::Cfg);\n",
                 "Config",
                 false,
+            ),
+            (
+                "mod guard;\npub type Config = (guard::/* note */Cfg);\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub use guard::/* note */Cfg as Config;\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config = <guard::Cfg as Iterator>::Item;\n",
+                "Config",
+                true,
             ),
             ("mod guard;\npub type\nConfig = ((Cfg));\n", "Config", false),
             (
