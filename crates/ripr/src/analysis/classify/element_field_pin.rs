@@ -674,7 +674,7 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
         }
         let name = path.segment()?.name_ref()?;
         let text = name.text();
-        let last = text.strip_prefix("r#").unwrap_or(&text);
+        let last = text.strip_prefix("r#").unwrap_or(text);
         (!last.is_empty()
             && !matches!(last, "self" | "Self" | "super" | "crate")
             && last.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
