@@ -217,6 +217,16 @@ fn class_with_gated_module(
     features: &str,
     declaration_gate: &str,
 ) -> Result<ExposureClass, String> {
+    class_with_gated_module_asserting(features, declaration_gate, "assert_eq")
+}
+
+/// [`class_with_gated_module`] with the pinning test spelling its assertion
+/// macro as `assertion` (for example the root-qualified `std::assert_eq`).
+fn class_with_gated_module_asserting(
+    features: &str,
+    declaration_gate: &str,
+    assertion: &str,
+) -> Result<ExposureClass, String> {
     let fixture = Fixture::with_files(&[
         ("Cargo.toml", &manifest(features)),
         (
@@ -225,7 +235,9 @@ fn class_with_gated_module(
         ),
         (
             "src/gated.rs",
-            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn discount_boundary() {\n        assert_eq!(crate::discount(101), 91);\n        assert_eq!(crate::discount(100), 90);\n    }\n}\n",
+            &format!(
+                "#[cfg(test)]\nmod tests {{\n    #[test]\n    fn discount_boundary() {{\n        {assertion}!(crate::discount(101), 91);\n        {assertion}!(crate::discount(100), 90);\n    }}\n}}\n"
+            ),
         ),
         ("diff.patch", &diff("src/lib.rs")),
     ])?;
@@ -266,6 +278,37 @@ fn a_module_mounted_behind_a_default_enabled_feature_gate_pins_like_an_ungated_o
             "a plain `cargo test` compiles this module: {features:?} {gate:?}"
         );
     }
+    Ok(())
+}
+
+/// The root-qualified spelling takes the targeted source-provenance route,
+/// which must admit the default-enabled declaration gate too (#15402 review).
+#[test]
+fn a_qualified_assertion_under_a_default_enabled_module_gate_pins_like_an_ungated_one()
+-> Result<(), String> {
+    assert_eq!(
+        class_with_gated_module_asserting("slow = []\n", "", "std::assert_eq")?,
+        ExposureClass::Exposed,
+        "the ungated module is the control"
+    );
+    assert_eq!(
+        class_with_gated_module_asserting(
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+            "std::assert_eq",
+        )?,
+        ExposureClass::Exposed,
+        "a plain `cargo test` compiles this module"
+    );
+    assert_ne!(
+        class_with_gated_module_asserting(
+            "slow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+            "std::assert_eq",
+        )?,
+        ExposureClass::Exposed,
+        "the default run is not known to compile this module"
+    );
     Ok(())
 }
 

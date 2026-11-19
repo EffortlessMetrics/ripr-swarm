@@ -3333,7 +3333,8 @@ fn owner_pin_assertions_with_matches(
         let context = item_context_refusal(module.syntax(), default_features).is_none();
         let admitted = ModuleDeclarationAdmission {
             context,
-            source_preserved: context && item_attributes_preserve_source_items(module.syntax()),
+            source_preserved: context
+                && item_attributes_preserve_source_items(module.syntax(), default_features),
         };
         result
             .module_declarations
@@ -4357,17 +4358,22 @@ pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
 /// items. The selected function's own harness attributes are outside this
 /// check; its parent and the resolved module declarations supply the context.
 pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
-    supported_item_context(item) && item_attributes_preserve_source_items(item)
+    supported_item_context(item) && item_attributes_preserve_source_items(item, None)
 }
 
 /// Whether every attribute on `item` and its enclosing items keeps the
-/// source items it gates as written.
-fn item_attributes_preserve_source_items(item: &SyntaxNode) -> bool {
+/// source items it gates as written. A plain `#[cfg(..)]` that
+/// `default_features` settle on is active in a plain `cargo test`, so it
+/// keeps them too (#14116).
+fn item_attributes_preserve_source_items(
+    item: &SyntaxNode,
+    default_features: Option<&BTreeSet<String>>,
+) -> bool {
     item.ancestors().all(|node| {
         node.children().filter_map(ast::Attr::cast).all(|attr| {
             crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
                 &attr.syntax().text().to_string(),
-            )
+            ) || default_enabled_gate(&attr, default_features)
         })
     })
 }

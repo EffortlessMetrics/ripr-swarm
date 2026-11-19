@@ -1248,7 +1248,9 @@ and repair still does not start.
   default do not. The same file pins the rule on a `mod name;` declaration
   (#14116): a default-enabled declaration gate reads `exposed`, and a
   non-default feature, a negation, a second unresolved atom and a
-  `cfg_attr` on the declaration do not. `default_feature_gate_tests` and
+  `cfg_attr` on the declaration do not. A root-qualified `std::assert_eq!`
+  under the same gate takes the targeted source-provenance route and reads
+  the same way. `default_feature_gate_tests` and
   `a_test_gate_resolves_with_test_as_the_build_flag` pin the scan and the
   evaluator.
 - `pinned_shape_limit.rs` pins each shape's withholding and the controls that
