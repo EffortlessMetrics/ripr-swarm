@@ -15042,6 +15042,9 @@ fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
         "pub trait Any2 { fn area(&self) -> u32; }\nimpl<T> Any2 for T {\n    fn area(&self) -> u32 { 9 }\n}\n",
         "pub trait Dflt {\n    fn area(&self) -> u32 { 9 }\n}\n",
         "pub struct Wrap<T>(pub T);\nimpl<T> Shape for Wrap<T> {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        // A second `Square` in another module shares the base name, so a
+        // receiver typed `Square` may be either type.
+        "pub mod other {\n    pub struct Square(pub u32);\n    impl super::Shape for Square {\n        fn area(&self) -> u32 { 9 }\n    }\n}\n",
     ] {
         let lib = format!("{SHAPE_LIB}{rival}");
         let (_, pin) = shape_pin(&lib, SHAPE_TESTS);
