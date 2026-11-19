@@ -33,7 +33,10 @@ fn arm_evidence_with_tests(
         (PathBuf::from("src/lib.rs"), source),
         (PathBuf::from("tests/prices.rs"), tests),
     ];
-    let index = index_from_files(&files)?;
+    let mut index = index_from_files(&files)?;
+    // The fixture crate is `prices`, so `use prices::*;` globs in the
+    // workspace's own items, not a foreign crate's macros (#15022).
+    index.package_names = ["prices".to_string()].into_iter().collect();
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
     let seam = seams
         .iter()
@@ -446,7 +449,8 @@ fn a_test_past_the_compact_cutoff_still_decides_the_arm() -> Result<(), String> 
             (PathBuf::from("src/lib.rs"), PRICES),
             (PathBuf::from("tests/prices.rs"), tests.as_str()),
         ];
-        let index = index_from_files(&files)?;
+        let mut index = index_from_files(&files)?;
+        index.package_names = ["prices".to_string()].into_iter().collect();
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
         let seam = seams
             .iter()
@@ -516,6 +520,41 @@ fn a_scalar_foreign_callee_keeps_the_arm_and_an_owning_crate_import_names_it() -
             if !named {
                 assert_eq!(evidence.activate.state, StageState::Yes, "{import}");
             }
+        }
+    }
+    Ok(())
+}
+
+/// #15022: a test file that rebinds a read macro (`assert_eq!`) can run an
+/// arm its visible input does not select. The rebound `assert_eq!` below
+/// calls its first argument's function with `Size::Medium` and never spells
+/// the owner's name, so no mention scan sees it.
+#[test]
+fn a_rebound_read_macro_keeps_the_arm_unnamed() -> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    assert_eq!(price_cents(Size::Small), 300);\n    \
+assert_eq!(price_cents(Size::Large), 500);\n}\n";
+    for (prelude, named) in [
+        (
+            "macro_rules! assert_eq {\n    ($f:ident ( $($arg:tt)* ), $expected:expr) => {\n        \
+let _ = $f(Size::Medium);\n    };\n}\n",
+            false,
+        ),
+        ("", true),
+    ] {
+        let tests = format!("use prices::*;\n\n{prelude}\n{body}");
+        let (full, compact, class) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        let expected = if named {
+            vec!["Size::Medium"]
+        } else {
+            Vec::new()
+        };
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            assert_eq!(missing_values(evidence), expected, "{prelude}");
+            assert_eq!(
+                class == SeamGripClass::WeaklyGripped,
+                named,
+                "{prelude}: {evidence:?}"
+            );
         }
     }
     Ok(())

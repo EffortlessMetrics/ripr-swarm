@@ -545,6 +545,7 @@ tests = [
   "crates/ripr-contract/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
   "crates/ripr-contract/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
   "crates/ripr-contract/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+  "xtask/src/reports/fixtures.rs::tests::goldens_clean_verdict_writes_only_for_the_joint_command",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -6346,6 +6347,12 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status bar reports disabled configuration without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports missing workspace without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports unavailable server without hanging on modal UI",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::the context manifest version wins and a leading v is dropped (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::a context without a manifest reads the shipped package.json, not a fixed release (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::a missing or malformed manifest leaves the version unknown (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::only extensionVersion.ts reads the manifest version from a context (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::workspaceContains activation events are exactly the analyzable project markers (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::@types/vscode matches the minimum VS Code the extension declares (#14647)",
   "editors/vscode/test/suite/missing_server_message.test.ts::a download that never reached its host is a network failure (#13638)",
   "editors/vscode/test/suite/missing_server_message.test.ts::network guidance names the connection and the offline route, other kinds do not (#13638)",
   "editors/vscode/test/suite/missing_server_message.test.ts::a network resolution failure shows the offline route in the popup (#13638)",
@@ -6365,6 +6372,8 @@ code = [
   "editors/vscode/src/extension.ts",
   "editors/vscode/src/serverResolver.ts",
   "editors/vscode/src/downloader.ts",
+  "editors/vscode/src/extensionVersion.ts",
+  "editors/vscode/src/workspaceHelpers.ts",
   "editors/vscode/package.json",
 ]
 outputs = [
@@ -18747,6 +18756,7 @@ tests = [
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_rebound_read_macro_keeps_the_arm_unnamed",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_head_edit_drops_the_unchanged_return_value",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_respelled_arm_value_drops_the_return_value_probe",

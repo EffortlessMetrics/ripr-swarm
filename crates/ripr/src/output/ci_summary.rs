@@ -15,6 +15,7 @@
 //! `markdown_inline` spelling.
 
 pub(crate) mod annotations;
+pub(crate) mod gate_verdict;
 mod headline;
 mod jq;
 
@@ -121,6 +122,9 @@ pub(crate) struct CiSummaryInput {
     /// `RIPR_GATE_MODE` is not blank. When false the policy
     /// and governance sections are folded (#11217).
     pub(crate) gate_configured: bool,
+    /// `RIPR_GATE_MODE` as set, unvalidated. Names an unknown mode as the
+    /// cause when no gate decision was written (#14081).
+    pub(crate) gate_mode: String,
     /// `RIPR_COMMENT_MODE`, `off` when unset.
     pub(crate) comment_mode: String,
     /// The enabled language names `ripr doctor --json` reports.
@@ -137,7 +141,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         attention: false,
         policy_reports_read: 0,
     };
-    summary.headline();
+    summary.headline(&input.gate_mode);
     summary.start_here();
     summary.first_run_status(&input.base_ref);
     summary.language_preview(&input.configured_languages);
@@ -151,7 +155,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.assistant_proof();
     summary.agent_proof_status();
     summary.governance(input.gate_configured);
-    summary.gate_decision();
+    summary.gate_decision(&input.gate_mode);
     summary.baseline_delta(input.gate_baseline);
     summary.ripr_zero();
     summary.sarif_and_badges(input.upload_sarif, input.pull_request);
@@ -338,11 +342,12 @@ impl Summary {
     }
 
     /// The pull request's own verdict, before ripr's orientation (#11217).
-    fn headline(&mut self) {
+    fn headline(&mut self, gate_mode: &str) {
         self.line("## RIPR advisory summary");
         self.blank();
         self.line("RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.");
         self.blank();
+        self.gate_verdict(gate_mode);
         let report = fs::read(self.root.join(COMMENTS_JSON))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
@@ -356,6 +361,29 @@ impl Summary {
         if !lines.is_empty() {
             self.blank();
         }
+    }
+
+    /// A failing gate, before the findings (#14081): a blocked or
+    /// misconfigured gate is why the job is red, so it leads. A set mode the
+    /// gate refuses comes first, because the gate did not run under it. A
+    /// decision document is read only when it names this run's mode, so a
+    /// report left by an earlier run under another mode is never worded as
+    /// this run's verdict. Every other state prints nothing here.
+    fn gate_verdict(&mut self, gate_mode: &str) {
+        let verdict = gate_verdict::GateVerdict::from_mode(gate_mode).or_else(|| {
+            fs::read(self.root.join(GATE_JSON))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
+                .and_then(|decision| gate_verdict::GateVerdict::from_decision(&decision))
+        });
+        let Some(verdict) = verdict else {
+            return;
+        };
+        for line in verdict.summary_lines() {
+            self.line(&line);
+        }
+        self.blank();
     }
 
     fn start_here(&mut self) {
@@ -1484,7 +1512,7 @@ impl Summary {
         );
     }
 
-    fn gate_decision(&mut self) {
+    fn gate_decision(&mut self, gate_mode: &str) {
         self.line("### Gate decision");
         if let Some(doc) = self.doc(GATE_JSON) {
             let count = |path: &str| inline(&doc.field(&[path], "0", "0"));
@@ -1597,10 +1625,7 @@ impl Summary {
             self.line("- Related inputs: `ripr/review/comments.json`, `ci/labels.json`");
             self.blank();
         }
-        self.report_or(
-            GATE_MD,
-            "Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate` to opt in.",
-        );
+        self.report_or(GATE_MD, &gate_verdict::missing_decision_line(gate_mode));
     }
 
     fn baseline_delta(&mut self, gate_baseline: bool) {
