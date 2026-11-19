@@ -387,13 +387,37 @@ function assertComponents(state, selectors, additional = []) {
   }
 }
 
+// The TERM acknowledgement must not come from the supervised Node process: a
+// loaded runner can starve its event loop past the escalation grace, so the
+// process is SIGKILLed before the handler runs and the .term file never
+// appears even though the owned group received the signal. This supervisor is
+// blocked in wait(2), so the trap writes the acknowledgement as soon as the
+// group is signalled. It publishes .term.ready first, so cancellation cannot
+// begin before the trap is armed.
+const TERM_SUPERVISOR_SCRIPT = [
+  '#!/bin/sh',
+  'term=$1',
+  'shift',
+  'trap \'printf observed > "$term"\' TERM',
+  ': > "$term.ready"',
+  '"$@" &',
+  'patient=$!',
+  'status=0',
+  'while kill -0 "$patient" 2>/dev/null; do',
+  '  wait "$patient" 2>/dev/null && status=0 || status=$?',
+  'done',
+  'exit $status',
+  '',
+].join('\n');
+
 function ownedProcessMain() {
   const fs = require('node:fs');
   const path = require('node:path');
   const cp = require('node:child_process');
   const [role, directory, behavior = 'ignore-term'] = process.argv.slice(2);
+  // Installing any handler keeps this fixture resistant to TERM; the group
+  // acknowledgement is recorded by the supervisor that started it.
   process.on('SIGTERM', () => {
-    fs.writeFileSync(path.join(directory, role + '.term'), 'observed');
     if (role === 'parent' && behavior === 'parent-exits') process.exit(0);
   });
   process.on('SIGINT', () => fs.writeFileSync(path.join(directory, role + '.int'), 'observed'));
@@ -407,8 +431,11 @@ function ownedProcessMain() {
     startTime: fields[19], procGroup: Number(fields[2]),
   }));
   fs.renameSync(identityFile + '.partial', identityFile);
+  const supervisor = process.argv[5];
   if (role === 'parent') {
-    cp.spawn(process.execPath, [process.argv[1], 'descendant', directory, behavior], { stdio: 'ignore' });
+    cp.spawn('/bin/sh', [supervisor, path.join(directory, 'descendant.term'),
+      process.execPath, process.argv[1], 'descendant', directory, behavior, supervisor],
+    { stdio: 'ignore' });
   }
   const pulse = path.join(directory, role + '.pulse');
   setInterval(() => {
@@ -448,6 +475,15 @@ function makeProcessFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-provision-process-'));
   const program = path.join(root, 'owned-process.cjs');
   writeFile(program, '(' + ownedProcessMain.toString() + ')();\n');
+  const supervisor = path.join(root, 'term-supervisor.sh');
+  writeFile(supervisor, TERM_SUPERVISOR_SCRIPT, 0o755);
+  const termFile = role => path.join(root, role + '.term');
+  const readyFile = role => termFile(role) + '.ready';
+  const invocation = (behavior = 'ignore-term') => ({
+    file: '/bin/sh',
+    args: [supervisor, termFile('parent'), process.execPath, program,
+      'parent', root, behavior, supervisor],
+  });
   const pids = () => ['parent', 'descendant'].map(role => {
     const filename = path.join(root, role + '.pid');
     return { role, ...(fs.existsSync(filename)
@@ -472,7 +508,9 @@ function makeProcessFixture(t) {
     const observations = pids().map(identity => {
       const { role, pid, procPid } = identity;
       assert.ok(pid > 0 && procPid > 0, role + ' never reached the intended fixture');
-      assert.equal(fs.existsSync(path.join(root, role + '.term')), true,
+      assert.ok(fs.existsSync(readyFile(role)),
+        role + ' supervisor was never armed for the owned group TERM');
+      assert.equal(fs.existsSync(termFile(role)), true,
         role + ' did not observe the owned group TERM');
       const observation = terminalState(identity);
       assert.equal(observation.terminal, true, role + ' remains live after nativeRun returned');
@@ -482,17 +520,18 @@ function makeProcessFixture(t) {
     // from native reaping; neither is a running descendant.
     t.diagnostic('Owned process terminal states: ' + observations.join(', '));
   };
-  return { root, program, pids, observe,
+  return { root, program, supervisor, termFile, readyFile, invocation, pids, observe,
     env: { PATH: '/usr/bin:/bin', HOME: root } };
 }
 
 async function cancelProcessFixture(t, behavior = 'ignore-term') {
   const f = makeProcessFixture(t);
+  const invocation = f.invocation(behavior);
   const driver = path.join(f.root, 'driver.cjs');
   const resultFile = path.join(f.root, 'result.json');
   writeFile(driver, "'use strict';\nconst fs = require('node:fs');\n"
     + 'const { nativeRun } = require(' + JSON.stringify(path.join(__dirname, 'provision-dev.cjs')) + ');\n'
-    + 'nativeRun(process.execPath, ' + JSON.stringify([f.program, 'parent', f.root, behavior]) + ', '
+    + 'nativeRun(' + JSON.stringify(invocation.file) + ', ' + JSON.stringify(invocation.args) + ', '
     + JSON.stringify({ cwd: f.root, env: f.env, capture: true, timeoutMs: 8000, killAfterMs: 150 })
     + ').then(result => { fs.writeFileSync(' + JSON.stringify(resultFile)
     + ', JSON.stringify(result)); process.exitCode = result.status; })'
@@ -508,8 +547,9 @@ async function cancelProcessFixture(t, behavior = 'ignore-term') {
     await exit;
   });
   const pulseFile = path.join(f.root, 'descendant.pulse');
-  await until(() => f.pids().every(({ pid }) => pid) && fs.existsSync(pulseFile),
-    'descendant never reached cancellation control');
+  await until(() => f.pids().every(({ pid }) => pid) && fs.existsSync(pulseFile)
+    && ['parent', 'descendant'].every(role => fs.existsSync(f.readyFile(role))),
+  'descendant never reached cancellation control');
   const initialPulse = fs.readFileSync(pulseFile, 'utf8');
   await until(() => fs.readFileSync(pulseFile, 'utf8') !== initialPulse,
     'descendant heartbeat never advanced before cancellation');
@@ -519,6 +559,11 @@ async function cancelProcessFixture(t, behavior = 'ignore-term') {
   assert.equal(terminalState(descendant).terminal, false,
     'the liveness oracle must observe the running descendant');
   assert.equal(child.kill('SIGTERM'), true);
+  // Bounded handshake, not one sample of a live process table: each supervisor
+  // records the group TERM from a process blocked in wait(2), so the
+  // acknowledgement cannot be starved past the escalation grace.
+  await until(() => ['parent', 'descendant'].every(role => fs.existsSync(f.termFile(role))),
+    'owned group never acknowledged the cancellation TERM', 4000);
   await until(() => closed, 'cancellation driver did not exit after group cleanup');
   const nativeExit = await exit;
   assert.equal(nativeExit.status, 143);
@@ -1090,9 +1135,10 @@ test('Given a native CLI installer failure, the process exits with that status w
 test('Given a deadline and TERM-resistant descendants, nativeRun returns after the owned group is terminal',
   { skip: !NATIVE, timeout: 8000 }, async t => {
     const f = makeProcessFixture(t);
+    const invocation = f.invocation();
     const termListeners = process.listenerCount('SIGTERM');
     const intListeners = process.listenerCount('SIGINT');
-    const result = await nativeRun(process.execPath, [f.program, 'parent', f.root],
+    const result = await nativeRun(invocation.file, invocation.args,
       { cwd: f.root, env: f.env, capture: true, timeoutMs: 1500, killAfterMs: 150 });
     assert.equal(result.timedOut, true);
     assert.notEqual(result.status, 0);

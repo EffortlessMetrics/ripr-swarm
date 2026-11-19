@@ -246,6 +246,14 @@ impl AttemptBaseline {
             .map(|region| region.module_name.as_str())
     }
 
+    /// The selected file's text when the attempt began, for the inline region
+    /// the baseline captured (#13203 C's baseline test set).
+    pub(crate) fn inline_test_region_source(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.source.as_str())
+    }
+
     /// The new-test proposal the attempt follows, when its policy records one
     /// (#13205: the manifest discloses the target's preflight state).
     pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
@@ -1359,7 +1367,7 @@ pub(crate) fn check_build_output_precondition(
     match output.status.code() {
         Some(0) => Ok(()),
         Some(1) => Err(NotIgnored(format!(
-            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
+            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule). A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
         ))),
         _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
@@ -1631,7 +1639,7 @@ fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathStat
 /// Whether Git itself would EOL-normalize `path` in `root`'s repository: the
 /// `text` attribute decides when set or unset (`-text`), and `core.autocrlf`
 /// decides when the attribute is unspecified (#7377 review). The EOL-only
-/// skip in [`delta_from_repository_states`] is only sound for paths Git
+/// skip in [`delta_from_repository_states_with_overrides`] is only sound for paths Git
 /// rewrites: for every other path a byte flip stays visible to `git status`
 /// and must keep naming an author in the delta. A probe failure fails
 /// closed — the change stays in the delta.
@@ -1695,14 +1703,6 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
-fn delta_from_repository_states(
-    before: &AttemptBaseline,
-    after: &AttemptBaseline,
-    committed: Option<&[AttemptPathChange]>,
-) -> AttemptDelta {
-    delta_from_repository_states_with_overrides(before, after, committed, &BTreeMap::new())
-}
-
 fn delta_from_repository_states_with_overrides(
     before: &AttemptBaseline,
     after: &AttemptBaseline,
@@ -2148,6 +2148,9 @@ fn writable_path_components_are_safe_in(
         if metadata.file_type().is_symlink() || is_windows_reparse_point(&metadata) {
             return Ok(false);
         }
+        // Only the Unix hard-link check below reads the explicit store scopes.
+        #[cfg(not(unix))]
+        let _ = explicit_store_scopes;
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
@@ -4694,7 +4697,13 @@ mod tests {
             match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
                 // The hold is its own variant: callers never match wording.
-                Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
+                // Each caller appends its own rerun (#14394), so the detail
+                // names no phase flag the `ripr repair` façade never takes.
+                Err(BuildOutputPreconditionError::NotIgnored(detail)) => {
+                    if detail.contains("--phase") || detail.contains("rerun") {
+                        return Err(format!("detail names a rerun: {detail}"));
+                    }
+                }
                 Err(error) => {
                     return Err(format!(
                         "unexpected precondition failure for {rule:?}: {error:?}"
@@ -6610,7 +6619,12 @@ mod tests {
         }
         let verdict = evaluate_edit_cage(
             &baseline.policy,
-            &delta_from_repository_states(&baseline, &after, Some(&[])),
+            &delta_from_repository_states_with_overrides(
+                &baseline,
+                &after,
+                Some(&[]),
+                &BTreeMap::new(),
+            ),
         );
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(

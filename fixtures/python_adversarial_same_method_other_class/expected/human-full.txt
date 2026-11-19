@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast probe:src_auth.py:python_preview:d982555b
   ripr context --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast --at probe:src_auth.py:python_preview:d982555b
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

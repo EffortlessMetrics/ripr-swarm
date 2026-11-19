@@ -7457,7 +7457,14 @@ fn classify_change_uses_call_effect_wording_for_console_log_without_literal() ->
 fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<(), String> {
     let finding = classify_weak_direct_line("    const total = applyDiscount(amount, threshold);")?;
 
-    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    // #14381: analysis keeps the ambiguous fallback; only the presented
+    // family and delta read as a value for a plain value declaration.
+    assert!(
+        !classify_probe_shape_detail("    const total = applyDiscount(amount, threshold);")
+            .specific
+    );
+    assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+    assert_eq!(finding.probe.delta, DeltaKind::Value);
     assert!(finding.probe.expected_sinks.is_empty());
     assert!(finding.probe.required_oracles.is_empty());
     assert!(finding.flow_sinks.is_empty());
@@ -7469,6 +7476,114 @@ fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<
             .any(|entry| entry == "probe_fact: ambiguous_fallback")
     );
     Ok(())
+}
+
+/// #14381: an unrecognised declaration whose initializer tests a condition
+/// keeps the conservative predicate presentation.
+#[test]
+fn classify_change_keeps_predicate_for_ambiguous_conditional_declaration() -> Result<(), String> {
+    let line = "    const ready = !pending;";
+    assert!(!classify_probe_shape_detail(line).specific);
+    let finding = classify_weak_direct_line(line)?;
+
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    assert_eq!(finding.probe.delta, DeltaKind::Control);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry == "probe_fact: ambiguous_fallback")
+    );
+    Ok(())
+}
+
+/// #14381: the closed recognizer for a plain single-name value declaration.
+#[test]
+fn plain_value_declaration_recognizer_is_closed() {
+    for line in [
+        "    const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  let total: number = base - bonus;",
+        "var label = `name: ok`;",
+        "  const cache: Map<string, number> = new Map();",
+        "  const first = items[0]?.name;",
+        "  const text = \"a > b\";",
+        "  const $el = query('#root');",
+        "  const quoted = 'it\\'s > x';",
+        "  const spaced =\tbase\t-\tbonus;",
+        "  export const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  const total = sum(items.map(price));",
+    ] {
+        assert!(
+            is_typescript_plain_value_declaration(line),
+            "`{line}` is a plain value declaration"
+        );
+    }
+    for line in [
+        "  const ok = a > b;",
+        "  const same = a === b;",
+        "  const ready = !pending;",
+        "  const pick = flag ? a : b;",
+        "  const both = a && b;",
+        "  const either = a || b;",
+        "  const fallback = value ?? 0;",
+        "  const f = (x) => x + 1;",
+        "  const v = await load();",
+        "  const has = key in obj;",
+        "  const isDate = value instanceof Date;",
+        "  const kind = typeof value;",
+        "  const { a, b } = obj;",
+        "  const [head] = list;",
+        "  const shape = {",
+        "  const value = compute(a,",
+        "  const x = 1; const y = 2;",
+        "  total = base - bonus;",
+        "  if (x) {",
+        "  const handler = function () {};",
+        "  const g = a = b;",
+        "  const message = isError",
+        "  const $el = query('#root')",
+        "  const x = compute(a); // a > b",
+        "  const re = /'/;",
+        "  const label = `${ready ? 'yes' : 'no'}`;",
+        "  const shown = `${count} items`;",
+        "  const present = key\tin\tobj;",
+        "  const kind = typeof\tvalue;",
+        "  const sum = a /* note */ + b;",
+        "  const kind = typeof(value);",
+        "  const has = key in(obj);",
+        "  const has = (key)in obj;",
+        "  const v = await(load());",
+        "  export const ok = a > b;",
+        "  export default value;",
+    ] {
+        assert!(
+            !is_typescript_plain_value_declaration(line),
+            "`{line}` must keep the conservative predicate presentation"
+        );
+    }
+}
+
+/// #14381: a recognised (specific) shape is presented unchanged, and only the
+/// ambiguous predicate fallback is re-presented.
+#[test]
+fn presented_shape_rewrites_only_the_ambiguous_fallback() {
+    let declaration = "    const desc = Object.getOwnPropertyDescriptor(raw, key);";
+    assert_eq!(
+        presented_typescript_shape(&TypeScriptProbeShape::ambiguous_fallback(), declaration),
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    );
+    let specific = TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control);
+    assert_eq!(
+        presented_typescript_shape(&specific, declaration),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        presented_typescript_shape(
+            &TypeScriptProbeShape::ambiguous_fallback(),
+            "  const ok = a > b;"
+        ),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
 }
 
 #[test]
@@ -12126,6 +12241,461 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
     assert!(
         all_text.contains("propagation_unknown"),
         "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14814: a FieldConstruction change read through a SIBLING field of the
+/// returned literal is not observed. `f()` builds `{ retries, verbose }` and
+/// the edit moves `retries`; a test asserting `f().verbose` reads a different
+/// field, so it cannot witness the changed one. The owner-call blanket credit
+/// promoted it to `exposed` only because the expression names `f`. It must
+/// downgrade to `weakly_exposed` / `propagation_unknown`, matching the Rust
+/// `one_hop_field_projection_sibling` precedent.
+#[test]
+fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for a sibling-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14857: a change that moves TWO values of the returned literal cannot be
+/// reduced to one changed field, so #14814's single-field guard is skipped.
+/// A test that reads a THIRD, untouched field still cannot witness the
+/// change: it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"timeout\", () => { expect(f().timeout).toBe(30); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a read of an untouched field must not read as exposed when two values moved, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for an untouched-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// #14857 control A: the same two-value change, but the assertion names
+/// EITHER changed field. That read pins a value the edit moved, so it stays
+/// `exposed`. A fix that downgrades this too is over-broad.
+#[test]
+fn ts_fieldconstruction_multi_value_change_named_read_stays_exposed() -> Result<(), String> {
+    for (field, expected) in [("retries", "5"), ("verbose", "true")] {
+        let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+        let test_src = format!(
+            "import {{ f }} from \"./owner\";\ntest(\"{field}\", () => {{ expect(f().{field}).toBe({expected}); }});\n"
+        );
+
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: true, timeout: 30 };",
+            Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a read of the changed field `{field}` must stay exposed, got {:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+/// #14857 round 1 (Devin): a whole-object assertion whose subject is a
+/// nullish fallback (`f() ?? defaults.config`) receives the whole object
+/// `f()` returns, so it notices both changed values and stays `exposed`.
+/// The trailing `.config` belongs to the fallback, not to `f()`; treating it
+/// as an untouched field of the owner would be an over-correction.
+#[test]
+fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\nconst defaults = { config: { retries: 3, verbose: false, timeout: 30 } };\ntest(\"whole\", () => { expect(f() ?? defaults.config).toEqual({ retries: 3, verbose: false, timeout: 30 }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion through a nullish fallback must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 control: the changed field itself, read off the owner's result,
+/// still confirms. `expect(f().retries)` observes `retries`, so the finding
+/// stays `exposed`. A fix that suppressed this too would over-apply.
+#[test]
+fn ts_fieldconstruction_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read by name must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 control: a whole-object assertion pins every field, the changed one
+/// included, and keeps its verdict. Recorded on base as `exposed`; this test
+/// pins that it does not move.
+#[test]
+fn ts_fieldconstruction_whole_object_assertion_is_unchanged() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"whole config\", () => { expect(f()).toEqual({ retries: 5, verbose: false }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion pins the changed field, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 F3 control: the read path passes THROUGH the changed field.
+/// `f().retries.n` has `retries` on the path from the owner call to the
+/// outermost segment, so it projects the changed field and keeps `exposed`.
+/// A guard that keys only on the outermost segment hides a genuine exposure.
+#[test]
+fn ts_fieldconstruction_read_through_changed_field_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 F1: `f()["verbose"]` is a field read too. A bracket string-literal
+/// read of a sibling field cannot witness the change, so it downgrades exactly
+/// like the dotted form.
+#[test]
+fn ts_fieldconstruction_bracket_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f()[\"verbose\"]).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a bracket sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 must-not-move: a computed key (`f()[k]`) and an index (`f()[0]`) are
+/// not field reads, so the sibling guard must not touch them. Both keep the
+/// base verdict, `exposed`. Only a bare-identifier bracket key is rewritten.
+#[test]
+fn ts_fieldconstruction_computed_and_index_reads_stay_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    for test_src in [
+        "import { f } from \"./owner\";\ntest(\"computed\", () => { const k = \"retries\"; expect(f()[k]).toBe(5); });\n",
+        "import { f } from \"./owner\";\ntest(\"index\", () => { expect(f()[0]).toBe(5); });\n",
+    ] {
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a computed or index read must keep its base verdict, got {:?} for {test_src:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+/// #14814 round 2: an operator glues onto the changed field's segment.
+/// `f().retries || f().verbose` reads `retries`, so it witnesses the change
+/// and must stay `exposed`; a dot-segment comparison sees `retries || f()`
+/// and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_mixed_expression_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries || f().verbose).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a mixed expression that reads the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 2: optional chaining glues onto the changed field's segment.
+/// `f().retries?.n` reads through `retries`, so it stays `exposed`; a
+/// dot-segment comparison sees `retries?` and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_optional_chain_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries?: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: { n: 3 }, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries?.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: { n: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "an optional-chain read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 3: a local that merely spells the changed field's name is not
+/// a field read. `retries && f().verbose` reads only the sibling off the owner,
+/// so it must downgrade; a whole-expression token scan finds the local and
+/// wrongly keeps the credit, which is a false green on the strongest signal.
+#[test]
+fn ts_fieldconstruction_local_named_like_changed_field_does_not_keep_credit() -> Result<(), String>
+{
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const retries = 1; expect(retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a local named like the changed field is not a field read, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 3: the member check is owner-rooted, so a member read of the
+/// same name on a DIFFERENT object is not a witness of the changed field.
+#[test]
+fn ts_fieldconstruction_foreign_member_named_like_changed_field_does_not_keep_credit()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const other = { retries: 1 }; expect(other.retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a member read on another object is not the changed field, got {:?}",
+        finding.class
     );
     Ok(())
 }
@@ -21259,6 +21829,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
+mod call_lexer_tests;
 mod catch_arm_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
@@ -21266,12 +21837,15 @@ mod class_entry_tests;
 mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
 mod committed_snapshot_tests;
+mod commonjs_class_receiver_tests;
+mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
 mod comparison_edit_tests;
 mod cross_module_entry_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
+mod default_class_declaration_tests;
 mod default_object_member_tests;
 mod derived_operand_tests;
 mod directory_specifier_tests;
@@ -21281,6 +21855,7 @@ mod error_payload_tests;
 mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
+mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
@@ -21303,6 +21878,7 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_const_tests;
 mod module_entry_tests;
+mod module_value_read_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
@@ -21331,6 +21907,7 @@ mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
+mod vitest_for_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

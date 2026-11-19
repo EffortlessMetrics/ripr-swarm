@@ -40,7 +40,8 @@ Keep the same --base and source options for every check below.
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
-2. DETAIL  Follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
+2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
+           Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
            Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
@@ -203,8 +204,9 @@ Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
            An `open=`, `stop=` or `done=` line saying preview evidence is advisory is expected.
-2. DETAIL  Follow the printed `ripr explain ...` command as printed, then the `ripr context ...`
-           it names (JSON).
+2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
+           Otherwise follow the printed `ripr explain ...` command as printed, then the
+           `ripr context ...` it names (JSON).
 3. WRITE   One focused test next to the related test. Assert exact changed values: every
            changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.

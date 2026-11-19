@@ -182,8 +182,8 @@ pub(crate) fn render_typescript_false_actionable_audit_markdown(
 ) -> String {
     let mut out = String::new();
     out.push_str("# RIPR TypeScript False-Actionable Audit\n\n");
-    out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
-    out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    out.push_str(&format!("Status: {}\n\n", md_code(&report.status)));
+    out.push_str(&format!("Root: {}\n\n", md_code(&report.root)));
     out.push_str(
         "Authority: advisory TypeScript-family preview audit only. Gate-decision and badge artifacts keep their existing authority.\n\n",
     );
@@ -226,9 +226,9 @@ pub(crate) fn render_typescript_false_actionable_audit_markdown(
         out.push_str("| --- | --- | --- | --- |\n");
         for case in &report.cases {
             out.push_str(&format!(
-                "| `{}` | `{}` | {} | `{}` |\n",
-                md_inline(&case.id),
-                md_inline(&case.disposition),
+                "| {} | {} | {} | `{}` |\n",
+                md_code(&case.id),
+                md_code(&case.disposition),
                 md_inline(&case.risk_class),
                 case.false_actionable
             ));
@@ -371,11 +371,7 @@ fn render_count_table(title: &str, rows: &[CountRow], out: &mut String) {
     out.push_str("| value | count |\n");
     out.push_str("| --- | ---: |\n");
     for row in rows {
-        out.push_str(&format!(
-            "| `{}` | `{}` |\n",
-            md_inline(&row.value),
-            row.count
-        ));
+        out.push_str(&format!("| {} | `{}` |\n", md_code(&row.value), row.count));
     }
     out.push('\n');
 }
@@ -418,8 +414,18 @@ fn required_bool_at(value: &Value, path: &[&str], case_index: usize) -> Result<b
     })
 }
 
+/// Imported text for a table cell or list item, through the shared Markdown
+/// owner: `<` cannot open raw HTML, `@name` (a Next.js `app/@modal/...` path,
+/// for example) cannot notify an account, a line ending cannot end the row
+/// and `|` cannot split the cell.
 fn md_inline(value: &str) -> String {
-    value.replace('|', "\\|").replace(['\r', '\n'], " ")
+    crate::output::markdown::table_cell_text(value)
+}
+
+/// Imported value shown as an inline code span. The fence outgrows any
+/// backtick run in the value, so a backtick cannot close the span early.
+fn md_code(value: &str) -> String {
+    crate::output::markdown::table_code_span(value)
 }
 
 #[cfg(test)]
@@ -489,6 +495,33 @@ mod tests {
         assert!(
             markdown.contains("Gate-decision and badge artifacts keep their existing authority")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn false_actionable_audit_markdown_shows_imported_text_literally() -> Result<(), String> {
+        let mut report =
+            build_typescript_false_actionable_audit_report(TypeScriptFalseActionableAuditInput {
+                root: ".".to_string(),
+                generated_at: "123".to_string(),
+                corpus_path: "corpus.json".to_string(),
+                corpus_json: Ok(safe_corpus()),
+            });
+        let id = "case`one|two";
+        let risk = "Promise<void> seen by @reviewer";
+        let case = report.cases.first_mut().ok_or("fixture case missing")?;
+        case.id = id.to_string();
+        case.risk_class = risk.to_string();
+
+        let markdown = render_typescript_false_actionable_audit_markdown(&report);
+        let rows = crate::output::test_support::rendered_markdown_table_rows(&markdown)?;
+        let row = rows
+            .iter()
+            .find(|row| row.first().is_some_and(|cell| cell == id))
+            .ok_or_else(|| format!("no row for the case id:\n{markdown}"))?;
+        assert_eq!(row.len(), 4, "case row keeps four cells: {row:?}");
+        assert_eq!(row[2], risk.replace("@reviewer", "@\u{2060}reviewer"));
+        assert!(!markdown.contains("@reviewer"), "live mention:\n{markdown}");
         Ok(())
     }
 

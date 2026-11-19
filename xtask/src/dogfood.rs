@@ -3592,7 +3592,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     summary: &str,
 ) -> DogfoodGeneratedCiCockpitRun {
     let start_here = summary.contains("### Start here")
-        && summary.contains("Open `start-here.md` in the `ripr-reports` artifact");
+        && summary.contains("Open `ripr/reports/start-here.md` in the `ripr-reports` artifact");
     let repair_commands = [
         GENERATED_CI_FIRST_ACTION_REPAIR,
         GENERATED_CI_FIRST_PR_REPAIR,
