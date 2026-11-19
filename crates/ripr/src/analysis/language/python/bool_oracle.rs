@@ -28,13 +28,19 @@
 //! `Compare` is taken as a `bool`; a type with a custom `__eq__` returning
 //! another value is an accepted residual.
 //!
-//! Anything else — a non-literal argument, a method, a decorated or
+//! A plain-name argument counts only when it is a direct pytest parametrize
+//! argname of the test with recorded cases, unbound by the body and not a
+//! Hypothesis input ([`settle_parametrized_names`], #15310): each generated
+//! case then calls the owner with that row's value, as a literal call would.
+//!
+//! Anything else — any other non-literal argument, a method, a decorated or
 //! re-exported-under-another-name owner, two candidate owners, a `bool`
 //! operand the assertion does not pin — stays smoke.
 
 mod patch_scope;
 
 use super::import_source_module_matches_owner;
+use super::parametrize::PythonParametrizeCases;
 use super::related_tests::related_test_relation;
 use super::sink_alignment::{binds_by_walrus, pattern_binds_name};
 use super::source_facts::parse_module_result;
@@ -57,6 +63,11 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             let Some(call) = &assertion.bare_bool_call else {
                 continue;
             };
+            // A name argument is a value only the test's own parametrize rows
+            // are shown to supply (#15310); anything else stays smoke.
+            if !call.name_arguments.is_empty() && !call.names_settled {
+                continue;
+            }
             // Only a pin-less reading is re-read: smoke (`assert f(x)`), weak
             // (`f(x) is True`) or an unrecognized helper (`assertIs`). An
             // assertion already read as an exact pin is left alone.
@@ -92,6 +103,45 @@ pub(super) fn credit_bare_bool_asserts<'a>(
     for (test_index, assertion_index, negated) in credits {
         let assertion = &mut tests[test_index].assertions[assertion_index];
         credit(assertion, negated);
+    }
+}
+
+/// Mark each bare-bool call of one pytest test whose plain-name arguments are
+/// all parametrize values pytest passes the test itself (#15310):
+/// `@pytest.mark.parametrize("line", ["#qwe"])` then `assert f(line)` pins the
+/// same `bool` that `assert f("#qwe")` pins for each row.
+///
+/// `cases` are the test's own statically certain pytest parametrize cases
+/// (never Hypothesis `@example` rows). A name settles only when every case
+/// binds it after the body's own bindings are removed (an assignment, loop
+/// target, import, `del`, a nested scope all refuse; so does a walrus anywhere
+/// in the function text, which the statement walk never sees) and
+/// `takes_value` says pytest passes it directly: a direct argname whose `indirect=` read settled, not a
+/// Hypothesis-generated input. Any other name, such as a fixture or a local,
+/// leaves the call unsettled and the assertion smoke.
+pub(super) fn settle_parametrized_names(
+    assertions: &mut [PythonAssertion],
+    body: &[Stmt],
+    function_text: &str,
+    cases: Option<&PythonParametrizeCases>,
+    takes_value: impl Fn(&str) -> bool,
+) {
+    let mut unbound_cases: Option<Option<PythonParametrizeCases>> = None;
+    for assertion in assertions {
+        let Some(call) = assertion.bare_bool_call.as_mut() else {
+            continue;
+        };
+        if call.name_arguments.is_empty() {
+            continue;
+        }
+        let unbound = unbound_cases.get_or_insert_with(|| {
+            cases.and_then(|cases| cases.clone().excluding_body_bindings(body))
+        });
+        call.names_settled = unbound.as_ref().is_some_and(|unbound| {
+            call.name_arguments.iter().all(|name| {
+                unbound.binds(name) && takes_value(name) && !binds_by_walrus(function_text, name)
+            })
+        });
     }
 }
 
