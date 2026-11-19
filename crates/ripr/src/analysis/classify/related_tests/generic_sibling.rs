@@ -63,12 +63,21 @@ pub(super) fn every_call_selects_generic_sibling(
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
+    // An unqualified primitive name is the primitive unless the owner's file
+    // declares or imports an item of that name (`use aliases::u8;`).
+    let owner_is_primitive = PRIMITIVE_TYPES.contains(&owner_head.as_str())
+        && !owner_argument.contains("::")
+        && index
+            .files()
+            .get(&owner.file)
+            .is_some_and(|file| !file_rebinds_name(file.data().source.as_ref(), &owner_head));
     if has_unnamed_route(owner.name.as_str(), &masked)
         || !every_site_passes_sibling_type(
             test,
             owner,
             &masked,
-            owner_argument,
+            &owner_head,
+            owner_is_primitive,
             &sibling_heads,
             owner_argument.starts_with('&'),
         )
@@ -199,7 +208,8 @@ fn every_site_passes_sibling_type(
     test: &TestSummary,
     owner: &FunctionSummary,
     masked: &str,
-    owner_argument: &str,
+    owner_head: &str,
+    owner_is_primitive: bool,
     sibling_heads: &[String],
     owner_takes_reference: bool,
 ) -> bool {
@@ -241,8 +251,11 @@ fn every_site_passes_sibling_type(
                 after,
                 at,
                 lets_before,
-                owner_argument,
-                sibling_heads,
+                Selectors {
+                    owner_head,
+                    owner_is_primitive,
+                    sibling_heads,
+                },
             );
         if !passes_sibling {
             return false;
@@ -250,6 +263,16 @@ fn every_site_passes_sibling_type(
         sites += 1;
     }
     sites > 0
+}
+
+/// The owner's and its siblings' selecting argument heads.
+#[derive(Clone, Copy)]
+struct Selectors<'a> {
+    owner_head: &'a str,
+    /// The owner's head is an unqualified primitive name that its file does
+    /// not rebind.
+    owner_is_primitive: bool,
+    sibling_heads: &'a [String],
 }
 
 /// The kind of value a literal expression has before inference picks its
@@ -358,12 +381,13 @@ fn literal_kind_rules_out_owner(
     after: usize,
     call_at: usize,
     lets_before: &str,
-    owner_argument: &str,
-    sibling_heads: &[String],
+    selectors: Selectors<'_>,
 ) -> bool {
-    let Some(owner_head) = selecting_type_head(owner_argument) else {
-        return false;
-    };
+    let Selectors {
+        owner_head,
+        owner_is_primitive,
+        sibling_heads,
+    } = selectors;
     let Some((start, end)) = first_argument_span(masked, after) else {
         return false;
     };
@@ -419,11 +443,37 @@ fn literal_kind_rules_out_owner(
         // `From<Count>` take an unsuffixed `2`), so it rules the owner out
         // only when the owner's argument is itself a primitive.
         // A qualified spelling (`aliases::u8`) is a path, not the primitive.
-        let owner_is_named = matches!(kind, LiteralKind::Exact(_))
-            || (PRIMITIVE_TYPES.contains(&owner_head.as_str()) && !owner_argument.contains("::"));
+        let owner_is_named = matches!(kind, LiteralKind::Exact(_)) || owner_is_primitive;
         owner_is_named
-            && !kind.admits(&owner_head)
+            && !kind.admits(owner_head)
             && sibling_heads.iter().any(|head| kind.admits(head))
+    })
+}
+
+/// Whether `source` declares an item named `name` or names it in a `use`
+/// statement, so an unqualified `name` may not be the primitive. A glob
+/// import of an alias with a primitive's name is not read.
+fn file_rebinds_name(source: &str, name: &str) -> bool {
+    const DECLARING: [&str; 5] = ["type", "struct", "enum", "union", "trait"];
+    let masked = mask_comments_and_strings(source);
+    masked.match_indices(name).any(|(at, found)| {
+        if !ident_boundary(&masked, at, at + found.len()) {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        let previous_word_start = before
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map_or(0, |i| i + 1);
+        if DECLARING.contains(&&before[previous_word_start..]) {
+            return true;
+        }
+        // Inside a `use` statement: a `use` keyword after the last `;` or
+        // closing brace before this mention.
+        let statement_start = before.rfind([';', '}']).map_or(0, |i| i + 1);
+        let statement = &before[statement_start..];
+        statement
+            .match_indices("use")
+            .any(|(start, matched)| ident_boundary(statement, start, start + matched.len()))
     })
 }
 
@@ -674,6 +724,15 @@ mod tests {
             "impl From<Count> for Cents::from",
             "assert_eq!(Cents::from(2u64), Cents(2));"
         )?);
+        // An imported alias with a primitive's name is not the primitive.
+        const IMPORTED: &str = "pub mod aliases { pub type u8 = f64; }\nuse aliases::u8;\npub trait Scale<T> { fn scale(&self, by: T) -> u32; }\npub struct Bar(pub u32);\n\
+            impl Scale<u8> for Bar {\n    fn scale(&self, by: u8) -> u32 { (self.0 as f64 * by) as u32 + 1 }\n}\n\
+            impl Scale<f32> for Bar {\n    fn scale(&self, by: f32) -> u32 { (self.0 as f32 * by) as u32 + 2 }\n}\n";
+        assert!(!refused(
+            IMPORTED,
+            "impl Scale<u8> for Bar::scale",
+            "let b = Bar(2); let by = 2.0; let _: f64 = by; assert_eq!(b.scale(by), 5);"
+        )?);
         // A path spelling a primitive's name is not the primitive.
         const QUALIFIED: &str = "pub mod aliases { pub type u8 = f64; }\npub trait Scale<T> { fn scale(&self, by: T) -> u32; }\npub struct Bar(pub u32);\n\
             impl Scale<aliases::u8> for Bar {\n    fn scale(&self, by: aliases::u8) -> u32 { (self.0 as f64 * by) as u32 + 1 }\n}\n\
@@ -684,6 +743,28 @@ mod tests {
             "let b = Bar(2); let by = 2.0; let _: f64 = by; assert_eq!(b.scale(by), 5);"
         )?);
         Ok(())
+    }
+
+    #[test]
+    fn file_rebinds_name_reads_declarations_and_imports() {
+        for (source, expected) in [
+            ("impl Scale<u8> for Bar {}", false),
+            ("type u8 = f64;", true),
+            ("pub struct str;", true),
+            ("use aliases::u8;", true),
+            ("use aliases::{u8, i32};", true),
+            ("use aliases::f32 as u8;", true),
+            ("use aliases::other; fn f(x: u8) {}", false),
+            ("// type u8 = f64;\nfn f(x: u8) {}", false),
+            ("let s = \"use u8\"; fn f(x: u8) {}", false),
+            ("fn u8_count() {}", false),
+        ] {
+            assert_eq!(
+                file_rebinds_name(source, "u8") || file_rebinds_name(source, "str"),
+                expected,
+                "{source}"
+            );
+        }
     }
 
     #[test]
