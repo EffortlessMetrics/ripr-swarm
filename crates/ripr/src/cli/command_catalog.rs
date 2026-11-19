@@ -1313,7 +1313,7 @@ mod tests {
         assert_eq!(alias.relation, CommandRelation::AliasOf("first-pr"));
         assert_eq!(
             CliCommand::from_parts(Some("start-here"), Vec::new()),
-            Ok(CliCommand::FirstPr(Vec::new()))
+            Ok(CliCommand::StartHere(Vec::new()))
         );
         Ok(())
     }

@@ -47,7 +47,22 @@ pub(super) fn analysis_outcome_exit_result(
     Ok(())
 }
 
+/// The shared root gate for a command that writes under `target/ripr`: the
+/// directory check of [`ensure_command_root_dir`] plus the output-containment
+/// check, so a checked-in `target` link cannot redirect its output (#7781).
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
+    ensure_command_root_dir(root, command_name)?;
+    // #7781: every command that writes under `target/ripr` shares this
+    // gate, so a checked-in `target` link cannot redirect its output.
+    crate::atomic_file::ensure_default_output_contained(root)
+        .map_err(|error| format!("{command_name}: {error}"))
+}
+
+/// The directory-only part of [`ensure_command_root`] (#15249): refuse a
+/// missing or non-directory `--root` with the shared wording naming the command
+/// actually run. A read-only command uses this form so a hostile `target` link
+/// it never writes through does not refuse it.
+pub(super) fn ensure_command_root_dir(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);
     match std::fs::metadata(root) {
@@ -60,10 +75,6 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             if let Some(note) = windows_root_rebind_note(root, command_name) {
                 eprintln!("{note}");
             }
-            // #7781: every command that writes under `target/ripr` shares this
-            // gate, so a checked-in `target` link cannot redirect its output.
-            crate::atomic_file::ensure_default_output_contained(root)
-                .map_err(|error| format!("{command_name}: {error}"))?;
             Ok(())
         }
         // Metadata resolved, so the typed name addresses an existing entry.

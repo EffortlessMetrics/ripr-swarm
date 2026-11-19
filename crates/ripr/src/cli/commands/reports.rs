@@ -252,6 +252,12 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
 
 fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_false_actionable_options(args)?;
+    // #15249: the shared root refusal, before the corpus is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "reports ts-false-actionable",
+    )?;
     // An unreadable corpus means the command could not complete: surface the
     // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
     // `blocked` report and exiting 0 as if the run succeeded.
