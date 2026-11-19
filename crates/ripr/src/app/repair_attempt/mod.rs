@@ -3455,12 +3455,22 @@ pub(crate) fn edit_cage_policy_from_packet(
 /// paths Git reports and the baseline capture opens the file, so both need
 /// the decoded name. Without this, `src/a%b.rs` became the rule
 /// `src/a%25b.rs`, a file that does not exist.
+///
+/// A decoded backslash refuses: on Unix it is a literal file-name byte
+/// (`%5C`), and the cage normalizer would read it as a separator, so
+/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// `tests/a/b.rs`.
 fn packet_path_text(text: &str) -> Result<String, String> {
     let decoded = crate::analysis::decode_stable_path_text(text);
-    decoded
+    let decoded = decoded
         .to_str()
-        .map(str::to_string)
-        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))
+        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))?;
+    if decoded.contains('\\') && !text.contains('\\') {
+        return Err(format!(
+            "repair packet path `{text}` names a file with a backslash in its name, which the edit cage cannot confine"
+        ));
+    }
+    Ok(decoded.to_string())
 }
 
 /// A non-test-surface selected target that may still be routed as its inline
@@ -6442,6 +6452,18 @@ mod tests {
                 != Some("src/a%b.rs")
         {
             return Err(format!("packet path was not decoded: {policy:?}"));
+        }
+        // An escaped backslash is a literal file-name byte, not a separator:
+        // it refuses instead of naming `tests/a/b.rs`.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%5Cb.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error) if error.contains("backslash") => {}
+            other => return Err(format!("escaped backslash was not refused: {other:?}")),
         }
         // A test-surface path in the recommended-test form decodes too.
         let packet = serde_json::json!({
