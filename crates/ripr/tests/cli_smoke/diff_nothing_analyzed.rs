@@ -119,6 +119,9 @@ fn intake_workspace(name: &str, sections: &[&str]) -> TestResult<(std::path::Pat
 const LIB_COMMENT: &str = "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+// note\n";
 const DELETED_PRICING: &str = "diff --git a/src/pricing.rs b/src/pricing.rs\ndeleted file mode 100644\nindex 3333333..0000000\n--- a/src/pricing.rs\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-pub fn price(qty: u32) -> u32 {\n-    qty * 9\n-}\n";
 const BINARY_TAX: &str = "diff --git a/src/tax.rs b/src/tax.rs\nindex 4444444..5555555 100644\nBinary files a/src/tax.rs and b/src/tax.rs differ\n";
+const BINARY_ARTIFACT: &str = "diff --git a/target/ripr/cache/x.rs b/target/ripr/cache/x.rs\nindex 8888888..9999999 100644\nBinary files a/target/ripr/cache/x.rs and b/target/ripr/cache/x.rs differ\n";
+const BINARY_QUOTED: &str = "diff --git \"a/src/caf\\303\\251.rs\" \"b/src/caf\\303\\251.rs\"\nindex 4444444..5555555 100644\nBinary files \"a/src/caf\\303\\251.rs\" and \"b/src/caf\\303\\251.rs\" differ\n";
+const BINARY_COPY: &str = "diff --git a/src/lib.rs b/src/fee.rs\nsimilarity index 80%\ncopy from src/lib.rs\ncopy to src/fee.rs\nindex 4444444..5555555 100644\nBinary files a/src/lib.rs and b/src/fee.rs differ\n";
 const BINARY_LOGO: &str = "diff --git a/logo.png b/logo.png\nindex 6666666..7777777 100644\nBinary files a/logo.png and b/logo.png differ\n";
 
 /// #15324: a deleted source file beside another changed file is named on
@@ -167,8 +170,9 @@ fn a_deleted_file_beside_another_change_is_named() -> TestResult {
 
 /// #15324: a source file git printed as binary (a `-diff` attribute) is not
 /// analyzed, so the outcome is incomplete with a typed limitation naming the
-/// file, the cause and the recovery. A binary asset, or a binary source
-/// outside the requested `--path` scope, changes nothing.
+/// file, the cause and the recovery. A binary asset, a binary source outside
+/// the requested scope (matched by its decoded name), or one under ripr's own
+/// artifact root changes nothing.
 #[test]
 fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult {
     let limitation_for = |name: &str, sections: &[&str]| -> TestResult<serde_json::Value> {
@@ -176,8 +180,12 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
         let _cleanup = DeclaredHunkScratch(root.clone());
         let mut args = vec!["check", "--diff", &diff, "--format", "json", "--quiet"];
         // The scope control asks only for lib.rs, so tax.rs was not requested.
-        if name.ends_with("scope-control") {
+        if name.ends_with("source-scope-control") {
             args.extend(["--path", "src/lib.rs"]);
+        }
+        // The decoded name is what an exact exclude matches.
+        if name.ends_with("quoted-exclude-control") {
+            args.extend(["--exclude", "src/café.rs"]);
         }
         let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -216,12 +224,30 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
         "{limitation}"
     );
 
+    let quoted = limitation_for("diff-binary-quoted-source", &[LIB_COMMENT, BINARY_QUOTED])?;
+    assert_eq!(
+        quoted["analysis_outcome"]["analysis_complete"], false,
+        "{quoted}"
+    );
+    assert!(
+        quoted.to_string().contains("not analyzed: src/café.rs"),
+        "{quoted}"
+    );
+
     for (name, sections) in [
         ("diff-binary-asset-control", &[LIB_COMMENT, BINARY_LOGO][..]),
         ("diff-text-only-control", &[LIB_COMMENT][..]),
         (
             "diff-binary-source-scope-control",
             &[LIB_COMMENT, BINARY_TAX][..],
+        ),
+        (
+            "diff-binary-artifact-control",
+            &[LIB_COMMENT, BINARY_ARTIFACT][..],
+        ),
+        (
+            "diff-binary-quoted-exclude-control",
+            &[LIB_COMMENT, BINARY_QUOTED][..],
         ),
     ] {
         let json = limitation_for(name, sections)?;
@@ -230,5 +256,34 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
             "{name}: {json}"
         );
     }
+    Ok(())
+}
+
+/// #15324: a binary-rendered copy destination is read whole as added source
+/// (#15121), so it is analyzed and is not named as unread.
+#[test]
+fn a_binary_rendered_copy_read_as_added_source_is_not_named_unread() -> TestResult {
+    let (root, diff) = intake_workspace("diff-binary-copy", &[LIB_COMMENT, BINARY_COPY])?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    fs::write(
+        root.join("src/lib.rs"),
+        "// note\npub mod fee;\npub fn keep(x: u32) -> u32 {\n    x + 1\n}\n",
+    )?;
+    fs::write(
+        root.join("src/fee.rs"),
+        "pub fn fee(q: u32) -> u32 {\n    q * 2\n}\n",
+    )?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["check", "--diff", &diff, "--format", "json", "--quiet"],
+    )?;
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    // Pin the stimulus: the copy destination was read as an added Rust file.
+    assert_eq!(json["summary"]["changed_rust_files"], 2, "{json}");
+    assert!(
+        !json.to_string().contains("rendered by git as binary"),
+        "{json}"
+    );
     Ok(())
 }

@@ -1527,6 +1527,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
     let deleted_paths = parsed_diff.deleted_paths;
+    let binary_paths = parsed_diff.binary_paths;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -2354,12 +2355,15 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     // #15324: a source file git printed as binary (a `-diff` or `binary`
     // attribute, or a NUL byte) carried no hunk, so its change was not
-    // analyzed. The result must not read as complete over it. A path outside
-    // the requested diff scope was not asked for, so it adds nothing.
-    let binary_sources = binary_rendered_source_paths(diff_text)
-        .into_iter()
-        .filter(|path| diff_scope.admits(std::path::Path::new(path)))
-        .collect::<Vec<_>>();
+    // analyzed. The result must not read as complete over it. The parser
+    // already dropped paths outside the requested scope; ripr's own artifacts
+    // and a copy destination read whole as added source are not unread.
+    let binary_sources = binary_rendered_source_paths(&binary_paths, |path| {
+        diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            || changed_files
+                .iter()
+                .any(|file| file.path == path && !file.added_lines.is_empty())
+    });
     if !binary_sources.is_empty() {
         limitations.push(
             AnalysisLimitation::new(

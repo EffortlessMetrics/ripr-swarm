@@ -10,8 +10,10 @@
 //! Git prints `Binary files a/x and b/x differ` instead of hunks for a file
 //! it treats as binary. For a source file that is almost always a `-diff` or
 //! `binary` attribute in `.gitattributes`, or a NUL byte in the file, and the
-//! change is then invisible to ripr. [`binary_rendered_source_paths`] finds
-//! those sections so the run can name the files, the cause and the recovery
+//! change is then invisible to ripr. The diff parser records each such
+//! section's path through the same header, prefix, quoting and scope rules as
+//! every other section; [`binary_rendered_source_paths`] keeps the source
+//! files among them so the run can name the files, the cause and the recovery
 //! instead of reading as a complete analysis.
 
 use std::path::{Path, PathBuf};
@@ -46,21 +48,18 @@ pub(crate) fn deleted_files_disclosure(
     ))
 }
 
-/// The new-side paths of file sections that git rendered as binary although
-/// the path routes to a language ripr analyzes. A deleted file
-/// (`and /dev/null differ`) is left to the deletion disclosure. A sentinel
-/// whose sides cannot be split unambiguously is skipped rather than guessed.
-pub(crate) fn binary_rendered_source_paths(diff_text: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for line in diff_text.lines() {
-        let Some(path) = binary_sentinel_new_path(line) else {
-            continue;
-        };
-        if route(Path::new(&path)).is_some() && !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-    paths
+/// The binary-rendered section paths (from the diff parser) that route to a
+/// language ripr analyzes and that `already_read` does not claim, as
+/// portable strings in diff order.
+pub(crate) fn binary_rendered_source_paths(
+    binary_paths: &[PathBuf],
+    already_read: impl Fn(&Path) -> bool,
+) -> Vec<String> {
+    binary_paths
+        .iter()
+        .filter(|path| route(path).is_some() && !already_read(path))
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect()
 }
 
 /// The recovery text for the typed limitation on binary-rendered sources.
@@ -84,49 +83,10 @@ pub(crate) fn binary_source_detail(paths: &[String]) -> String {
     )
 }
 
-/// The new side of `Binary files <old> and <new> differ`. Each side is
-/// `/dev/null` or a path with a one-component prefix (`a/`, `b/`, or a
-/// mnemonic prefix); the split is the ` and ` where both sides name the same
-/// path, or where the old side is `/dev/null` (an added file); a sentinel
-/// with a single ` and ` also reads as a rename to its new side.
-fn binary_sentinel_new_path(line: &str) -> Option<String> {
-    let rest = line
-        .strip_prefix("Binary files ")?
-        .strip_suffix(" differ")?;
-    let splits = rest
-        .match_indices(" and ")
-        .map(|(at, separator)| (unquote(&rest[..at]), unquote(&rest[at + separator.len()..])))
-        .collect::<Vec<_>>();
-    let paired = splits.iter().find_map(|(old, new)| {
-        let new_path = strip_side_prefix(new).filter(|_| *new != "/dev/null")?;
-        (*old == "/dev/null" || strip_side_prefix(old) == Some(new_path)).then_some(new_path)
-    });
-    // A renamed binary file names two different paths; that is only
-    // unambiguous when the sentinel has a single ` and `.
-    let renamed = || match splits.as_slice() {
-        [(old, new)] if *old != "/dev/null" && *new != "/dev/null" => {
-            strip_side_prefix(old).and(strip_side_prefix(new))
-        }
-        _ => None,
-    };
-    paired.or_else(renamed).map(str::to_string)
-}
-
-fn unquote(side: &str) -> &str {
-    side.strip_prefix('"')
-        .and_then(|inner| inner.strip_suffix('"'))
-        .unwrap_or(side)
-}
-
-fn strip_side_prefix(side: &str) -> Option<&str> {
-    let (_, path) = side.split_once('/')?;
-    (!path.is_empty()).then_some(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{binary_rendered_source_paths, binary_source_detail, deleted_files_disclosure};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn a_deletion_beside_other_changes_names_the_file_and_the_narrower_scope() -> Result<(), String>
@@ -168,46 +128,25 @@ mod tests {
     }
 
     #[test]
-    fn binary_sentinels_on_analyzed_sources_are_named_and_others_are_not() {
-        let diff = "\
-diff --git a/src/pricing.rs b/src/pricing.rs
-index 059b527..c63ac94 100644
-Binary files a/src/pricing.rs and b/src/pricing.rs differ
-diff --git a/src/new.rs b/src/new.rs
-new file mode 100644
-Binary files /dev/null and b/src/new.rs differ
-diff --git a/src/gone.rs b/src/gone.rs
-deleted file mode 100644
-Binary files a/src/gone.rs and /dev/null differ
-diff --git a/logo.png b/logo.png
-Binary files a/logo.png and b/logo.png differ
-diff --git a/app/x and y.py b/app/x and y.py
-Binary files a/app/x and y.py and b/app/x and y.py differ
-Binary files nonsense differ
-Binary files a/src/one.rs and b/src/two.rs differ
-";
+    fn only_unread_routed_sources_are_named() {
+        let paths = [
+            "src/tax.rs",
+            "logo.png",
+            "app/x and y.py",
+            "src/copied.rs",
+            "src/café.rs",
+        ]
+        .map(PathBuf::from);
+        let named = binary_rendered_source_paths(&paths, |path| path == Path::new("src/copied.rs"));
         assert_eq!(
-            binary_rendered_source_paths(diff),
+            named,
             vec![
-                "src/pricing.rs".to_string(),
-                "src/new.rs".to_string(),
+                "src/tax.rs".to_string(),
                 "app/x and y.py".to_string(),
-                "src/two.rs".to_string(),
+                "src/café.rs".to_string(),
             ]
         );
-        assert!(
-            binary_rendered_source_paths("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n").is_empty()
-        );
-    }
-
-    #[test]
-    fn mnemonic_and_quoted_sides_pair_by_path() {
-        assert_eq!(
-            binary_rendered_source_paths(
-                "Binary files \"i/src/lib.rs\" and \"w/src/lib.rs\" differ\n"
-            ),
-            vec!["src/lib.rs".to_string()]
-        );
+        assert!(binary_rendered_source_paths(&[], |_| false).is_empty());
     }
 
     #[test]
