@@ -14,8 +14,10 @@
 //! ceiling only goes down as the migration moves modules out of line.
 //!
 //! A module counts when it has a body and an outer `cfg` attribute whose
-//! predicate names `test` (`test`, `all(test, ..)`, `any(test, ..)`), and no
-//! enclosing module already counted. Files that do not parse are refused, not
+//! predicate names `test` outside `not(..)` (`test`, `all(test, ..)`,
+//! `any(test, ..)`; outer or inner attribute), and no enclosing module already
+//! counted. The ratchet only refuses inline bodies; it does not check that an
+//! out-of-line file's name matches the manifest exclusions. Files that do not parse are refused, not
 //! skipped: an unparsed file is not evidence that it has no inline tests.
 
 use std::collections::BTreeMap;
@@ -74,6 +76,15 @@ fn is_test_cfg(attr: &ast::Attr) -> bool {
     false
 }
 
+/// True when an outer attribute, or an inner `#![cfg(..)]` at the top of the
+/// module body, gates the module on `test`.
+fn is_test_gated(module: &ast::Module) -> bool {
+    module.attrs().any(|attr| is_test_cfg(&attr))
+        || module
+            .item_list()
+            .is_some_and(|items| items.attrs().any(|attr| is_test_cfg(&attr)))
+}
+
 /// Number of outermost inline test modules in `source`, or an error when the
 /// file does not parse cleanly.
 pub(crate) fn inline_test_module_count(source: &str) -> Result<usize, String> {
@@ -89,14 +100,14 @@ pub(crate) fn inline_test_module_count(source: &str) -> Result<usize, String> {
         .syntax()
         .descendants()
         .filter_map(ast::Module::cast)
-        .filter(|module| module.item_list().is_some() && module.attrs().any(|a| is_test_cfg(&a)))
+        .filter(|module| module.item_list().is_some() && is_test_gated(module))
         .filter(|module| {
             !module
                 .syntax()
                 .ancestors()
                 .skip(1)
                 .filter_map(ast::Module::cast)
-                .any(|outer| outer.attrs().any(|a| is_test_cfg(&a)))
+                .any(|outer| is_test_gated(&outer))
         })
         .count();
     Ok(counted)
@@ -112,7 +123,7 @@ pub(crate) fn ratchet_violations(
         let allowed = baseline.get(path).copied().unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} has {count} inline test module(s), baseline allows {allowed}\n  reason: #15193: declare `#[cfg(test)] mod tests;` and put the body in the file Rust resolves for it (`<stem>/tests.rs`, or `#[path = \"<name>_tests.rs\"]`), so the tests stay out of the published crate; do not raise the baseline"
+                "{path} has {count} inline test module(s), baseline allows {allowed}\n  reason: #15193: declare `#[cfg(test)] mod tests;` and put the body in the file Rust resolves for it (`<stem>/tests.rs`, or `#[path = \"<name>_tests.rs\"]`), so the tests stay out of the published crate. A module gated `any(test, feature = ..)` also compiles outside tests: keep its file out of the excluded names. Do not raise the baseline"
             ));
         }
     }

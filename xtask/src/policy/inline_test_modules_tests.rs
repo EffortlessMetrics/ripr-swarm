@@ -64,6 +64,18 @@ fn out_of_line_modules_and_non_test_cfgs_are_not_counted() {
 }
 
 #[test]
+fn an_inner_cfg_test_attribute_gates_the_module() {
+    assert_eq!(
+        count("mod tests {\n    #![cfg(test)]\n    fn t() {}\n}\n"),
+        Ok(1)
+    );
+    assert_eq!(
+        count("mod real {\n    #![cfg(unix)]\n    fn t() {}\n}\n"),
+        Ok(0)
+    );
+}
+
+#[test]
 fn a_module_nested_in_a_counted_module_is_not_counted_again() {
     assert_eq!(
         count(
