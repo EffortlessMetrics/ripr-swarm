@@ -179,8 +179,12 @@ Only the test function's own body is read. The walker enters `if`, `for`,
 
 1. a comparison with any `==` in its chain: `exact_value` / strong
    (rule 1 narrows this to chains whose operators are all `==`);
-2. any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
-   `in`, `not in`): `relational_check` / weak;
+2. a single `is` whose one side is the literal `True` or `False` and whose
+   two sides are not the same tokens (`f(x) is False`, `True is f(x)`):
+   `exact_value` / strong, like `== True|False`, whatever `f` returns (#15250);
+   any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
+   `in`, `not in`, including `is None` and `is not True|False`):
+   `relational_check` / weak;
 3. a call to `isinstance`: `relational_check` / weak;
 4. any other call: the call table below, else `smoke_only` / smoke;
 5. anything else (a name, `not x`, `a and b`, a subscript): `smoke_only` /
