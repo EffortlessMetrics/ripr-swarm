@@ -1498,8 +1498,9 @@ mod decision_helper_tests {
         ARM_UNSELECTED_REASON_PREFIX, ActivationEvidence, AnalysisScope, DeltaKind,
         DiscriminatorShape, Finding, GUARD_UNENTERED_REASON_PREFIX, MissingDiscriminatorFact,
         Probe, ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestRole, SourceCurrentness,
-        StopReason, boundary_input_observed_with_weak_oracle, exact_assertion_fact,
-        input_boundary_fact, is_unselected_input_reason, row_exact_discriminator_fact,
+        StopReason, UNREFERENCED_IN_WORKSPACE, boundary_input_observed_with_weak_oracle,
+        exact_assertion_fact, first_observing_related_test, input_boundary_fact,
+        is_unselected_input_reason, row_exact_discriminator_fact,
     };
     use crate::domain::language_capability::{AnalysisMode, REPO_SCOPE_EVIDENCE_LINE};
     use crate::domain::{
@@ -2081,5 +2082,83 @@ mod decision_helper_tests {
             })
             .boundary_input_observed_with_weak_oracle()
         );
+    }
+
+    /// #14820: an unreferenced owner is a test-side gap only when every
+    /// condition holds; dropping any one keeps the finding fail-closed.
+    #[test]
+    fn an_unreferenced_owner_needs_every_condition_of_the_test_side_gap() {
+        let unreferenced = || {
+            edited(|finding| {
+                finding.class = ExposureClass::NoStaticPath;
+                finding.ripr.reach = stage(
+                    StageState::No,
+                    &format!("no caller of over_limit {UNREFERENCED_IN_WORKSPACE}"),
+                );
+            })
+        };
+        assert!(unreferenced().is_unreferenced_no_static_path());
+
+        let mut stale = unreferenced();
+        stale.source_currentness = SourceCurrentness::BaseDeleted;
+        let mut other_class = unreferenced();
+        other_class.class = ExposureClass::StaticUnknown;
+        let mut limited = unreferenced();
+        limited.static_limit_kind = Some(StaticLimitKind::DynamicDispatch);
+        let mut reach_unknown = unreferenced();
+        reach_unknown.ripr.reach.state = StageState::Unknown;
+        let mut unmarked = unreferenced();
+        unmarked.ripr.reach.summary = "no caller of over_limit".to_string();
+        let mut marker_not_last = unreferenced();
+        marker_not_last.ripr.reach.summary =
+            format!("{UNREFERENCED_IN_WORKSPACE} except through a macro");
+        for (label, finding) in [
+            ("stale source", stale),
+            ("another class", other_class),
+            ("a static limit", limited),
+            ("reach not ruled out", reach_unknown),
+            ("no marker", unmarked),
+            ("marker not at the end", marker_not_last),
+        ] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{label}");
+        }
+    }
+
+    /// Higher tiers observe more: a row with no call path ranks below one
+    /// whose assertion misses, which ranks below every other row, and the
+    /// picker takes the first row of the best tier.
+    #[test]
+    fn observation_tiers_rank_no_call_path_lowest_and_pickers_take_the_best() {
+        let with_miss = |name: &str, miss: Option<RelatedTestMiss>| {
+            let mut row = related(name, OracleStrength::Weak);
+            row.miss = miss;
+            row
+        };
+        let cases = [
+            (Some(RelatedTestMiss::NoCallPath), 0),
+            (Some(RelatedTestMiss::AssertionNotObserving), 1),
+            (Some(RelatedTestMiss::NoAssertion), 2),
+            (Some(RelatedTestMiss::WeakAssertion), 2),
+            (None, 2),
+        ];
+        for (miss, tier) in cases {
+            assert_eq!(with_miss("t", miss).observation_tier(), tier, "{miss:?}");
+        }
+        let rows = [
+            with_miss("unreached", Some(RelatedTestMiss::NoCallPath)),
+            with_miss(
+                "not_observing",
+                Some(RelatedTestMiss::AssertionNotObserving),
+            ),
+        ];
+        assert_eq!(
+            first_observing_related_test(&rows).map(|row| row.name.as_str()),
+            Some("not_observing")
+        );
+        assert_eq!(
+            first_observing_related_test(&rows[..1]).map(|row| row.name.as_str()),
+            Some("unreached")
+        );
+        assert_eq!(first_observing_related_test(&[]), None);
     }
 }
