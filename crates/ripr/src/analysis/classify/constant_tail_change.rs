@@ -38,6 +38,12 @@
 //!   `use` line ([`base_side_may_rebind_trusted_macros`]). The diff parser
 //!   registers no section for a deleted file, so a deleted file is seen
 //!   only through such a removed line in a surviving file.
+//!
+//! #14938: the same folder also answers the opposite question for probe
+//! seeding, [`is_equal_constant_respelling`]: a returned constant rewritten
+//! as the same value (`65` → `0x41`, `"A"` → `"\x41"`, `1.0` → `1e0`) with
+//! every numeric literal suffix kept. Floats fold (as exact decimals) only
+//! for that equality; a float tail is never an admitted change.
 
 use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
 use crate::analysis::facts::FunctionSummary;
@@ -139,7 +145,12 @@ pub(in crate::analysis) fn constant_tail_change(
     {
         return None;
     }
-    if !distinct(&old_tail.value, &new_tail.value) {
+    // A float anywhere refuses, as before #14938 taught the folder floats
+    // for equality only: a float tail is never admitted as a changed value.
+    if old_tail.value.holds_float()
+        || new_tail.value.holds_float()
+        || !distinct(&old_tail.value, &new_tail.value)
+    {
         return None;
     }
     if (old_tail.uses_vec || new_tail.uses_vec)
@@ -248,11 +259,30 @@ enum Const {
     Byte(u8),
     Char(char),
     Str(String),
+    /// A float literal as its exact decimal value, `digits × 10^exponent`
+    /// with no leading or trailing zero digit (zero is empty digits), so two
+    /// spellings fold equal only when they are the same rational number and
+    /// therefore round alike at every width, `f16` and `f128` included. Two
+    /// floats are never [`distinct`]: only equality is read from them.
+    Float {
+        digits: String,
+        exponent: i64,
+    },
     /// Elements of an array (`vec == false`) or `vec!` (`vec == true`).
     List {
         vec: bool,
         elements: Vec<Const>,
     },
+}
+
+impl Const {
+    fn holds_float(&self) -> bool {
+        match self {
+            Const::Float { .. } => true,
+            Const::List { elements, .. } => elements.iter().any(Const::holds_float),
+            _ => false,
+        }
+    }
 }
 
 struct ConstantTail {
@@ -382,7 +412,104 @@ fn fold_literal(literal: &ast::Literal) -> Option<Const> {
         ast::LiteralKind::Byte(byte) => Some(Const::Byte(byte.value().ok()?)),
         ast::LiteralKind::Char(character) => Some(Const::Char(character.value().ok()?)),
         ast::LiteralKind::String(text) => Some(Const::Str(text.value().ok()?.into_owned())),
+        ast::LiteralKind::FloatNumber(number) => {
+            let text = ast::AstToken::text(&number);
+            let digits = text
+                .strip_suffix(number.suffix().unwrap_or(""))?
+                .replace('_', "");
+            exact_decimal(&digits)
+        }
         _ => None,
+    }
+}
+
+/// A float literal's text (`1.5`, `15e-1`, `1.`, `2E+3`, no `_` or suffix)
+/// as its exact decimal [`Const::Float`]; `None` for any other shape.
+fn exact_decimal(text: &str) -> Option<Const> {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], text.get(at + 1..)?),
+        None => (text, "0"),
+    };
+    let exponent_digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+    if exponent_digits.is_empty()
+        || exponent_digits.len() > 9
+        || !exponent_digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if whole.is_empty()
+        || !format!("{whole}{fraction}")
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut exponent = exponent.parse::<i64>().ok()? - i64::try_from(fraction.len()).ok()?;
+    let digits = format!("{whole}{fraction}");
+    let digits = digits.trim_start_matches('0');
+    let trimmed = digits.trim_end_matches('0');
+    exponent += i64::try_from(digits.len() - trimmed.len()).ok()?;
+    if trimmed.is_empty() {
+        exponent = 0;
+    }
+    Some(Const::Float {
+        digits: trimmed.to_string(),
+        exponent,
+    })
+}
+
+/// #14938: whether `new` respells the constant expression `old` as the same
+/// value (`65` as `0x41`, `"A"` as `"\x41"` or `r#"A"#`, `'A'` as
+/// `'\u{41}'`, `1.0` as `1e0`), so no test can tell the two apart. Both
+/// sides must fold with the #14852 folder, and every numeric literal keeps
+/// its suffix in order: `1` to `1i8` can change the inferred type. A `vec!`,
+/// an attribute or anything the folder refuses answers `false`.
+pub(in crate::analysis) fn is_equal_constant_respelling(old: &str, new: &str) -> bool {
+    let (old, new) = (old.trim(), new.trim());
+    if old == new {
+        return false;
+    }
+    let read = |text: &str| {
+        let tail = whole_body_constant_tail(&format!("fn ripr_respelling() {{ {text} }}"))?;
+        let parse = crate::analysis::syntax::parse_clean_source_file(&format!(
+            "fn ripr_suffixes() {{ {text} }}"
+        ))?;
+        // The folder negates in `i128`, so `-(-128i8)` folds to 128 although
+        // it overflows `i8`. Equality reads a minus sign only directly on a
+        // literal, where both spellings negate the same typed literal.
+        let negates_non_literal = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::PrefixExpr::cast)
+            .any(|prefix| {
+                prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                    && !matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+            });
+        if negates_non_literal {
+            return None;
+        }
+        let suffixes = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Literal::cast)
+            .map(|literal| match literal.kind() {
+                ast::LiteralKind::IntNumber(number) => {
+                    Some(number.suffix().unwrap_or("").to_string())
+                }
+                ast::LiteralKind::FloatNumber(number) => {
+                    Some(format!("float:{}", number.suffix().unwrap_or("")))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        (!tail.uses_vec).then_some((tail.value, suffixes))
+    };
+    match (read(old), read(new)) {
+        (Some(old), Some(new)) => old == new,
+        _ => false,
     }
 }
 
@@ -1042,6 +1169,92 @@ mod tests {
             read_family(old, new, "ready", "false", ProbeFamily::Predicate)?,
             None
         );
+        Ok(())
+    }
+
+    #[test]
+    fn an_equal_value_respelling_is_recognized() {
+        for (old, new) in [
+            ("65", "0x41"),
+            ("-128", "-0x80"),
+            ("0", "-0"),
+            ("1_000", "1000"),
+            ("\"A\"", "\"\\x41\""),
+            ("\"A\"", "r#\"A\"#"),
+            ("'A'", "'\\u{41}'"),
+            ("b'A'", "b'\\x41'"),
+            ("1.0", "1e0"),
+            ("0.5f32", "5e-1f32"),
+            ("0.0", "0e5"),
+            ("1.", "10e-1"),
+            ("2E+3", "2000.0"),
+            ("[1, 2]", "[0x1, 0b10]"),
+            ("true", "!false"),
+        ] {
+            assert!(is_equal_constant_respelling(old, new), "{old} -> {new}");
+        }
+    }
+
+    #[test]
+    fn a_changed_or_unfoldable_respelling_is_not_recognized() {
+        for (old, new) in [
+            // Same text is not an edit.
+            ("65", "65"),
+            // A different value.
+            ("65", "66"),
+            ("\"A\"", "\"B\""),
+            ("1.0", "1.5"),
+            // Values that round alike in f64 but differ at a wider type.
+            ("9007199254740992.0f128", "9007199254740993.0f128"),
+            ("9007199254740992.0", "9007199254740993.0"),
+            ("0.1", "0.10000000000000000555"),
+            ("0.0", "-0.0"),
+            ("[1, 2]", "[1, 2, 3]"),
+            // A suffix added, removed or changed can change the inferred type.
+            ("1", "1i8"),
+            ("1u8", "1i8"),
+            ("1.0", "1.0f32"),
+            // A different literal kind is a different type.
+            ("b'A'", "65"),
+            ("'A'", "\"A\""),
+            // `vec!` may be rebound; names and calls are not constants.
+            ("vec![1]", "vec![0x1]"),
+            ("LIMIT", "0x41"),
+            ("f(65)", "f(0x41)"),
+            // An attribute can remove what the syntax shows.
+            ("[1, 2]", "[1, #[cfg(any())] 2]"),
+            // A minus sign on anything but a literal can overflow the
+            // literal's type: `-(-128i8)` panics where `128i8` wraps.
+            ("128i8", "-(-128i8)"),
+            ("-(-128i8)", "128i8"),
+            ("1", "--1"),
+            ("-1", "-(1)"),
+        ] {
+            assert!(!is_equal_constant_respelling(old, new), "{old} -> {new}");
+        }
+    }
+
+    #[test]
+    fn a_float_tail_is_still_not_an_admitted_constant_change() -> Result<(), String> {
+        // #14938 folds floats for equality only; #14852 keeps refusing them.
+        let old = Const::Float {
+            digits: "1".into(),
+            exponent: 0,
+        };
+        let list = Const::List {
+            vec: false,
+            elements: vec![old.clone()],
+        };
+        assert!(old.holds_float());
+        assert!(list.holds_float());
+        assert!(!Const::Int(1).holds_float());
+        // The admission itself refuses distinct float tails, including a
+        // float list whose length changed, which `distinct` alone would admit.
+        for (old_tail, new_tail) in [("1.0", "2.0"), ("[1.0]", "[1.0, 2.0]")] {
+            let old = format!("pub fn ratio() -> f64 {{\n    {old_tail}\n}}\n");
+            let new = format!("pub fn ratio() -> f64 {{\n    {new_tail}\n}}\n");
+            assert_eq!(read(&old, &new, "ratio", new_tail)?, None, "{new_tail}");
+        }
         Ok(())
     }
 }

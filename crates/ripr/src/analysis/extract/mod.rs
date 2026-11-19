@@ -22,11 +22,12 @@ pub(crate) use literals::{extract_literal_facts, extract_literals};
 // `string_literal_spans` offsets index the unmasked text: a literal's
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).
 pub(crate) use mask::{
-    mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
-    rust_identity_spans, string_literal_spans,
+    line_comment_starts, mask_comments_and_strings, mask_with_char_literals,
+    mask_with_string_delimiter_quotes, rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
-    LazyDecls, OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_with,
+    LazyDecls, OracleTextShape, assertion_compares_only_literals, assertion_oracle_text,
+    assertion_reads_placeholder, classify_assertion, classify_assertion_with,
     equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
     extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,

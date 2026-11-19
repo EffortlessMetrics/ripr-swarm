@@ -937,6 +937,12 @@ pub struct FileFacts {
     /// parse (#13754). `None` from the lexical fallback and from hand-built
     /// facts; the unseen-reach scan then parses `source` itself.
     pub(crate) external_docs: Option<bool>,
+    /// Where this file declares `const`/`static` items (and macro calls that
+    /// may), as byte ranges of `source`, read from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the owner-pin constant table then parses `source` itself.
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FileFacts {
@@ -1962,6 +1968,9 @@ pub(crate) struct FileFactsWire {
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
     #[serde(default)]
     pub(crate) external_docs: Option<bool>,
+    #[serde(default)]
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FunctionFactWire {
@@ -2122,6 +2131,7 @@ impl From<&FileFacts> for FileFactsWire {
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
             external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.clone(),
         }
     }
 }
@@ -2217,6 +2227,7 @@ impl FileFactsWire {
             item_scopes: self.item_scopes,
             macro_candidates: self.macro_candidates,
             external_docs: self.external_docs,
+            constant_syntax: self.constant_syntax,
         })
     }
 }
@@ -2407,6 +2418,7 @@ struct FileFactsWireRef<'a> {
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
     external_docs: Option<bool>,
+    constant_syntax: Option<&'a [crate::analysis::syntax::constant_items::ConstantSyntax]>,
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2477,6 +2489,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
             external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.as_deref(),
         }
     }
 }
@@ -2713,6 +2726,7 @@ mod tests {
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2860,6 +2874,7 @@ mod tests {
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -3071,6 +3086,7 @@ fn checks_helper() {
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;

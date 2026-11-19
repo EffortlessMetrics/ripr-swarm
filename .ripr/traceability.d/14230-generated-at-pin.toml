@@ -1,0 +1,7 @@
+# Opt-in pinned artifact stamp for reproducible artifact bytes (#14230).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/output_determinism.rs::rust_check_findings_json_repeats_under_a_pinned_generated_at",
+  "crates/ripr/src/agent/artifact.rs::tests::generated_at_override_is_exact_or_refused_and_only_unset_reads_the_clock",
+]

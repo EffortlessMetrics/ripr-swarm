@@ -679,6 +679,7 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | the same body under a trait the workspace declares, and a plain function no source names | the same unit test | `no_static_path` (no dispatch allowance) |
 | owner whose only naming is a same-named call (`self.inner.get()`) inside its own body, beside an unrelated same-file test | `rust_owner_self_body_same_name_no_unseen_reach` | `no_static_path` (#10160) |
 | the same owner with a caller (`self.get()`) outside its body | `rust_owner_self_body_same_name_with_caller_control` | `weakly_exposed` (reach stays undecided; fixtures differ only by that caller) |
+| two impls of one generic trait on a type (`From<u32>`, `From<&str>`), the test calling the other impl with a typed argument | `rust_generic_trait_sibling_impl` | `reachable_unrevealed`, relation `weak_token_substring` (the argument type at the call site names the sibling impl, so the call is not a direct call of the changed owner; an argument whose type is not read from the call keeps the previous relation; #14074) |
 | private owner whose only same-file test is a compile-time `assert_*::<T>()` check | `rust_compile_time_marker_test_no_observation` | `reachable_unrevealed`, observation `no` (a zero-argument turbofish helper call passes no value and is not an oracle; #10091) |
 | same owner with that marker test beside a test that calls it and asserts its value | `rust_asserting_same_file_test_positive_control` | `exposed` (`direct_owner_call`; the marker neither earns nor withdraws credit; #10091) |
 

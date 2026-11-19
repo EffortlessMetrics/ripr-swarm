@@ -1089,7 +1089,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 41. `assert_ok_eq!(parse(5), 10)` under a verified `use claims::assert_ok_eq;`
     beside an `Ok(..)` tail change: the related test reads `exact_value` /
     strong and the finding reads `exposed`.
-42. The same line with no import, another crate's `assert_ok_eq`, a renamed
+42. [abstain] The same line with no import, another crate's `assert_ok_eq`, a renamed
     or path-qualified import, a local `macro_rules! assert_ok_eq`, or a
     `path`/`package` `claims` dependency: `unknown` / none, and the
     finding keeps `rust_macro_wrapped_assertion_unresolved`.

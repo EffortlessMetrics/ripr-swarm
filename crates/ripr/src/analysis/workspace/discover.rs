@@ -120,15 +120,21 @@ pub(crate) fn supplement_absent_file_limitations(
 }
 
 pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    worktree_regular_source_file(root, relative).is_some()
+}
+
+/// Where the changed path `relative` is on disk as a regular file reached
+/// through real directories below `root`, when it is.
+pub(crate) fn worktree_regular_source_file(root: &Path, relative: &Path) -> Option<PathBuf> {
     if relative.is_absolute()
         || relative
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
-        return false;
+        return None;
     }
     if is_regular_source_below_root(root, relative) {
-        return true;
+        return Some(root.join(relative));
     }
     // Git diffs keep the repository-relative path. `--root` is often a
     // crate subdirectory, so `root.join(diff_path)` misses a file that
@@ -148,10 +154,10 @@ pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path
             continue;
         }
         if is_regular_source_below_root(root, Path::new(suffix)) {
-            return true;
+            return Some(root.join(suffix));
         }
     }
-    false
+    None
 }
 
 fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {

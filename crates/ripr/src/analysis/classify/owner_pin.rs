@@ -78,6 +78,7 @@ use crate::analysis::facts::{
     RustIncludeLimitation, SourceRoleProvenanceEdgeKind, literal_include_fragments,
 };
 use crate::analysis::sync_memo::SyncMemo;
+use crate::analysis::syntax::constant_items::{ConstantSyntax, span_text};
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::ra::LineIndex;
 use crate::analysis::syntax::{
@@ -169,6 +170,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #8361: the edit only drops or adds whole guard operands of the bool
+    /// owner's `&&` / `||` tail. A pinned call whose literal arguments leave
+    /// every such operand at its chain's identity value runs both versions
+    /// to the same result, so it withholds the credit.
+    guard_operands: Option<short_circuit::GuardOperandChange>,
     /// #13005: set only while [`Self::literal_check_withholds`] asks whether
     /// the current-owner literal check is the one gate refusing an assertion.
     skip_current_literal_check: Cell<bool>,
@@ -5884,6 +5890,17 @@ impl OwnerReturnPin {
             .and_then(|before| {
                 super::owner_value::ClosedChange::read(&owner.body, name, changed_line, before)
             });
+        let guard_operands = probe
+            .before
+            .as_deref()
+            .filter(|_| returns_bool)
+            .and_then(|before| {
+                short_circuit::GuardOperandChange::read(
+                    &owner.body,
+                    probe.expression.trim().trim_end_matches(';').trim(),
+                    before,
+                )
+            });
         Some(Self {
             name: name.to_string(),
             call,
@@ -5919,6 +5936,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            guard_operands,
             skip_current_literal_check: Cell::new(false),
         })
     }
@@ -6045,6 +6063,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -6182,6 +6201,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -6287,6 +6307,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -6345,18 +6366,22 @@ impl OwnerReturnPin {
         &self,
         operands: &'a [String; 2],
         index: &RustIndex,
-    ) -> Option<(CallShape<'a>, String, Option<&'a str>)> {
+    ) -> Option<(CallShape<'a>, String, Option<&'a str>, Option<&'a str>)> {
         [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
             let expected = helper_arguments::expected_literal(&operands[other], index)?;
             if let Some(call) = self.awaited_call_shape(None, &operands[at], &self.name) {
-                return Some((call, expected, Some(operands[at].as_str())));
+                return Some((call, expected, Some(operands[at].as_str()), None));
             }
             let rendered = self
                 .returns_scalar
                 .then(|| helper_arguments::rendered_template_call(&operands[at], &expected))
                 .flatten()?;
+            // #14194 review: a rendered call is still text this owner appears
+            // in exactly once, so the guard-operand agreement check can read
+            // its arguments. It is kept out of the `call_text` slot because
+            // the adaptor gates must keep refusing a rendered operand.
             self.awaited_call_shape(None, rendered, &self.name)
-                .map(|call| (call, expected, None))
+                .map(|call| (call, expected, None, Some(rendered)))
         })
     }
 
@@ -6752,13 +6777,20 @@ impl OwnerReturnPin {
         }
         probe.selected.set(substituted.is_some());
         let substituted_expected;
+        // #14194 review: a rendered, indexed or unwrapped twin supplies the
+        // call text the guard-operand check reads, while `call_text` stays
+        // `None` so the adaptor gates keep refusing those forms.
+        let derived_call: Cell<Option<&str>> = Cell::new(None);
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
         let (call, expected, call_text): (_, _, Option<&str>) = if let Some(operands) = &substituted
         {
-            let Some((call, expected, call_text)) = self.substituted_pin(operands, index) else {
+            let Some((call, expected, call_text, derived_call_text)) =
+                self.substituted_pin(operands, index)
+            else {
                 return false;
             };
+            derived_call.set(derived_call_text);
             substituted_expected = expected;
             (call, substituted_expected.as_str(), call_text)
         } else if let Some([first, second]) = claims_operands {
@@ -6899,7 +6931,10 @@ impl OwnerReturnPin {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                         helper_arguments::rendered_template_call(operands[at], operands[other])
                             .and_then(|call| {
-                                self.awaited_call_shape(poll_context, call, &self.name)
+                                let shape =
+                                    self.awaited_call_shape(poll_context, call, &self.name)?;
+                                derived_call.set(Some(call));
+                                Some(shape)
                             })
                             .map(|call| (call, operands[other], None))
                     })
@@ -6915,7 +6950,13 @@ impl OwnerReturnPin {
                                 exact_integer_projection(operands[at], operands[other])
                                     .filter(|_| !ord_method_rebindable(operands[at], test, index))
                                     .and_then(|call| {
-                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                        let shape = self.awaited_call_shape(
+                                            poll_context,
+                                            call,
+                                            &self.name,
+                                        )?;
+                                        derived_call.set(Some(call));
+                                        Some(shape)
                                     })
                                     .map(|call| (call, operands[other], None))
                             })
@@ -6930,7 +6971,13 @@ impl OwnerReturnPin {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 single_element_index(operands[at])
                                     .and_then(|call| {
-                                        self.awaited_call_shape(poll_context, call, &self.name)
+                                        let shape = self.awaited_call_shape(
+                                            poll_context,
+                                            call,
+                                            &self.name,
+                                        )?;
+                                        derived_call.set(Some(call));
+                                        Some(shape)
                                     })
                                     .map(|call| (call, operands[other], None))
                             })
@@ -7518,6 +7565,32 @@ impl OwnerReturnPin {
                             &self.name,
                         )
                     })
+                {
+                    return false;
+                }
+                // #8361: a dropped or added guard operand that every run of
+                // this call leaves at its chain's identity value gives both
+                // versions the same result here. The wrapper forms carry no
+                // `call_text`, so the call text this arm derived is used: the
+                // assertion's own text is a helper assertion like
+                // `assert_eq!(actual, expected)` and does not name the owner,
+                // which is why reading `walk_site` here left every wrapper
+                // pin open (#14194 review).
+                let guard_site = call_text
+                    .or_else(|| derived_call.get())
+                    .unwrap_or(assertion.text.as_str());
+                if let Some(guards) = &self.guard_operands
+                    && guards.pinned_call_agrees(
+                        test,
+                        // A substituted pin reads its call in the test's own
+                        // scope, so a helper parameter that shares a name with
+                        // a test binding must not supply the argument value
+                        // (#14194 review).
+                        loan.as_ref().filter(|_| substituted.is_none()),
+                        guard_site,
+                        assertion.line,
+                        &self.name,
+                    )
                 {
                     return false;
                 }
@@ -15626,14 +15699,21 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// worker they stay in line under the #8756 memo-lock guard. Results are
 /// folded in index file order, so the table is the same either way.
 fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
-    let files: Vec<(&PathBuf, &str)> = index
+    let files: Vec<ConstantScanFile<'_>> = index
         .files()
         .iter()
-        .map(|(path, facts)| (path, facts.data().source.as_ref()))
+        .map(|(path, facts)| {
+            let data = facts.data();
+            (path, data.source.as_ref(), data.constant_syntax.as_deref())
+        })
         .collect();
-    let per_file = map_scans(&files, |(_, source)| file_constants(source));
+    let per_file = map_scans(&files, |(_, source, stored)| {
+        stored
+            .and_then(|stored| stored_file_constants(source, stored))
+            .unwrap_or_else(|| file_constants(source))
+    });
     let mut table = ConstantTable::new();
-    for ((path, _), constants) in files.iter().zip(per_file) {
+    for ((path, _, _), constants) in files.iter().zip(per_file) {
         for (name, initializer, declared) in constants {
             table
                 .entry(name)
@@ -15644,9 +15724,52 @@ fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
     table
 }
 
+/// A file of [`workspace_constant_table`]: its path, source text and the
+/// producer's stored constant syntax, when it has one.
+type ConstantScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a [ConstantSyntax]>);
+
+/// One file's constants: `(name, masked initializer, declared type)`.
+type FileConstants = Vec<(String, String, Option<String>)>;
+
+/// [`file_constants`] read from the producer's stored [`ConstantSyntax`]
+/// instead of a fresh parse (#13754). The stored ranges come from the same
+/// clean parse [`file_constants`] would make, in the same tree order, so the
+/// result is the same. `None` when a stored range does not lie on character
+/// boundaries of `source`; the caller then parses.
+fn stored_file_constants(source: &str, stored: &[ConstantSyntax]) -> Option<FileConstants> {
+    let mut found = Vec::new();
+    for entry in stored {
+        match entry {
+            ConstantSyntax::Item { name, body, ty } => {
+                let name = span_text(source, *name)?;
+                let body = span_text(source, *body)?;
+                let ty = match ty {
+                    Some(ty) => Some(span_text(source, *ty)?),
+                    None => None,
+                };
+                let name = name.strip_prefix("r#").unwrap_or(name);
+                found.push((
+                    name.to_string(),
+                    mask_comments_and_strings(body),
+                    ty.map(mask_comments_and_strings),
+                ));
+            }
+            ConstantSyntax::MacroTokens(tokens) => {
+                let text = mask_comments_and_strings(span_text(source, *tokens)?);
+                for (name, initializer) in text_declared_constants(&text) {
+                    let declared = declared_type(&initializer).map(str::to_string);
+                    let name = name.strip_prefix("r#").unwrap_or(&name).to_string();
+                    found.push((name, initializer, declared));
+                }
+            }
+        }
+    }
+    Some(found)
+}
+
 /// One file's `const`/`static` items for [`workspace_constant_table`], in
 /// source order: `(name, masked initializer, declared type)`.
-fn file_constants(source: &str) -> Vec<(String, String, Option<String>)> {
+fn file_constants(source: &str) -> FileConstants {
     let mut found = Vec::new();
     if !source.contains("const") && !source.contains("static") {
         return found;
@@ -19190,4 +19313,193 @@ struct HelperCallProbe {
     spelling: &'static str,
     skip: usize,
     selected: Cell<bool>,
+}
+
+#[cfg(test)]
+mod stored_constant_syntax_tests {
+    use super::{file_constants, stored_file_constants, workspace_constant_table};
+    use crate::analysis::rust_index::RustIndex;
+    use crate::analysis::syntax::nesting_parse_calls;
+    use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    use std::path::{Path, PathBuf};
+
+    const SOURCES: [(&str, &str); 6] = [
+        ("src/plain.rs", "pub fn plain() -> u32 { 1 }\n"),
+        (
+            "src/items.rs",
+            concat!(
+                "pub const LIMIT: u32 = quota(2); // trailing \"note\"\n",
+                "static mut COUNT: usize = 0;\n",
+                "pub static r#NAME: &str = \"a /* not a comment */\";\n",
+                "const _: () = ();\n",
+                "pub const fn quota(n: u32) -> u32 { n }\n",
+                "fn body() -> u32 { const INNER: [u32; 2] = [1, 2]; INNER[0] }\n",
+                "extern \"C\" { static FOREIGN: u32; }\n",
+            ),
+        ),
+        (
+            "src/macros.rs",
+            concat!(
+                "thread_local! { static CELL: std::cell::Cell<u32> = std::cell::Cell::new(3); }\n",
+                "lazy_static::lazy_static! { static ref TABLE: Vec<u32> = vec![1]; }\n",
+                "macro_rules! noop { () => {} }\n",
+                "noop!();\n",
+            ),
+        ),
+        (
+            "src/unicode.rs",
+            "pub const ÉTÉ: &str = \"été\";\npub const AFTER: char = 'é';\n",
+        ),
+        (
+            "src/typed.rs",
+            "pub const MAP: [(u8, &str); 1] = [(1, \"x\")];\nimpl S { pub const ASSOC: u8 = 4; }\npub struct S;\n",
+        ),
+        (
+            "src/static_lifetime.rs",
+            "pub fn name() -> &'static str { \"n\" }\n",
+        ),
+    ];
+
+    fn parsed_index() -> Result<RustIndex, String> {
+        let mut index = RustIndex::default();
+        for (path, source) in SOURCES {
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), source)?;
+            index.insert_file_only(PathBuf::from(path), facts);
+        }
+        Ok(index)
+    }
+
+    /// #13754: the constant table reads the producer's stored item ranges
+    /// instead of parsing every workspace file again, and gets the same
+    /// table.
+    #[test]
+    fn stored_constant_syntax_builds_the_same_table_without_parsing() -> Result<(), String> {
+        let index = parsed_index()?;
+        // Premise: every clean source carries stored syntax that answers
+        // exactly what a fresh parse does, and the corpus exercises items,
+        // raw names, nested items, macro bodies and multibyte text.
+        for (path, source) in SOURCES {
+            let file = index
+                .files()
+                .get(Path::new(path))
+                .ok_or_else(|| format!("{path} indexed"))?;
+            let stored = file
+                .data()
+                .constant_syntax
+                .as_deref()
+                .ok_or_else(|| format!("{path} has stored constant syntax"))?;
+            assert_eq!(
+                stored_file_constants(source, stored),
+                Some(file_constants(source)),
+                "{path}"
+            );
+        }
+        let names: Vec<String> = SOURCES
+            .iter()
+            .flat_map(|(_, source)| file_constants(source))
+            .map(|(name, _, _)| name)
+            .collect();
+        for expected in [
+            "LIMIT", "COUNT", "NAME", "INNER", "CELL", "TABLE", "ÉTÉ", "AFTER", "MAP", "ASSOC",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "{expected} in {names:?}"
+            );
+        }
+
+        // The counter is per thread, so build each table on one pool worker,
+        // where `map_scans` stays in line on the calling thread.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .map_err(|error| error.to_string())?;
+        let counted = |index: &RustIndex| {
+            pool.install(|| {
+                let before = nesting_parse_calls();
+                let table = workspace_constant_table(index);
+                (table, nesting_parse_calls() - before)
+            })
+        };
+        let (stored_table, stored_parses) = counted(&index);
+        assert_eq!(stored_parses, 0, "stored syntax leaves nothing to parse");
+
+        // Hand-built facts carry no stored syntax: the table parses and agrees.
+        let mut owned = index.clone();
+        for (path, _) in SOURCES {
+            let mut facts = owned
+                .owned_file(Path::new(path))
+                .ok_or_else(|| format!("{path} indexed"))?;
+            facts.constant_syntax = None;
+            owned.insert_file_only(PathBuf::from(path), facts);
+        }
+        let (parsed_table, parses) = counted(&owned);
+        assert_eq!(
+            parses, 5,
+            "without stored syntax each file spelling `const` or `static` parses"
+        );
+        assert_eq!(stored_table, parsed_table);
+        Ok(())
+    }
+
+    /// The fixtures above pin named shapes; this ratchet runs the same
+    /// equivalence over a real tree, ripr's own syntax sources, so a later
+    /// change to the producer's walk that drops or reorders an entry fails
+    /// here instead of silently moving an owner-pin verdict.
+    #[test]
+    fn stored_constant_syntax_matches_a_fresh_parse_on_real_sources() -> Result<(), String> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/analysis/syntax");
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect();
+        paths.sort();
+        let mut compared = 0usize;
+        let mut with_constants = 0usize;
+        for path in &paths {
+            let source = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let Ok(facts) = RaRustSyntaxAdapter.summarize_file(path, &source) else {
+                continue;
+            };
+            let stored = facts
+                .constant_syntax
+                .as_deref()
+                .ok_or_else(|| format!("{} has stored constant syntax", path.display()))?;
+            let parsed = file_constants(&source);
+            assert_eq!(
+                stored_file_constants(&source, stored),
+                Some(parsed.clone()),
+                "{}",
+                path.display()
+            );
+            compared += 1;
+            with_constants += usize::from(!parsed.is_empty());
+        }
+        // Premise: the corpus is real and exercises the stored path.
+        assert!(
+            compared >= 15,
+            "compared {compared} of {} files",
+            paths.len()
+        );
+        assert!(
+            with_constants >= 10,
+            "{with_constants} files declare constants"
+        );
+        Ok(())
+    }
+
+    /// A stored range off a character boundary (a corrupt or foreign cache
+    /// entry) is not trusted: the caller falls back to parsing.
+    #[test]
+    fn a_stored_range_off_a_char_boundary_is_refused() {
+        use crate::analysis::syntax::constant_items::ConstantSyntax;
+        let source = "pub const ÉTÉ: u8 = 1;\n";
+        let stored = [ConstantSyntax::Item {
+            name: (11, 13),
+            body: (20, 21),
+            ty: None,
+        }];
+        assert_eq!(stored_file_constants(source, &stored), None);
+    }
 }

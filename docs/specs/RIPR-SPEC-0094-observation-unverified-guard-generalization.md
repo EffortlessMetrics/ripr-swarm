@@ -957,6 +957,146 @@ Proof: `a_bare_assert_on_the_kept_field_is_a_field_pin` in
 and `a_bare_assert_on_anything_else_stays_weak` in
 `crates/ripr/tests/predicate_record_field_masked.rs`.
 
+## A literal-only assertion observes nothing (#14968)
+
+An assertion whose compared operands hold only literals reads no runtime
+value, so it cannot observe anything the changed owner does:
+
+```rust
+assert!(true); let _ = f(5);         // read weakly_exposed, now reachable_unrevealed
+assert!(false); let _ = f(5);        // the same
+assert_eq!(2 + 2, 4); let _ = f(5);  // the same
+```
+
+Before this rule, the single-assertion fallback (and the family match)
+associated such an assertion with any probe its test reached, so a bare call
+beside it read `weakly_exposed` with `observation_unverified`.
+
+Rule, for every family. `assertion_compares_only_literals` reads the
+outermost known assertion macro (`assert!`, `assert_eq!`, `assert_ne!`, their
+`debug_` and `prop_` spellings, `ensure!`), never its message arguments, and
+answers yes when every compared operand holds only numeric literals,
+`true`/`false`, string or character literals and operators. Such an
+assertion that is also a top-level statement (or the tail expression) of the
+test body, at its own line, is unconditional: reveal drops it from the
+assertions it credits. It supplies no oracle. A test whose only assertions
+are such literals is listed with `assertion_not_observing`.
+
+The dropped literal still counts toward the single-assertion fallback, so
+dropping it never hands that fallback to an unrelated sibling assertion:
+
+```rust
+let mut s = S { v: vec![] }; s.add(5); let o = other();
+assert!(true); assert!(!o.is_empty());      // side_effect stays reachable_unrevealed
+let _ = g(2); assert!(true); assert_eq!(other(), 4);  // error_path stays reachable_unrevealed
+```
+
+Only a surviving assertion or implicit observer that reads the owner's
+result is counted as in the test without the literal, so the literal does not
+displace that reading. It reads the owner's result when its text, with
+comments and strings masked, calls the owner by name, or names a test `let`
+bound from an owner call (the shared sink-identity binding,
+`oracle_binds_sink_identity`). Whether it is an assertion macro does not
+matter, but a known assertion macro is read through its compared operands
+only: a call in its diagnostic arguments
+(`assert_eq!(other(), 4, "{:?}", g(9))`) runs only when the assertion fails,
+so it reads nothing and the fallback stays with the dropped literal.
+
+Invariant: an unconditional literal-only assertion never raises a test's
+class, and never lowers it below the same test without it, except where that
+no-literal reading was itself single-assertion fallback credit on a sibling
+that neither calls the owner nor reads a binding bound from an owner call
+(`assert!(!o.is_empty())` or `assert_eq!(other(), 4)` above, which read
+`weakly_exposed` without the literal). There the test keeps the
+`reachable_unrevealed` it had before this rule. "Reads a binding" is as the
+shared binding authority resolves it: a name that any pattern in the test
+rebinds, even in a nested scope, is not an owner binding, so such a read
+fails closed to that same exception (see Known limits).
+
+```rust
+g(2).unwrap_err(); assert!(true);                   // weakly_exposed, as without assert!(true)
+let _e = g(2).unwrap_err(); assert_eq!(1, 1);       // weakly_exposed
+g(3).unwrap(); assert!(true);                       // weakly_exposed
+g(2).expect_err(&format!("x")); assert!(true);      // weakly_exposed
+assert!(true); assert!(g(2).is_err());              // weakly_exposed (predicate and error_path)
+assert!(g(2).is_err()); assert!(true);              // weakly_exposed
+assert_eq!(1, 1); assert!(g(2).is_err());           // weakly_exposed
+let r = g(2); assert!(true); assert!(r.is_err());   // weakly_exposed
+g(3)?; assert!(true); Ok(())                        // reachable_unrevealed, as `g(3)?; Ok(())`
+```
+
+A literal inside an `if`, `if let`, `match` arm, loop or closure is not
+dropped. It runs only on a path the test's own read selects, so it keeps the
+reading it had before this rule:
+
+```rust
+if let Ok(_) = g(2) { assert!(false, "2 must be rejected"); }  // weakly_exposed
+match g(3) { Ok(_) => {} Err(_) => assert!(false), }           // weakly_exposed
+```
+
+Fail-closed toward the existing credit. Any identifier (a binding, a
+constant, a call, a nested macro), a byte or raw string prefix, an unknown
+macro or `assert_matches!`, an unparseable test body, or an assertion that
+does not sit at a top-level statement of the test body at its own line (for
+example one produced by a helper or macro expansion) leaves the assertion as
+it was. So does a literal with a twin of the same squashed text on its line,
+nested or not (`if let Ok(_) = g(2) { assert!(false); } assert!(false);`
+stays `weakly_exposed`), since an assertion fact records only its line and
+text. Dropping the literal never removes credit another assertion in the
+test supplies (`assert!(true); assert_eq!(f(5), 7)` stays `exposed`).
+
+Dropping the literal lowers a class, never the reach limitation the credited
+reading named. A `weakly_exposed` proximity-only finding names a
+RIPR-SPEC-0114 transitive or RIPR-SPEC-0117 macro witness (for example a test
+a same-file `macro_rules!` generator emits), while a `reachable_unrevealed`
+one admits only a cross-package witness (#10127). A finding that reads
+`reachable_unrevealed` because every related test asserts nothing but
+dropped literals keeps the weak reading's admission: it stays
+`reachable_unrevealed` and names the same limit. A related test with no
+assertion, or with any other assertion, keeps the #10127 rule, as does a
+related-test list at its render cap. The same holds for the #3700 wrapper
+error seam (a changed top-level `map_err` conversion, the shape
+`wrapper_error_seam_expression` recognizes) whose related tests assert only
+dropped literals reads `reachable_unrevealed` and keeps the
+`wrapper_error_binding_unresolved` limitation and its typed next step,
+instead of asking for an assertion the suite may already contain.
+
+Known limits:
+
+- An assertion on a test-local value that does not come from the owner
+  (`let x = 3; assert!(x == 3); let _ = f(5);`) still reads `weakly_exposed`.
+  Telling that apart from a value the owner wrote needs the test's data flow,
+  not the assertion's text.
+- A guarded literal whose guard reads nothing from the owner
+  (`if cfg_flag { assert!(true) }`) keeps its earlier reading.
+- A scoped rebinding of an owner binding
+  (`let r = g(2); if let Some(r) = Some(1) { .. } assert!(true);
+  assert!(r.is_err());`) reads `reachable_unrevealed` on the predicate probe,
+  where the same test without the literal reads `weakly_exposed`.
+  `oracle_binds_sink_identity` drops any name a pattern rebinds, without
+  scope, so the surviving read is not counted as an owner read. This is fail
+  closed; a scope-aware binder belongs to the shared owner, not this rule.
+- A `?` alone gives no implicit credit (`g(3)?; Ok(())` reads
+  `reachable_unrevealed`). Under the invariant above, `g(3)?; assert!(true);
+  Ok(())` reads the same. Its earlier `weakly_exposed` came only from the
+  literal.
+
+Proof: `literal_only_assertions_are_recognized_and_reads_are_not` in
+`crates/ripr/src/analysis/extract/oracles/arguments.rs`, and
+`crates/ripr/tests/literal_only_assertion_credit.rs` through `check_workspace`
+(bare-call, owner-read, guarded-literal, implicit-observer,
+owner-reading-assertion, scoped-rebinding, unrelated-sibling and same-line
+twin rows), `owner_result_readers_call_the_owner_or_read_its_binding` in
+`crates/ripr/src/analysis/classify/literal_assertion.rs`, and
+`a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit` with
+`a_same_package_generator_limits_reachable_unrevealed_only_for_dropped_literals`
+in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`,
+`wrapper_error_binding_limit_names_map_err_error_and_return_families_only` in
+`crates/ripr/src/analysis/language/rust/oracles.rs`, and
+`wrapper_error_retains_specific_guidance_for_proximity_reach` with
+`unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim` in
+`crates/ripr/tests/unindexed_guidance.rs`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

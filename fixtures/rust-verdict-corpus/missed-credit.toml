@@ -406,7 +406,7 @@ reason = "The registered Trial callback is indexed for reach but its assertion i
 
 [[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
-reason = "RIPR-SPEC-0154 example 3 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
+reason = "RIPR-SPEC-0154 example 7 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 
 [[entry]]
 case = "spec-b-0157-closure-capture"

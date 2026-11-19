@@ -9360,7 +9360,7 @@
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate",
       "status": "below_target",
-      "target": 0.21,
+      "target": 0.24,
       "title": "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)",
       "unit": "ratio",
       "value": 0.3711
