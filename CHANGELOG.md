@@ -18,6 +18,15 @@ entries below are the complete record.
 
 ### Changed
 
+- TypeScript preview: a changed comparison against a module `const` derived
+  from literal integer arithmetic (`const m = 1000 * 60; const h = m * 60;`)
+  now resolves the boundary value, so an exact test input at that value
+  (`assert.equal(formatShort(3_600_000), "1h")`) witnesses `msAbs >= h` instead
+  of leaving it `weakly_exposed` with `observation_unconfirmed`. The fold takes
+  only decimal integer literals, other such module constants, parentheses and
+  `*`, `+`, `-`, with every step a non-negative safe integer; `let`/`var`,
+  reassigned, shadowed, function-local, overflowing, non-integer or cyclic
+  bindings keep the operand unresolved (#15358).
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence

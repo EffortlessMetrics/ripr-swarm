@@ -3893,13 +3893,42 @@ fn resolve_owner_module_boundary_constants(
     workspace_root: Option<&Path>,
 ) -> (String, String) {
     let resolve = |operand: &str| -> String {
-        if is_boundary_literal(operand) || !is_constant_shaped_operand(operand) {
+        if is_boundary_literal(operand) {
             return operand.to_string();
         }
-        ts_owner_module_constant_value(operand, owner, workspace_root)
+        if is_constant_shaped_operand(operand)
+            && let Some(value) = ts_owner_module_constant_value(operand, owner, workspace_root)
+        {
+            return value;
+        }
+        ts_owner_module_folded_constant_value(operand, owner, workspace_root)
             .unwrap_or_else(|| operand.to_string())
     };
     (resolve(left), resolve(right))
+}
+
+/// #15358: the value of a bare module `const` the owner's module derives from
+/// literal integer arithmetic (`const m = 1000 * 60; const h = m * 60;`),
+/// read through the AST rules of [`super::boundary_input`]: exactly one
+/// top-level immutable binding, every other occurrence a plain read, no
+/// `eval`/`with`, and every step a non-negative safe integer. An owner
+/// parameter of that name, any other shape and any read failure keep the
+/// operand unresolved.
+fn ts_owner_module_folded_constant_value(
+    name: &str,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<String> {
+    if !is_bare_identifier(name) || owner.params.iter().any(|param| param == name) {
+        return None;
+    }
+    let root = workspace_root?;
+    let source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &owner.file).ok()??,
+    )
+    .ok()?;
+    super::boundary_input::ts_module_folded_integer_constant(&owner.file, &source, name)
+        .map(|value| value.to_string())
 }
 
 /// #4104-E3: replace a bare constant-shaped owner-call argument with the
