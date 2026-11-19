@@ -419,22 +419,27 @@ fn step_run_block(step_id: &str) -> Result<String, String> {
     let (_, after_id) = WORKFLOW
         .split_once(step_id)
         .ok_or_else(|| format!("rust-gates.yml keeps {step_id}"))?;
-    let (_, body) = after_id
-        .split_once("        run: |\n")
-        .or_else(|| after_id.split_once("        run: "))
-        .ok_or_else(|| format!("{step_id} keeps a run block"))?;
-    if after_id
+    // Read the first `run:` after the step id, then branch on its form. A
+    // separate search for `run: |` and `run: ` can match different steps:
+    // `run: |` also starts with `run: `, and a single-line step's first
+    // `run: |` may belong to a later step (#14999 review).
+    let (_, after_run) = after_id
         .split_once("        run: ")
-        .is_some_and(|(between, _)| !between.contains("|\n"))
-    {
-        return Ok(body.lines().next().unwrap_or_default().trim().to_string());
+        .ok_or_else(|| format!("{step_id} keeps a run block"))?;
+    if let Some(body) = after_run.strip_prefix("|\n") {
+        return Ok(body
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("          "))
+            .map(|line| line.strip_prefix("          ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n"));
     }
-    Ok(body
+    Ok(after_run
         .lines()
-        .take_while(|line| line.is_empty() || line.starts_with("          "))
-        .map(|line| line.strip_prefix("          ").unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join("\n"))
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string())
 }
 
 #[test]
