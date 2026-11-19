@@ -447,7 +447,7 @@ fn path_attribute(module: &ast::Module) -> Option<String> {
         let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
             return None;
         };
-        if meta.path()?.syntax().text().to_string() != "path" {
+        if meta.path()?.syntax().text() != "path" {
             return None;
         }
         let ast::Expr::Literal(literal) = meta.expr()? else {
@@ -794,7 +794,7 @@ mod tests {
             &members(&[
                 (
                     "src/lib.rs",
-                    "#[cfg_attr(test, allow(dead_code))]\nmod lints;\n",
+                    "#[cfg_attr(test, warn(missing_docs))]\nmod lints;\n",
                 ),
                 ("src/lints.rs", ""),
             ]),
