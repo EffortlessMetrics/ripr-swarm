@@ -3670,18 +3670,22 @@ fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
     sites.is_empty()
 }
 
-/// Whether `root` is an integration test, bench or example crate root: a
+/// Whether `root` is an integration test, bench or example crate root
+/// (`tests/NAME.rs`, or the multi-file `tests/NAME/main.rs`, #15327): a
 /// crate no other crate can depend on, so nothing it defines is importable.
 /// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
 /// root is importable and answers no.
 fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
-    !index.member_crates.is_custom_lib_path_root(root)
-        && root
-            .parent()
+    let target_directory = |directory: Option<&Path>| {
+        directory
             .and_then(Path::file_name)
-            .is_some_and(|directory| {
-                directory == "tests" || directory == "benches" || directory == "examples"
-            })
+            .is_some_and(|name| name == "tests" || name == "benches" || name == "examples")
+    };
+    let parent = root.parent();
+    !index.member_crates.is_custom_lib_path_root(root)
+        && (target_directory(parent)
+            || (root.file_name().is_some_and(|name| name == "main.rs")
+                && target_directory(parent.and_then(Path::parent))))
 }
 
 /// Whether source text may hold an out-of-line `mod name;`, read lexically
@@ -3846,7 +3850,7 @@ impl TargetRoots {
 
 /// The crate root file `file` composes under: a recognized Cargo target root
 /// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example or build script), a root the package manifest names (`[lib] path`,
+/// example (`tests/NAME.rs` or `tests/NAME/main.rs` and kin) or build script), a root the package manifest names (`[lib] path`,
 /// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
 /// `path`), or `None` when composition is unresolved, goes through
 /// `include!`, or ends at a file no target is known to root.
@@ -3899,6 +3903,10 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
         | [.., "src", "bin", _]
         | [.., "src", "bin", _, "main.rs"] => true,
         [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
+        // Cargo autodiscovers a multi-file integration test, bench or
+        // example as `tests/NAME/main.rs` (and kin), with its modules beside
+        // it (#15327).
+        [package @ .., "tests" | "benches" | "examples", _, "main.rs"] => package_has_src(package),
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
     };
