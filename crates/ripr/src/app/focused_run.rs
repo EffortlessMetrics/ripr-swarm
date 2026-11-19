@@ -14,7 +14,8 @@
 //! a `started` test with no terminal event, and unclosed or mismatched suites
 //! are refused. The retained record is the normalized record, not the caller's
 //! bytes. It states what was checked and what was not: ripr did not observe the
-//! run, and the result does not gate finish.
+//! run. Whether a result is required to finish is decided by the caller of
+//! this module: only an attempt that follows a new-test proposal needs one.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -170,6 +171,10 @@ pub(crate) struct FocusedRunRecord {
 }
 
 impl FocusedRunRecord {
+    pub(crate) fn failed_count(&self) -> usize {
+        self.failed
+    }
+
     pub(crate) fn counted(&self) -> usize {
         self.ran_tests.len()
     }
@@ -397,6 +402,15 @@ pub(crate) fn validate_focused_run(
 /// `tests/` file); nothing is then counted rather than guessed. A `#[path]`
 /// module is not detectable from the file alone and stays a caller's claim.
 fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
+    let mut path = file_module_path(file)?;
+    path.push(module.to_string());
+    Some(path)
+}
+
+/// The module path `file` itself contributes to a libtest name: empty for a
+/// crate root or an integration-test file, `a::b` for `src/a/b.rs`. `None`
+/// when it cannot be derived from the file alone.
+fn file_module_path(file: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = file.split('/').collect();
     let mut path: Vec<String> = Vec::new();
     if let Some(at) = parts.iter().position(|part| *part == "src") {
@@ -417,8 +431,19 @@ fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
             _ => return None,
         }
     }
-    path.push(module.to_string());
     Some(path)
+}
+
+/// A libtest name with the file's own module path removed: the
+/// file-internal path `analysis::executable_test_function_names` reports
+/// (`tests::adds`). `None` when the name does not carry that prefix.
+fn file_internal_path<'a>(name: &'a str, file_prefix: &str) -> Option<&'a str> {
+    if file_prefix.is_empty() {
+        Some(name)
+    } else {
+        name.strip_prefix(file_prefix)
+            .and_then(|rest| rest.strip_prefix("::"))
+    }
 }
 
 enum NameScope {
@@ -454,13 +479,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
                 return false;
             };
             let file_prefix = file_parts.join("::");
-            let path = if file_prefix.is_empty() {
-                Some(name)
-            } else {
-                name.strip_prefix(&file_prefix)
-                    .and_then(|rest| rest.strip_prefix("::"))
-            };
-            path.is_some_and(|path| {
+            file_internal_path(name, &file_prefix).is_some_and(|path| {
                 path.strip_prefix(module)
                     .is_some_and(|rest| rest.starts_with("::"))
                     && defined.contains(path)
@@ -469,6 +488,110 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
         NameScope::AnyPath => defined.contains(name),
         NameScope::Nothing => false,
     }
+}
+
+/// The full-proof finish gate for an attempt that follows a new-test proposal
+/// (#13203 slice C): a finish needs a recorded focused result with at least one
+/// counted test and no failed test. The result's attribution stays the
+/// caller's claim; a failed test counts as having run, so it is refused here.
+pub(crate) fn require_passing_run(
+    record: Option<&FocusedRunRecord>,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(record) = record else {
+        return Err(format!(
+            "attempt `{attempt_id}` follows a new-test proposal, so finishing needs a focused test result; run the new test (`cargo test -- --format json -Z unstable-options`) and pass its events with `--test-result FILE`"
+        ));
+    };
+    if record.counted() == 0 {
+        return Err(format!(
+            "attempt `{attempt_id}` has a focused test result with no counted test; run the new test and pass its events with `--test-result FILE`"
+        ));
+    }
+    if record.failed_count() > 0 {
+        return Err(format!(
+            "the focused test result reports {} failed test(s) for attempt `{attempt_id}`; fix the test or the code, rerun it and pass the new events with `--test-result FILE`",
+            record.failed_count()
+        ));
+    }
+    require_new_test(&record.ran_tests, attempt_id, baseline)
+}
+
+/// The selected file's tests when an inline-proposal attempt began: the input
+/// of the inline-proposal gate, which must not credit a test that already
+/// existed.
+#[derive(Debug)]
+pub(crate) struct ProposalBaseline {
+    /// The module path the file contributes to libtest names; `None` when it
+    /// cannot be derived, and then no ran test is credited as new.
+    file_prefix: Option<String>,
+    /// File-internal test paths (`tests::adds`).
+    tests: BTreeSet<String>,
+}
+
+/// Test names defined by the selected file when the attempt began.
+pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<ProposalBaseline, String> {
+    Ok(ProposalBaseline {
+        file_prefix: file_module_path(file).map(|parts| parts.join("::")),
+        tests: executable_test_names(file, source)?,
+    })
+}
+
+/// An inline proposal adds a test to a file that already holds tests, so a
+/// passing run must include a test the baseline did not define. A ran name is
+/// new only when, with the file's module path removed, its file-internal path
+/// is not a baseline path; a name whose path cannot be derived is not new.
+fn require_new_test(
+    ran: &[String],
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(baseline) = baseline else {
+        return Ok(());
+    };
+    let is_new = |name: &str| {
+        baseline.file_prefix.as_deref().is_some_and(|prefix| {
+            file_internal_path(name, prefix).is_some_and(|path| !baseline.tests.contains(path))
+        })
+    };
+    if !ran.iter().any(|name| is_new(name)) {
+        return Err(format!(
+            "attempt `{attempt_id}` follows an inline new-test proposal, but every counted test already existed in the file when the attempt began; run the newly added test and pass its events with `--test-result FILE`"
+        ));
+    }
+    Ok(())
+}
+
+/// Apply C's gate to a normalized claim committed by an older B producer.
+/// This checks the retained claim's outcome; it does not attest execution.
+pub(crate) fn require_passing_recorded_run(
+    raw: &str,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Outcome {
+        schema_version: String,
+        kind: String,
+        attempt_id: String,
+        ran_tests: Vec<String>,
+        passed: usize,
+        failed: usize,
+    }
+    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| {
+        format!("the retained focused result cannot be read: {error}; inspect the retained attempt")
+    })?;
+    if outcome.schema_version != FOCUSED_RUN_SCHEMA_VERSION
+        || outcome.kind != FOCUSED_RUN_RECORD_KIND
+        || outcome.attempt_id != attempt_id
+        || outcome.ran_tests.is_empty()
+        || outcome.failed != 0
+        || outcome.passed != outcome.ran_tests.len()
+    {
+        return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
+    }
+    require_new_test(&outcome.ran_tests, attempt_id, baseline)
 }
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
@@ -834,6 +957,106 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
+    }
+
+    #[test]
+    fn the_finish_gate_needs_a_counted_passing_run() {
+        let ran = |events: Value| {
+            validate_focused_run(
+                &document("attempt-1", "abc123", "tests/math.rs", events),
+                &scope(None),
+            )
+        };
+        let passing = ran(serde_json::json!([ok("adds")]));
+        assert!(
+            passing
+                .as_ref()
+                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1", None).is_ok()),
+            "{passing:?}"
+        );
+        let failing = ran(serde_json::json!([
+            ok("adds"),
+            {"type": "test", "event": "failed", "name": "subtracts"}
+        ]));
+        let failing = failing.as_ref().map_err(String::clone);
+        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1", None));
+        assert!(
+            verdict
+                .as_ref()
+                .is_ok_and(|v| v.as_ref().err().is_some_and(|e| e.contains("1 failed"))),
+            "{verdict:?}"
+        );
+        let missing = require_passing_run(None, "attempt-1", None)
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("needs a focused test result"), "{missing}");
+        let baseline = ProposalBaseline {
+            file_prefix: Some(String::new()),
+            tests: ["adds".to_string()].into(),
+        };
+        let old_only = ran(serde_json::json!([ok("adds")]));
+        let old_only = old_only.as_ref().map_err(String::clone);
+        let verdict = old_only.map(|r| require_passing_run(Some(r), "attempt-1", Some(&baseline)));
+        assert!(
+            verdict.as_ref().is_ok_and(|v| v
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("already existed"))),
+            "{verdict:?}"
+        );
+        let with_new = ran(serde_json::json!([ok("adds"), ok("subtracts")]));
+        assert!(
+            with_new.as_ref().is_ok_and(|r| {
+                require_passing_run(Some(r), "attempt-1", Some(&baseline)).is_ok()
+            }),
+            "{with_new:?}"
+        );
+    }
+
+    #[test]
+    fn the_new_test_check_compares_file_internal_paths_exactly() {
+        let before = "fn production() {}\n\n#[test]\nfn existing_discount() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn old() {}\n}\n";
+        let check = |file: &str, names: &[&str]| {
+            let baseline = baseline_test_names(file, before)?;
+            let ran: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+            require_new_test(&ran, "attempt-1", Some(&baseline))
+        };
+        let refused = |result: Result<(), String>| {
+            result
+                .err()
+                .is_some_and(|error| error.contains("already existed"))
+        };
+        let in_math = baseline_test_names("src/math.rs", before);
+        assert_eq!(
+            in_math
+                .as_ref()
+                .map(|b| (b.file_prefix.clone(), b.tests.clone())),
+            Ok((
+                Some("math".to_string()),
+                ["existing_discount".to_string(), "tests::old".to_string()].into()
+            )),
+            "{in_math:?}"
+        );
+        // A governed `tests::existing_discount` is new even though a
+        // top-level `existing_discount` already existed.
+        assert_eq!(
+            check("src/math.rs", &["math::tests::existing_discount"]),
+            Ok(())
+        );
+        assert!(refused(check("src/math.rs", &["math::tests::old"])));
+        assert_eq!(
+            check("src/math.rs", &["math::tests::old", "math::tests::added"]),
+            Ok(())
+        );
+        // A name without the file's module path is not credited.
+        assert!(refused(check("src/math.rs", &["tests::added"])));
+        assert!(refused(check("src/math.rs", &["other::tests::added"])));
+        // A crate root contributes no prefix.
+        assert_eq!(check("src/lib.rs", &["tests::existing_discount"]), Ok(()));
+        assert!(refused(check("src/lib.rs", &["tests::old"])));
+        assert!(refused(check("src/lib.rs", &["existing_discount"])));
+        // A file whose module path cannot be derived credits nothing.
+        assert!(refused(check("src/bin/tool.rs", &["tests::added"])));
     }
 
     #[test]
