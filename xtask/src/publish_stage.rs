@@ -6,18 +6,26 @@
 //! `#[cfg(test)] mod tests { .. }` blocks, and that share grows with every
 //! test added. Moving those blocks into files is a 400k-line diff.
 //!
-//! Instead the package is built from a staged copy of the workspace: every
-//! tracked file the build reads is copied, and in `crates/ripr/src` each inline
-//! module whose attributes include exactly `#[cfg(test)]` is removed with its
-//! attributes and doc comments. A build without `cfg(test)` never compiles
-//! such a module, so the library, the binary and every feature build are the
-//! same with or without it. The repository checkout keeps every test.
+//! Instead the package is built from a publish stage: a sparse local clone of
+//! the workspace checked out at `HEAD`, holding the workspace members and the
+//! root files, in which `crates/ripr/src` has each inline module whose
+//! attributes include exactly `#[cfg(test)]` removed with its attributes and
+//! doc comments. A build without `cfg(test)` never compiles such a module, so
+//! the library, the binary and every feature build are the same with or
+//! without it. The repository checkout keeps every test.
+//!
+//! Because the stage is a Git checkout of `HEAD`, `cargo package` still
+//! records the source commit in `.cargo_vcs_info.json`, marked dirty by the
+//! strip. The stage also writes [`PUBLISH_STAGE_MARKER`] holding that commit;
+//! a dirty record whose commit equals the marker's is a publish-stage package,
+//! which `build.rs` and the release gate identify by its commit
+//! (`crates/ripr/src/build_commit_record.rs`).
 //!
 //! The strip is fail-closed: a file that does not parse before or after the
 //! edit stops the stage, and the rehearsal then compiles the packaged crate.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use ra_ap_syntax::ast::{self, HasAttrs};
@@ -26,8 +34,13 @@ use ra_ap_syntax::{AstNode, Edition, SourceFile, TextRange};
 /// The crate whose inline test modules are stripped in the stage.
 const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
 
-/// Workspace directories copied into the stage. Cargo loads every member's
-/// manifest and targets, so all members are copied; nothing else is read.
+/// The marker file, relative to the `ripr` package root, that names the
+/// commit a publish stage was checked out at. Packaged by the `include` list.
+pub(crate) const PUBLISH_STAGE_MARKER: &str = ".ripr-publish-stage";
+
+/// Workspace directories checked out in the stage, besides the root files.
+/// Cargo loads every member's manifest and targets, so all members are
+/// checked out; nothing else is read.
 const STAGED_DIRECTORIES: &[&str] = &[
     ".cargo",
     "crates/ripr",
@@ -39,17 +52,16 @@ const STAGED_DIRECTORIES: &[&str] = &[
 /// What staging did, for the rehearsal log.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct StageReport {
-    pub(crate) copied_files: usize,
+    pub(crate) commit: String,
     pub(crate) stripped_files: usize,
     pub(crate) stripped_modules: usize,
     pub(crate) stripped_bytes: usize,
 }
 
-/// Copy the tracked files of `workspace` that a package build reads into
-/// `stage` (which must not exist), then strip inline test modules from the
-/// staged `crates/ripr/src`. Tracked files are read from the working tree, so
-/// an uncommitted edit to a tracked file is staged, as `cargo package
-/// --allow-dirty` would package it; untracked files are not.
+/// Check out `HEAD` of `workspace` into `stage` (which must not exist) as a
+/// sparse local clone, then strip inline test modules from the staged
+/// `crates/ripr/src` and write the marker. Only committed content is staged:
+/// an uncommitted edit in the checkout is not packaged.
 pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageReport, String> {
     if stage.exists() {
         return Err(format!(
@@ -57,39 +69,34 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
             stage.display()
         ));
     }
-    let mut report = StageReport::default();
-    for relative in tracked_files(workspace)? {
-        if !is_staged(&relative) {
-            continue;
-        }
-        let from = workspace.join(&relative);
-        // A tracked file deleted in the working tree is not packaged either.
-        if !from.is_file() {
-            continue;
-        }
-        let to = stage.join(&relative);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-        }
-        fs::copy(&from, &to).map_err(|e| format!("cannot stage {}: {e}", from.display()))?;
-        report.copied_files += 1;
-        if relative.starts_with(STRIPPED_SOURCE_ROOT)
-            && relative.extension().is_some_and(|ext| ext == "rs")
-        {
-            let text = fs::read_to_string(&to)
-                .map_err(|e| format!("cannot read {}: {e}", to.display()))?;
-            let stripped = strip_inline_test_modules(&text)
-                .map_err(|e| format!("{}: {e}", relative.display()))?;
-            if stripped.modules > 0 {
-                fs::write(&to, &stripped.text)
-                    .map_err(|e| format!("cannot write {}: {e}", to.display()))?;
-                report.stripped_files += 1;
-                report.stripped_modules += stripped.modules;
-                report.stripped_bytes += text.len().saturating_sub(stripped.text.len());
-            }
-        }
-    }
+    let commit = git_output(workspace, &["rev-parse", "--verify", "HEAD"])?;
+    let workspace_arg = workspace.to_string_lossy().into_owned();
+    let stage_arg = stage.to_string_lossy().into_owned();
+    let parent = stage
+        .parent()
+        .ok_or_else(|| format!("publish stage {} has no parent", stage.display()))?;
+    fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    git_output(
+        parent,
+        &[
+            "clone",
+            "--quiet",
+            "--shared",
+            "--no-checkout",
+            workspace_arg.as_str(),
+            stage_arg.as_str(),
+        ],
+    )?;
+    let mut sparse = vec!["sparse-checkout", "set", "--cone"];
+    sparse.extend_from_slice(STAGED_DIRECTORIES);
+    git_output(stage, &sparse)?;
+    git_output(stage, &["checkout", "--quiet", "--detach", commit.as_str()])?;
+
+    let mut report = StageReport {
+        commit: commit.clone(),
+        ..StageReport::default()
+    };
+    strip_tree(stage, &stage.join(STRIPPED_SOURCE_ROOT), &mut report)?;
     if report.stripped_files == 0 {
         // The ripr source always holds inline test modules; staging none
         // means the strip did not run on it, not that there was nothing to do.
@@ -97,38 +104,61 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
             "no inline #[cfg(test)] module was stripped under {STRIPPED_SOURCE_ROOT}; the stage would package every test"
         ));
     }
+    let marker = stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER);
+    fs::write(&marker, format!("{commit}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
     Ok(report)
 }
 
-fn tracked_files(workspace: &Path) -> Result<Vec<PathBuf>, String> {
+fn strip_tree(stage: &Path, dir: &Path, report: &mut StageReport) -> Result<(), String> {
+    let mut entries = fs::read_dir(dir)
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    entries.sort_by_key(fs::DirEntry::path);
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if kind.is_dir() {
+            strip_tree(stage, &path, report)?;
+        } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            let text = fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            let relative = path.strip_prefix(stage).unwrap_or(&path);
+            let stripped = strip_inline_test_modules(&text)
+                .map_err(|e| format!("{}: {e}", relative.display()))?;
+            if stripped.modules > 0 {
+                fs::write(&path, &stripped.text)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+                report.stripped_files += 1;
+                report.stripped_modules += stripped.modules;
+                report.stripped_bytes += text.len().saturating_sub(stripped.text.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Run `git` with fixed arguments in `dir` and return its trimmed stdout.
+fn git_output(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
-        .args(["ls-files", "-z", "--cached"])
-        .current_dir(workspace)
+        .args(args)
+        .current_dir(dir)
         .output()
-        .map_err(|e| format!("git ls-files failed to start: {e}"))?;
+        .map_err(|e| format!("git {} failed to start: {e}", args.join(" ")))?;
     if !output.status.success() {
         return Err(format!(
-            "git ls-files failed in {}: {}",
-            workspace.display(),
+            "git {} failed in {}: {}",
+            args.join(" "),
+            dir.display(),
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let text = String::from_utf8(output.stdout)
-        .map_err(|e| format!("git ls-files printed a non-UTF-8 path: {e}"))?;
-    Ok(text
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .collect())
-}
-
-/// Root-level files (the workspace manifest, lockfile and toolchain pin) and
-/// everything under the staged directories.
-fn is_staged(relative: &Path) -> bool {
-    relative.components().count() == 1
-        || STAGED_DIRECTORIES
-            .iter()
-            .any(|directory| relative.starts_with(directory))
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim().to_string())
+        .map_err(|e| format!("git {} printed non-UTF-8 output: {e}", args.join(" ")))
 }
 
 /// One source file after the strip.
@@ -225,17 +255,38 @@ fn line_break_end(source: &str, end: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Run `git` with fixed arguments in a test's own temporary repository.
-    fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .map_err(|e| e.to_string())?;
-        status
-            .success()
-            .then_some(())
-            .ok_or_else(|| format!("git {args:?} failed"))
+    /// A temporary repository with `files` committed, plus `untracked`.
+    fn committed_workspace(
+        root: &Path,
+        files: &[(&str, &str)],
+        untracked: &[(&str, &str)],
+    ) -> Result<std::path::PathBuf, String> {
+        let io = |e: std::io::Error| e.to_string();
+        let _ = fs::remove_dir_all(root);
+        let workspace = root.join("workspace");
+        for (path, body) in files.iter().chain(untracked) {
+            let file = workspace.join(path);
+            fs::create_dir_all(file.parent().ok_or("no parent")?).map_err(io)?;
+            fs::write(&file, body).map_err(io)?;
+        }
+        git_output(&workspace, &["init", "-q"])?;
+        for (path, _) in files {
+            git_output(&workspace, &["add", "--", path])?;
+        }
+        git_output(
+            &workspace,
+            &[
+                "-c",
+                "user.name=stage-test",
+                "-c",
+                "user.email=stage-test@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ],
+        )?;
+        Ok(workspace)
     }
 
     #[test]
@@ -286,42 +337,48 @@ mod tests {
     }
 
     #[test]
-    fn stages_tracked_member_files_and_strips_only_ripr_source() -> Result<(), String> {
+    fn stages_head_of_the_members_strips_only_ripr_source_and_marks_the_commit()
+    -> Result<(), String> {
         let io = |e: std::io::Error| e.to_string();
         let root = std::env::temp_dir().join(format!("ripr-stage-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let workspace = root.join("workspace");
         let test_module =
             "pub fn live() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n";
-        for (path, body) in [
-            ("Cargo.toml", "[workspace]\n"),
-            ("crates/ripr/src/lib.rs", test_module),
-            ("crates/ripr-contract/src/lib.rs", test_module),
-            ("docs/guide.md", "not staged\n"),
-        ] {
-            let file = workspace.join(path);
-            fs::create_dir_all(file.parent().ok_or("no parent")?).map_err(io)?;
-            fs::write(&file, body).map_err(io)?;
-        }
-        git(&workspace, &["init", "-q"])?;
-        git(&workspace, &["add", "."])?;
-        // Untracked: never staged.
-        fs::write(workspace.join("crates/ripr/src/scratch.rs"), "junk").map_err(io)?;
+        let workspace = committed_workspace(
+            &root,
+            &[
+                ("Cargo.toml", "[workspace]\n"),
+                ("crates/ripr/src/lib.rs", test_module),
+                ("crates/ripr/src/nested/deep.rs", test_module),
+                ("crates/ripr-contract/src/lib.rs", test_module),
+                ("docs/guide.md", "not staged\n"),
+            ],
+            &[("crates/ripr/src/scratch.rs", "untracked\n")],
+        )?;
+        // An uncommitted edit is not staged: the stage is HEAD.
+        fs::write(workspace.join("Cargo.toml"), "edited\n").map_err(io)?;
+        let head = git_output(&workspace, &["rev-parse", "HEAD"])?;
 
         let stage = root.join("stage");
         let report = stage_workspace(&workspace, &stage)?;
         assert_eq!(
             (
-                report.copied_files,
+                report.commit.as_str(),
                 report.stripped_files,
                 report.stripped_modules
             ),
-            (3, 1, 1)
+            (head.as_str(), 2, 2)
         );
+        assert_eq!(git_output(&stage, &["rev-parse", "HEAD"])?, head);
         assert_eq!(
-            fs::read_to_string(stage.join("crates/ripr/src/lib.rs")).map_err(io)?,
-            "pub fn live() {}\n\n"
+            fs::read_to_string(stage.join("Cargo.toml")).map_err(io)?,
+            "[workspace]\n"
         );
+        for stripped in ["crates/ripr/src/lib.rs", "crates/ripr/src/nested/deep.rs"] {
+            assert_eq!(
+                fs::read_to_string(stage.join(stripped)).map_err(io)?,
+                "pub fn live() {}\n\n"
+            );
+        }
         // Only ripr is stripped; the contract crate keeps its tests.
         assert_eq!(
             fs::read_to_string(stage.join("crates/ripr-contract/src/lib.rs")).map_err(io)?,
@@ -329,6 +386,10 @@ mod tests {
         );
         assert!(!stage.join("docs/guide.md").exists());
         assert!(!stage.join("crates/ripr/src/scratch.rs").exists());
+        assert_eq!(
+            fs::read_to_string(stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER)).map_err(io)?,
+            format!("{head}\n")
+        );
         // An existing stage is never staged over.
         assert!(
             matches!(stage_workspace(&workspace, &stage), Err(e) if e.contains("already exists"))
@@ -339,15 +400,12 @@ mod tests {
 
     #[test]
     fn a_stage_that_strips_nothing_is_refused() -> Result<(), String> {
-        let io = |e: std::io::Error| e.to_string();
         let root = std::env::temp_dir().join(format!("ripr-stage-empty-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let workspace = root.join("workspace");
-        let lib = workspace.join("crates/ripr/src/lib.rs");
-        fs::create_dir_all(lib.parent().ok_or("no parent")?).map_err(io)?;
-        fs::write(&lib, "pub fn live() {}\n").map_err(io)?;
-        git(&workspace, &["init", "-q"])?;
-        git(&workspace, &["add", "."])?;
+        let workspace = committed_workspace(
+            &root,
+            &[("crates/ripr/src/lib.rs", "pub fn live() {}\n")],
+            &[],
+        )?;
         let refused = stage_workspace(&workspace, &root.join("stage"));
         assert!(
             matches!(refused, Err(e) if e.contains("no inline #[cfg(test)] module was stripped"))

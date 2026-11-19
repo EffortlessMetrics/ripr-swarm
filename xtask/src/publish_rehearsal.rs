@@ -40,8 +40,13 @@ pub(crate) fn run() -> Result<(), String> {
     }
 
     let version = pkgid_version("ripr")?;
-    let scratch =
-        std::env::temp_dir().join(format!("ripr-publish-rehearsal-{}", std::process::id()));
+    // Under `target/`, beside `PUBLISH_STAGE_DIR`, so keeping the stage is a
+    // same-filesystem rename even when the system temp dir is another mount.
+    // Absolute, because the rehearsal's cargo commands run inside the stage.
+    let scratch = std::env::current_dir()
+        .map_err(|e| format!("cannot read the current directory: {e}"))?
+        .join("target")
+        .join(format!("ripr-publish-rehearsal-{}", std::process::id()));
     if scratch.exists() {
         fs::remove_dir_all(&scratch)
             .map_err(|e| format!("cannot clear {}: {e}", scratch.display()))?;
@@ -80,7 +85,7 @@ fn keep_stage(scratch: &Path) -> Result<(), String> {
         )
     })?;
     println!(
-        "publish stage kept at {PUBLISH_STAGE_DIR}: run the real `cargo publish -p ripr-contract` and `cargo publish -p ripr` from there"
+        "publish stage kept at {PUBLISH_STAGE_DIR}: run the real `cargo publish --allow-dirty -p ripr-contract` and then `cargo publish --allow-dirty -p ripr` from there"
     );
     Ok(())
 }
@@ -97,12 +102,32 @@ pub(crate) fn vendored_ripr_crate(
 ) -> Result<(PathBuf, PathBuf), String> {
     let workspace =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
+    // The cargo commands below run inside the stage, so every path handed to
+    // them must be absolute; `release-readiness` passes a relative scratch.
+    let scratch = workspace.join(scratch);
     let stage = scratch.join("stage");
     let report = crate::publish_stage::stage_workspace(&workspace, &stage)?;
     println!(
-        "publish stage: {} files staged; {} inline #[cfg(test)] modules ({} bytes) stripped from {} ripr source files",
-        report.copied_files, report.stripped_modules, report.stripped_bytes, report.stripped_files
+        "publish stage: HEAD {} checked out; {} inline #[cfg(test)] modules ({} bytes) stripped from {} ripr source files",
+        report.commit, report.stripped_modules, report.stripped_bytes, report.stripped_files
     );
+    // `cargo package` and `cargo vendor` re-resolve and may rewrite
+    // Cargo.lock; restore the committed one afterwards, so the kept stage
+    // differs from HEAD only by the strip and its marker.
+    let lock_path = stage.join("Cargo.lock");
+    let lock_backup = fs::read(&lock_path).ok();
+    let packaged = package_from_stage(&scratch, &stage, version);
+    if let Some(bytes) = lock_backup {
+        let _ = fs::write(&lock_path, bytes);
+    }
+    packaged
+}
+
+fn package_from_stage(
+    scratch: &Path,
+    stage: &Path,
+    version: &str,
+) -> Result<(PathBuf, PathBuf), String> {
     let target = scratch.join("target");
     let target_arg = target.to_string_lossy().into_owned();
 
@@ -116,14 +141,14 @@ pub(crate) fn vendored_ripr_crate(
         ],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
         None,
-        &stage,
+        stage,
     )?;
     let contract_crate = pick_crate_file(&target.join("package"), "ripr-contract", version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
 
     let vendor = scratch.join("vendor");
     let vendor_arg = vendor.to_string_lossy().into_owned();
-    run_cargo(&["vendor", vendor_arg.as_str()], &[], None, &stage)?;
+    run_cargo(&["vendor", vendor_arg.as_str()], &[], None, stage)?;
     let vendored_contract = vendor.join(format!("ripr-contract-{version}"));
     extract_crate(
         &contract_crate,
@@ -136,24 +161,16 @@ pub(crate) fn vendored_ripr_crate(
     )
     .map_err(|e| format!("cannot write vendored checksum: {e}"))?;
 
-    // `cargo package` re-resolves and may rewrite Cargo.lock; restore it, so
-    // the kept stage carries the workspace lockfile.
-    let lock_path = stage.join("Cargo.lock");
-    let lock_backup = fs::read(&lock_path).ok();
     let vendor_cfg = vendor.to_string_lossy().replace('\\', "/");
-    let packaged = run_cargo(
+    run_cargo(
         &["package", "-p", "ripr", "--no-verify", "--allow-dirty"],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
         Some(&[
             "source.crates-io.replace-with=\"vendored\"".to_string(),
             format!("source.vendored.directory=\"{vendor_cfg}\""),
         ]),
-        &stage,
-    );
-    if let Some(bytes) = lock_backup {
-        let _ = fs::write(&lock_path, bytes);
-    }
-    packaged?;
+        stage,
+    )?;
     let ripr_crate = pick_crate_file(&target.join("package"), "ripr", version)?;
     Ok((contract_crate, ripr_crate))
 }

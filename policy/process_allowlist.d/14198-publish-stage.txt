@@ -1,2 +1,2 @@
-xtask/src/publish_stage.rs|Command::new|2|release-proof|Runs `git ls-files -z --cached` in the workspace to choose the tracked files copied into the publish stage, and `git init`/`git add` in the unit tests' own temporary repositories. Fixed argument lists, no shell, no network, no user-repository mutation.
-xtask/src/publish_stage.rs|use std::process::Command|1|release-proof|Import for the git spawn sites described above.
+xtask/src/publish_stage.rs|Command::new|1|release-proof|One `git` helper with fixed argument lists: reads HEAD, makes a sparse `--shared --no-checkout` local clone of the workspace as the publish stage and checks out that commit there, and in the unit tests initializes and commits their own temporary repositories. No shell, no network, no user-repository mutation.
+xtask/src/publish_stage.rs|use std::process::Command|1|release-proof|Import for the git helper described above.

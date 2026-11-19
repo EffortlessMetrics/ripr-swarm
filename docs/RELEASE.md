@@ -269,23 +269,34 @@ remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
 test adds to them (#14198).
 
 So `ripr` is packaged from a **publish stage**, never straight from the
-checkout. `cargo xtask publish-dry-run` copies the tracked files of the
-workspace members (plus root-level files and `.cargo/`) into a stage and, in
+checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+clone of the workspace checked out at `HEAD` (the workspace members, the root
+files and `.cargo/`; uncommitted edits are not staged) and, in
 `crates/ripr/src` only, removes every inline module whose attributes include
 exactly `#[cfg(test)]`, with its attributes and doc comments
 (`xtask/src/publish_stage.rs`). A build without `cfg(test)` never compiles
 those modules, so the library, binary and feature builds are unchanged; the
 repository checkout keeps every test. The strip parses each file with the
 Rust parser before and after the edit and stops the rehearsal on any parse
-error, and the rehearsal then compiles the packaged crate. Out-of-line
-`#[cfg(test)] mod name;` declarations stay; their files are left out by the
-`include` list above. A passing rehearsal leaves the stage at
+error or when nothing was stripped, and the rehearsal then compiles the
+packaged crate. Out-of-line `#[cfg(test)] mod name;` declarations stay; their
+files are left out by the `include` list above. The rehearsal fails when a
+packaged crate is over the limit. A passing rehearsal leaves the stage at
 `target/publish-stage`, and the real publish runs from there (see
 [Publish](#publish)).
 
-From the stage the crate measured STAGED_BYTES bytes on main `STAGED_SHA`
-(STAGED_HEADROOM bytes, about STAGED_PCT%, under the limit), via
-`cargo xtask publish-dry-run`.
+Because the stage is a Git checkout of `HEAD`, the packaged
+`.cargo_vcs_info.json` still names the source commit, marked `"dirty": true`
+by the strip. The stage also writes `crates/ripr/.ripr-publish-stage`, which
+holds that commit and is packaged. A dirty record whose commit equals the
+marker's is identified as that commit, clean, by `build.rs` (so
+`ripr --version` prints the plain commit) and by the `package-install`
+identity check; any other dirty record stays dirty
+(`crates/ripr/src/build_commit_record.rs`).
+
+From the stage the crate measured 7,384,261 bytes on main `5b9c56a4`
+(3,101,499 bytes, about 29.6%, under the limit; 728 inline test modules,
+19,360,633 bytes, stripped from 616 files), via `cargo xtask publish-dry-run`.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
@@ -433,8 +444,12 @@ checkout: the checkout's `ripr` package is over the crates.io upload limit
 cargo login
 cargo xtask publish-dry-run        # leaves the rehearsed stage at target/publish-stage
 cd target/publish-stage
-cargo publish -p ripr
+cargo publish --allow-dirty -p ripr-contract
+cargo publish --allow-dirty -p ripr
 ```
+
+`--allow-dirty` is required because the strip modifies the checked-out
+`ripr` sources; the stage holds nothing else that differs from `HEAD`.
 
 Cargo may time out while polling the registry index after upload. If that
 happens, check crates.io manually before retrying.
