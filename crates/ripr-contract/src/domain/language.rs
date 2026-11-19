@@ -542,6 +542,14 @@ pub enum StaticLimitKind {
     /// route, not by this label. This names the unresolved boundary input,
     /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
     ActivationBoundaryInputUnresolved,
+    /// A Rust owner compiled only under a cfg ripr cannot evaluate
+    /// (`#[cfg(error_generic_member_access)]`) has no test seen calling it,
+    /// and a doc example in the same library is gated by the same cfg, so
+    /// the doctest admission did not read it. That example may check the
+    /// owner, so the producer withholds the gap as `static_unknown`. Nothing
+    /// is credited; this names the unread example, not a coverage claim.
+    /// See RIPR-SPEC-0240 (#14935).
+    RustGatedDoctestUnread,
 }
 
 impl StaticLimitKind {
@@ -624,6 +632,7 @@ impl StaticLimitKind {
             StaticLimitKind::ActivationBoundaryInputUnresolved => {
                 "activation_boundary_input_unresolved"
             }
+            StaticLimitKind::RustGatedDoctestUnread => "rust_gated_doctest_unread",
         }
     }
 
@@ -836,6 +845,12 @@ impl StaticLimitKind {
                  closure-derived operand that ripr cannot map to a test call's arguments, so it \
                  cannot tell which side of the boundary a test input lands on. The repair is \
                  withheld; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustGatedDoctestUnread => {
+                "Doc example not read: the changed Rust function is compiled only under a cfg \
+                 ripr cannot evaluate, and a doc example in the same library is gated by that \
+                 cfg, so ripr did not read the example that may check it. ripr does not claim \
+                 a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1237,6 +1252,10 @@ mod tests {
             StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
             "activation_boundary_input_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustGatedDoctestUnread.as_str(),
+            "rust_gated_doctest_unread"
+        );
     }
 
     #[test]
@@ -1278,6 +1297,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
             StaticLimitKind::ActivationBoundaryInputUnresolved,
+            StaticLimitKind::RustGatedDoctestUnread,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

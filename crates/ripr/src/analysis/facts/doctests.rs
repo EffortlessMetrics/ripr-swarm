@@ -45,12 +45,14 @@
 //! `crate::` (`RustIndex::doctest_source`).
 
 mod enclosing;
+mod gated;
 
 use self::enclosing::enclosing_gate_refuses;
+pub(crate) use self::gated::attribute_gate_atoms;
 use super::cfg_predicates::rust_ident_name;
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -100,6 +102,9 @@ impl DocExample {
 
 pub(super) fn register_doctests(index: &mut RustIndex) {
     let mut generated: Vec<(TestFact, Arc<str>)> = Vec::new();
+    // Rebuilt whole on every pass, so a reused index never keeps the atoms
+    // of a file whose examples changed or went away (#14935).
+    let mut refused_gate_atoms: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
     for (path, file) in &index.files {
         // Most files hold no fenced example; check that before the manifest.
         if !file.data.source.contains("```") {
@@ -110,6 +115,13 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
         };
         let defaults = index.member_crates.default_library_features(&root);
         let defaults = defaults.as_ref();
+        let atoms = gated::refused_example_gate_atoms(&file.data.source, defaults);
+        if !atoms.is_empty() {
+            refused_gate_atoms
+                .entry(root.clone())
+                .or_default()
+                .extend(atoms);
+        }
         if file_has_inner_cfg_gate(&file.data.source, defaults) {
             continue;
         }
@@ -142,6 +154,7 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
             generated.push((test, Arc::from(source)));
         }
     }
+    index.refused_doctest_gate_atoms = refused_gate_atoms;
     let mut touched = std::collections::BTreeSet::new();
     for (test, source) in generated {
         let key = (test.file.clone(), test.start_line);
@@ -205,6 +218,19 @@ fn doctested_library_root(index: &RustIndex, path: &Path) -> Option<PathBuf> {
     (root.ends_with(Path::new("src").join("lib.rs"))
         && index.member_crates.runs_library_doctests(root))
     .then(|| root.to_path_buf())
+}
+
+impl RustIndex {
+    /// The cfg atoms that gate a doc example ripr refused to read in the
+    /// doctested library `file` composes under (#14935); `None` when the file
+    /// is not in such a library or no example there was refused for a gate.
+    pub(crate) fn refused_doctest_gate_atoms(&self, file: &Path) -> Option<&BTreeSet<String>> {
+        if self.refused_doctest_gate_atoms.is_empty() {
+            return None;
+        }
+        let root = doctested_library_root(self, file)?;
+        self.refused_doctest_gate_atoms.get(&root)
+    }
 }
 
 /// Whether the item on `item_line` is a public production function of

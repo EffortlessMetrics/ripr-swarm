@@ -98,6 +98,7 @@ const STATIC_LIMIT_KINDS: [StaticLimitKind; 36] = [
     StaticLimitKind::TypescriptWorkspaceReadLimited,
     StaticLimitKind::RustFutureNeverPolled,
     StaticLimitKind::ActivationBoundaryInputUnresolved,
+    StaticLimitKind::RustGatedDoctestUnread,
 ];
 
 fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
@@ -138,12 +139,13 @@ fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
         StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
         StaticLimitKind::RustFutureNeverPolled => 34,
         StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
+        StaticLimitKind::RustGatedDoctestUnread => 36,
     }
 }
 
 /// The largest ordinal `static_limit_kind_ordinal` assigns. Keep it equal to
 /// the last arm; the test below checks the array reaches it.
-const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 35;
+const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 36;
 
 #[test]
 fn static_limit_kind_list_is_complete_and_ordered() {
@@ -155,7 +157,7 @@ fn static_limit_kind_list_is_complete_and_ordered() {
     // the match but missing from the array fails here.
     assert_eq!(STATIC_LIMIT_KINDS.len(), MAX_STATIC_LIMIT_KIND_ORDINAL + 1);
     assert_eq!(
-        static_limit_kind_ordinal(StaticLimitKind::ActivationBoundaryInputUnresolved),
+        static_limit_kind_ordinal(StaticLimitKind::RustGatedDoctestUnread),
         MAX_STATIC_LIMIT_KIND_ORDINAL
     );
 }
