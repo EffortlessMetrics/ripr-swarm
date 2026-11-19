@@ -40,11 +40,22 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         comment_mode: options.comment_mode,
     };
     let summary = render_ci_summary(&input);
-    let mut stdout = std::io::stdout().lock();
-    stdout
-        .write_all(&summary)
-        .and_then(|()| stdout.flush())
-        .map_err(|err| format!("{COMMAND} could not write the summary: {err}; check you can write to the summary path, then rerun"))
+    write_summary(&mut std::io::stdout().lock(), &summary)
+}
+
+/// The summary is bytes (full reports are included verbatim), so it keeps
+/// its own writer, but its errors carry the shared stdout-writer prefixes:
+/// a reader that closed stdout early (`ripr reports ci-summary | head`)
+/// then exits `2` quietly, as every other command does
+/// (docs/EXIT_CODES.md), instead of blaming a "summary path" that was
+/// never involved.
+fn write_summary(out: &mut impl Write, summary: &[u8]) -> Result<(), String> {
+    out.write_all(summary).map_err(|err| {
+        format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun")
+    })?;
+    out.flush().map_err(|err| {
+        format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun")
+    })
 }
 
 /// `RIPR_GATE_MODE` counts as set when it is non-empty, read raw as

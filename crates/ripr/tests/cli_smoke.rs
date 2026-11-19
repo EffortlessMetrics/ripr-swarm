@@ -37352,6 +37352,31 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
     Ok(())
 }
 
+/// `ripr reports ci-summary` writes its Markdown bytes through its own
+/// writer; a closed reader must still get the shared quiet exit 2, not a
+/// "could not write the summary ... summary path" report.
+#[test]
+fn ci_summary_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["reports", "ci-summary", "--root"])
+        .arg(&sample)
+        .args(["--base-ref", "main"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.trim().is_empty(),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
+}
+
 #[test]
 fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
 -> Result<(), Box<dyn std::error::Error>> {
