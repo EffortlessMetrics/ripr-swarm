@@ -2062,16 +2062,31 @@ fn check_inner(
                     None,
                     || {},
                     move || {
-                        app::check_with_progress_core(retry, &retry_config, progress_scope, None)
+                        // Buffer the run's stderr disclosures (for example the
+                        // deletion-only note): they describe the retry's diff,
+                        // so they print only if the retry replaces the output
+                        // (#15330).
+                        let (result, disclosures) = crate::analysis::capture_disclosures(|| {
+                            app::check_with_progress_core(
+                                retry,
+                                &retry_config,
+                                progress_scope,
+                                None,
+                            )
+                        });
+                        result.map(|retried| (retried, disclosures))
                     },
                 )
             });
-        if let Some(Ok(retried)) = retried
+        if let Some(Ok((retried, disclosures))) = retried
             && retried
                 .analysis_outcome
                 .as_ref()
                 .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
         {
+            for message in disclosures {
+                eprintln!("{message}");
+            }
             eprintln!(
                 "ripr: analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
             );
