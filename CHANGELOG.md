@@ -7883,6 +7883,86 @@ entries below are the complete record.
 - `cargo xtask dx-scoreboard` and the public proof page keep partially measured
   metrics out of fully met tallies and disclose their coverage without changing
   target or regression gate decisions (#13136).
+- Verdict corpus: authored subjects now fill the credited and probe-family
+  cells, and new cases pin the multi-line dropped-conjunct refusal and a changed
+  `impl quickcheck::Arbitrary` body reading as test stimulus rather than a
+  product gap. Reports reject stored rows whose truth, origin or scoring
+  metadata disagree with their case definitions, and each fixture's stated
+  expected class is machine-checked against `expected/check.json` with a
+  per-language ratchet (#5515, #7945, #11545, #9619, #12928).
+- Fixture controls: the installed Rust fixture pin is reconstructed with a fully
+  specified commit, an opt-in real-pytest control replays the printed Python
+  verification action, and the Python receipt route pins its stale-verify and
+  wrong-attempt refusals with no receipt written. The narrow causal fixture
+  coverage command, perl contract migration refresh command and agentic-bench
+  fail-closed receipt stamping round this out (#4516, #4518, #3580, #3217,
+  #3543, #6683).
+- Judged-panel packets: a packet authority kernel, typed loader and semantic
+  validator, replay over retained inventory, one-to-one adjudicator identity,
+  case-anchor binding, integral metric rendering, replay digest validation,
+  feedback staging and build-directory and Cargo-configuration isolation for the
+  Python judged PR panel (#3266, #3555, #3669, #3673, #3682, #3686, #3691,
+  #3677, #3694, #3680, #3696, #5039, #5038, #5045).
+- Eval sweep and repair trust: typed accepted-manifest and receipt validation, a
+  managed currentness-bound refresh route, a deterministic acceptance gate, a
+  typed repair-trust model, a RepairAttempt edit-cage verdict kernel and the
+  scoreboard and mutation spot-check changes that pair measurements by
+  repository, head, base and language and add a `--rust-diff-mode` recall figure
+  (#3565, #3733, #3566, #3735, #3567, #3736, #3568, #3734, #3169, #6636, #13177,
+  #12901).
+- Merge queue and admission: merge-ready admission accepts a one-line source
+  review attestation and `VERDICT: APPROVE <sha>` or `VERDICT: BLOCK` first
+  lines, checks outstanding negative reviews first, and fails closed on reverse
+  landing. Notices and policy docs now name the native queue as the landing step
+  (#4984, #8157, #14578, #3439, #10136, #14247, #3437, #3157, #3332, #3330).
+- Hosted CI cost: routed-rust starts test shards alongside the gates job, uses
+  two complete test partitions, shares policy and fixture evaluations, aligns
+  dev debug metadata and raises the admission cap to 3700 lines (earlier 3000).
+  Queue VS Code e2e tests the composed diff, label events no longer rerun full
+  gates and runner pools get scoped sweep concurrency (#4838, #8194, #8198,
+  #8082, #4871, #3596, #14513, #3274, #3275, #13485, #3615, #3462, #8858).
+- Actions perimeter: auxiliary PR, review and comment Actions and duplicate
+  main-push builds were retired, main/master product replay was dropped, UB
+  review runs only on explicit `full-ci` requests and dependency security checks
+  take paired manual inputs. The Scratch GC timer is manual-only and the
+  extension publishes by explicit per-channel dispatch (#4842, #14500, #7827,
+  #7826, #7903, #4987, #3840, #4219, #1874, #4199, #4121, #4127).
+- xtask policy plumbing: `cargo xtask` gained product-route parity, progressive
+  help, an architecture ratchet for the repair-card renderer, parser-backed
+  cfg-test region authority, a shared schema validator, a user-text interface
+  and a policy-only extraction (Part A). Spec-age and spec-maintenance helpers
+  were reworked, and fixtures, cache GC and doc-artifact diagnostics were
+  tightened (#3524, #3456, #3435, #3458, #3496, #3497, #3590, #3629, #3631,
+  #3640, #5193, #13355, #8107, #8286, #8382, #4403, #8354, #1269, #3431).
+- Local precommit cost: precommit limits Cargo jobs on low-memory hosts, skips
+  building test binaries to list `covered_by` selectors when unneeded, requests
+  workspace-only metadata, seeds locked fixture dependencies, speeds up the
+  local-context scan and allowlists a mkfifo probe. Rustdoc warnings now fail
+  the doc gate and an unused direct `bytes` dependency is gone (#13705, #8233,
+  #8340, #9949, #8413, #9201, #14244, #11475, #3154, #3176, #3765, #4037).
+- Coverage and platform fixes: live coverage now records bounded memory and
+  storage measurements and strips test-profile debuginfo during generation,
+  Windows MSVC builds use `rust-lld`, and the Windows advisory lane builds tests
+  per step and admits the file-policy report as evidence. Unix-only imports and
+  constants are gated, the Windows check-pr driver stays outside build output
+  and process-group kills are confirmed (#4978, #9272, #3699, #3729, #5239,
+  #5242, #5426, #5427, #5461, #5462, #5470, #5466, #4309, #4310, #5388, #5187,
+  #5044).
+- Analysis internals: shared behavior-evidence witness adapters, a per-language
+  outcome with a `LanguageRun` compatibility projection, and no strong
+  test-oracle credit for unevaluated syntax. The opt-in latency trace reports
+  per-seam evidence cost, worker occupancy and memo hits without changing
+  findings (#4790, #4847, #6396, #9377, #3687, #3712, #9575).
+- Specs and schemas: RIPR-SPEC-0397 defines shared BEAM Mix/rebar3 application
+  facts with Elixir and Erlang actor-test contracts, and RIPR-SPEC-0422 adds the
+  adapter-substrate qualification receipt schema with corpus fixtures. The RIPR
+  config and receipt artifact name are bound (#5875, #5594, #6382, #6337).
+- Release and install qualification: archive qualification exercises an
+  installed VSIX over managed HTTPS with tamper controls, final native payload
+  identity is staged and verified, `install-receipt` judges multi-sample medians
+  and the published-install matrix can pin an exact release. The nightly DX
+  scoreboard publishes a trend page and Windows warm samples are admitted
+  (#9469, #4521, #4699, #12909, #13064, #14795, #12947).
 - `cargo xtask help check-fast`, `cargo xtask help --all` and `cargo xtask commands` now list `check-fast` with its local-only scope, the committed `origin/main...HEAD` selector, and its report paths (#13145).
 - `cargo xtask check-fast` appears in exhaustive help and the command catalog,
   with detailed help explaining its committed-diff selection, local reports,
