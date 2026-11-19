@@ -19,8 +19,10 @@
 //!   from the block headers with their attributes. Item order means nothing
 //!   there; it does inside a function body, an `enum` or a `struct`;
 //! - neither file can make item order observable: no textual macro scope
-//!   (`macro_rules!`, `#[macro_use]`) and no source position macro in the
-//!   block (`line!`, `column!`).
+//!   (`macro_rules!`, `#[macro_use]`) and no source position macro
+//!   (`line!`, `column!`) anywhere in it. A move shifts the lines of every
+//!   item between its two positions, so a position macro in an unchanged
+//!   item would change value with no line of that item in the diff.
 //!
 //! Anything else (a move with an edit, a fragment of a body, a move into
 //! another `impl`) stays probed.
@@ -236,6 +238,7 @@ pub(super) fn moved_item_lines(
         ORDER_OBSERVERS_IN_FILE
             .iter()
             .any(|observer| side.masked.contains(observer))
+            || invokes_position_macro(&side.masked)
     }) {
         return moved;
     }
@@ -263,10 +266,7 @@ pub(super) fn moved_item_lines(
             == 1;
         let masked = masked_text(&old, removed_run);
         let same_code = masked.is_some() && masked == masked_text(&new, added_run);
-        let position_observed = masked
-            .as_ref()
-            .is_some_and(|lines| invokes_position_macro(&lines.join("\n")));
-        if !unique_on_old_side || !same_code || position_observed {
+        if !unique_on_old_side || !same_code {
             continue;
         }
         let old_owner = old.unordered_owner(removed_run.0, removed_run.1);
@@ -370,6 +370,12 @@ mod tests {
         let old = format!("macro_rules! m {{ () => {{}} }}\n\n{TOP_LEVEL}");
         let (new, changed) = moved(&old, 3, 10, 15);
         assert_eq!(counts(&old, &new, &changed), (0, 0));
+
+        // A source position macro in an unchanged item the move passes: its
+        // line number shifts with no line of it in the diff.
+        let old = "fn a() {}\n\nfn where_am_i() -> u32 {\n    line!()\n}\n\nfn last() {}\n";
+        let (new, changed) = moved(old, 1, 2, 7);
+        assert_eq!(counts(old, &new, &changed), (0, 0));
 
         // A source position macro inside the block.
         for invocation in [
