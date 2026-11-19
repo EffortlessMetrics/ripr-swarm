@@ -26,7 +26,7 @@
 //! removes, and the verbatim fallback's over-catch direction is the safe
 //! one for a policy gate.
 
-use ra_ap_syntax::ast::{self, HasAttrs};
+use ra_ap_syntax::ast::{self, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile};
 
 /// Production-region result for one Rust source file.
@@ -162,6 +162,101 @@ fn significant_tokens(text: &str) -> Vec<String> {
         i += 1;
     }
     tokens
+}
+
+/// Out-of-line module files one Rust source file declares at top level,
+/// split by whether the declaration is test-gated.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct DeclaredModuleFiles {
+    /// Candidate files of `#[cfg(test)] mod name;` declarations, each with
+    /// the directory its own child modules live in. A `#[path]` target has
+    /// none: Rust resolves its children beside it, among production files.
+    pub(crate) test_gated: Vec<(String, Option<String>)>,
+    /// Candidate files of every other `mod name;` declaration.
+    pub(crate) ordinary: Vec<String>,
+}
+
+/// Resolves the top-level `mod name;` declarations of `file` (a
+/// repository-relative path) to the files Rust would read for them:
+/// `#[path = ".."]` relative to the declaring file's directory, otherwise
+/// `<base>/name.rs` and `<base>/name/mod.rs`, where `<base>` is the file's
+/// directory for `mod.rs`/`lib.rs`/`main.rs` and `<dir>/<stem>` for any other
+/// file. Test gating honors the same exact `#[cfg(test)]` spelling as
+/// [`production_text_regions`]. Declarations nested in inline modules are
+/// not resolved (their files then stay fully scanned, the over-report
+/// direction), and an unparsed file declares nothing.
+pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleFiles {
+    let mut declared = DeclaredModuleFiles::default();
+    let parse = SourceFile::parse(source, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return declared;
+    }
+    let (dir, stem) = match file.rsplit_once('/') {
+        Some((dir, name)) => (dir, name.strip_suffix(".rs").unwrap_or(name)),
+        None => ("", file.strip_suffix(".rs").unwrap_or(file)),
+    };
+    let join = |left: &str, right: &str| {
+        if left.is_empty() {
+            right.to_string()
+        } else {
+            format!("{left}/{right}")
+        }
+    };
+    let base = if matches!(stem, "mod" | "lib" | "main") {
+        dir.to_string()
+    } else {
+        join(dir, stem)
+    };
+    for module in parse
+        .tree()
+        .syntax()
+        .children()
+        .filter_map(ast::Module::cast)
+    {
+        if module.item_list().is_some() {
+            continue;
+        }
+        let Some(name) = module.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let name = name.strip_prefix("r#").unwrap_or(&name).to_string();
+        let explicit_path = module.attrs().find_map(|attr| {
+            let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
+                return None;
+            };
+            if meta.path()?.syntax().text().to_string().trim() != "path" {
+                return None;
+            }
+            let ast::Expr::Literal(literal) = meta.expr()? else {
+                return None;
+            };
+            let ast::LiteralKind::String(text) = literal.kind() else {
+                return None;
+            };
+            text.value().ok().map(|value| value.to_string())
+        });
+        let candidates: Vec<(String, Option<String>)> = match explicit_path {
+            Some(path) => vec![(join(dir, &path), None)],
+            None => {
+                let children = join(&base, &name);
+                vec![
+                    (format!("{children}.rs"), Some(children.clone())),
+                    (format!("{children}/mod.rs"), Some(children)),
+                ]
+            }
+        };
+        let gated = module
+            .attrs()
+            .any(|attr| attribute_text_requires_test(&attr.syntax().text().to_string()));
+        if gated {
+            declared.test_gated.extend(candidates);
+        } else {
+            declared
+                .ordinary
+                .extend(candidates.into_iter().map(|(target, _)| target));
+        }
+    }
+    declared
 }
 
 #[cfg(test)]
@@ -486,6 +581,83 @@ mod cfg_test_spelling_tests {
                 !attribute_text_requires_test(spelling),
                 "{spelling} must not gate on test"
             );
+        }
+    }
+
+    mod declared_module_files_tests {
+        use super::super::declared_module_files;
+
+        #[test]
+        fn a_cfg_test_declaration_names_its_file_and_child_directory() {
+            let declared = declared_module_files(
+                "crates/ripr/src/output/foo.rs",
+                "pub fn a() {}\n#[cfg(test)]\nmod tests;\nmod real;\n",
+            );
+            assert_eq!(
+                declared.test_gated,
+                vec![
+                    (
+                        "crates/ripr/src/output/foo/tests.rs".to_string(),
+                        Some("crates/ripr/src/output/foo/tests".to_string())
+                    ),
+                    (
+                        "crates/ripr/src/output/foo/tests/mod.rs".to_string(),
+                        Some("crates/ripr/src/output/foo/tests".to_string())
+                    ),
+                ]
+            );
+            assert_eq!(
+                declared.ordinary,
+                vec![
+                    "crates/ripr/src/output/foo/real.rs".to_string(),
+                    "crates/ripr/src/output/foo/real/mod.rs".to_string(),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_mod_rs_owner_resolves_beside_itself() {
+            let declared =
+                declared_module_files("crates/ripr/src/lsp/mod.rs", "#[cfg(test)]\nmod tests;\n");
+            assert_eq!(
+                declared.test_gated.first().map(|(file, _)| file.as_str()),
+                Some("crates/ripr/src/lsp/tests.rs")
+            );
+        }
+
+        #[test]
+        fn a_path_target_resolves_from_the_declaring_directory_without_children() {
+            let declared = declared_module_files(
+                "crates/ripr/src/output/mod.rs",
+                "#[cfg(test)]\n#[path = \"x_tests.rs\"]\nmod tests;\n",
+            );
+            assert_eq!(
+                declared.test_gated,
+                vec![("crates/ripr/src/output/x_tests.rs".to_string(), None)]
+            );
+        }
+
+        #[test]
+        fn only_the_exact_cfg_test_spelling_gates_and_inline_or_nested_decls_are_ignored() {
+            let declared = declared_module_files(
+                "crates/ripr/src/a.rs",
+                "#[cfg(all(test, unix))]\nmod unix_tests;\n#[cfg(test)]\nmod inline {}\nmod outer {\n    #[cfg(test)]\n    mod tests;\n}\n",
+            );
+            assert!(declared.test_gated.is_empty(), "{declared:?}");
+            assert_eq!(
+                declared.ordinary,
+                vec![
+                    "crates/ripr/src/a/unix_tests.rs".to_string(),
+                    "crates/ripr/src/a/unix_tests/mod.rs".to_string(),
+                ]
+            );
+        }
+
+        #[test]
+        fn an_unparsed_file_declares_nothing() {
+            let declared =
+                declared_module_files("crates/ripr/src/a.rs", "#[cfg(test)]\nmod tests;\nfn (");
+            assert_eq!(declared, super::super::DeclaredModuleFiles::default());
         }
     }
 }

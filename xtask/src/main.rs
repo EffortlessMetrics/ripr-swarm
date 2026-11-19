@@ -14904,6 +14904,62 @@ mod architecture_rule_tests {
 /// role/provenance facts instead of re-deriving role from paths,
 /// attributes, or strings. This gate rejects consumer-side role
 /// heuristics and names the owning producer API to route through.
+/// Files under `scan_root` that are test code as a whole (#15193): the file
+/// of a top-level `#[cfg(test)] mod name;` declaration, and every file below
+/// that module's child directory. A file that an ordinary declaration from
+/// outside those test files also reaches stays scanned. Returns the exempt
+/// files and child-directory prefixes (each ending in `/`).
+fn out_of_line_test_files(
+    files: &[String],
+    scan_root: &str,
+) -> Result<(BTreeSet<String>, Vec<String>), String> {
+    let tracked: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let mut gated: Vec<(String, Option<String>)> = Vec::new();
+    let mut ordinary: Vec<(String, String)> = Vec::new();
+    for file in files {
+        if !file.starts_with(scan_root) || !file.ends_with(".rs") {
+            continue;
+        }
+        let source = read_text_lossy(Path::new(file))?;
+        let declared = rust_region_scan::declared_module_files(file, &source);
+        gated.extend(declared.test_gated);
+        ordinary.extend(
+            declared
+                .ordinary
+                .into_iter()
+                .map(|target| (file.clone(), target)),
+        );
+    }
+    let mut exempt_files = BTreeSet::new();
+    let mut exempt_dirs = Vec::new();
+    for (target, children) in gated {
+        if !tracked.contains(target.as_str()) {
+            continue;
+        }
+        exempt_files.insert(target);
+        if let Some(children) = children {
+            exempt_dirs.push(format!("{children}/"));
+        }
+    }
+    let is_candidate = |file: &str, files: &BTreeSet<String>, dirs: &[String]| {
+        files.contains(file) || dirs.iter().any(|dir| file.starts_with(dir.as_str()))
+    };
+    // Fail closed: production code (a declarer outside the candidates) that
+    // also reaches a candidate file or directory keeps it in the scan.
+    let reached: Vec<&String> = ordinary
+        .iter()
+        .filter(|(declarer, _)| !is_candidate(declarer, &exempt_files, &exempt_dirs))
+        .map(|(_, target)| target)
+        .collect();
+    exempt_files.retain(|file| !reached.iter().any(|target| *target == file));
+    exempt_dirs.retain(|dir| {
+        !reached
+            .iter()
+            .any(|target| target.starts_with(dir.as_str()))
+    });
+    Ok((exempt_files, exempt_dirs))
+}
+
 fn check_rust_source_role_authority() -> Result<(), String> {
     const SCAN_ROOT: &str = "crates/ripr/src";
     /// Out of scope: non-Rust adapters own their per-language test-file
@@ -14927,12 +14983,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
-        (
-            "crates/ripr/src/output/related_test_role_tests.rs",
-            "\"#[cfg(test)]\"",
-            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
-        ),
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 6] = [
         (
             "crates/ripr/src/output/review_comments/placement.rs",
             "starts_with(\"tests",
@@ -14962,16 +15013,6 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "crates/ripr/src/analysis/classify/related_tests.rs",
             "starts_with(\"tests",
             "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
-        ),
-        (
-            "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
-            "\"#[cfg(test)]\"",
-            "owner-pin collectability preservation fixture in the cfg(test)-gated tests module; source spelling is input data, while cfg_predicates owns the production availability decision (#4478)",
-        ),
-        (
-            "crates/ripr/src/lsp/tests.rs",
-            "\"#[cfg(test)]\"",
-            "LSP test fixtures split source text on the attribute spelling; the string is test data, not a role decision",
         ),
     ];
     /// Rules: (pattern, owner guidance). Patterns are matched as plain
@@ -15042,10 +15083,17 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     ];
 
     let files = tracked_files()?;
+    // #15193: unit tests move to out-of-line `#[cfg(test)] mod tests;` files.
+    // Such a file is test code as a whole, exactly like the interior of the
+    // inline module it replaces, so it gets the same exemption.
+    let (test_files, test_dirs) = out_of_line_test_files(&files, SCAN_ROOT)?;
     let mut violations = Vec::new();
     let mut fallbacks = Vec::new();
     for file in &files {
         if !file.starts_with(SCAN_ROOT) || !file.ends_with(".rs") {
+            continue;
+        }
+        if test_files.contains(file) || test_dirs.iter().any(|dir| file.starts_with(dir.as_str())) {
             continue;
         }
         if OUT_OF_SCOPE_PREFIXES
