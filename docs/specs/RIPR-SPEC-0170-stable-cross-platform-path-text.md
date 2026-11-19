@@ -129,8 +129,9 @@ the three characters `%FF` renders as `%25FF`.
 7. A consumer that opens a file named by stable path text decodes it first: a
    Rust source file `src/100%.rs` (gap file `src/100%25.rs`) gets the same
    repair start and edit-cage rules as `src/lib.rs`. A seam packet path that
-   decodes to a literal backslash refuses instead of naming another file, and
-   a gap-ledger packet's native spelling is read as written.
+   decodes to a literal backslash refuses instead of naming another file. A
+   TypeScript or Python gap-ledger packet carries native spellings and is read
+   as written; a Rust gap-ledger packet carries stable path text and decodes.
 
 ## Test Mapping
 

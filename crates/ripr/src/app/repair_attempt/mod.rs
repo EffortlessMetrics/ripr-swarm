@@ -3295,9 +3295,11 @@ pub(crate) fn edit_cage_policy_from_packet(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
     };
-    // Seam packets spell paths as stable path text; gap-ledger packets
-    // (TypeScript, Python) carry native spellings and are read as written.
-    let stable_paths = !(ledger_envelope || is_gap_ledger_packet(value));
+    // Seam packets spell paths as stable path text. A gap-ledger packet
+    // keeps its record's spelling: native for TypeScript and Python (read as
+    // written), stable path text for a Rust record (decoded).
+    let stable_paths = !(ledger_envelope || is_gap_ledger_packet(value))
+        || value.get("language").and_then(serde_json::Value::as_str) == Some("rust");
     let packet_path = |text: &str| packet_path_text(text, stable_paths);
     let selected_target_text = packet_path(selected_target_text)?;
     let selected_target_text = selected_target_text.as_str();
@@ -3482,7 +3484,8 @@ fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String
 }
 
 /// A packet the gap decision ledger rendered. Its paths come from the
-/// language adapter's native spelling, not the stable path encoder.
+/// record's own spelling: the TypeScript and Python adapters write native
+/// paths, while Rust records carry stable path text from their evidence.
 fn is_gap_ledger_packet(value: &serde_json::Value) -> bool {
     value.get("source").and_then(serde_json::Value::as_str) == Some("gap_decision_ledger")
 }
@@ -6492,14 +6495,35 @@ mod tests {
         if policy.selected_target.path() != "tests/a%25.test.ts" {
             return Err(format!("gap-ledger packet path was decoded: {policy:?}"));
         }
+        // The envelope's marker alone keeps the inner packet's spelling.
+        let inner = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%25.test.ts"],
+            "forbidden_files": []
+        });
         let envelope = serde_json::json!({
             "source": "gap_decision_ledger",
-            "packets": [packet],
+            "packets": [inner],
         });
         let rendered = serde_json::to_string(&envelope).map_err(|error| error.to_string())?;
         let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
         if policy.selected_target.path() != "tests/a%25.test.ts" {
             return Err(format!("gap-ledger envelope path was decoded: {policy:?}"));
+        }
+        // A Rust gap-ledger record carries stable path text, so it decodes.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "source": "gap_decision_ledger",
+            "language": "rust",
+            "allowed_edit_surface": ["tests/100%25.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" {
+            return Err(format!(
+                "Rust gap-ledger packet path was not decoded: {policy:?}"
+            ));
         }
         // A test-surface path in the recommended-test form decodes too.
         let packet = serde_json::json!({
