@@ -563,31 +563,45 @@ impl DropImplIndex {
             sources_closed: closed_field_workspace(index, &[], false),
             ..Self::default()
         };
-        // Names bound to the same type, as an undirected adjacency.
-        let mut same_type: std::collections::BTreeMap<String, Vec<String>> =
+        // Names bound to the same type: original -> alias, and back.
+        let mut aliases_of: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut originals_of: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for scan in scans {
             match scan {
                 Some(scan) => {
                     built.non_plain.extend(scan.non_plain);
-                    for (left, right) in scan.same_type_names {
-                        same_type
-                            .entry(left.clone())
+                    for (original, alias) in scan.same_type_names {
+                        aliases_of
+                            .entry(original.clone())
                             .or_default()
-                            .push(right.clone());
-                        same_type.entry(right).or_default().push(left);
+                            .push(alias.clone());
+                        originals_of.entry(alias).or_default().push(original);
                     }
                 }
                 None => built.any_unparseable = true,
             }
         }
-        // #15107: an impl written against one name reaches every name bound
-        // to the same type, transitively and in either direction.
-        let mut pending: Vec<String> = built.non_plain.iter().cloned().collect();
-        while let Some(name) = pending.pop() {
-            for other in same_type.get(&name).into_iter().flatten() {
-                if built.non_plain.insert(other.clone()) {
-                    pending.push(other.clone());
+        // #15107: an impl reaches the type it names (an impl against an
+        // alias reaches the aliased type) and then every alias of that type,
+        // transitively. Aliases are keyed by name only, so a name two scopes
+        // bind to different types (`use a::Loud as Local;`, `use b::Cfg as
+        // Local;`) is never walked back to the other scope's type.
+        let mut seeds: Vec<String> = built.non_plain.iter().cloned().collect();
+        let mut back = seeds.clone();
+        while let Some(name) = back.pop() {
+            for original in originals_of.get(&name).into_iter().flatten() {
+                if built.non_plain.insert(original.clone()) {
+                    back.push(original.clone());
+                    seeds.push(original.clone());
+                }
+            }
+        }
+        while let Some(name) = seeds.pop() {
+            for alias in aliases_of.get(&name).into_iter().flatten() {
+                if built.non_plain.insert(alias.clone()) {
+                    seeds.push(alias.clone());
                 }
             }
         }
@@ -642,9 +656,9 @@ fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
 /// a type it receives (`impl Drop for $name`): no type is then called plain.
 const MACRO_DROP_TARGET: &str = "$";
 
-/// #15107: pairs of names `tree` binds to the same type. A rename
-/// `use guard::Cfg as Config;` and an alias `type Config = Cfg;` (generics
-/// dropped) each pair `Config` with `Cfg`.
+/// #15107: `(original, alias)` pairs of names `tree` binds to the same type.
+/// A rename `use guard::Cfg as Config;` and an alias `type Config = Cfg;`
+/// (generics dropped) each yield `(Cfg, Config)`.
 fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
     // A plain path's last segment (`guard::Cfg<T>` reads `Cfg`); anything
     // else (`(Cfg, u8)`, `&Cfg`, `<Cfg as T>::Out`, `self`) names no type.
@@ -683,7 +697,7 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
             && let Some(ty) = alias.ty()
             && let Some(original) = last_segment(&ty.syntax().text().to_string())
         {
-            pairs.push((ident(name.text()), original));
+            pairs.push((original, ident(name.text())));
         }
     }
     pairs
@@ -718,12 +732,13 @@ fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet
             {
                 continue;
             }
-            // `Drop for Target`, the target maybe `$name` or a path.
+            // `Drop for Target`, the target maybe `$name` or a path. `for`
+            // must follow `Drop` at once: in `impl<T: Drop> Describe for X`
+            // the `Drop` is a bound, not the implemented trait.
             let mut rest = tokens.iter().skip(at + 1);
-            if !rest
-                .by_ref()
-                .take(8)
-                .any(|token| token.kind() == SyntaxKind::FOR_KW)
+            if rest
+                .next()
+                .is_none_or(|token| token.kind() != SyntaxKind::FOR_KW)
             {
                 continue;
             }
@@ -2158,6 +2173,12 @@ mod tests {
                 false,
                 false,
             ),
+            // `Drop` as a bound on the impl's generics is not the trait.
+            (
+                "macro_rules! describe { ($t:ident) => { impl<T: Drop> Describe for $t<T> {} }; }\ndescribe!(Row);\n",
+                true,
+                true,
+            ),
             // A macro that names no `Drop` impl leaves every type plain.
             (
                 "macro_rules! describe { ($t:ident) => { impl $t { fn d(&self) {} } }; }\ndescribe!(Row);\n",
@@ -2238,6 +2259,18 @@ mod tests {
         ])?;
         if drop_is_plain(&reverse, "Cfg") {
             return Err("an impl against the rename must reach the original name".into());
+        }
+        // One name bound to different types in two scopes links neither
+        // type to the other.
+        let scoped = drop_index(&[
+            ("src/guard.rs", loud),
+            (
+                "src/lib.rs",
+                "mod guard;\npub struct Row;\nmod one { use crate::guard::Cfg as Local; }\nmod two { use crate::Row as Local; }\n",
+            ),
+        ])?;
+        if !drop_is_plain(&scoped, "Row") || drop_is_plain(&scoped, "Local") {
+            return Err("a shared alias name must not carry Cfg's Drop to Row".into());
         }
         Ok(())
     }
