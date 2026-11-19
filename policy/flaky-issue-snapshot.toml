@@ -117,3 +117,9 @@ number = 13393
 state = "closed"
 flaky = true
 title = "Flaky: seam_inventory cache-key tests fail in the Rust-only feature lane when a pilot or repair test moves the process-wide seam limit"
+
+[[issue]]
+number = 13839
+state = "closed"
+flaky = true
+title = "Flaky: lsp::backend::disk_bytes_equal_text_tests::same_length_buffer_checks_read_unchanged_disk_once reads disk twice"

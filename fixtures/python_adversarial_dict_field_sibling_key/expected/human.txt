@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_conf.py
   Suggested test: test_host
   Test node: tests/test_conf.py::test_host
-  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_conf.py::test_host
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input && python -m pytest tests/test_conf.py::test_host) (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for the missing check `port == 9090`
   Evidence: reach yes · infection yes · propagation weak · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -54,6 +54,5 @@ Next: drill into the top finding:
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

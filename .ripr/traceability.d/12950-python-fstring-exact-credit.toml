@@ -1,9 +1,9 @@
-# Bounded exact f-string reader credit; weak consumer reach remains #12950.
+# Exact f-string reader credit; consumer observations are extended by #12950.
 [[extend]]
 id = "RIPR-SPEC-0028"
 tests = [
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_credits_an_exact_old_value_pin",
-  "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_requires_old_true_new_false",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_requires_a_deciding_assertion",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_bounds_the_interpolated_utf8_bytes",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_declines_conversions_specs_and_non_strings",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::fstring_constant_reader_preserves_binding_and_activation_guards",

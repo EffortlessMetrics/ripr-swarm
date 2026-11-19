@@ -104,14 +104,27 @@ fn shadowed_undefined_does_not_hide_a_genuinely_dropped_loop_registration() {
 }
 
 #[test]
-fn vitest_test_for_registration_is_a_partial_extraction_gap() {
+fn vitest_test_for_literal_table_is_indexed_not_a_partial_gap() {
+    // #10760: a resolved Vitest `test.for` over an inline literal table with
+    // destructured rows is read, so it is no longer disclosed.
     let file = Path::new("tests/tier.test.ts");
     let source = "import { test, expect } from 'vitest';\nimport { tier } from '../src/tier';\ntest.for([\n  [49, 'basic'],\n  [50, 'basic'],\n])(\"tier row\", ([score, expected]) => {\n  expect(tier(score)).toBe(expected);\n});\n";
     let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 1, "test.for is indexed: {tests:?}");
     assert!(
-        tests.is_empty(),
-        "test.for registrations are not indexed yet: {tests:?}"
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "an indexed test.for is not a gap"
     );
+}
+
+#[test]
+fn vitest_test_for_unread_row_binding_is_a_partial_extraction_gap() {
+    // The `.each`-style `(score, expected)` reads `expected` as the
+    // TestContext, so the registration is not read and stays disclosed.
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { test, expect } from 'vitest';\nimport { tier } from '../src/tier';\ntest.for([\n  [49, 'basic'],\n  [50, 'basic'],\n])(\"tier row\", (score, expected) => {\n  expect(tier(score)).toBe(expected);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "unread .for binding: {tests:?}");
     let gap = detect_partial_test_extraction(file, source, &tests);
     assert!(
         gap.as_ref()
@@ -121,17 +134,12 @@ fn vitest_test_for_registration_is_a_partial_extraction_gap() {
 }
 
 #[test]
-fn vitest_it_for_registration_is_a_partial_extraction_gap() {
+fn vitest_it_for_registration_is_indexed() {
     let file = Path::new("tests/tier.test.ts");
     let source = "import { it, expect } from 'vitest';\nit.for([[1, 2]])(\"row\", ([a, b]) => {\n  expect(a + b).toBe(3);\n});\n";
     let tests = extract_tests(file, source);
-    assert!(tests.is_empty(), "it.for is not indexed: {tests:?}");
-    let gap = detect_partial_test_extraction(file, source, &tests);
-    assert!(
-        gap.as_ref()
-            .is_some_and(|gap| gap.shape == "test.for registration"),
-        "it.for disclosed, got {gap:?}"
-    );
+    assert_eq!(tests.len(), 1, "it.for is indexed: {tests:?}");
+    assert!(detect_partial_test_extraction(file, source, &tests).is_none());
 }
 
 #[test]
@@ -173,7 +181,8 @@ fn unrelated_for_method_is_not_a_partial_extraction_gap() {
 #[test]
 fn vitest_test_only_for_registration_is_a_partial_extraction_gap() {
     let file = Path::new("tests/tier.test.ts");
-    let source = "import { test, expect } from 'vitest';\ntest.only.for([[1]])(\"row\", () => {\n  expect(1).toBe(1);\n});\n";
+    // A whole array row passed on is not a read row binding (#10760).
+    let source = "import { test, expect } from 'vitest';\ntest.only.for([[1]])(\"row\", (row) => {\n  expect(row).toEqual([1]);\n});\n";
     let tests = extract_tests(file, source);
     assert!(tests.is_empty());
     let gap = detect_partial_test_extraction(file, source, &tests);
@@ -200,4 +209,22 @@ fn ordinary_test_each_and_direct_test_stay_fully_extracted() {
         "call-form .each stays indexed: {each_tests:?}"
     );
     assert!(detect_partial_test_extraction(file, each, &each_tests).is_none());
+}
+
+/// #14089: the word before a `(` that holds the context name was measured
+/// one byte past a multibyte char. `helper\u{301}` ends in a combining acute
+/// accent, an identifier char that is not alphanumeric.
+#[test]
+fn a_call_on_a_callee_with_a_combining_mark_is_not_a_rebinding() {
+    for callee in ["helper\u{301}", "helpe\u{301}r", "größe", "helper"] {
+        let masked = format!("(t) => {{ {callee}(t); }}");
+        assert!(nested_rebinding_bodies(&masked, "t").is_empty(), "{masked}");
+    }
+    // A nested function that rebinds the name is still found.
+    let masked = "(t) => { run(function (t) { t.skip(); }); }";
+    let bodies: Vec<&str> = nested_rebinding_bodies(masked, "t")
+        .into_iter()
+        .map(|range| &masked[range])
+        .collect();
+    assert_eq!(bodies, vec!["{ t.skip(); "]);
 }

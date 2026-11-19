@@ -2644,3 +2644,223 @@ fn a_src_short_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), St
     );
     Ok(())
 }
+
+/// Classify a change to `svc/a/src/core.py` for a test in `svc/a/tests/`, with
+/// every workspace file (test files included) given to the module passes.
+fn test_local_shadow_class(workspace_files: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        2,
+        "    return x + 2",
+        Some(SHADOW_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13706: under pytest prepend import mode a helper `core.py` in the test's
+/// own directory answers `from core import price`, so the project module of
+/// that name is not credited.
+#[test]
+fn a_test_local_module_shadowing_the_owner_name_is_not_exposed() -> Result<(), String> {
+    // Unshadowed control: the strong test pins the change and credits.
+    assert_eq!(
+        test_local_shadow_class(&["svc/a/src/core.py", "svc/a/tests/test_core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A helper module of another project's tests does not shadow this one.
+    assert_eq!(
+        test_local_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/b/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        ExposureClass::Exposed
+    );
+    // A helper module beside the test shadows the bare name.
+    assert_eq!(
+        test_local_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/a/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        SHADOWED_CLASS
+    );
+    Ok(())
+}
+
+const SHADOWED_CLASS: ExposureClass = ExposureClass::WeaklyExposed;
+
+const SHADOW_METHOD_OWNER: &str = "class Calc:\n    def add(self, x):\n        return x + 2\n";
+const SHADOW_METHOD_OLD: &str = "        return x + 1";
+const SHADOW_METHOD_TEST: &str =
+    "from core import Calc\n\n\ndef test_add():\n    assert Calc().add(1) == 3\n";
+
+fn method_shadow_class(workspace_files: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_METHOD_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_METHOD_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        3,
+        "        return x + 2",
+        Some(SHADOW_METHOD_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13706: method owners use the rival-module guard as their only module
+/// identity check, so a test-local module defining its own class of the same
+/// name must withhold the credit there too.
+#[test]
+fn a_test_local_module_shadowing_a_method_owner_class_is_not_exposed() -> Result<(), String> {
+    assert_eq!(
+        method_shadow_class(&["svc/a/src/core.py", "svc/a/tests/test_core.py"])?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        method_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/a/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        SHADOWED_CLASS
+    );
+    Ok(())
+}
+
+/// #13786: a package re-export (`svc/a/src/core/__init__.py` re-exports `price`
+/// from `impl.py`) is shadowed by a same-project plain `core` module the same
+/// way, so `from core import price` credits neither.
+#[test]
+fn a_reexported_package_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), String> {
+    let reexport_class = |workspace_sources: &[&str]| -> Result<ExposureClass, String> {
+        let owner_file = Path::new("svc/a/src/core/impl.py");
+        let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+        for owner in &mut owners {
+            owner.reexport_modules = vec!["core".to_string()];
+        }
+        let files = workspace_sources
+            .iter()
+            .map(|file| std::path::PathBuf::from(*file))
+            .collect::<Vec<_>>();
+        related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
+        let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+        classify::classify_change_with_context(
+            owner_file,
+            2,
+            "    return x + 2",
+            Some(SHADOW_OLD),
+            &owners,
+            &tests,
+            classify::PythonNoBehaviorContext::default(),
+            None,
+        )
+        .map(|finding| finding.class)
+        .ok_or_else(|| "changed line should classify".to_string())
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Unshadowed control credits the re-export.
+    assert_eq!(reexport_class(&package)?, ExposureClass::Exposed);
+    let shadowed = [package[0], package[1], "svc/a/core.py"];
+    assert_ne!(reexport_class(&shadowed)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+const MODULE_CONSTANT_OWNER: &str = "DISCOUNT_THRESHOLD = 10_000\n\n\ndef discounted_total(amount):\n    if amount >= DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n";
+const MODULE_CONSTANT_TEST: &str = "import pricing\nfrom svc.a.src.pricing import discounted_total\n\n\ndef test_below():\n    assert discounted_total(5_000) == 5_000\n\n\ndef test_above():\n    assert discounted_total(20_000) == 18_000\n\n\ndef test_at():\n    assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000\n";
+
+/// Classify the boundary change in `svc/a/src/pricing.py` for the module
+/// constant test at `test_file`, with every workspace file given to the
+/// src-ambiguity and test-local shadow passes as the workspace analysis does.
+fn module_constant_boundary_class(
+    workspace_files: &[&str],
+    test_file: &str,
+) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/pricing.py");
+    let mut owners = extract_owners(owner_file, MODULE_CONSTANT_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new(test_file), MODULE_CONSTANT_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        5,
+        "    if amount >= DISCOUNT_THRESHOLD:",
+        Some("    if amount > DISCOUNT_THRESHOLD:"),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #14035: `import pricing; pricing.DISCOUNT_THRESHOLD` binds the boundary
+/// value only while `pricing` identifies the owner's module for the test. A
+/// test-local `pricing.py` ahead on `sys.path` (#13706) or a rival project's
+/// `src/pricing.py` (#4566) answers the attribute instead, so the call at the
+/// boundary is not credited.
+#[test]
+fn a_shadowed_module_constant_boundary_is_not_exposed() -> Result<(), String> {
+    let owner = "svc/a/src/pricing.py";
+    let test = "svc/a/tests/test_pricing.py";
+    // Unshadowed control: the call at the boundary credits.
+    assert_eq!(
+        module_constant_boundary_class(&[owner, test], test)?,
+        ExposureClass::Exposed
+    );
+    // A test-local helper module of the same name shadows `pricing`.
+    assert_ne!(
+        module_constant_boundary_class(&[owner, "svc/a/tests/pricing.py", test], test)?,
+        ExposureClass::Exposed
+    );
+    // A rival project's `pricing` answers the import in that project's tests.
+    let rival_test = "svc/b/tests/test_pricing.py";
+    assert_eq!(
+        module_constant_boundary_class(&[owner, rival_test], rival_test)?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        module_constant_boundary_class(&[owner, "svc/b/src/pricing.py", rival_test], rival_test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

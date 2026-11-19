@@ -39,7 +39,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "probe:src_lib.rs:call_deletion:75eda2b6",
                 "propagation_unknown",
                 "proc_macro_opaque",
-                vec!["macro", "output or effect", "original and changed"],
+                vec!["macro", "output or effect", "old and new code"],
             ),
             (
                 "helper_chain_one_hop",
@@ -48,7 +48,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "infection_evidence_unknown",
                 vec![
                     "local or computed operand",
-                    "original and changed",
+                    "old and new code",
                     "ripr.toml",
                     "does not support",
                 ],
@@ -58,7 +58,7 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 "probe:src_lib.rs:static_unknown:c48715e6",
                 "static_unknown",
                 "no_changed_rust_line",
-                vec!["declaration", "consumes", "original and changed"],
+                vec!["declaration", "consumes", "old and new code"],
             ),
         ] {
             let root = fixture(name, &scratch)?;
@@ -150,24 +150,42 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 )?;
                 assert!(explain.status.success(), "{explain:?}");
                 let text = String::from_utf8(explain.stdout)?;
-                assert!(text.contains("To investigate this uncertainty:"), "{text}");
+                // The unknown verdict points at the Next step section instead
+                // of repeating the same paragraph-long step.
+                assert!(
+                    text.contains(
+                        "ripr could not settle this statically; Next step above says what to do about it."
+                    ),
+                    "{text}"
+                );
+                assert!(!text.contains("To investigate this uncertainty:"), "{text}");
                 assert!(
                     !text.contains("To change the verdict, a test needs to:"),
                     "{text}"
                 );
-                let section = text
-                    .split_once("To investigate this uncertainty:\n")
-                    .ok_or("no uncertainty section")?
-                    .1;
-                let body = section
-                    .split("  Stop reasons:\n")
+                if name == "propagate_stdout_macro" {
+                    // Its test only calls `report(5)`: the retained row is an
+                    // evidence record, not an assertion, so the summary must
+                    // not count one.
+                    assert!(
+                        text.contains("  Tests examined: 1 (no assertion recorded)\n"),
+                        "{text}"
+                    );
+                }
+                let body = text
+                    .split_once("\nNext step\n")
+                    .ok_or("no Next step section")?
+                    .1
+                    .lines()
                     .next()
-                    .ok_or("no section body")?
+                    .ok_or("no Next step body")?
                     .trim();
+                let advice = step.trim_end_matches('.');
+                assert_eq!(body, advice, "Next step/JSON advice differs: {text}");
                 assert_eq!(
-                    body,
-                    format!("- {step}"),
-                    "uncertainty-section/JSON advice differs: {text}"
+                    text.matches(advice).count(),
+                    1,
+                    "explain repeats the next step: {text}"
                 );
                 assert!(
                     !text.contains("deep static analysis") && !text.contains("use deep mode"),
@@ -247,6 +265,34 @@ fn unknown_explain_repair_preserves_decidable_recipes() -> TestResult {
             );
             assert!(text.contains(need), "{text}");
             assert!(!text.contains("To investigate this uncertainty:"), "{text}");
+            if name == "boundary_gap" {
+                // #14811: explain gives the digest's plain verdict reason
+                // next to the internal token; human-full stays unchanged.
+                let why = "  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart\n";
+                assert!(
+                    text.contains(&format!(
+                        "Static exposure\n  weakly_exposed (warning, confidence 0.92)\n{why}"
+                    )),
+                    "{text}"
+                );
+                let full = run_command(
+                    env!("CARGO_BIN_EXE_ripr"),
+                    Some(&scratch),
+                    &[
+                        "check",
+                        "--root",
+                        &root_arg,
+                        "--diff",
+                        &diff_arg,
+                        "--format",
+                        "human-full",
+                    ],
+                )?;
+                assert!(full.status.success(), "{full:?}");
+                let full = String::from_utf8(full.stdout)?;
+                assert!(full.contains("Static exposure\n  weakly_exposed"), "{full}");
+                assert!(!full.contains(why), "{full}");
+            }
         }
         Ok(())
     })();

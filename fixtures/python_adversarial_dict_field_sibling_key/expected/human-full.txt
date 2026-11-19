@@ -67,7 +67,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_conf.py
   suggested test: test_host
   pytest node: tests/test_conf.py::test_host
-  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_conf.py::test_host
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input && python -m pytest tests/test_conf.py::test_host) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:
@@ -82,6 +82,5 @@ Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
   ripr context --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d
-
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

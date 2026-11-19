@@ -1,0 +1,17 @@
+use quickcheck_arbitrary_shapes::{gap, width, Pair, Span};
+
+#[test]
+fn gap_is_second_minus_first() {
+    fn property(pair: Pair) -> bool {
+        gap(&pair) == pair.1.wrapping_sub(pair.0)
+    }
+    quickcheck::quickcheck(property as fn(Pair) -> bool);
+}
+
+#[test]
+fn width_is_end_minus_start() {
+    fn property(span: Span) -> bool {
+        width(&span) == span.1.wrapping_sub(span.0)
+    }
+    quickcheck::quickcheck(property as fn(Span) -> bool);
+}

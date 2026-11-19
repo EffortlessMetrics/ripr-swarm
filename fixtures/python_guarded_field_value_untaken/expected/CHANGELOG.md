@@ -24,3 +24,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_guarded_field_value_untaken (3)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows (#13443); fixture landed after the 905-fixture bless, main-health recovery
+
+Command:
+`cargo xtask goldens bless python_guarded_field_value_untaken --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_guarded_field_value_untaken (4)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_guarded_field_value_untaken --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_guarded_field_value_untaken (5)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_guarded_field_value_untaken --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -20,17 +20,21 @@
 //!   argument is a literal or the caller's own parameter (resolved
 //!   through the caller's rows);
 //! - chains of at most [`MAX_HELPER_HOPS`] hops, acyclic, with a
-//!   single caller and a single call site per hop.
+//!   single caller and a single call site per hop;
+//! - reach only through a caller that calls the helper at several direct
+//!   sites (#14918, [`HelperHop::multi_site`]): no rows bind and no result
+//!   forwards across such a hop.
 //!
 //! Everything else stops at a named edge: recursion, an ambiguous or
 //! unknown callee, a computed (non-literal, non-parameter) argument,
-//! multi-caller or multi-site binding, and hop exhaustion. Call reach
+//! multi-caller binding, and hop exhaustion. Call reach
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
 mod cross_crate_hop;
 mod cross_crate_path;
 mod macro_argument;
+mod own_crate_test_hop;
 mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
@@ -41,6 +45,8 @@ mod field_projection;
 mod method_hop_tests;
 #[cfg(test)]
 mod multi_caller_tests;
+#[cfg(test)]
+mod multi_site_tests;
 mod receiver_value;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
@@ -180,6 +186,16 @@ impl HopReceiver {
     }
 }
 
+impl HelperHop {
+    /// Whether this hop carries reach only (#6614 macro argument, #14918
+    /// multi-site call): it binds no argument rows and forwards no result.
+    /// Every argument-binding and result-forwarding consumer refuses such a
+    /// hop; reach consumers accept it.
+    pub(crate) fn reach_only(&self) -> bool {
+        self.through_macro || self.multi_site
+    }
+}
+
 /// One hop of a resolved helper chain: the caller, the call site, and
 /// the positional argument texts at that site.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,6 +215,13 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// The caller calls the callee at more than one direct site (#14918):
+    /// `parse` builds `number(parts[0])?`, `number(parts[1])?` and
+    /// `number(parts[2])?`. A test that reaches the caller reaches the callee
+    /// as surely as through a single site, but no one site's arguments stand
+    /// for the others, so the hop carries reach only: it binds no argument
+    /// rows (`arguments` is empty) and never forwards the callee's result.
+    pub(crate) multi_site: bool,
     /// Bound by the own-module qualified-call route (#8999). Its receiver
     /// entry needs the stricter identity rules, and the hop establishes only
     /// reach, never result forwarding. Preserve this provenance through chains.
@@ -1082,6 +1105,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -1093,6 +1117,29 @@ pub(crate) fn resolve_chain(
         return resolve_multi_caller(callee_name, &callers, index, workspace_complete, visited);
     }
     chain_through_caller(callers[0], callee_name, index, workspace_complete, visited)
+}
+
+/// How many direct calls of `callee_name` one recorded call text holds: a
+/// whole-word name followed by `(` or a turbofish `::<` (#14918). Over-counting (a nested
+/// `f(f(x))`) only makes the hop reach-only, which binds less.
+fn direct_call_count(text: &str, callee_name: &str) -> usize {
+    // Call-shaped text in a string or comment is not a call.
+    let text = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let text = text.as_str();
+    let bytes = text.as_bytes();
+    text.match_indices(callee_name)
+        .filter(|(start, _)| {
+            let end = start + callee_name.len();
+            // A single `.` marks a method receiver; a range `..` does not.
+            let method_dot =
+                *start > 0 && bytes[start - 1] == b'.' && (*start < 2 || bytes[start - 2] != b'.');
+            let word_start = !method_dot
+                && (*start == 0
+                    || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_'));
+            let after = text[end..].trim_start();
+            word_start && (after.starts_with('(') || after.starts_with("::<"))
+        })
+        .count()
 }
 
 /// The most callers [`resolve_multi_caller`] binds one by one (#9329). A
@@ -1204,6 +1251,12 @@ fn chain_through_caller(
         if let Some(hop) = cross_crate_hop::cross_crate_free_hop(caller, callee_name, index) {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
+        // #8387: an integration-test helper's call spelled through the
+        // package's own library name.
+        if let Some(hop) = own_crate_test_hop::own_crate_test_helper_hop(caller, callee_name, index)
+        {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
@@ -1226,20 +1279,44 @@ fn chain_through_caller(
             caller.name
         ));
     }
-    if sites.len() > 1 {
+    // #14918: several direct sites in the one caller still carry reach (a
+    // test that runs the caller runs the callee). No site's arguments stand
+    // for the others, so the hop is reach only and binds no rows.
+    // A line holding two calls (`Ok((number(a)?, number(b)?))`) is one
+    // recorded site; counting each direct call keeps it from binding only
+    // the first call's arguments.
+    let multi_site = sites.len() > 1
+        || sites
+            .first()
+            .is_some_and(|(text, _)| direct_call_count(text, callee_name) > 1);
+    // Only a production caller carries multi-site reach: a test or test
+    // helper that calls the owner several times already relates to it
+    // directly, and a hop through it would displace that direct evidence.
+    // Only the hop directly above the owner may be multi-site: higher up, a
+    // reach-only hop would make every whole-chain binding and pinning gate
+    // refuse the single-site hops below it, which bind on their own.
+    // A caller that rebinds the helper's name (a closure, a nested item or a
+    // `use`) may call that binding instead; multi-site reach needs the bare
+    // name to mean the helper.
+    if multi_site
+        && (caller.source_role != crate::analysis::facts::FunctionSourceRole::Production
+            || !visited.is_empty()
+            || caller_body_rebinds_free_callee_name(&caller.body, callee_name))
+    {
         return stopped(format!(
-            "helper `{callee_name}` is called {} times in `{}`; multi-site binding is not transferred at this bound",
-            sites.len(),
+            "helper `{callee_name}` is called more than once in `{}`; multi-site binding is not transferred at this bound",
             caller.name
         ));
     }
     let (call_text, arguments) = sites[0].clone();
+    let arguments = if multi_site { Vec::new() } else { arguments };
     let hop = HelperHop {
         caller: caller.clone(),
         call_text,
         arguments,
         receiver: None,
         through_macro: false,
+        multi_site,
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -1361,6 +1438,8 @@ pub(crate) fn test_calls_method_entry(
             && !entry.source_role.is_evidence_role()
             && chain.hops[..=at]
                 .iter()
+                // #14918: a multi-site hop is a real call, so it carries this
+                // reach; only an unexpanded macro hop is refused here.
                 .all(|below| !below.through_macro && !below.module_qualified)
             && super::activation::signature_parameter_texts(entry)
                 .first()
@@ -1528,7 +1607,10 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
     if masked.len() != call.text.len() {
         return None;
     }
-    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // A non-ASCII char continues an identifier (`größe`, `р`): it is a word
+    // char here, so a receiver or a longer name spelled with one stays whole
+    // and is declined below as a non-plain identifier.
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || !ch.is_ascii();
     let mentions: Vec<usize> = masked
         .match_indices(callee_name)
         .map(|(at, _)| at)
@@ -1548,6 +1630,8 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         return None;
     }
     let before = masked[..at].strip_suffix('.')?;
+    // `is_word` holds every non-ASCII char, so the char found here is ASCII
+    // and one byte wide.
     let receiver_start = before
         .rfind(|ch: char| !is_word(ch))
         .map_or(0, |found| found + 1);
@@ -1604,6 +1688,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
             binding: ReceiverBinding::Parameter,
         }),
         through_macro: false,
+        multi_site: false,
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
@@ -2847,7 +2932,7 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
                     None => return false,
                 },
             };
-            !hop.through_macro
+            !hop.reach_only()
                 && !hop.module_qualified
                 && hop.receiver.is_none()
                 && !hop.transparent_macros_rebound
@@ -3134,7 +3219,7 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         || hops.is_empty()
         || hops
             .iter()
-            .any(|hop| hop.through_macro || hop.module_qualified || hop.receiver.is_some())
+            .any(|hop| hop.reach_only() || hop.module_qualified || hop.receiver.is_some())
     {
         return false;
     }
@@ -3187,7 +3272,7 @@ pub(crate) fn asserting_method_entry<'a>(
     let (top, below) = hops.split_last()?;
     let method = below.last()?.caller.name.as_str();
     let receiver = top.receiver.as_ref()?.parameter()?;
-    if top.through_macro
+    if top.reach_only()
         || top.caller.source_role != FunctionSourceRole::CfgTestModule
         || !hops_forward_owner_result(owner_name, below)
         || !hops_call_the_indexed_callees(owner_name, below, index)
@@ -3323,7 +3408,7 @@ fn hops_forward_owner_result_with(
             // #8999: a module-qualified hop has no result-forwarding proof.
             // #9329: a method hop never forwards: its caller makes a
             // receiver call whose result no tail-forwarding rule reads.
-            if hop.through_macro
+            if hop.reach_only()
                 || (hop.module_qualified && hop.crate_qualifier.is_none())
                 || hop.receiver.is_some()
             {
@@ -4592,9 +4677,11 @@ mod tests {
     }
 
     // #9086: inside a scope the same (source, name, package names) query scans
-    // the source once; a different name or package set is a new scan.
+    // the source once. #11738: so does every other name or package set, since
+    // one scan of a source's macro sites answers all of them; a diff that
+    // changes many functions of one file asks about a new name per function.
     #[test]
-    fn scoped_import_answer_scans_once_per_distinct_query() {
+    fn scoped_import_answer_scans_once_per_source() {
         // #9217: `macro_may_define_item_named` skips `MacroSites::scan` when
         // the source has no `!`. Keep a bang so this pin still measures
         // scan-once-per-distinct-query, not the skip. The unused
@@ -4608,17 +4695,31 @@ mod tests {
         let mut with_package = index_with_tests(vec![], vec![]);
         with_package.package_names = ["serde".to_string()].into_iter().collect();
         let scans = || super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
-        let _scope = crate::analysis::syntax::run_memo::enter();
+        let scope = crate::analysis::syntax::run_memo::enter();
         super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
         let first = source_imports_foreign_entry(&plain, source, "parse");
         assert_eq!(scans(), 1, "the first ask scans the source");
         let second = source_imports_foreign_entry(&plain, source, "parse");
         assert_eq!(first, second);
         assert_eq!(scans(), 1, "the repeated ask is served from the scope");
-        source_imports_foreign_entry(&plain, source, "other");
-        assert_eq!(scans(), 2, "another name is a new scan");
-        source_imports_foreign_entry(&with_package, source, "parse");
-        assert_eq!(scans(), 3, "another package set is a new scan");
+        let other = source_imports_foreign_entry(&plain, source, "other");
+        assert_eq!(scans(), 1, "another name reads the same scan");
+        let packaged = source_imports_foreign_entry(&with_package, source, "parse");
+        assert_eq!(scans(), 1, "another package set reads the same scan");
+        let edited = format!("{source}fn later() {{}}\n");
+        source_imports_foreign_entry(&plain, &edited, "parse");
+        assert_eq!(scans(), 2, "another source is a new scan");
+        drop(scope);
+        // The memoized answers are the unscoped ones, and nothing is kept
+        // once the scope ends.
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        assert_eq!(source_imports_foreign_entry(&plain, source, "parse"), first);
+        assert_eq!(source_imports_foreign_entry(&plain, source, "other"), other);
+        assert_eq!(
+            source_imports_foreign_entry(&with_package, source, "parse"),
+            packaged
+        );
+        assert_eq!(scans(), 3, "outside a scope every ask scans");
     }
 
     // #7080: tests that call the ambiguous name enter the refused chain;
@@ -5281,6 +5382,7 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -5313,6 +5415,7 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -5861,6 +5964,7 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            multi_site: false,
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,
@@ -5947,6 +6051,7 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    multi_site: false,
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,

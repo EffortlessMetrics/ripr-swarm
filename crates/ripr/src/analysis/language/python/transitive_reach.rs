@@ -14,7 +14,7 @@
 
 use super::related_tests::{
     body_calls_method_on_owner_bound_receiver, contains_call_name,
-    import_source_module_matches_owner, owner_module_paths,
+    import_source_module_matches_owner, module_name_identifies_owner_for, owner_module_paths,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{
@@ -234,10 +234,15 @@ fn import_provenanced_class_locals(
         {
             locals.push(import.alias.clone());
         }
+        // The module name must identify the owner's module for this test:
+        // a project-relative package name (#13737) only under its project
+        // root, and no name a test-local module (#13706) or a rival project
+        // (#4566) answers instead (#14035).
         if import.source_module.is_empty()
             && !import.alias.is_empty()
             && (owner_modules.contains(&import.imported)
                 || owner.reexport_modules.contains(&import.imported))
+            && module_name_identifies_owner_for(owner, &import.imported, &test.file)
         {
             let qualified = format!("{}.{class}", import.alias);
             if !locals.contains(&qualified) {
@@ -420,6 +425,59 @@ class Table:
             "import src.table as table\n\ndef test_print_table():\n    value = table.Table()\n    assert value is not None\n",
         )?;
         assert_named_limitation(&finding);
+        Ok(())
+    }
+
+    /// #14035: `import table; table.Table()` witnesses the owner's class only
+    /// while `table` identifies the owner's module for the test. A test-local
+    /// `table.py` ahead on `sys.path` (#13706) or a rival project's
+    /// `src/table.py` (#4566) answers the import instead.
+    #[test]
+    fn shadowed_module_import_construction_names_no_limitation() -> Result<(), String> {
+        let finding = |workspace_files: &[&str], test_file: &str| -> Result<Finding, String> {
+            let file = Path::new("svc/a/src/table.py");
+            let line_text = "        if column_index == len(self.columns) - 1:";
+            let line = TABLE_SOURCE
+                .lines()
+                .position(|line| line == line_text)
+                .ok_or("fixture source must contain the changed line")?
+                + 1;
+            let mut owners = extract_owners(file, TABLE_SOURCE);
+            apply_class_facts(&mut owners);
+            let files = workspace_files
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            crate::analysis::language::python::related_tests::apply_src_module_ambiguity(
+                &mut owners,
+                files.iter().filter(|file| {
+                    !crate::analysis::language::python::source_utils::is_test_file(file)
+                }),
+            );
+            crate::analysis::language::python::related_tests::apply_test_local_shadows(
+                &mut owners,
+                files.iter(),
+            );
+            let tests = extract_tests(
+                Path::new(test_file),
+                "import table\n\ndef test_print_table():\n    value = table.Table()\n    assert value is not None\n",
+            );
+            classify_change(file, line, line_text, &owners, &tests)
+                .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+        };
+        let owner = "svc/a/src/table.py";
+        let test = "svc/a/tests/test_table.py";
+        // Unshadowed control: the module import names the limitation.
+        assert_named_limitation(&finding(&[owner, test], test)?);
+        // A test-local helper module of the same name shadows `table`.
+        assert_silent(&finding(&[owner, "svc/a/tests/table.py", test], test)?);
+        // A rival project's `table` answers the import in that project's tests.
+        let rival_test = "svc/b/tests/test_table.py";
+        assert_named_limitation(&finding(&[owner, rival_test], rival_test)?);
+        assert_silent(&finding(
+            &[owner, "svc/b/src/table.py", rival_test],
+            rival_test,
+        )?);
         Ok(())
     }
 
