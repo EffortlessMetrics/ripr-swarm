@@ -3327,11 +3327,11 @@ mod tests {
         let grown = format!("{} More words.", limit.as_str().ok_or("limit description")?);
         *limit = json!(grown);
         let total = argument_description_bytes(&tools)?;
-        // " More words." is 11 bytes: the total moves by exactly that, so a
+        // " More words." is 12 bytes: the total moves by exactly that, so a
         // walker that skipped or double-counted the argument would fail here.
-        if total != 1615 + 11 {
+        if total != 1615 + 12 {
             return Err(format!(
-                "a lengthened argument description moved the total to {total}, not 1626"
+                "a lengthened argument description moved the total to {total}, not 1627"
             ));
         }
         // Growth past the ceiling is refused with the named total.
