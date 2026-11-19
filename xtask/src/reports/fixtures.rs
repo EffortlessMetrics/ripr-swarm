@@ -1332,13 +1332,11 @@ fn clear_fixture_cache_with(
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => match backoff.get(attempts - 1) {
                 Some(wait) if transient(&err) => sleep(*wait),
+                // An OS error's Display already names its raw code, as
+                // "(os error N)", so the report carries it without repeating it.
                 _ => {
-                    let raw = err
-                        .raw_os_error()
-                        .map(|code| format!(" (os error {code})"))
-                        .unwrap_or_default();
                     return Err(format!(
-                        "failed to clear fixture fact cache {} after {attempts} attempt(s): {err}{raw}",
+                        "failed to clear fixture fact cache {} after {attempts} attempt(s): {err}",
                         normalize_path(dir)
                     ));
                 }
