@@ -17,8 +17,7 @@
 
 use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
-    AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
-    bounded_document,
+    AttemptFailure, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession, bounded_document,
 };
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
@@ -400,7 +399,7 @@ fn durable_attempt_document(
     }
     limitations.extend(route_limitations);
     if let Some(limitation) =
-        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+        crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
         limitations.push(limitation.to_string());
     }
@@ -852,13 +851,8 @@ impl WorkspaceSession {
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -1306,7 +1300,7 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::workspace::CODE_STALE_SNAPSHOT;
+    use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
     use crate::domain::DiscriminatorShape;
@@ -3464,5 +3458,83 @@ pub(super) mod tests {
         ] {
             assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
+    }
+
+    fn fix_site(inline_module: Option<&str>, new_test_kind: Option<&'static str>) -> RepairFixSite {
+        RepairFixSite {
+            test_name: String::new(),
+            file: "src/lib.rs".to_string(),
+            line: 0,
+            oracle: None,
+            oracle_kind: "none",
+            oracle_strength: "none",
+            inline_test_module: inline_module.map(str::to_string),
+            new_test_kind,
+        }
+    }
+
+    #[test]
+    fn prepare_limitations_distinguish_existing_test_grip_from_an_admitted_proposal() {
+        let existing = prepare_limitations(&fix_site(None, None));
+        assert_eq!(existing.len(), 2);
+        assert!(existing[0].contains("target-admission authority has not run"));
+        assert!(!existing[0].contains("new-test proposal"));
+        let proposal = prepare_limitations(&fix_site(None, Some("integration")));
+        assert_eq!(proposal.len(), 2);
+        assert!(proposal[0].contains("new-test proposal the shared repair gate admitted"));
+        assert!(!proposal[0].contains("target-admission authority has not run"));
+        // Both always state that the transaction dies with the session.
+        for limitations in [&existing, &proposal] {
+            assert!(limitations[1].contains("the transaction is in-memory"));
+            assert!(limitations[1].contains("ripr_get_repair_attempt"));
+        }
+    }
+
+    #[test]
+    fn inline_test_module_boundary_confines_new_tests_to_the_governed_module() {
+        assert_eq!(
+            inline_test_module_boundary(&fix_site(None, None)),
+            Value::Null
+        );
+        let boundary = inline_test_module_boundary(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(boundary["file"], "src/lib.rs");
+        assert_eq!(boundary["module"], "tests");
+        let text = boundary["boundary"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("inside this inline test module only"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "production code, the module declaration and existing tests stay unchanged"
+            )
+        );
+        assert_eq!(boundary.as_object().map(serde_json::Map::len), Some(3));
+    }
+
+    #[test]
+    fn must_not_change_swaps_the_production_statement_for_the_inline_module_cage() {
+        use crate::output::agent_seam_packets::{
+            EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING,
+            inline_test_module_edit_statement,
+        };
+        assert_eq!(
+            must_not_change(&fix_site(None, None)),
+            vec![
+                EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        let inline = must_not_change(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(
+            inline,
+            vec![
+                inline_test_module_edit_statement("src/lib.rs", "tests"),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        assert!(inline[0].contains("src/lib.rs"));
+        assert!(inline[0].contains("mod tests"));
+        assert!(!inline.contains(&EDIT_CAGE_PRODUCTION_STATEMENT.to_string()));
     }
 }

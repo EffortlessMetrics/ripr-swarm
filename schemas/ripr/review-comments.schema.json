@@ -528,7 +528,8 @@
             "producer_failure",
             "eol_only_churn",
             "verification_only_change",
-            "unevaluated_condition"
+            "unevaluated_condition",
+            "requested_scope_excluded"
           ]
         },
         "producer_stage": {
@@ -965,6 +966,9 @@
           "description": "Copyable ripr agent receipt command. Present when gap_state == actionable.",
           "type": "string",
           "minLength": 1
+        },
+        "changed_reaching_tests": {
+          "description": "Present only when non-empty. Tests this PR changed that reach the card's owner by a reach-establishing relation (direct or helper owner call, verified re-export chain), as `file::name`. Gate evaluate keeps the candidate advisory only when this is non-empty; file proximity alone never qualifies (#13893). Shape: an array of non-empty strings. The shape is pinned by producer tests rather than as a schema rule, because adding a constrained property to this open object needs a schema_version bump (#1720); gate evaluate grants no waiver for a value that is not a non-empty array with a non-blank string."
         },
         "why_not_actionable": {
           "description": "Human-readable sentence from the first static limitation reason. Present when gap_state == static_limitation.",
@@ -1534,6 +1538,11 @@
               "type": "string",
               "minLength": 1
             },
+            "canonical_gap_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Domain-owned canonical gap identity, present when the seam has one; stable across source movement so a suppressed gap still matches its baseline entry (#13895)."
+            },
             "file": {
               "type": "string",
               "minLength": 1
@@ -1541,6 +1550,11 @@
             "line": {
               "type": "integer",
               "minimum": 1
+            },
+            "class": {
+              "description": "Grip class (ungripped, weakly_gripped, ...) of a seam withheld as a static limitation; the message names it in exposure words (#13892).",
+              "type": "string",
+              "minLength": 1
             },
             "reason": {
               "type": "string",

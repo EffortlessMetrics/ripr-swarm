@@ -228,13 +228,26 @@ pub struct OwnedProcess {
     group_owned: bool,
     #[cfg(unix)]
     custody_lost: bool,
-    /// Unix PID custody: the group signal has been issued and the primary
-    /// reaped. Once the leader is reaped its pgid becomes recyclable by an
+    /// Unix PID custody: the group signal has been issued, so repeated
+    /// requests are disarmed even while settlement retains the leader.
+    /// Once the leader is reaped its pgid becomes recyclable by an
     /// unrelated process group, so every later release path — `Drop`, a
     /// repeated `terminate_tree` — must stay disarmed rather than risk
     /// signaling a group that reused the number (#9895 review).
     #[cfg(all(unix, not(windows)))]
     group_settled: bool,
+    #[cfg(target_os = "linux")]
+    group_cleanup_error: Option<String>,
+    #[cfg(target_os = "linux")]
+    group_quiescent: bool,
+    /// One cumulative Linux settlement window, started by the first
+    /// successful group signal and never renewed by polls or cleanup retries.
+    #[cfg(target_os = "linux")]
+    group_settlement_deadline: Option<Instant>,
+    /// Model a persistently nonterminal snapshot without creating an
+    /// unkillable kernel process. The public owner paths still enforce time.
+    #[cfg(all(test, target_os = "linux"))]
+    injected_group_nonterminal: bool,
     /// Unix test oracle: the custody contract allows exactly one group
     /// signal per owner lifetime; each `request_kill` on unix increments
     /// this counter so a witness can pin it.
@@ -344,6 +357,14 @@ impl OwnedProcess {
             group_owned,
             custody_lost: false,
             group_settled: false,
+            #[cfg(target_os = "linux")]
+            group_cleanup_error: None,
+            #[cfg(target_os = "linux")]
+            group_quiescent: false,
+            #[cfg(target_os = "linux")]
+            group_settlement_deadline: None,
+            #[cfg(all(test, target_os = "linux"))]
+            injected_group_nonterminal: false,
             #[cfg(test)]
             test_group_kills: 0,
             #[cfg(test)]
@@ -412,10 +433,14 @@ impl OwnedProcess {
         }
     }
 
-    /// Non-blocking exit check. Contained Unix groups settle while the leader
-    /// is still waitable: WNOWAIT observes exit without releasing its identity.
-    /// The group is disarmed before the subsequent standard-library reap.
+    /// Poll direct-child exit and at most one Linux group snapshot without
+    /// sleeping for settlement. WNOWAIT retains the leader identity while
+    /// members settle; the group is disarmed before the standard-library reap.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        #[cfg(target_os = "linux")]
+        if let Some(error) = &self.group_cleanup_error {
+            return Err(std::io::Error::other(error.clone()));
+        }
         #[cfg(unix)]
         if self.custody_lost {
             return Err(std::io::Error::other(
@@ -429,19 +454,56 @@ impl OwnedProcess {
             }
             self.request_kill()?;
         }
+        #[cfg(target_os = "linux")]
+        if self.group_owned && !self.group_quiescent {
+            let observation = self.linux_settlement_deadline().and_then(|deadline| {
+                #[cfg(test)]
+                if self.injected_group_nonterminal {
+                    return Ok(false);
+                }
+                linux_group_is_quiescent(self.child.id(), deadline)
+            });
+            match observation {
+                Ok(false) => return Ok(None),
+                Ok(true) => self.group_quiescent = true,
+                Err(error) => {
+                    self.group_cleanup_error = Some(error.to_string());
+                    return Err(error);
+                }
+            }
+        }
         self.child.try_wait()
     }
 
     /// Reap the direct child, preserving the same prereap settlement ordering
-    /// as `try_wait`. Callers that need a deadline use their bounded poll loop.
+    /// as `try_wait`. Running-child time remains caller-bounded. On Linux,
+    /// once group termination starts, all polls share one settlement deadline;
+    /// a permanently nonterminal member returns an error instead of renewing it.
     pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
         let mut backoff = PollBackoff::new();
         loop {
             if let Some(status) = self.try_wait()? {
                 return Ok(status);
             }
-            backoff.sleep(None);
+            #[cfg(target_os = "linux")]
+            let deadline = self.group_settlement_deadline;
+            #[cfg(not(target_os = "linux"))]
+            let deadline = None;
+            backoff.sleep(deadline);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_settlement_deadline(&self) -> std::io::Result<Instant> {
+        let deadline = self.group_settlement_deadline.ok_or_else(|| {
+            std::io::Error::other("owned group settlement has no signal-bound deadline")
+        })?;
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "owned group settlement exceeded its deadline after SIGKILL",
+            ));
+        }
+        Ok(deadline)
     }
 
     #[cfg(unix)]
@@ -482,6 +544,10 @@ impl OwnedProcess {
                         "owned child custody was lost; signalling is disarmed",
                     ));
                 }
+                #[cfg(target_os = "linux")]
+                if let Some(error) = &self.group_cleanup_error {
+                    return Err(std::io::Error::other(error.clone()));
+                }
                 if self.group_settled {
                     return Ok(());
                 }
@@ -493,6 +559,11 @@ impl OwnedProcess {
                 }
                 match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
                     Ok(()) | Err(rustix::io::Errno::SRCH) => {
+                        #[cfg(target_os = "linux")]
+                        {
+                            self.group_settlement_deadline =
+                                Some(Instant::now() + FALLBACK_REAP_BUDGET);
+                        }
                         self.group_settled = true;
                         return Ok(());
                     }
@@ -536,6 +607,17 @@ impl OwnedProcess {
                     ));
                 }
                 return Err(self.failed_termination_fallback(error.to_string()));
+            }
+            #[cfg(target_os = "linux")]
+            if !self.group_quiescent {
+                let settlement = self.linux_settlement_deadline().and_then(|deadline| {
+                    wait_for_linux_group_quiescence(self.child.id(), deadline)
+                });
+                if let Err(error) = settlement {
+                    self.group_cleanup_error = Some(error.to_string());
+                    return Err(self.failed_termination_fallback(error.to_string()));
+                }
+                self.group_quiescent = true;
             }
             return if self.reap_within(FALLBACK_REAP_BUDGET) {
                 Ok(())
@@ -644,6 +726,107 @@ impl OwnedProcess {
         self.test_direct_kills
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.child.kill()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_stat_tail(stat: &[u8]) -> std::io::Result<&str> {
+    // Linux comm is arbitrary bytes, including non-UTF8 and ')' characters.
+    // Only the numeric/state tail is textual; do not decode comm.
+    let end = stat
+        .iter()
+        .rposition(|byte| *byte == b')')
+        .ok_or_else(|| std::io::Error::other("malformed process stat"))?;
+    let tail = stat
+        .get(end + 1..)
+        .ok_or_else(|| std::io::Error::other("missing process stat tail"))?;
+    std::str::from_utf8(tail).map_err(std::io::Error::other)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_stat_group_is_quiescent(stat: impl AsRef<[u8]>, group: u32) -> std::io::Result<bool> {
+    let fields: Vec<_> = linux_stat_tail(stat.as_ref())?.split_whitespace().collect();
+    let field = |index: usize| {
+        fields
+            .get(index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other("incomplete process stat"))
+    };
+    // do_task_stat can emit pgid=-1 when lock_task_sighand loses task
+    // teardown. Membership is then unknown, even if the sampled state is X/Z.
+    // Keep the observation pending under the existing settlement deadline.
+    if field(2)? == "-1" {
+        return Ok(false);
+    }
+    let pgrp = field(2)?.parse::<u32>().map_err(std::io::Error::other)?;
+    if pgrp != group {
+        return Ok(true);
+    }
+    let threads = field(17)?.parse::<u32>().map_err(std::io::Error::other)?;
+    Ok(matches!(field(0)?, "Z" | "X") && threads <= 1)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_group_is_quiescent(group: u32, deadline: Instant) -> std::io::Result<bool> {
+    let mut quiescent = true;
+    let mut leader_seen = false;
+    for entry in std::fs::read_dir("/proc")? {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "owned group observation exceeded its budget",
+            ));
+        }
+        let entry = entry?;
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        match std::fs::read(entry.path().join("stat")) {
+            Ok(stat) => {
+                quiescent &= linux_stat_group_is_quiescent(&stat, group)?;
+                if pid == group {
+                    let leader_group = linux_stat_tail(&stat)?
+                        .split_whitespace()
+                        .nth(2)
+                        .and_then(|value| value.parse::<u32>().ok());
+                    if leader_group != Some(group) {
+                        return Err(std::io::Error::other("owned leader changed process group"));
+                    }
+                    leader_seen = true;
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(3) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if Instant::now() >= deadline {
+        return Err(std::io::Error::other(
+            "owned group observation exceeded its budget",
+        ));
+    }
+    if !leader_seen {
+        return Err(std::io::Error::other(
+            "owned unreaped leader absent from process snapshot",
+        ));
+    }
+    Ok(quiescent)
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_linux_group_quiescence(group: u32, deadline: Instant) -> std::io::Result<()> {
+    loop {
+        if linux_group_is_quiescent(group, deadline)? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "owned group not quiescent after SIGKILL",
+            ));
+        }
+        std::thread::sleep(
+            Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
 }
 
@@ -766,6 +949,70 @@ impl Drop for OwnedProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    fn refusal_diagnostic<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<String, String> {
+        result
+            .err()
+            .map(|error| error.to_string())
+            .ok_or_else(|| "expected a diagnostic refusal, but the operation succeeded".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_group_observer_requires_terminal_single_thread_members() -> Result<(), String> {
+        let stat = |state: &str, group: u32, threads: u32| {
+            format!(
+                "42 (name with ) spaces) {state} 1 {group} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {threads}"
+            )
+        };
+        for state in ["R", "S", "D", "T", "I"] {
+            assert!(
+                !linux_stat_group_is_quiescent(stat(state, 42, 1), 42).map_err(|e| e.to_string())?
+            );
+        }
+        assert!(linux_stat_group_is_quiescent(stat("Z", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(stat("X", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(!linux_stat_group_is_quiescent(stat("Z", 42, 2), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(stat("R", 43, 1), 42).map_err(|e| e.to_string())?);
+        assert!(!refusal_diagnostic(linux_stat_group_is_quiescent("malformed", 42))?.is_empty());
+        assert!(
+            !refusal_diagnostic(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42))?.is_empty()
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stat_unavailable_group_is_pending_even_for_terminal_state() -> Result<(), String> {
+        // The kernel initializes pgid=-1/num_threads=0 before attempting
+        // lock_task_sighand; state is sampled independently of that lock.
+        for state in ["R", "X", "Z"] {
+            let stat =
+                format!("42 (name with ) spaces) {state} 1 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            let settled = linux_stat_group_is_quiescent(stat, 42).map_err(|error| {
+                format!("valid unavailable pgrp must remain pending, not error: {error}")
+            })?;
+            assert!(!settled, "unknown group membership must remain pending");
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stat_unknown_group_does_not_accept_other_malformed_groups() -> Result<(), String> {
+        for group in ["-2", "invalid", "4294967296"] {
+            let stat = format!("42 (worker) X 1 {group} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            assert!(!refusal_diagnostic(linux_stat_group_is_quiescent(stat, 42))?.is_empty());
+        }
+        let unrelated = "43 (worker) R 1 43 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1";
+        assert!(
+            linux_stat_group_is_quiescent(unrelated, 42).map_err(|error| error.to_string())?,
+            "known unrelated positive group remains outside the owned group"
+        );
+        Ok(())
+    }
+
     use std::io::Read;
     use std::process::Stdio;
 
@@ -1543,6 +1790,202 @@ mod tests {
             .args(["-c", "printf owned-output; exit 7"])
             .stdout(Stdio::piped());
         contained_command(command)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader() -> Result<(), String>
+    {
+        let mut stat = b"42 (arbitrary\xff ) name) Z 1 42 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1".to_vec();
+        assert!(linux_stat_group_is_quiescent(&stat, 42).map_err(|e| e.to_string())?);
+        stat.extend_from_slice(b"\xff");
+        assert!(
+            linux_stat_group_is_quiescent(&stat, 42).is_err(),
+            "invalid tail is not a non-member"
+        );
+        assert!(
+            !refusal_diagnostic(wait_for_linux_group_quiescence(
+                u32::MAX,
+                Instant::now() + Duration::from_secs(1)
+            ))?
+            .is_empty()
+        );
+        Ok(())
+    }
+
+    /// Keep a real, exited, unreaped leader while a test-only observation
+    /// models the nonterminal member. No kernel D-state or descendant escape
+    /// is manufactured; deadline and reap decisions use the public owner.
+    #[cfg(target_os = "linux")]
+    fn pending_linux_group() -> Result<OwnedProcess, String> {
+        let mut owned = successful_group_command()?;
+        let setup_deadline = Instant::now() + Duration::from_secs(5);
+        let mut backoff = PollBackoff::new();
+        while !owned
+            .observe_owned_exit()
+            .map_err(|error| error.to_string())?
+        {
+            if Instant::now() >= setup_deadline {
+                return Err("setup: primary did not exit within budget".to_string());
+            }
+            backoff.sleep(Some(setup_deadline));
+        }
+        owned.injected_group_nonterminal = true;
+        assert_eq!(owned.try_wait().map_err(|error| error.to_string())?, None);
+        assert!(
+            owned
+                .observe_owned_exit()
+                .map_err(|error| error.to_string())?
+        );
+        assert_eq!(owned.test_group_kills, 1);
+        Ok(owned)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_settlement_deadline_survives_polls_and_explicit_cleanup() -> Result<(), String> {
+        let mut owned = pending_linux_group()?;
+        let original = owned
+            .group_settlement_deadline
+            .ok_or("missing signal deadline")?;
+        assert_eq!(owned.try_wait().map_err(|error| error.to_string())?, None);
+        owned.request_kill().map_err(|error| error.to_string())?;
+        assert_eq!(owned.group_settlement_deadline, Some(original));
+        assert_eq!(owned.test_group_kills, 1);
+
+        // Advance only this owner's deadline, not the OS clock. An explicit
+        // cleanup may not grant a fresh window after earlier pending polls.
+        let expired = Instant::now();
+        owned.group_settlement_deadline = Some(expired);
+        let error = owned
+            .terminate_tree()
+            .err()
+            .ok_or("expired cleanup succeeded")?;
+        assert!(error.contains("settlement exceeded its deadline after SIGKILL"));
+        assert!(error.contains("primary reaped within budget: true"));
+        assert_eq!(owned.group_settlement_deadline, Some(expired));
+        assert!(!refusal_diagnostic(owned.try_wait())?.is_empty());
+        assert!(!refusal_diagnostic(owned.wait())?.is_empty());
+        assert!(!refusal_diagnostic(owned.terminate_tree())?.is_empty());
+        assert_eq!(
+            owned.test_group_kills, 1,
+            "no group signal after fallback reap"
+        );
+        assert!(!refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty());
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_try_wait_refuses_expired_nonterminal_settlement() -> Result<(), String> {
+        let mut owned = pending_linux_group()?;
+        let expired = Instant::now();
+        owned.group_settlement_deadline = Some(expired);
+        // Keep the snapshot nonterminal: a false result must not bypass the
+        // deadline or give the public wait loop another unbounded iteration.
+        assert!(owned.injected_group_nonterminal);
+        let error = owned
+            .try_wait()
+            .err()
+            .ok_or("expired nonterminal poll remained pending")?;
+        assert_eq!(
+            error.to_string(),
+            "owned group settlement exceeded its deadline after SIGKILL"
+        );
+        assert_eq!(owned.group_settlement_deadline, Some(expired));
+        assert!(
+            owned
+                .observe_owned_exit()
+                .map_err(|error| error.to_string())?
+        );
+        assert!(!owned.group_quiescent);
+        assert!(
+            !refusal_diagnostic(owned.try_wait())?.is_empty(),
+            "failure stays sticky"
+        );
+        assert!(
+            !refusal_diagnostic(owned.wait())?.is_empty(),
+            "wait cannot resume polling"
+        );
+        let cleanup = owned
+            .terminate_tree()
+            .err()
+            .ok_or("fallback erased the nonterminal settlement failure")?;
+        assert!(cleanup.contains("incomplete tree cleanup"));
+        assert!(cleanup.contains("settlement exceeded its deadline after SIGKILL"));
+        assert!(cleanup.contains("primary reaped within budget: true"));
+        assert!(!refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty());
+        assert_eq!(owned.test_group_kills, 1, "no renewed or post-reap signal");
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_wait_refuses_expired_settlement_before_reaping() -> Result<(), String> {
+        let mut owned = pending_linux_group()?;
+        owned.group_settlement_deadline = Some(Instant::now());
+        // Even a now-quiescent real snapshot must not renew an expired
+        // lifetime window. A reset-to-now+budget mutant would return exit 7.
+        owned.injected_group_nonterminal = false;
+        let error = owned
+            .wait()
+            .err()
+            .ok_or("expired wait accepted late settlement")?;
+        assert!(
+            error
+                .to_string()
+                .contains("settlement exceeded its deadline after SIGKILL")
+        );
+        assert!(
+            owned
+                .observe_owned_exit()
+                .map_err(|error| error.to_string())?
+        );
+        assert!(
+            !refusal_diagnostic(owned.try_wait())?.is_empty(),
+            "the failure must persist"
+        );
+        let cleanup = owned
+            .terminate_tree()
+            .err()
+            .ok_or("cleanup erased the failure")?;
+        assert!(cleanup.contains("primary reaped within budget: true"));
+        assert_eq!(owned.test_group_kills, 1);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_pending_settlement_can_complete_within_original_deadline() -> Result<(), String> {
+        let mut owned = pending_linux_group()?;
+        let original = owned
+            .group_settlement_deadline
+            .ok_or("missing signal deadline")?;
+        owned.injected_group_nonterminal = false;
+        let status = owned.wait().map_err(|error| error.to_string())?;
+        assert_eq!(status.code(), Some(7));
+        assert_eq!(owned.group_settlement_deadline, Some(original));
+        assert!(owned.group_quiescent);
+        assert!(owned.group_cleanup_error.is_none());
+        assert!(
+            !refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty(),
+            "successful wait reaps"
+        );
+        owned.terminate_tree()?;
+        assert_eq!(owned.test_group_kills, 1);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_group_cleanup_failure_cannot_become_success_on_retry() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        owned.terminate_tree()?;
+        owned.group_cleanup_error = Some("injected unproved group cleanup".to_string());
+        assert!(!refusal_diagnostic(owned.try_wait())?.is_empty());
+        assert!(owned.terminate_tree().is_err());
+        assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
+        Ok(())
     }
 
     #[cfg(unix)]

@@ -231,7 +231,9 @@ the ordinary form is:
 ripr agent repair --root . --seam-id <seam_id> --phase before
 ```
 
-Save the exact `--attempt ... --phase after` command it prints. The transaction
+Save the exact `ripr continue ... --attempt <repair-attempt-id>` command it
+prints (with `--json`, `repair_attempt.next_command` carries the equivalent
+`ripr agent repair ... --attempt <repair-attempt-id> --phase after`). The transaction
 captures its own before evidence. A manual snapshot or a CI packet alone does
 not prepare that attempt. See [Repair attempt identity](REPAIR_ATTEMPT.md).
 

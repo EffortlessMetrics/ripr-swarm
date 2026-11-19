@@ -11,7 +11,9 @@
 //! changed line with control flow, and an owner that is itself patched.
 
 use super::approx_band::parse_expression;
-use super::related_tests::{is_python_identifier_char, owner_module_paths};
+use super::related_tests::{
+    is_python_identifier_char, module_name_identifies_owner_for, owner_module_paths,
+};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
@@ -64,10 +66,14 @@ pub(super) fn literal_patch_calls(
         // `PythonImport.source_module` is empty for `import time`, so the
         // owner file's module paths are the source-module fact this check can
         // use without new parser fields.
+        // The prefix must also identify the owner's module for this test: a
+        // test-local module of that name (#13706) or a rival project's module
+        // (#4566) is what `patch` would import instead (#14035).
         let prefix = segments[..segments.len() - 2].join(".");
         if !owner_module_paths(&owner.file)
             .iter()
             .any(|module| module.as_str() == prefix)
+            || !module_name_identifies_owner_for(owner, &prefix, &test.file)
         {
             return None;
         }

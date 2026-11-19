@@ -24,7 +24,7 @@ PR. They should be short, dated, and focused on consequences.
 | [0015](0015-start-here-surfaces-use-canonical-gap-records.md) | accepted | Keep start-here surfaces centered on canonical gap records. |
 | [0016](0016-editor-adoption-assurance-remains-read-only.md) | accepted | Keep editor adoption assurance read-only. |
 | [0017](0017-editor-gap-queue-is-read-only.md) | accepted | Keep editor actionable gap queue projection read-only. |
-| [0018](0018-perl-lsp-fact-substrate.md) | proposed | Use `perl-lsp` batch fact export as the Perl intelligence substrate. |
+| [0018](0018-perl-lsp-fact-substrate.md) | accepted | Use `perl-lsp` batch fact export as the Perl intelligence substrate. |
 | [0019](0019-language-adapters-reuse-shared-packet-contract.md) | accepted | Language adapters reuse the shared packet contract: one validator, shared renderers, parity test. |
 | [0020](0020-repair-artifacts-carry-producer-identity.md) | accepted | Repair artifacts carry producer identity, repository revision, worktree state, and a bounded content commitment. |
 | [0021](0021-static-and-executed-assurance-axes.md) | accepted | Keep static movement, executed verification, receipt issuance, and external runtime mutation on separate axes. |
@@ -34,3 +34,4 @@ PR. They should be short, dated, and focused on consequences.
 | [0025](0025-go-parser-substrate.md) | proposed | Use `tree-sitter` with `tree-sitter-go` as the Go syntax substrate (exact spans, local error recovery). |
 | [0026](0026-guarded-test-only-edit-boundary.md) | proposed | Propose one guarded, opt-in, test-only assertion replacement edit class with versioned preconditions (#1902); no edit emission in this slice; acceptance remains a pending design decision on #1902. |
 | [0027](0027-one-user-facing-package-lockstep-support-crates.md) | accepted | One user-facing package (`ripr`); internal support crates published in lockstep when compiler-unit evidence requires a split. Supersedes ADR 0001's packaging clause. |
+| [0028](0028-no-terminal-styling.md) | accepted | `ripr` emits no terminal styling on any route; `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `FORCE_COLOR` are intentionally inert (#7441). |

@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - Tighten internal domain verification with explicit per-reason feedback expectations,
   both directions of executed-control state and outcome predicates, and shared
   constructor-list/exhaustiveness guards for symbolic enum domains. Fixed identity

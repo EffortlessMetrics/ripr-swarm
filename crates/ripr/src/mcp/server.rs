@@ -866,12 +866,17 @@ fn optional_string_argument(
 /// The source an omitted `ripr_refresh` `source` selects (#13096): the same
 /// `app::diff_source` decision `ripr check` makes with no `--worktree` or
 /// `--committed` flag. A clean or untracked-only tree, or a probe that could
-/// not run, keeps committed history.
+/// not run, keeps committed history. The probe runs under the same
+/// `RIPR_GIT_TIMEOUT` deadline as the refresh (#14386); an invalid value
+/// selects under the default here and the refresh itself then fails closed
+/// with `config_invalid`.
 fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let git_timeout = workspace::mcp_git_timeout()
+        .unwrap_or_else(|_invalid| Some(crate::app::default_cli_git_timeout()));
     let selected = crate::app::diff_source::select_live_diff_source(
         root,
         crate::app::diff_source::DiffSourceRequest::Default,
-        Some(crate::app::default_cli_git_timeout()),
+        git_timeout,
     );
     if selected.is_working_tree() {
         workspace::RefreshSource::Worktree
@@ -1727,8 +1732,24 @@ async fn answer_initialize_session_ping(
     Ok(result)
 }
 
-impl rmcp::Service<RoleServer> for InitializeSessionService {
-    async fn handle_request(
+/// The pinned SDK answers a method it can type but this server does not
+/// serve (`prompts/get`, `logging/setLevel`, `resources/subscribe`, the task
+/// methods, a discovery-session `ping`) with a `-32601` whose whole message is
+/// the bare method name. Give those the same `Method not found: <method>`
+/// wording as a method the SDK cannot type (#14186). Only that exact SDK
+/// shape is rewritten: the code is unchanged, and an error that already
+/// carries a message or data of its own passes through.
+fn name_missing_method(error: ErrorData, method: &str) -> ErrorData {
+    if error.code == ErrorCode::METHOD_NOT_FOUND && error.message == method && error.data.is_none()
+    {
+        unknown_method_error(method)
+    } else {
+        error
+    }
+}
+
+impl InitializeSessionService {
+    async fn route_request(
         &self,
         request: ClientRequest,
         context: RequestContext<RoleServer>,
@@ -1753,6 +1774,19 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
             context,
         ))
         .await
+    }
+}
+
+impl rmcp::Service<RoleServer> for InitializeSessionService {
+    async fn handle_request(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ServerResult, ErrorData> {
+        let method = request.method().to_owned();
+        self.route_request(request, context)
+            .await
+            .map_err(|error| name_missing_method(error, &method))
     }
 
     async fn handle_notification(
@@ -1814,3 +1848,7 @@ mod source_recovery_tests;
 #[cfg(test)]
 #[path = "worktree_custody_tests.rs"]
 mod worktree_custody_tests;
+
+#[cfg(test)]
+#[path = "owner_opt_out_tests.rs"]
+mod owner_opt_out_tests;
