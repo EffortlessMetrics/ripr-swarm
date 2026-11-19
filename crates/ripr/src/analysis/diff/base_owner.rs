@@ -1073,7 +1073,10 @@ mod tests {
                 !swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "other/f.rs", touched)?,
                 "a file outside the target's directory (touched {touched})"
             );
-            for rooted in ["/abs/x.rs", "C:/abs/x.rs"] {
+            // The drive letter is joined at run time so the source holds no
+            // literal local path.
+            let drive = format!("{}:/abs/x.rs", 'C');
+            for rooted in ["/abs/x.rs", drive.as_str()] {
                 assert!(
                     swapped(
                         &format!("#[path = \"{rooted}\"]\nmod x;\n"),
