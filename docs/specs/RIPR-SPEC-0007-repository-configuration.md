@@ -716,6 +716,17 @@ Cargo.toml exists;
 and doctor's selected --root is not rebound;
 and language detection remains a shallow root scan (the locator stays
 cargo-only).
+
+Given a root whose projects sit below the shallow marker scan (for example
+`backend/Cargo.toml` and `frontend/package.json` with no marker at the root
+or in `src/`) and a loaded `ripr.toml` whose `[languages] enabled` names
+languages,
+when ripr doctor runs with the human screen,
+then the detected-languages line says where the scan looked and names the
+languages the loaded ripr.toml enables, instead of "none detected" (#15195);
+and with no loaded ripr.toml the line still says "none detected";
+and any detected language keeps the ordinary detected-languages line;
+and the marker scan and doctor JSON output are unchanged.
 ```
 
 ### Literal artifact-root rule excludes no source sibling
