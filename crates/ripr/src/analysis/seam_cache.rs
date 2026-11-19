@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -180,6 +181,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
 /// versions, across the Rust, TypeScript and Python fact stores this build
 /// knows. `ripr cache status` reports it; the next store prunes most of it.
 pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
     let mut total = RepoFileFactCache::at_base(base).reclaimable();
     #[cfg(feature = "lang-typescript")]
     total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
@@ -1465,8 +1470,10 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use build_retention::{
-    BuildRetention, Reclaimable, analyzer_version_from_entry_prefix, integer_schema_rank,
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
 };
 mod export;
 pub(crate) mod path_dependencies;
