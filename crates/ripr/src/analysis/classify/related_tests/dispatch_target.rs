@@ -37,6 +37,12 @@ pub(super) fn every_call_runs_an_override(
         .iter()
         .filter(|id| **id != owner.id.0.as_str())
         .filter(|id| owner_trait_name(id).as_deref() == Some(trait_name))
+        // A generic self type (`impl Counter for Fast<u8>`) does not say
+        // which instantiations override; `Fast<u16>` may keep the default.
+        .filter(|id| {
+            !id.rsplit_once(" for ")
+                .is_some_and(|(_, ty)| ty.contains('<'))
+        })
         .filter_map(|id| impl_self_type_name(id))
         .collect();
     if overriding.is_empty() {
