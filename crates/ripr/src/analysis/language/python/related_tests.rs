@@ -1012,6 +1012,9 @@ fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
             .fixture_defs
             .iter()
             .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+        || test.value_helpers.iter().any(|helper| {
+            helper.body_text.contains(name) || helper.imports.iter().any(import_mentions)
+        })
 }
 
 fn related_test_relation_scan(
@@ -1067,6 +1070,9 @@ fn related_test_relation_scan(
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
+    if value_helper_calls_owner(test, owner) {
+        return Some(PythonRelationKind::HelperOwnerCall);
+    }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
     // ranking labels for a test that already references the owner without a
@@ -1087,6 +1093,24 @@ fn related_test_relation_scan(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a same-file value helper the test calls (`value_helpers.rs`,
+/// #15350) calls the owner by the direct-call rules, read as a test whose body
+/// is the helper's and whose imports are the test's plus the helper's own.
+/// Reach only: the helper's return is not shown to be the owner's result.
+fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.value_helpers.iter().any(|helper| {
+        let mut view = test.clone();
+        view.body_text.clone_from(&helper.body_text);
+        view.imports.extend(helper.imports.iter().cloned());
+        view.assertions.clear();
+        view.fixtures.clear();
+        view.fixture_defs.clear();
+        view.value_helpers.clear();
+        !bare_name_bound_to_other_module(&view, owner)
+            && (body_calls_owner(&view.body_text, owner) || import_alias_calls_owner(&view, owner))
+    })
 }
 
 /// Whether the test imports the free-function owner's name (under any alias)

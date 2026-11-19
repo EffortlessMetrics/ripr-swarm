@@ -841,6 +841,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         test.constant_rebinding.header_reach |= header_reach;
     }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
+    super::value_helpers::attach_value_helpers(file, written, &module.body, &mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
         source,

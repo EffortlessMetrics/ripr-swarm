@@ -436,6 +436,7 @@ mod sink_alignment;
 mod source_facts;
 mod table_reads;
 mod table_rows;
+mod value_helpers;
 #[cfg(test)]
 use discriminators::{
     first_python_keyword_argument, is_literal_python_model_field_value,
@@ -841,6 +842,9 @@ struct PythonTest {
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
+    /// Same-file value helpers the body calls by bare name (#15350); filled
+    /// by `value_helpers.rs` and read only as reach-only relations.
+    value_helpers: Vec<value_helpers::PythonValueHelper>,
     parametrized: bool,
     /// The original single parametrization is a plain two-argument literal call.
     simple_literal_parametrize: bool,
@@ -2700,6 +2704,7 @@ mod cross_module_caller_tests;
 mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
+
 #[cfg(test)]
 mod imported_literal_tests;
 #[cfg(test)]
@@ -2714,6 +2719,8 @@ mod test_local_literal_tests;
 mod test_module_constant_tests;
 #[cfg(test)]
 mod trailing_comment_tests;
+#[cfg(test)]
+mod value_helper_tests;
 
 #[cfg(test)]
 mod call_chain_tests;

@@ -493,6 +493,16 @@ string text make no edge, nor does a caller wrapped by any decorator
 `click.argument`, with `import click` in its module) is a caller as well, since
 its decorators build a command that runs the body; an `async def` caller is
 allowed (#4568, #9226).
+A test is also related with the weak `helper_owner_call` relation when its
+body bare-calls a same-file value helper whose own body calls the owner by the
+direct-call rules, read with the test's imports plus the helper's own
+(`def parse(text): from pkg import parse_lines; return parse_lines(text)`,
+#15350). The helper must be a module-level, undecorated, synchronous `def` not
+named `test*`, the only binding of its name in the file, with a straight-line
+body (imports, assignments and expression statements, no `yield` or lambda)
+ending in `return <value>`; a test that binds the helper's name itself (a
+fixture parameter or a local) does not reach it. The relation carries no
+oracle, so such a test turns a `no_static_path` reading weak, never `exposed`.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
