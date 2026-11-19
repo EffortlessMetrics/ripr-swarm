@@ -115,12 +115,15 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
         };
         let defaults = index.member_crates.default_library_features(&root);
         let defaults = defaults.as_ref();
-        let atoms = gated::refused_example_gate_atoms(&file.data.source, defaults);
-        if !atoms.is_empty() {
-            refused_gate_atoms
-                .entry(root.clone())
-                .or_default()
-                .extend(atoms);
+        // As for the admission below, only a document on a public production
+        // function counts: rustdoc compiles no example in a `#[cfg(test)]` module.
+        for (item_line, atoms) in gated::refused_example_gate_atoms(&file.data.source, defaults) {
+            if documents_production_function(index, path, item_line) {
+                refused_gate_atoms
+                    .entry(root.clone())
+                    .or_default()
+                    .extend(atoms);
+            }
         }
         if file_has_inner_cfg_gate(&file.data.source, defaults) {
             continue;

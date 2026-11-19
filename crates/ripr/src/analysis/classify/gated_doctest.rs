@@ -18,9 +18,11 @@
 //!
 //! - the owner's own or enclosing `#[cfg(..)]` gates, as
 //!   `unestablished_cfg_gates_of_fn` reads them (gates provably on in a test
-//!   build are not among them), require a custom cfg name on: not under
-//!   `any(..)` or an odd number of `not(..)`, and not a `key = "value"` pair
-//!   or a built-in name such as `unix` (`facts::doctests::gated`); and
+//!   build are not among them), require a custom cfg name on: every
+//!   combinator above it is a conjunction once negations are pushed inward
+//!   and an even number of `not(..)` encloses it, and it is not a
+//!   `key = "value"` pair or a built-in name such as `unix`
+//!   (`facts::doctests::gated`); and
 //! - a runnable fenced doc example in the same doctested library is gated by
 //!   that name (`RustIndex::refused_doctest_gate_atoms`). The match is
 //!   library-wide, not per item, which is why only custom names count:

@@ -164,6 +164,13 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
         .replace("doc = \"# _ = stringify! {\"", "allow(unused)")
         .replace("doc = \"# };\"", "allow(unused)");
     let gated = "#[cfg(nightly_api)]\n    ";
+    // The stub applies with the name on, so the example runs only with it off.
+    let inverted_stub = refused_example("nightly_api").replace("not(nightly_api)", "nightly_api");
+    // rustdoc compiles no example inside a `#[cfg(test)]` module.
+    let test_module_example = format!(
+        "\n#[cfg(test)]\nmod doc_only {{\n{}}}\n",
+        refused_example("nightly_api")
+    );
     let mut wrong = Vec::new();
     for (case, text) in [
         (
@@ -206,6 +213,22 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
         (
             "example cfg_attr adds no doc text",
             source(&no_doc_text, gated, ""),
+        ),
+        (
+            "example stubbed out with the name on",
+            source(&inverted_stub, gated, ""),
+        ),
+        (
+            "owner gate that is `nightly_api || not(other_api)`",
+            source(
+                &refused_example("nightly_api"),
+                "#[cfg(not(all(not(nightly_api), other_api)))]\n    ",
+                "",
+            ),
+        ),
+        (
+            "refused example inside a test module",
+            source("", gated, &test_module_example),
         ),
     ] {
         let finding = provide_finding(&text)?;

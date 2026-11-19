@@ -14,12 +14,20 @@
 //! gate a refused runnable fenced example:
 //!
 //! - a `#[cfg_attr(P, doc = "..")]` line inside an open runnable fence (the
-//!   shape that rewrites the example per configuration) contributes every
-//!   name in `P`, either polarity: `not(x)` stubs the example when `x` is off
-//!   and so runs it when `x` is on;
-//! - an unprovable `#[cfg(P)]` between a document holding a runnable fence and
-//!   its item contributes the names `P` requires on (not under `any(..)` or an
-//!   odd number of `not(..)`), since the example is compiled only then.
+//!   shape that stubs the example out per configuration) contributes the
+//!   names `not(P)` requires on: `not(x)` stubs the example when `x` is off
+//!   and so runs it only when `x` is on, while `cfg_attr(x, ..)` runs it only
+//!   when `x` is off and contributes nothing;
+//! - an unprovable `#[cfg(P)]` after a runnable fence and before its item
+//!   contributes the names `P` requires on, since the example is compiled
+//!   only then.
+//!
+//! A name is required on when every combinator above it is a conjunction
+//! once negations are pushed inward (`all(..)`, or `any(..)` under an odd
+//! number of `not(..)`) and an even number of `not(..)` encloses it, so
+//! `not(all(not(x), y))`, which is `x || not(y)`, requires nothing. Only a
+//! document on a public production function counts, as for the admission
+//! itself: rustdoc compiles no example inside a `#[cfg(test)]` module.
 //!
 //! Only custom names count, the ones a build script or `RUSTFLAGS` sets
 //! (`error_generic_member_access`). `key = "value"` pairs (`feature`,
@@ -55,22 +63,24 @@ const BUILT_IN_NAMES: [&str; 13] = [
     "ub_checks",
 ];
 
-/// The custom cfg names that gate a refused runnable fenced doc example in
-/// `source`. A document is the `///` runs and the attribute, blank and comment
-/// lines between them, up to its item.
+/// The custom cfg names that gate each refused runnable fenced doc example in
+/// `source`, keyed by the 1-based line of the item the document ends at. A
+/// document is the `///` runs and the attribute, blank and comment lines
+/// between them, up to its item.
 pub(super) fn refused_example_gate_atoms(
     source: &str,
     defaults: Option<&BTreeSet<String>>,
-) -> BTreeSet<String> {
-    let mut atoms = BTreeSet::new();
+) -> Vec<(usize, BTreeSet<String>)> {
+    let mut found = Vec::new();
     if !source.contains("```") {
-        return atoms;
+        return found;
     }
+    let mut atoms = BTreeSet::new();
     // `open`: a fence is open, and `open_runnable`: that fence is runnable;
     // `seen_runnable`: a runnable fence opened anywhere in this document.
     let (mut in_document, mut open, mut open_runnable, mut seen_runnable) =
         (false, false, false, false);
-    for line in source.lines() {
+    for (index, line) in source.lines().enumerate() {
         if let Some(text) = outer_doc_text(line) {
             in_document = true;
             if let Some(info) = text.trim_start().strip_prefix("```") {
@@ -92,15 +102,18 @@ pub(super) fn refused_example_gate_atoms(
             continue;
         }
         // The item line, or code outside any document, ends the document.
+        if !atoms.is_empty() {
+            found.push((index + 1, std::mem::take(&mut atoms)));
+        }
         (in_document, open, open_runnable, seen_runnable) = (false, false, false, false);
     }
-    atoms
+    found
 }
 
 /// The custom names a refusing attribute contributes on the example side (see
 /// the module docs): a doc-text `cfg_attr` inside an open runnable fence gives
-/// every name of its predicate; a `cfg` after a runnable fence gives the names
-/// it requires on.
+/// the names the negation of its predicate requires on; a `cfg` after a
+/// runnable fence gives the names it requires on.
 fn example_gate_atoms(
     attribute: &str,
     open_runnable: bool,
@@ -111,7 +124,7 @@ fn example_gate_atoms(
         return BTreeSet::new();
     };
     match attribute_cfg_family(trimmed) {
-        AttributeCfgFamily::Cfg if seen_runnable => required_names(args),
+        AttributeCfgFamily::Cfg if seen_runnable => required_names(args, false),
         AttributeCfgFamily::CfgAttr if open_runnable => split_top_level_operands(args)
             .filter(|operands| {
                 operands.iter().skip(1).any(|operand| {
@@ -120,20 +133,14 @@ fn example_gate_atoms(
                 })
             })
             .and_then(|operands| operands.first().copied())
-            .map(|predicate| {
-                predicate_names(predicate)
-                    .into_iter()
-                    .map(|(name, _)| name)
-                    .collect()
-            })
+            .map(|predicate| required_names(predicate, true))
             .unwrap_or_default(),
         _ => BTreeSet::new(),
     }
 }
 
 /// The custom cfg names a `#[cfg(P)]` gate on an owner requires on
-/// (`error_generic_member_access`): names of `P` under no `any(..)` and an even
-/// number of `not(..)`. An owner behind `#[cfg(not(x))]` is compiled when `x`
+/// (`error_generic_member_access`), as the module docs define it. An owner behind `#[cfg(not(x))]` is compiled when `x`
 /// is off, and one behind `#[cfg(any(x, y))]` with only `y` on, so neither is
 /// compiled only in the build that runs an example needing `x`. Any other
 /// attribute, or text that does not read, has none.
@@ -145,29 +152,24 @@ pub(crate) fn owner_gate_atoms(attribute: &str) -> BTreeSet<String> {
     if !matches!(attribute_cfg_family(trimmed), AttributeCfgFamily::Cfg) {
         return BTreeSet::new();
     }
-    required_names(args)
-}
-
-fn required_names(predicate: &str) -> BTreeSet<String> {
-    predicate_names(predicate)
-        .into_iter()
-        .filter(|(_, required)| *required)
-        .map(|(name, _)| name)
-        .collect()
+    required_names(args, false)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Group {
     Not,
+    All,
     Any,
     Other,
 }
 
-/// Each custom bare name of `predicate`, with whether the predicate requires
-/// it on: no enclosing `any(..)` and an even number of enclosing `not(..)`.
-/// `key = "value"` pairs and built-in names are skipped.
-fn predicate_names(predicate: &str) -> Vec<(String, bool)> {
-    let mut names = Vec::new();
+/// The custom bare names `predicate` requires on, or `not(predicate)` when
+/// `negated`: every enclosing combinator is a conjunction once negations are
+/// pushed inward, and an even number of `not(..)` encloses the name. An
+/// unknown combinator requires nothing. `key = "value"` pairs and built-in
+/// names are skipped.
+fn required_names(predicate: &str, negated: bool) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
     let chars: Vec<char> = predicate.chars().collect();
     let mut groups: Vec<Group> = Vec::new();
     let mut pending = Group::Other;
@@ -204,6 +206,7 @@ fn predicate_names(predicate: &str) -> Vec<(String, bool)> {
         let name: String = chars[start..at].iter().collect();
         pending = match name.as_str() {
             "not" => Group::Not,
+            "all" => Group::All,
             "any" => Group::Any,
             _ => Group::Other,
         };
@@ -218,11 +221,25 @@ fn predicate_names(predicate: &str) -> Vec<(String, bool)> {
         if BUILT_IN_NAMES.contains(&name.as_str()) || name.starts_with("target_") {
             continue;
         }
-        let required = !groups.contains(&Group::Any)
-            && groups.iter().filter(|group| **group == Group::Not).count() % 2 == 0;
-        names.push((name, required));
+        if required_through(&groups, negated) {
+            names.insert(name);
+        }
     }
     names
+}
+
+/// Whether a name nested in `groups` (outermost first) is required on, as
+/// `required_names` defines it.
+fn required_through(groups: &[Group], negated: bool) -> bool {
+    let mut odd = negated;
+    for group in groups {
+        match (group, odd) {
+            (Group::Not, _) => odd = !odd,
+            (Group::All, false) | (Group::Any, true) => {}
+            _ => return false,
+        }
+    }
+    !odd
 }
 
 /// The index just past the string literal opening at `open`.
@@ -263,6 +280,15 @@ mod tests {
         );
         assert!(owner_gate_atoms("#[cfg(not(nightly_api))]").is_empty());
         assert!(
+            owner_gate_atoms("#[cfg(not(all(not(nightly_api), other_api)))]").is_empty(),
+            "this is `nightly_api || not(other_api)`, so neither name is required"
+        );
+        assert_eq!(
+            owner_gate_atoms("#[cfg(not(any(not(nightly_api), other_api)))]"),
+            atoms(&["nightly_api"]),
+            "this is `nightly_api && not(other_api)`"
+        );
+        assert!(
             owner_gate_atoms("#[cfg(any(nightly_api, feature = \"serde\"))]").is_empty(),
             "under `any(..)` no single name is required"
         );
@@ -286,7 +312,12 @@ mod tests {
         assert_eq!(
             example_gate_atoms(stub, true, true),
             atoms(&["error_generic_member_access"]),
-            "a doc-text cfg_attr counts either polarity"
+            "a stub under not(x) runs the example only with x on"
+        );
+        let inverted = "#[cfg_attr(nightly_api, doc = \"# _ = stringify! {\")]";
+        assert!(
+            example_gate_atoms(inverted, true, true).is_empty(),
+            "a stub under x runs the example only with x off"
         );
         assert!(
             example_gate_atoms(stub, false, true).is_empty(),
@@ -322,7 +353,8 @@ mod tests {
 pub fn f() -> bool { true }\n";
         assert_eq!(
             refused_example_gate_atoms(source, None),
-            atoms(&["nightly_api"])
+            vec![(7, atoms(&["nightly_api"]))],
+            "keyed by the item line the document ends at"
         );
     }
 
@@ -347,7 +379,7 @@ pub fn f() -> bool { true }\n";
         let custom = "/// ```\n/// lib::f();\n/// ```\n#[cfg(custom_gate)]\npub fn f() {}\n";
         assert_eq!(
             refused_example_gate_atoms(custom, None),
-            atoms(&["custom_gate"])
+            vec![(5, atoms(&["custom_gate"]))]
         );
     }
 }

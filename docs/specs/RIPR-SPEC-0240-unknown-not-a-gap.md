@@ -1224,13 +1224,19 @@ names that gate a refused runnable fenced example (plain, `rust` or an edition
 fence):
 
 - a `#[cfg_attr(P, doc = "..")]` line inside an open runnable fence gives
-  every name in `P`, either polarity (`not(x)` stubs the example when `x` is
-  off, so it runs when `x` is on);
-- an unprovable `#[cfg(P)]` between a document holding a runnable fence and
-  its item gives the names `P` requires on.
+  the names `not(P)` requires on (`not(x)` stubs the example when `x` is off,
+  so it runs only when `x` is on; `cfg_attr(x, ..)` runs it only with `x` off
+  and gives nothing);
+- an unprovable `#[cfg(P)]` after a runnable fence and before its item gives
+  the names `P` requires on.
 
-A name is required on when it sits under no `any(..)` and an even number of
-`not(..)`. Only custom names count, the ones a build script or `RUSTFLAGS`
+Only a document on a public production function counts, as for the admission
+itself: rustdoc compiles no example inside a `#[cfg(test)]` module.
+
+A name is required on when every combinator above it is a conjunction once
+negations are pushed inward (`all(..)`, or `any(..)` under an odd number of
+`not(..)`) and an even number of `not(..)` encloses it; `not(all(not(x), y))`
+is `x || not(y)` and requires nothing. Only custom names count, the ones a build script or `RUSTFLAGS`
 sets. `key = "value"` pairs (`feature`, `target_os`) and built-in names
 (`unix`, `windows`, `debug_assertions`, `miri`, `target_*`, `test`, `doctest`,
 `docsrs`, ..) gate ordinary code everywhere, and the match is library-wide,
@@ -1245,9 +1251,10 @@ the finding is rewritten through `withhold_gap` to `static_unknown` under
 `rust_gated_doctest_unread`. Reach, related tests and stages are unchanged.
 
 A test seen calling the owner, a gate on another name, an owner behind
-`not(x)` or `any(x, y)`, a shared built-in or `feature` gate, an example that
+`not(x)`, `any(x, y)` or `not(all(not(x), y))`, a shared built-in or `feature` gate, an example that
 is not refused, a `cfg_attr` that adds no doc text, an example item behind
-`cfg(not(x))`, a `weakly_exposed` finding, an owner whose gates do not read
+`cfg(not(x))`, an example stubbed out under `cfg_attr(x, ..)`, a refused
+example inside a `#[cfg(test)]` module, a `weakly_exposed` finding, an owner whose gates do not read
 and an owner outside a doctested library keep today's reading. A gate on an
 enclosing `mod` or `impl` of the example is not collected. Nothing is
 credited.
