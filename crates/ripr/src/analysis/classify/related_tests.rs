@@ -4926,7 +4926,9 @@ pub(super) fn path_is_absolute_form(path: &Path) -> bool {
 }
 
 /// The workspace-package scope of a source path (`crates/foo/src/lib.rs`
-/// -> `crates/foo/`), or `None` when the path carries no package scope:
+/// -> `crates/foo/`; a relative path keeps the directories above `crates/`,
+/// so `rust/crates/foo/src/lib.rs` -> `rust/crates/foo/`, #15299), or `None`
+/// when the path carries no package scope:
 /// single-crate relative paths (`src/lib.rs`, `tests/basic.rs`) and
 /// absolute paths are unscopable (#3235). Shared with the classifier's
 /// evidence stage, whose cross-package same-name defeat gate (#3731 review
