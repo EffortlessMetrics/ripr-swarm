@@ -116,9 +116,18 @@ pub(crate) fn ts_literal_arm_witness(
                 .as_deref()
                 .filter(|_| !assertion.has_dynamic_matcher_arg);
             let expected_value = expected.and_then(scalar_constant);
-            // An assertion anywhere that expects the old result may observe
-            // the arm through a local or a derived value: keep the verdict.
-            if expected_value.as_ref() == Some(&change.old_value) {
+            // An assertion anywhere that expects the old result, alone or
+            // inside a wrapping object, array or expression, may observe the
+            // arm through a local or a wrapper: keep the verdict.
+            if expected_value.as_ref() == Some(&change.old_value)
+                || [
+                    assertion.expected_value_or_variant.as_deref(),
+                    assertion.dynamic_expected_text.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|text| mentions_constant(text, &change.old_value))
+            {
                 return LiteralArmWitness::Kept;
             }
             let observes_owner_call = ts_observed_owner_call_arguments(
@@ -167,6 +176,21 @@ pub(crate) fn ts_literal_arm_unpinned_line(
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+/// Whether expected-side source text spells `constant` anywhere: a quoted
+/// string with its exact content, or a number, boolean or `null` token.
+fn mentions_constant(text: &str, constant: &ArmConstant) -> bool {
+    match constant {
+        ArmConstant::Text(inner) => ['\'', '"', '`']
+            .iter()
+            .any(|quote| text.contains(&format!("{quote}{inner}{quote}"))),
+        ArmConstant::Number(_) | ArmConstant::Boolean(_) | ArmConstant::Null => text
+            .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '$')))
+            .filter_map(scalar_constant)
+            .any(|token| token == *constant),
+        ArmConstant::Undefined | ArmConstant::Member(_) => false,
+    }
 }
 
 /// The returned literal text of a one-line `return <literal>` (an optional

@@ -234,6 +234,15 @@ fn an_assertion_expecting_the_arms_old_result_keeps_exposed() -> Result<(), Stri
             "arm-pinned-local",
             "    const label = dir(1);\n    expect(label).toBe('one');\n",
         ),
+        // The old result inside a wrapping object or array is still pinned.
+        (
+            "arm-pinned-object",
+            "    expect(dir(2)).toBe('two');\n    expect({ d: dir(1) }).toEqual({ d: 'one' });\n",
+        ),
+        (
+            "arm-pinned-array",
+            "    expect(dir(2)).toBe('two');\n    expect([dir(1), dir(2)]).toEqual(['one', 'two']);\n",
+        ),
     ] {
         let finding = finding_at(
             label,
@@ -266,11 +275,12 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         "      return 'uno';",
         each,
     )?;
-    let unpinned = baseline
-        .missing
-        .iter()
-        .any(|line| line.contains("expects another arm's result"));
-    assert!(!unpinned, "it.each: {:?}", baseline.missing);
+    assert_eq!(
+        baseline.class,
+        ExposureClass::Exposed,
+        "it.each: {:?}",
+        baseline.missing
+    );
     let snapshot = finding_at(
         "arm-snapshot",
         DIR,

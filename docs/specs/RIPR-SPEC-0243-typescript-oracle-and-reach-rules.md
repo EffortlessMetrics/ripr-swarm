@@ -2679,7 +2679,9 @@ keys); do not take the next number.
   `infection_unknown`, with a line naming the unpinned arm result.
   A duplicated old literal, any non-literal or multi-line return, a generator
   or concise-arrow owner, a non-direct relation, and a snapshot, structural,
-  dynamic or table-row expected side on an owner call keep the verdict.
+  dynamic or table-row expected side on a direct owner call, and any strong
+  assertion whose expected text spells the old literal (alone or inside an
+  object, array or expression), keep the verdict.
   `tests/literal_arm_return_tests.rs` pins the reader
   (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
   refusals) and the production path:
