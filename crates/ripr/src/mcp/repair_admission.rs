@@ -213,12 +213,30 @@ impl SeamAdmission {
                         // emitted next command here; the sources are still
                         // read under it, so a refusal never offers a stub
                         // command that would itself refuse.
-                        let outcome = resolve_repair_subject_in(
+                        let mut outcome = resolve_repair_subject_in(
                             candidate_seams,
                             policy,
                             &finding.id,
                             RefusalRoot::implicit(Some(root)),
                         );
+                        // A `probe:` finding id re-mints from the seam's own
+                        // expression, which a changed line the seam parses
+                        // differently (an `Err(..)` return, a `let _ =`
+                        // predicate) never matches. The readable producer gap
+                        // id is the identity the card join and `ripr repair`
+                        // accept for the same item, so an unresolved finding
+                        // id retries once under it; the same resolver still
+                        // refuses an ambiguous or ineligible match.
+                        if matches!(outcome, RepairSubjectOutcome::Unknown)
+                            && let Some(gap) = &finding.canonical_gap
+                        {
+                            outcome = resolve_repair_subject_in(
+                                candidate_seams,
+                                policy,
+                                &gap.id,
+                                RefusalRoot::implicit(Some(root)),
+                            );
+                        }
                         // #11397: `ripr repair` also holds a start whose
                         // inline test target has uncommitted changes. Ask the
                         // same predicate so MCP names the CLI's cause instead

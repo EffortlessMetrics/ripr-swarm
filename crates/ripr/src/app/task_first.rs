@@ -2571,6 +2571,16 @@ pub(crate) fn held_inline_reason(file: &str) -> String {
     format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
 }
 
+/// The uncommitted test-target file a [`held_inline_reason`] sentence names,
+/// read back from the shared wording so an adapter can word the commit step
+/// without a second copy of the cause. `None` for any other text.
+pub(crate) fn held_inline_file_in_reason(text: &str) -> Option<&str> {
+    let start = text.find(HELD_INLINE_OPENING)? + HELD_INLINE_OPENING.len();
+    let rest = &text[start..];
+    let end = rest.find(HELD_INLINE_CLOSING)?;
+    Some(&rest[..end])
+}
+
 const HELD_INLINE_OPENING: &str = "the inline test target `";
 const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
 

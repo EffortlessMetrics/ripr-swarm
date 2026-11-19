@@ -582,6 +582,24 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
+        // `ripr repair` and the per-item admission hold a start whose inline
+        // test target has uncommitted changes (#11397). The card asks the same
+        // shared predicate, so it never claims `repair_ready` for a seam the
+        // gate refuses; the refusal names the commit step.
+        if let Some(file) = crate::app::task_first::held_inline_start_file(
+            root,
+            entry.seam.id().as_str(),
+            &producers.candidate_seams,
+        ) {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: the shared repair gate (`ripr repair`) refuses this seam: {}. Commit or stash `{file}`, then run ripr_refresh again",
+                    item.canonical_id,
+                    crate::app::task_first::held_inline_reason(&file)
+                ),
+            )));
+        }
         // The refresh-time probe and custody are not re-run per read, so a
         // source edit after the refresh (the server does not watch the
         // worktree) would otherwise ride a card labeled current. Re-verify the
