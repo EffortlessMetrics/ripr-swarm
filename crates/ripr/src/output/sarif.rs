@@ -184,28 +184,8 @@ struct SarifRunDisclosures<'a> {
 }
 
 /// Render diff-scoped Findings as SARIF, keeping only the leading results
-/// that fit `results_budget` pretty-printed bytes (`None` renders all).
-/// Omitted results are disclosed in the run properties, never silently.
-/// Test-only unanchored form; production renders through
-/// [`render_findings_sarif_anchored`].
-#[cfg(test)]
-pub(crate) fn render_findings_sarif_with_budget(
-    output: &CheckOutput,
-    config: &RiprConfig,
-    suppressions: &[SuppressionEntry],
-    results_budget: Option<usize>,
-) -> String {
-    render_findings_sarif_anchored(
-        output,
-        config,
-        suppressions,
-        results_budget,
-        &CheckoutAnchor::unknown(),
-    )
-}
-
-/// [`render_findings_sarif_with_budget`] with every `artifactLocation.uri`
-/// (and the fingerprint path) resolved from the checkout top level through
+/// that fit `results_budget` pretty-printed bytes (`None` renders all), with
+/// every `artifactLocation.uri` (and the fingerprint path) resolved from the checkout top level through
 /// `anchor`, the base code scanning resolves uris against. An unknown anchor
 /// keeps the root-relative spelling.
 pub(crate) fn render_findings_sarif_anchored(
@@ -375,24 +355,6 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
         limit_info,
         evidence_limitations,
         results_bound.as_ref(),
-    )
-}
-
-/// Test-only unanchored `sarif-compact` rendering with an explicit budget;
-/// production renders through [`render_findings_sarif_compact_anchored`].
-#[cfg(test)]
-fn render_findings_sarif_compact_with_budget(
-    output: &CheckOutput,
-    config: &RiprConfig,
-    suppressions: &[SuppressionEntry],
-    results_budget: Option<usize>,
-) -> String {
-    render_findings_sarif_compact_anchored(
-        output,
-        config,
-        suppressions,
-        results_budget,
-        &CheckoutAnchor::unknown(),
     )
 }
 
@@ -1928,6 +1890,45 @@ fn escape_message(value: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+/// Render diff-scoped Findings as SARIF, keeping only the leading results
+/// that fit `results_budget` pretty-printed bytes (`None` renders all).
+/// Omitted results are disclosed in the run properties, never silently.
+/// Test-only unanchored form; production renders through
+/// [`render_findings_sarif_anchored`].
+#[cfg(test)]
+pub(crate) fn render_findings_sarif_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
+}
+
+/// Test-only unanchored `sarif-compact` rendering with an explicit budget;
+/// production renders through [`render_findings_sarif_compact_anchored`].
+#[cfg(test)]
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_compact_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
 }
 
 /// Render diff-scoped Findings as SARIF with the default results budget.

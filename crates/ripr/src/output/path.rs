@@ -120,18 +120,44 @@ impl CheckoutAnchor {
         }
     }
 
-    /// `file` (a finding path under `root`, in the root's own spelling) as a
-    /// path relative to the checkout top level. Falls back to
-    /// [`repository_relative_path`] when no top level is known or `file` is
-    /// not plainly under `root` (a `..` remainder never resolves upward).
+    /// `file` (a finding path) as a path relative to the checkout top level.
+    ///
+    /// Producers spell finding files two ways: Rust findings join the root
+    /// (`crates/app/src/lib.rs` under `--root crates/app`, `./src/lib.rs`
+    /// under `--root .`), while preview-language findings (Python,
+    /// TypeScript, JavaScript) are already root-relative (`src/app.py`).
+    /// A root-joined spelling strips the root; any other plain relative
+    /// spelling is root-relative. When both readings are lexically possible
+    /// (a root-relative file whose first directory repeats the root's
+    /// spelling) the file system decides: only a file that exists under the
+    /// root and not at the invoking-directory spelling is read
+    /// root-relative.
+    ///
+    /// Falls back to [`repository_relative_path`] when no top level is
+    /// known or neither reading is a plain path below the root (a `..`
+    /// remainder never resolves upward).
     pub(crate) fn relative_path(&self, root: &Path, file: &Path) -> PathBuf {
-        if self.root_prefix.is_some()
-            && let Ok(below_root) = file.strip_prefix(root)
-            && is_plain_relative(below_root)
-        {
-            return self.root_relative_path(below_root);
+        if self.root_prefix.is_none() {
+            return repository_relative_path(root, file).to_path_buf();
         }
-        repository_relative_path(root, file).to_path_buf()
+        let joined = file
+            .strip_prefix(root)
+            .ok()
+            .filter(|below_root| is_plain_relative(below_root));
+        let root_relative = (!file.has_root() && is_plain_relative(file)).then_some(file);
+        let below_root = match (joined, root_relative) {
+            (Some(joined), Some(root_relative)) => {
+                if root.join(root_relative).exists() && !file.exists() {
+                    root_relative
+                } else {
+                    joined
+                }
+            }
+            (Some(joined), None) => joined,
+            (None, Some(root_relative)) => root_relative,
+            (None, None) => return repository_relative_path(root, file).to_path_buf(),
+        };
+        self.root_relative_path(below_root)
     }
 
     /// `relative` (a path already relative to the root, such as a repo
@@ -697,12 +723,18 @@ mod tests {
     #[test]
     fn anchored_paths_never_climb_or_invent_a_location() {
         let member = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
-        // A file outside the root, or a `..` remainder, keeps the
-        // unanchored spelling instead of being joined under the prefix.
-        assert_eq!(
-            member.display_path(Path::new("crates/app"), Path::new("other/src/lib.rs")),
-            repository_display_path(Path::new("crates/app"), Path::new("other/src/lib.rs"))
-        );
+        // A plain relative file that does not repeat the root's spelling is
+        // root-relative (the preview-language convention): it joins under
+        // the prefix whatever the root spelling.
+        for root in ["crates/app", ".", "/checkout/crates/app"] {
+            assert_eq!(
+                member.display_path(Path::new(root), Path::new("src/app.py")),
+                "crates/app/src/app.py",
+                "root {root}"
+            );
+        }
+        // A `..` remainder keeps the unanchored spelling instead of being
+        // joined under the prefix.
         assert_eq!(
             member.display_path(Path::new("."), Path::new("./../escape.rs")),
             repository_display_path(Path::new("."), Path::new("./../escape.rs"))
