@@ -3905,8 +3905,13 @@ mod tests {
                 _ => {
                     // A valid replacement may change bytes before a subsequent
                     // invalid range fails. Accounting must cover this return too.
+                    // A UTF-16 position inside the inserted surrogate pair is
+                    // refused whatever the text; a line past the end is not.
                     let mut params = full_replace_params(uri, step, &text);
-                    params.content_changes.push(ranged_insert(99, 0, "bad"));
+                    params
+                        .content_changes
+                        .push(ranged_insert(0, 0, "\u{1F389}"));
+                    params.content_changes.push(ranged_insert(0, 1, "bad"));
                     store.change(params, &PositionEncodingKind::UTF16);
                 }
             }
