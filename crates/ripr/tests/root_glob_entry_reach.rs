@@ -233,3 +233,12 @@ fn a_root_glob_does_not_reach_a_test_inside_a_module() -> Result<(), String> {
     assert!(!outcome.related);
     Ok(())
 }
+
+#[test]
+fn the_same_root_glob_written_twice_does_not_link() -> Result<(), String> {
+    // Two occurrences are counted as two, not deduplicated by path.
+    let outcome = at_root("use money::*;\nuse money::*;\n")?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}

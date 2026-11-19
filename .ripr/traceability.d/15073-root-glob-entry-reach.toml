@@ -13,4 +13,5 @@ tests = [
   "crates/ripr/tests/root_glob_entry_reach.rs::a_glob_in_a_sibling_module_of_the_test_file_does_not_link",
   "crates/ripr/tests/root_glob_entry_reach.rs::a_lone_glob_in_a_sibling_module_does_not_reach_a_top_level_test",
   "crates/ripr/tests/root_glob_entry_reach.rs::a_root_glob_does_not_reach_a_test_inside_a_module",
+  "crates/ripr/tests/root_glob_entry_reach.rs::the_same_root_glob_written_twice_does_not_link",
 ]
