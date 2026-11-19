@@ -45,3 +45,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (5)
+
+Reason:
+RIPR-SPEC-0197: off() rewrites false as !true, the same value, so the line seeds no probe (#14938)
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
