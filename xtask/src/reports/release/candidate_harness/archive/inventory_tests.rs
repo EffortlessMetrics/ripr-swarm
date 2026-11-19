@@ -2,7 +2,10 @@
 //! (#15204): every ordinary entry is its committed blob or, under the stripped
 //! source root, exactly the inline-test strip of it; a dirty Cargo VCS record
 //! requires the marker naming the admitted commit.
-use super::{ArchiveRules, archive_inventory, qualified_command};
+use super::{
+    ArchiveRules, archive_inventory, owned_cargo_config, package_args, packages_of_manifest,
+    qualified_command,
+};
 use crate::publish_stage::{PUBLISH_STAGE_MARKER, stage_workspace, strip_inline_test_modules};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -230,6 +233,46 @@ fn stage_evidence_is_accepted_only_all_together() -> Result<(), String> {
     )
 }
 
+#[test]
+fn a_staged_archive_with_strippable_source_left_unstripped_is_refused() -> Result<(), String> {
+    let mut entries = staged_entries()?;
+    // Another strippable committed file, packaged unstripped beside the
+    // stripped lib.rs: the stage strips every such file, so this is refused.
+    entries.insert("src/more.rs".to_string(), LIB.to_string());
+    let mut blobs = committed();
+    blobs.insert(
+        "crates/ripr/src/more.rs".to_string(),
+        LIB.as_bytes().to_vec(),
+    );
+    match archive_inventory(&crate_bytes(&entries)?, &rules(&blobs)) {
+        Err(error) if error.contains("unstripped strippable entries=1") => Ok(()),
+        other => Err(format!(
+            "expected refusal, got {:?}",
+            other.map(|i| i.len())
+        )),
+    }
+}
+
+#[test]
+fn only_a_staged_package_is_allowed_dirty_and_path_dependencies_are_packaged() -> Result<(), String>
+{
+    let manifest = "[package]\nname = \"ripr\"\n\n[dependencies]\nripr-contract = { path = \"../ripr-contract\", version = \"=0.11.0\" }\nserde = \"1\"\n\n[target.'cfg(unix)'.build-dependencies]\nhelper = { package = \"ripr-helper\", path = \"../helper\" }\n\n[dev-dependencies]\nfixture = { path = \"../fixture\" }\n";
+    let packages = packages_of_manifest(manifest.as_bytes(), "ripr")?;
+    if packages != ["ripr", "ripr-contract", "ripr-helper"] {
+        return Err(format!("unexpected packaged packages: {packages:?}"));
+    }
+    let path = Path::new("x");
+    let staged = package_args(path, path, path, true, &packages);
+    let checkout = package_args(path, path, path, false, &packages);
+    if !staged.iter().any(|arg| arg == "--allow-dirty")
+        || checkout.iter().any(|arg| arg == "--allow-dirty")
+        || !checkout.iter().any(|arg| arg == "--locked")
+    {
+        return Err(format!("unexpected arguments: {staged:?} / {checkout:?}"));
+    }
+    Ok(())
+}
+
 /// Real Cargo output from a real publish stage passes the inventory, so the
 /// rules above describe what `cargo package` actually writes.
 #[test]
@@ -307,22 +350,20 @@ fn real_stage_archive(root: &Path) -> Result<(), String> {
         return Err(format!("unexpected stage report: {report:?}"));
     }
     let target = root.join("target");
-    let target_arg = target.to_string_lossy().into_owned();
-    run(
-        "cargo",
-        &[
-            "package",
-            "--offline",
-            "--locked",
-            "--allow-dirty",
-            "--target-dir",
-            target_arg.as_str(),
-            "--package",
-            "ripr-contract",
-            "--package",
-            "ripr",
-        ],
+    // The producer's own argument and package derivation, so a missing
+    // `--allow-dirty` or path dependency shows up here as a Cargo refusal.
+    let packages = packages_of_manifest(files[1].1.as_bytes(), "ripr")?;
+    if packages != ["ripr", "ripr-contract"] {
+        return Err(format!("unexpected packaged packages: {packages:?}"));
+    }
+    let config = owned_cargo_config(root, "package", None)?;
+    let args = package_args(&config, &stage.join("Cargo.toml"), &target, true, &packages);
+    qualified_command(
+        Path::new("cargo"),
+        &args,
         &stage,
+        Duration::from_mins(5),
+        "inventory fixture package",
     )?;
     let bytes = std::fs::read(target.join("package/ripr-0.11.0.crate")).map_err(io)?;
     let mut blobs = BTreeMap::new();

@@ -42,25 +42,13 @@ impl AttributedArchive {
         let workspace = stage.as_deref().unwrap_or_else(|| source.root());
         let manifest = workspace.join("Cargo.toml");
         let config = owned_cargo_config(owned_root, "package", None)?;
-        let mut args = vec![
-            "--config".to_string(),
-            config.to_string_lossy().into_owned(),
-            "package".to_string(),
-            "--jobs".to_string(),
-            "2".to_string(),
-            "--locked".to_string(),
-            "--manifest-path".to_string(),
-            manifest.to_string_lossy().into_owned(),
-            "--target-dir".to_string(),
-            target.to_string_lossy().into_owned(),
-        ];
-        // Path dependencies such as `ripr-contract` are not on a registry
-        // before the release, so they are packaged in the same invocation and
-        // Cargo verifies the candidate against them.
-        for package in packaged_packages(&source)? {
-            args.push("--package".to_string());
-            args.push(package);
-        }
+        let args = package_args(
+            &config,
+            &manifest,
+            &target,
+            stage.is_some(),
+            &packaged_packages(&source)?,
+        );
         qualified_command(
             Path::new("cargo"),
             &args,
@@ -616,6 +604,41 @@ fn publish_stage_for(
     Ok(Some(stage))
 }
 
+/// The qualified `cargo package` arguments. Path dependencies such as
+/// `ripr-contract` are not on a registry before the release, so they are
+/// packaged in the same invocation and Cargo verifies the candidate against
+/// them. A publish stage is dirty by construction (the strip and the marker);
+/// `--allow-dirty` admits only that, because `verify_stage` and the archive
+/// inventory bound what the dirt may be.
+fn package_args(
+    config: &Path,
+    manifest: &Path,
+    target: &Path,
+    staged: bool,
+    packages: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        "--config".to_string(),
+        config.to_string_lossy().into_owned(),
+        "package".to_string(),
+        "--jobs".to_string(),
+        "2".to_string(),
+        "--locked".to_string(),
+        "--manifest-path".to_string(),
+        manifest.to_string_lossy().into_owned(),
+        "--target-dir".to_string(),
+        target.to_string_lossy().into_owned(),
+    ];
+    if staged {
+        args.push("--allow-dirty".to_string());
+    }
+    for package in packages {
+        args.push("--package".to_string());
+        args.push(package.clone());
+    }
+    args
+}
+
 /// The candidate package and its committed path dependencies, for one
 /// multi-package `cargo package`.
 fn packaged_packages(source: &AdmittedSource) -> Result<Vec<String>, String> {
@@ -623,16 +646,26 @@ fn packaged_packages(source: &AdmittedSource) -> Result<Vec<String>, String> {
     let manifest = source
         .committed_file(&manifest_path)
         .ok_or_else(|| "candidate source lacks committed package Cargo.toml".to_string())?;
+    packages_of_manifest(manifest, source.package_name())
+}
+
+fn packages_of_manifest(manifest: &[u8], package_name: &str) -> Result<Vec<String>, String> {
     let manifest: toml::Value = toml::from_str(
         std::str::from_utf8(manifest)
             .map_err(|error| format!("package manifest UTF-8: {error}"))?,
     )
     .map_err(|error| format!("package manifest TOML: {error}"))?;
     let mut packages = std::collections::BTreeSet::new();
-    for table in ["dependencies", "build-dependencies"] {
-        let Some(dependencies) = manifest.get(table).and_then(toml::Value::as_table) else {
-            continue;
-        };
+    let mut tables = vec![&manifest];
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        tables.extend(targets.values());
+    }
+    let dependency_tables = tables.into_iter().flat_map(|table| {
+        ["dependencies", "build-dependencies"]
+            .into_iter()
+            .filter_map(move |name| table.get(name).and_then(toml::Value::as_table))
+    });
+    for dependencies in dependency_tables {
         for (key, value) in dependencies {
             if value.get("path").is_some() {
                 let name = value
@@ -643,7 +676,7 @@ fn packaged_packages(source: &AdmittedSource) -> Result<Vec<String>, String> {
             }
         }
     }
-    packages.insert(source.package_name().to_string());
+    packages.insert(package_name.to_string());
     Ok(packages.into_iter().collect())
 }
 
@@ -671,21 +704,18 @@ impl<'a> ArchiveRules<'a> {
         self.blobs.get(path).map(Vec::as_slice)
     }
 
-    /// True when `body` is exactly the publish-stage strip of the committed
-    /// blob at `committed_path` and that strip removed at least one module.
-    fn is_committed_strip(&self, committed_path: &str, body: &[u8]) -> bool {
+    /// The publish-stage strip of the committed blob at `committed_path`,
+    /// when it is under the stripped source root and removes a module.
+    fn committed_strip(&self, committed_path: &str) -> Option<String> {
         let root = format!("{}/", crate::publish_stage::STRIPPED_SOURCE_ROOT);
         if !(committed_path.starts_with(&root) && committed_path.ends_with(".rs")) {
-            return false;
+            return None;
         }
-        let Some(text) = self
-            .committed(committed_path)
-            .and_then(|blob| std::str::from_utf8(blob).ok())
-        else {
-            return false;
-        };
+        let text = std::str::from_utf8(self.committed(committed_path)?).ok()?;
         crate::publish_stage::strip_inline_test_modules(text)
-            .is_ok_and(|stripped| stripped.modules > 0 && stripped.text.as_bytes() == body)
+            .ok()
+            .filter(|stripped| stripped.modules > 0)
+            .map(|stripped| stripped.text)
     }
 }
 
@@ -700,6 +730,7 @@ fn archive_inventory(
     let mut inventory = BTreeMap::new();
     let mut vcs_dirty = false;
     let mut stripped_entries = 0_usize;
+    let mut unstripped_entries = 0_usize;
     for entry in archive
         .entries()
         .map_err(|error| format!("read produced archive entries: {error}"))?
@@ -813,13 +844,18 @@ fn archive_inventory(
                 }
             }
             _ => {
-                if rules.committed(&committed_path) != Some(body.as_slice()) {
-                    if !rules.is_committed_strip(&committed_path, &body) {
+                let committed = rules.committed(&committed_path) == Some(body.as_slice());
+                match (committed, rules.committed_strip(&committed_path)) {
+                    (true, None) => {}
+                    (true, Some(_)) => unstripped_entries += 1,
+                    (false, Some(text)) if text.as_bytes() == body.as_slice() => {
+                        stripped_entries += 1;
+                    }
+                    (false, _) => {
                         return Err(format!(
                             "packaged ordinary entry is not the committed source blob: {relative}"
                         ));
                     }
-                    stripped_entries += 1;
                 }
             }
         }
@@ -841,12 +877,13 @@ fn archive_inventory(
         }
     }
     // A publish-stage archive is exactly: a dirty record, the marker naming
-    // the admitted commit, and at least one stripped entry. Any one of the
-    // three without the others is refused.
+    // the admitted commit, and at least one stripped entry, with no
+    // strippable source left unstripped. Any part without the rest is refused.
     let marked = inventory.contains_key(crate::publish_stage::PUBLISH_STAGE_MARKER);
-    if vcs_dirty != marked || marked != (stripped_entries > 0) {
+    if vcs_dirty != marked || marked != (stripped_entries > 0) || (marked && unstripped_entries > 0)
+    {
         return Err(format!(
-            "produced archive is not a committed or publish-stage package: dirty={vcs_dirty}, marker={marked}, stripped entries={stripped_entries}"
+            "produced archive is not a committed or publish-stage package: dirty={vcs_dirty}, marker={marked}, stripped entries={stripped_entries}, unstripped strippable entries={unstripped_entries}"
         ));
     }
     Ok(inventory)
