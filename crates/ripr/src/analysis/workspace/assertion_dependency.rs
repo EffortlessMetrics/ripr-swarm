@@ -181,6 +181,62 @@ fn config_allowed(value: &toml::Value) -> bool {
         })
 }
 
+/// `[env]` keys a directory-discovered Cargo configuration may set. Cargo
+/// forwards `[env]` to the `rustc` target-information probe that a resolving
+/// `cargo metadata` runs, so a key such as `LD_PRELOAD`, `RUSTC_BOOTSTRAP` or
+/// `RUSTUP_TOOLCHAIN` would let the analyzed tree choose code that runs.
+const DISCOVERED_CONFIG_ENV_ALLOWED: [&str; 7] = [
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "RUST_MIN_STACK",
+    "RUST_TEST_THREADS",
+];
+
+/// Whether a Cargo configuration found by walking up from the analysis root
+/// (rather than the user's own Cargo home) leaves the metadata probe's
+/// programs alone. The probe runs `rustc` for target information, and Cargo
+/// takes that program, its wrappers, its flags and its environment from
+/// these files: an analyzed tree could otherwise name a program the probe
+/// runs (`build.rustc`, `build.rustc-wrapper`, `build.rustc-workspace-wrapper`),
+/// load code into `rustc` (`[env]` `LD_PRELOAD`, or `RUSTC_BOOTSTRAP` with a
+/// `-Z` flag in `rustflags`), or pull in an unsnapshotted file (`include`).
+/// A refusal only withholds the assertion-dependency identity.
+fn discovered_config_allowed(value: &toml::Value) -> bool {
+    let build_allowed = value.get("build").is_none_or(|build| {
+        [
+            "rustc",
+            "rustc-wrapper",
+            "rustc-workspace-wrapper",
+            "rustflags",
+        ]
+        .iter()
+        .all(|key| build.get(key).is_none())
+    });
+    let target_allowed = value.get("target").is_none_or(|target| {
+        target
+            .as_table()
+            .is_some_and(|table| table.values().all(|entry| entry.get("rustflags").is_none()))
+    });
+    let env_allowed = value.get("env").is_none_or(|env| {
+        env.as_table().is_some_and(|table| {
+            table.keys().all(|key| {
+                DISCOVERED_CONFIG_ENV_ALLOWED
+                    .iter()
+                    .any(|allowed| key.eq_ignore_ascii_case(allowed))
+            })
+        })
+    });
+    build_allowed
+        && target_allowed
+        && env_allowed
+        && ["include", "unstable", "host"]
+            .iter()
+            .all(|key| value.get(key).is_none())
+}
+
 fn environment_allowed(env: &BTreeMap<String, String>) -> bool {
     !env.keys().any(|key| {
         ["CARGO_SOURCE_", "CARGO_REGISTRIES_", "CARGO_REGISTRY_"]
@@ -268,12 +324,18 @@ fn snapshot_with_environment(
     identities.insert("effective-home-resolved".into(), directory_identity(&home)?);
     identities.extend(environment_identity_inputs(env));
     let mut configs = vec![home.join("config"), home.join("config.toml")];
+    let canonical_home = home.canonicalize().ok();
     let mut manifests = Vec::new();
     for dir in root.ancestors() {
         configs.extend([dir.join(".cargo/config"), dir.join(".cargo/config.toml")]);
         manifests.extend([dir.join("Cargo.toml"), dir.join("Cargo.lock")]);
     }
     for path in configs {
+        // The walk reaches the Cargo home itself when the root sits under it
+        // (`~/project` finds `~/.cargo/config.toml`); that file is still the
+        // user's own and keeps the home rules.
+        let discovered = path.parent().and_then(|dir| dir.canonicalize().ok()) != canonical_home
+            || canonical_home.is_none();
         identities.insert(
             format!("config-dir:{}", path.parent()?.to_str()?),
             directory_identity(path.parent()?)?,
@@ -284,7 +346,8 @@ fn snapshot_with_environment(
                 format!("resolved:{}", path.to_str()?),
                 path.canonicalize().ok()?.to_str()?.into(),
             );
-            if !config_allowed(&parse(bytes)?) {
+            let value = parse(bytes)?;
+            if !config_allowed(&value) || (discovered && !discovered_config_allowed(&value)) {
                 return None;
             }
         }
@@ -603,6 +666,9 @@ fn metadata_probe_result(root: &Path) -> Result<Vec<u8>, MetadataProbeFailure> {
 
 #[cfg(test)]
 mod metadata_probe_tests;
+
+#[cfg(test)]
+mod discovered_config_tests;
 
 pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIdentity> {
     let root = package_root.canonicalize().ok()?;
