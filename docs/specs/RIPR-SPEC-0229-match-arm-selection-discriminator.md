@@ -538,10 +538,12 @@ implies but does not spell out:
   arm (#12143). A bare `let`-then-return and a tail `match` do not remap.
 - the read macros (`assert_eq!`, `println!`, `dbg!`, ...) are trusted by
   name, so the unselected arm is not named when the workspace defines,
-  imports or may glob in another macro under one of those names (#15022): a
-  test-local `macro_rules! assert_eq` can run the owner with an input the
-  call it wraps never shows. A glob of a workspace package does not count
-  as foreign; a glob of any other crate does.
+  imports or may glob in another macro under a name that the owner, a
+  function it reaches, a related test or a helper that test reaches
+  invokes (#15022): a test-local `macro_rules! assert_eq` can run the owner
+  with an input the call it wraps never shows. A name nothing on those
+  paths invokes is not asked about. A glob of a workspace package does not
+  count as foreign; a glob of any other crate does.
 
 ## Required Evidence
 

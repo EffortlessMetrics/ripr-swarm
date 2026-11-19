@@ -4830,8 +4830,9 @@ fn missing_guard_entry_discriminator(
 /// that selects one arm can still run another. The same refusals as
 /// [`missing_guard_entry_discriminator`]: a callee may call it back
 /// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
-/// read, a read macro's name is rebound ([`read_macro_name_rebound`]), or
-/// anything outside the related tests names it
+/// read, a read macro it or a related test invokes is rebound
+/// ([`invoked_read_macro_rebound`]), or anything outside the related tests
+/// names it
 /// ([`owner_named_outside_related_tests`]): its own body (a direct,
 /// `Self::`-qualified or `self.` self-call), a helper passed as a function
 /// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
@@ -4851,8 +4852,43 @@ fn owner_may_call_itself(
         // The read macros are trusted by name (#15022, as in
         // `missing_guard_entry_discriminator`): a workspace that defines,
         // imports or may glob in another macro under one of those names can
-        // run the owner with an input the call it wraps never shows.
-        || read_macro_name_rebound(index)
+        // run the owner with an input the call it wraps never shows. Only
+        // the names the owner, its callees, the related tests and their
+        // helpers invoke are asked about, so an unrelated `macro_rules!
+        // assert` elsewhere leaves an `assert_eq!`-only arm readable.
+        || invoked_read_macro_rebound(owner, functions_by_name, index, related_tests)
+}
+
+/// Whether a [`READ_MACROS`] name that the owner, a function it reaches,
+/// a related test or a helper that test reaches invokes is rebound in the
+/// workspace ([`macro_names_rebound`]). A name nothing on those paths
+/// invokes cannot run the owner from a read call.
+fn invoked_read_macro_rebound(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    let mut invoked = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    collect_read_macros(&owner.body, &mut invoked);
+    pending.extend(owner.calls.iter().map(|call| call.name.as_str()));
+    for test in related_tests {
+        collect_read_macros(&test.body, &mut invoked);
+        pending.extend(test.body_calls().map(|call| call.name.as_str()));
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            collect_read_macros(&function.body, &mut invoked);
+            pending.extend(function.calls.iter().map(|call| call.name.as_str()));
+        }
+    }
+    let names = invoked.into_iter().collect::<Vec<_>>();
+    !names.is_empty() && macro_names_rebound(index, &names)
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -5256,46 +5292,69 @@ fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) 
 /// Whether `body` invokes a macro other than [`READ_MACROS`], whose
 /// expansion is not read and may call any function.
 fn invokes_unread_macro(body: &str) -> bool {
+    macro_invocations(body)
+        .iter()
+        .any(|(name, foreign_path)| *foreign_path || !READ_MACROS.contains(&name.as_str()))
+}
+
+/// Add to `invoked` each [`READ_MACROS`] name that `body` invokes without a
+/// path outside the standard crates (#15022).
+fn collect_read_macros(body: &str, invoked: &mut std::collections::BTreeSet<&'static str>) {
+    for (name, foreign_path) in macro_invocations(body) {
+        if let Some(read) = READ_MACROS.iter().find(|read| **read == name)
+            && !foreign_path
+        {
+            invoked.insert(*read);
+        }
+    }
+}
+
+/// The macro invocations in `body`, comments and strings masked: each
+/// name, and whether a path outside the standard crates qualifies it.
+fn macro_invocations(body: &str) -> Vec<(String, bool)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter
     // and the name.
-    masked.match_indices('!').any(|(offset, _)| {
-        let next = bytes[offset + 1..]
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace());
-        if !matches!(next, Some(b'(' | b'[' | b'{')) {
-            return false;
-        }
-        let name_end = masked[..offset].trim_end().len();
-        let name_start = masked[..name_end]
-            .char_indices()
-            .rev()
-            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let name = &masked[name_start..name_end];
-        // A path-qualified name (`util::println!`) is a read macro only
-        // under the standard crates.
-        let qualifier = masked[..name_start].trim_end();
-        let foreign_path = qualifier.ends_with("::")
-            && !["std::", "core::", "alloc::"].iter().any(|root| {
-                qualifier.strip_suffix(root).is_some_and(|head| {
-                    !head
-                        .chars()
-                        .next_back()
-                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-                })
-            });
-        // `if !(done)` is a negation after a keyword, not a macro.
-        !name.is_empty()
-            && (foreign_path || !READ_MACROS.contains(&name))
-            && !matches!(
-                name,
-                "if" | "while" | "match" | "return" | "in" | "else" | "break"
-            )
-    })
+    masked
+        .match_indices('!')
+        .filter_map(|(offset, _)| {
+            let next = bytes[offset + 1..]
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace());
+            if !matches!(next, Some(b'(' | b'[' | b'{')) {
+                return None;
+            }
+            let name_end = masked[..offset].trim_end().len();
+            let name_start = masked[..name_end]
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
+            let name = &masked[name_start..name_end];
+            // A path-qualified name (`util::println!`) is a read macro only
+            // under the standard crates.
+            let qualifier = masked[..name_start].trim_end();
+            let foreign_path = qualifier.ends_with("::")
+                && !["std::", "core::", "alloc::"].iter().any(|root| {
+                    qualifier.strip_suffix(root).is_some_and(|head| {
+                        !head
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                    })
+                });
+            // `if !(done)` is a negation after a keyword, not a macro.
+            (!name.is_empty()
+                && !matches!(
+                    name,
+                    "if" | "while" | "match" | "return" | "in" | "else" | "break"
+                ))
+            .then(|| (name.to_string(), foreign_path))
+        })
+        .collect()
 }
 
 /// Produce a missing-discriminator fact for a `FieldConstruction` seam whose
