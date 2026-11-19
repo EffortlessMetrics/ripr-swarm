@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn strips_an_inline_test_module_with_its_attributes_and_docs() -> Result<(), String> {
-        let source = "pub fn keep() -> u8 {\n    1\n}\n\n/// Unit tests.\n#[cfg(test)]\n#[allow(clippy::unwrap_used)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn one() {\n        assert_eq!(keep(), 1);\n    }\n}\n";
+        let source = "pub fn keep() -> u8 {\n    1\n}\n\n/// Unit tests.\n#[cfg(test)]\n#[doc(hidden)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn one() {\n        assert_eq!(keep(), 1);\n    }\n}\n";
         let stripped = strip_inline_test_modules(source)?;
         assert_eq!(stripped.modules, 1);
         assert_eq!(stripped.text, "pub fn keep() -> u8 {\n    1\n}\n\n");
