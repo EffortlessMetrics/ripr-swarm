@@ -436,12 +436,17 @@ as a `tests/` file does: a call spelled through the package's own library name
 entry file itself is admitted, and only an entry `cargo test` runs through
 libtest: one spelling `test = false`, `harness = false` or any
 `required-features` keeps the path-shape reading, as do a file no `[[test]]`
-names and a `[[bin]]` entry. The manifest is read through the
+names and a `[[bin]]` entry. Only the analysis root's own package qualifies:
+a member or nested package's declared entry has no package prefix of its own
+in the path-shape keys, so it never reads as the root package's test. Other
+`tests/`-shape consumers (helper hops, `crate::` resolution) keep the
+path-shape reading. The manifest is read through the
 committed-source overlay (`MemberCrates::is_declared_test_target_entry`);
 absent manifest authority answers no.
 
 - `crates/ripr/tests/declared_test_target_crate_name.rs::a_declared_test_target_outside_tests_pairs_its_crate_named_call`
 - `crates/ripr/tests/declared_test_target_crate_name.rs::a_file_no_test_target_declares_stays_uncredited`
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_member_package_declared_test_never_reads_as_the_root_package`
 
 ## Implementation Mapping
 

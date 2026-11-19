@@ -142,8 +142,13 @@ fn a_file_no_test_target_declares_stays_uncredited() -> Result<(), String> {
 #[test]
 fn a_member_package_declared_test_never_reads_as_the_root_package() -> Result<(), String> {
     // The root package owns the changed `clamp_score`; member `b` declares
-    // `checks/t.rs` and pins its own same-named `b::clamp_score`.
-    let member_test = "#[test]\nfn clamps_at_limit() {\n    assert_eq!(b::clamp_score(100), 100);\n    assert_eq!(b::clamp_score(101), 100);\n}\n";
+    // `checks/t.rs` and spells the root's `my_pkg::clamp_score` with no
+    // dependency edge on it. Test discovery already drops that test (the
+    // owner reads no_static_path even with `root_package_only` forced off),
+    // so this is a regression guard on the end-to-end reading; the
+    // root-package check in `is_declared_test_target_entry` is defense in
+    // depth behind it.
+    let member_test = "#[test]\nfn clamps_at_limit() {\n    assert_eq!(my_pkg::clamp_score(100), 100);\n    assert_eq!(my_pkg::clamp_score(101), 100);\n}\n";
     let found = finding_with(
         "[workspace]\nmembers = [\"crates/b\"]\n",
         "crates/b/src/lib.rs",
