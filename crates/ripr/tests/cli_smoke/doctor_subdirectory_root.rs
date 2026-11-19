@@ -116,7 +116,7 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
         }
 
         // `--root .` still pins the invocation directory: this is the old
-        // view, and it proves the fixture would show the defect.
+        // view, where py/ alone detects Python only.
         let (pinned, pinned_stderr) = doctor_in(&subdir, &["doctor", "--root", "."])?;
         if pinned_stderr.contains("resolved workspace root to") {
             return Err(format!(
@@ -126,9 +126,16 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
         if !pinned.lines().any(|line| line == "Root: .") {
             return Err(format!("`--root .` must diagnose py/ itself:\n{pinned}"));
         }
-        if !pinned.contains("enabled = [\"python\"]") {
+        if detected_line(&pinned) != Some("- Detected languages: python (preview)") {
             return Err(format!(
-                "control: py/ alone detects Python only and suggests [\"python\"]:\n{pinned}"
+                "control: py/ alone detects Python only, unlike the root:\n{pinned}"
+            ));
+        }
+        // Even there, the `rust` the workspace config enables explicitly is
+        // kept in the replacement list (#15304 review).
+        if !pinned.contains("enabled = [\"rust\", \"python\"]") {
+            return Err(format!(
+                "`--root .` must keep the explicitly enabled rust:\n{pinned}"
             ));
         }
 
@@ -163,39 +170,62 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
     result
 }
 
-/// Negative control: a standalone Python repository has nothing to widen to,
-/// so implicit doctor stays put and still suggests `["python"]`.
+/// A standalone Python repository with no Rust marker. Implicit doctor has
+/// nothing to widen to. The tip drops `rust` only when it is the built-in
+/// default (#7648); a `rust` the user wrote into `[languages].enabled` stays
+/// in the replacement list (#15304 review).
 #[test]
-fn doctor_in_a_standalone_python_repo_keeps_its_root() -> Result<(), String> {
-    let workspace = unique_temp_workspace("doctor-standalone-python");
-    let result = (|| -> Result<(), String> {
-        write(
-            &workspace.join("pyproject.toml"),
-            "[project]\nname = \"py\"\nversion = \"0.1.0\"\n",
-        )?;
-        write(
-            &workspace.join("app.py"),
-            "def add(a, b):\n    return a + b\n",
-        )?;
-        write(
-            &workspace.join("ripr.toml"),
-            "[languages]\nenabled = [\"rust\"]\n",
-        )?;
-        run_git(&workspace, &["init", "-q", "-b", "main"])?;
-        let (stdout, stderr) = doctor_in(&workspace, &["doctor"])?;
-        if stderr.contains("resolved workspace root to") {
-            return Err(format!("a root run must not move:\n{stderr}"));
-        }
-        if !stdout.lines().any(|line| line == "Root: .") {
-            return Err(format!("a root run keeps `Root: .`:\n{stdout}"));
-        }
-        if !stdout.contains("enabled = [\"python\"]") {
-            return Err(format!(
-                "a Python-only repo is still told to enable Python alone:\n{stdout}"
-            ));
-        }
-        Ok(())
-    })();
-    ignore_remove_dir_all(&workspace);
-    result
+fn doctor_tip_keeps_explicit_rust_and_drops_only_the_default() -> Result<(), String> {
+    let cases: [(&str, Option<&str>, Option<&str>); 3] = [
+        (
+            "explicit",
+            Some("[languages]\nenabled = [\"rust\"]\n"),
+            Some("enabled = [\"rust\", \"python\"]"),
+        ),
+        // Without a ripr.toml there is no file to edit, so doctor prints no
+        // tip; it must not name a Rust-keeping list either.
+        ("config-free", None, None),
+        (
+            "table-without-enabled",
+            Some("[languages]\n\n[analysis]\nmode = \"fast\"\n"),
+            Some("enabled = [\"python\"]"),
+        ),
+    ];
+    for (label, config, expected) in cases {
+        let workspace = unique_temp_workspace(&format!("doctor-standalone-python-{label}"));
+        let result = (|| -> Result<(), String> {
+            write(
+                &workspace.join("pyproject.toml"),
+                "[project]\nname = \"py\"\nversion = \"0.1.0\"\n",
+            )?;
+            write(
+                &workspace.join("app.py"),
+                "def add(a, b):\n    return a + b\n",
+            )?;
+            if let Some(config) = config {
+                write(&workspace.join("ripr.toml"), config)?;
+            }
+            run_git(&workspace, &["init", "-q", "-b", "main"])?;
+            let (stdout, stderr) = doctor_in(&workspace, &["doctor"])?;
+            if stderr.contains("resolved workspace root to") {
+                return Err(format!("{label}: a root run must not move:\n{stderr}"));
+            }
+            if !stdout.lines().any(|line| line == "Root: .") {
+                return Err(format!("{label}: a root run keeps `Root: .`:\n{stdout}"));
+            }
+            match (expected, tip_line(&stdout)) {
+                (Some(expected), Some(tip)) if tip.contains(&format!("Set `{expected}`")) => {}
+                (None, None) if !stdout.contains("enabled = [\"rust\"") => {}
+                (expected, tip) => {
+                    return Err(format!(
+                        "{label}: expected tip {expected:?}, got {tip:?}:\n{stdout}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        ignore_remove_dir_all(&workspace);
+        result?;
+    }
+    Ok(())
 }

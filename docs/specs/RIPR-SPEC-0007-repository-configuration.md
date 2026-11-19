@@ -157,6 +157,10 @@ tip and `Root:` therefore describe the tree check analyzes, and a run from a
 Python subdirectory of a Rust workspace is not told to replace `rust` with
 `python`. `--root .` diagnoses the invocation directory alone. If that resolver
 fails, doctor says so on stderr and diagnoses the invocation directory.
+The tip's replacement list drops `rust` only when it is the built-in default and
+no Rust marker is found (#7648). A `rust` written in `[languages].enabled` is the
+user's selection and stays in the list; a `[languages]` table without `enabled`,
+or no `ripr.toml`, leaves the default.
 
 ### Doctor blocking and advisory marks (#9033)
 

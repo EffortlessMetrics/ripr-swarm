@@ -263,20 +263,21 @@ fn shallow_has_extension(root: &Path, extension: &str) -> bool {
 
 /// Languages to name in a copy-paste `[languages] enabled = [...]` tip.
 ///
-/// Keep every already-enabled language except default `rust` when the
-/// workspace has no Rust markers, then append each language the tip is
-/// asking the user to add. Following the tip must not disable another
-/// preview adapter, and a TypeScript-only repo must not be told to enable
-/// Rust (#7648).
+/// Keep every already-enabled language except `rust` when `keep_rust` is
+/// false, then append each language the tip is asking the user to add.
+/// Following the tip must not disable another preview adapter, and a
+/// TypeScript-only repo must not be told to enable Rust (#7648). Callers pass
+/// `keep_rust` true when Rust markers are present or when `rust` was enabled
+/// explicitly rather than by default (#15304).
 pub fn enablement_tip_languages(
     enabled: &[LanguageId],
-    rust_detected: bool,
+    keep_rust: bool,
     to_add: impl IntoIterator<Item = LanguageId>,
 ) -> Vec<LanguageId> {
     let mut target: Vec<LanguageId> = enabled
         .iter()
         .copied()
-        .filter(|id| *id != LanguageId::Rust || rust_detected)
+        .filter(|id| *id != LanguageId::Rust || keep_rust)
         .collect();
     for id in to_add {
         if !target.contains(&id) {

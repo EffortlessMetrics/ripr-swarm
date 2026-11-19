@@ -6,3 +6,6 @@
   detected Python alone, printed `Root: .`, and suggested
   `enabled = ["python"]`, which drops Rust. `--root .` still diagnoses the
   current directory alone (#15304).
+- The `enabled` tip keeps `rust` when `ripr.toml` lists it in
+  `[languages].enabled`, even where no Rust marker is found. Only the
+  built-in default `rust` is left out for a repository with no Rust (#15304).
