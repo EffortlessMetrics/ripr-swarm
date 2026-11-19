@@ -820,7 +820,7 @@ impl OwnerCallIdentity {
         if owner.item.container != FunctionContainer::Free {
             return None;
         }
-        let owner_path = definition_module_path(owner)?;
+        let owner_path = definition_module_path_in(index, owner)?;
         let owner_package = package_key(&owner.file);
         let owner_absolute = super::related_tests::path_is_absolute_form(&owner.file);
         let mut rivals = Vec::new();
@@ -858,7 +858,7 @@ impl OwnerCallIdentity {
                             return None;
                         }
                         CrateClass::Crate(class) if class == owner_crate => {
-                            definitions.push(definition_module_path(function));
+                            definitions.push(definition_module_path_in(index, function));
                         }
                         _ => {}
                     }
@@ -1027,7 +1027,7 @@ impl OwnerCallIdentity {
             && self.layout.class(&test.file) == self.owner_crate
             && package_key(&test.file) == self.owner_package;
         TestScope {
-            file_segments: file_module_segments(&test.file).filter(|_| same_crate),
+            file_segments: file_module_segments_in(index, &test.file).filter(|_| same_crate),
             scopes,
             crate_names: self.own_crate_names(test, index),
         }
@@ -1626,7 +1626,74 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
 /// path of the module that holds its `impl` block (the segments before the
 /// first `impl ` segment); otherwise an impl member has no module-level path.
 fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<String>> {
-    let mut path = file_module_segments(&function.file)?;
+    module_path_from(
+        file_module_segments(&function.file)?,
+        function,
+        through_impl,
+    )
+}
+
+/// [`definition_module_path`] that reads a manifest-declared `[lib] path`
+/// root (#14495). The file a package's `[lib] path` names is its library's
+/// crate root, so a definition there has the empty module path plus its
+/// inline modules. A crate root owns its directory the way `src/lib.rs`
+/// owns `src/`, so a file below the root's directory takes its segments
+/// relative to that directory (`source/pricing.rs` is `pricing` under
+/// `source/entry.rs`). A package with a `#[path]` remap keeps the rule off
+/// at the callers, as for the default layout. Every other file keeps the
+/// path-shape segments.
+pub(super) fn definition_module_path_in(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    if let Some(segments) = custom_lib_root_segments(index, &function.file) {
+        return module_path_from(segments, function, false);
+    }
+    definition_module_path(function)
+}
+
+/// [`file_module_segments`] read the way [`definition_module_path_in`]
+/// reads definitions, so a test module's own path and the owner's path
+/// below a `[lib] path` root are compared in one reading (#14495 review).
+fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+    custom_lib_root_segments(index, file).or_else(|| file_module_segments(file))
+}
+
+/// Module segments of `file` below its package's `[lib] path` root, or
+/// `None` when the package has no custom root or `file` is not under the
+/// root's directory.
+fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+    let crate_root = index.member_crates.custom_lib_path_root_of(file)?;
+    let normalized = super::related_tests::normalize_path(file);
+    let root = super::related_tests::normalize_path(&crate_root);
+    if normalized == root {
+        return Some(Vec::new());
+    }
+    let directory = match root.rsplit_once('/') {
+        Some((directory, _)) => format!("{directory}/"),
+        None => String::new(),
+    };
+    let body = normalized.strip_prefix(&directory)?.strip_suffix(".rs")?;
+    // Other targets' directories never hold the library's modules.
+    if ["tests/", "benches/", "examples/", "src/bin/"]
+        .iter()
+        .any(|target| body.starts_with(target))
+        || matches!(body, "main" | "build" | "src/main")
+    {
+        return None;
+    }
+    let mut segments: Vec<String> = body.split('/').map(str::to_string).collect();
+    if segments.last().is_some_and(|last| last == "mod") {
+        segments.pop();
+    }
+    (!segments.is_empty()).then_some(segments)
+}
+
+fn module_path_from(
+    mut path: Vec<String>,
+    function: &FunctionSummary,
+    through_impl: bool,
+) -> Option<Vec<String>> {
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
     let mut segments: Vec<&str> = rest.split("::").collect();
@@ -3685,7 +3752,7 @@ fn qualified_call_names_owner(
     if package_remaps_module_paths(index, owner_package.as_deref()) {
         return false;
     }
-    let Some(owner_path) = definition_module_path(owner) else {
+    let Some(owner_path) = definition_module_path_in(index, owner) else {
         return false;
     };
     let layout = CrateLayout::new(index, owner_package.as_deref());

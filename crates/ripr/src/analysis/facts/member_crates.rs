@@ -322,6 +322,31 @@ impl MemberCrates {
             && is_library_root(&package, &crate_root)
     }
 
+    /// The root-relative library root a manifest `[lib] path` names for the
+    /// package nearest `file`, when that path stays inside the package
+    /// (#14495). `None` for a default `src/lib.rs` library, an escaping or
+    /// non-string path, a virtual or unreadable manifest, or absent
+    /// manifest authority.
+    pub(crate) fn custom_lib_path_root_of(&self, file: &Path) -> Option<PathBuf> {
+        let root = lexical(self.root.as_ref()?);
+        let file = lexical(&root.join(file));
+        // Read the manifest where the analyzed sources are read, so a dirty
+        // `[lib] path` cannot move a committed-source root.
+        let (package, _) = nearest_package_snapshot(&root, file.parent()?, true)?;
+        let relative = lexical(Path::new(
+            package.manifest.get("lib")?.get("path")?.as_str()?,
+        ));
+        if !relative
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+            || relative == Path::new("src").join("lib.rs")
+        {
+            return None;
+        }
+        let crate_root = package.directory.join(relative);
+        crate_root.strip_prefix(&root).ok().map(Path::to_path_buf)
+    }
+
     /// An established binary root cannot export macros to another crate,
     /// even when an opaque invocation emits `#[macro_export]`. Read the
     /// selected source epoch, and refuse unknown or overlapping library
