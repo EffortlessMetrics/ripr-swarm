@@ -113,5 +113,28 @@ fn a_later_rename_copy_or_delete_of_an_edited_path_refuses_its_lines() -> Result
     {
         return Err(format!("edit-then-copy parsed unexpectedly: {parsed:?}"));
     }
+    // Deleted after being emptied: git writes no `---`/`+++` pair.
+    let emptied =
+        "diff --git a/src/a.rs b/src/a.rs\ndeleted file mode 100644\nindex 1111111..0000000\n";
+    let parsed = parse_unbounded(&format!("{edit_a}{emptied}"));
+    if !paths(&parsed).is_empty()
+        || repeated_limitation_paths(&parsed) != [Some("src/a.rs".to_string())]
+    {
+        return Err(format!(
+            "edit-then-empty-delete parsed unexpectedly: {parsed:?}"
+        ));
+    }
+    // Pure-renamed onto a path an earlier section edited: it is no longer
+    // listed as an unchanged pure rename.
+    let pure = "diff --git a/src/z.rs b/src/b.rs\nsimilarity index 100%\nrename from src/z.rs\nrename to src/b.rs\n";
+    let parsed = parse_unbounded(&format!("{edit_b}{pure}"));
+    if !paths(&parsed).is_empty()
+        || !parsed.pure_rename_paths.is_empty()
+        || repeated_limitation_paths(&parsed) != [Some("src/b.rs".to_string())]
+    {
+        return Err(format!(
+            "edit-then-pure-rename parsed unexpectedly: {parsed:?}"
+        ));
+    }
     Ok(())
 }

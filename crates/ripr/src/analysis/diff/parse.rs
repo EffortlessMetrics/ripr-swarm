@@ -981,6 +981,10 @@ mod parser_state {
             if raw.starts_with("deleted file mode ") {
                 self.deletion_section = true;
                 self.record_deleted_file_if_ready();
+                // #15268: an emptied file deletes with no `---`/`+++` pair.
+                if let Some(old) = self.section_old_path.clone() {
+                    self.note_repeated_section(&old, files);
+                }
                 return true;
             }
 
