@@ -4935,12 +4935,24 @@ pub(in crate::analysis) fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
         .strip_prefix("crates/")
-        .or_else(|| normalized.rsplit_once("/crates/").map(|(_, rest)| rest));
-    if let Some(crate_relative) = crate_relative
+        .map(|rest| ("", rest))
+        .or_else(|| normalized.rsplit_once("/crates/"));
+    if let Some((leading, crate_relative)) = crate_relative
         && let Some((crate_name, package_relative)) = crate_relative.split_once('/')
         && (package_relative.starts_with("src/") || package_relative.starts_with("tests/"))
     {
-        return Some(format!("crates/{crate_name}/"));
+        // Keep the directories above `crates/`: a workspace nested below the
+        // analysis root (`rust/crates/x`) or two workspaces that both have a
+        // `crates/x` are distinct packages, not one.
+        if path_is_absolute_form(path) {
+            return Some(format!("crates/{crate_name}/"));
+        }
+        let leading = if leading.is_empty() {
+            String::new()
+        } else {
+            format!("{leading}/")
+        };
+        return Some(format!("{leading}crates/{crate_name}/"));
     }
     if path_is_absolute_form(path) {
         return None;
@@ -14795,6 +14807,20 @@ fn crate_c_score_test() {
         assert_eq!(
             package_prefix(Path::new("crates/ripr/examples/sample/src/lib.rs")).as_deref(),
             Some("crates/ripr/examples/sample/")
+        );
+        // A workspace below the analysis root keeps the directories above
+        // `crates/`, so two workspaces' `crates/alpha` stay two packages (#15299).
+        assert_eq!(
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs")).as_deref(),
+            Some("w2/crates/alpha/")
+        );
+        assert_eq!(
+            package_prefix(Path::new("rust/crates/alpha/tests/a.rs")).as_deref(),
+            Some("rust/crates/alpha/")
+        );
+        assert_ne!(
+            package_prefix(Path::new("w1/crates/alpha/src/lib.rs")),
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs"))
         );
     }
 
