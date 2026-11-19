@@ -1089,7 +1089,11 @@ def body_refusal_reason(body: str, head: str) -> str | None:
             if verdict[1].lower() == head:
                 return f"its VERDICT SHA is uppercase; write the head as {head}"
             return f"its VERDICT line names {verdict[1]}, not the head {head}"
-        lines, verdict_carrier = substantive, True
+        # Same line lists as comment_body_verdict_ready: header rows dropped.
+        lines = [
+            line for line in without_verdict_table_headers(visible) if line.strip()
+        ]
+        verdict_carrier = True
     elif MARKER_OPEN.match(normalize_body(first)):
         if not positive_line(first):
             return (
@@ -1106,7 +1110,7 @@ def body_refusal_reason(body: str, head: str) -> str | None:
             "its first line is neither a readiness marker nor "
             f"`VERDICT: APPROVE {head}`: '{_snippet(first)}'"
         )
-    fenced_lines = fenced if verdict_carrier else without_verdict_table_headers(fenced)
+    fenced_lines = without_verdict_table_headers(fenced)
     for line in fenced_lines:
         if STATE_TOKEN.search(line) or negation_hit(line):
             return (
@@ -2442,6 +2446,11 @@ def self_test() -> None:
         verdict_open + "\n\n| Verdict | BLOCK |\n|---|---|\n| x | y |", head
     )
     # A veto from a later retraction line is explained by that line.
+    # A refused VERDICT body is explained by its real refuser, not by a header row.
+    reason = body_refusal_reason(
+        verdict_open + "\n| Verdict | Notes |\n|---|---|\nThe build is red; tests fail.", head
+    )
+    assert reason is not None and "tests fail" in reason and "Notes |" not in reason, reason
     reason = negative_reason("Thanks\n\nThe earlier REVIEW_READY is withdrawn.", head)
     assert "earlier REVIEW_READY is withdrawn" in reason, reason
     # SHA shape messages.
@@ -2532,7 +2541,7 @@ def main() -> int:
         # refusal into a traceback, and review data is untrusted log text.
         try:
             details = refusal_details(reviews, head=args.head, pull=pull)
-        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+        except Exception as exc:  # diagnostics never change the exit code
             details = [f"the refusal could not be explained ({type(exc).__name__})"]
         for detail in details:
             print(
