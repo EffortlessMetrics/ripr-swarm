@@ -57,7 +57,8 @@ The codeLens contains a cached informational advisory and an explicit refresh ac
   lens lines come from the saved file, so a lens would sit on the wrong line.
   The lens returns once the buffer matches the analyzed content again. The same
   fail-closed rule hover and diagnostics apply.
-- When `N == 0`, the title reads `"ripr: no related tests found (CLASS)"`.
+- When `N == 0` and the class is not `no_static_path`, the title reads
+  `"ripr: no related tests found (CLASS)"`.
   The word "no related tests found" is the correct static phrase; the
   runtime-mutation-testing synonym is never used.
 - A `no_static_path` finding reads `"ripr: no static test path found (no path)"`
@@ -68,14 +69,14 @@ The codeLens contains a cached informational advisory and an explicit refresh ac
 
 ### Honesty rules
 
-Every full title starts with `Refresh saved-workspace analysis · `. The cached advisory
-after that prefix MUST comply with the static-language vocabulary:
+A refresh row's full title is the cached advisory followed by the
+`· refresh saved workspace` suffix. The cached advisory before that suffix MUST comply with the static-language vocabulary:
 
 | Condition | Required phrasing |
 |---|---|
 | `snapshot == None` | Return empty `Vec` (no lens at all) |
 | class is `no_static_path` | `"ripr: no static test path found (no path) · static, cached"` |
-| `N == 0` | `"ripr: no related tests found (CLASS)"` |
+| `N == 0`, class is not `no_static_path` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
 | `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
 | Any TS/Python finding (preview) | Prefix with `"preview: "`; the class in parentheses does not repeat "preview" (#14462) |
@@ -198,7 +199,7 @@ codeLens. Base-deleted findings emit no lens.
 ### Command object
 
 Each resolved lens carries the existing advertised server command `ripr.refresh` with no
-arguments. Its title is `Refresh saved-workspace analysis · {cached advisory}`. Explicit
+arguments. Its title is `{cached advisory} · refresh saved workspace`. Explicit
 invocation uses the existing full saved-workspace refresh owner; requesting lenses never
 triggers analysis. No client extension or client-local command handler is required.
 `data: None` (resolve is disabled).
@@ -297,21 +298,21 @@ result:   [] (empty array, not a 0-count lens)
 
 ```
 finding:  class=exposed, related_tests.len()=3, language_status=None
-title:    "Refresh saved-workspace analysis · ripr: 3 related tests (exposed) · static, cached"
+title:    "ripr: 3 related tests (exposed) · static, cached · refresh saved workspace"
 ```
 
 ### Rust NoStaticPath, 0 related tests
 
 ```
 finding:  class=no_static_path, related_tests.len()=0, language_status=None
-title:    "Refresh saved-workspace analysis · ripr: no static test path found (no path) · static, cached"
+title:    "ripr: no static test path found (no path) · static, cached · refresh saved workspace"
 ```
 
 ### TypeScript Preview, Exposed, 1 related test
 
 ```
 finding:  class=exposed, related_tests.len()=1, language_status=Some(Preview)
-title:    "Refresh saved-workspace analysis · preview: 1 related test (exposed) · static, cached"
+title:    "preview: 1 related test (exposed) · static, cached · refresh saved workspace"
 ```
 
 ### URI mismatch — filter works
