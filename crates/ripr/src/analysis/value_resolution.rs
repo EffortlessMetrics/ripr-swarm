@@ -1696,7 +1696,7 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
             }
             continue;
         }
-        if let Some(args) = attr_call_args(attr, "case") {
+        if let Some(args) = rstest_case_attr_args(attr) {
             // `#[case]` without args - no scalar values to capture.
             if args.is_empty() {
                 continue;
@@ -1936,6 +1936,28 @@ fn attr_call_args<'a>(attr: &'a str, name: &str) -> Option<&'a str> {
     let inner = attr_inner(attr)?;
     let rest = inner.strip_prefix(name)?.trim_start();
     let args = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
+    Some(args)
+}
+
+/// Arguments of an rstest case row: `#[case(..)]` or its named form
+/// `#[case::description(..)]`, which rstest documents for readable test
+/// names and which carries the same positional row.
+fn rstest_case_attr_args(attr: &str) -> Option<&str> {
+    if let Some(args) = attr_call_args(attr, "case") {
+        return Some(args);
+    }
+    let rest = attr_inner(attr)?.strip_prefix("case::")?;
+    let open = rest.find('(')?;
+    let description = rest[..open].trim_end();
+    let identifier = description.strip_prefix("r#").unwrap_or(description);
+    let mut chars = identifier.chars();
+    let starts = chars
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic());
+    if !starts || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let args = rest[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
     Some(args)
 }
 
