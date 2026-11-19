@@ -533,6 +533,15 @@ pub enum StaticLimitKind {
     /// those tests, so reach is not claimed. The gap is withheld and the class
     /// is `static_unknown`; no runtime is chosen. See RIPR-SPEC-0240 / #13702.
     RustFutureNeverPolled,
+    /// A changed predicate boundary's compared operand does not bind to an
+    /// owner argument ripr can read from a test call: it is local, computed
+    /// (`cents % 100 > 49`), iterator-derived or closure-derived, so no test
+    /// input can be matched against the boundary value. The producer withholds
+    /// the repair packet; the class is unchanged (a `no_static_path` finding
+    /// stays `no_static_path`), and the sub-case is carried by the repair
+    /// route, not by this label. This names the unresolved boundary input,
+    /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
+    ActivationBoundaryInputUnresolved,
 }
 
 impl StaticLimitKind {
@@ -612,6 +621,9 @@ impl StaticLimitKind {
             }
             StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
             StaticLimitKind::RustFutureNeverPolled => "rust_future_never_polled",
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "activation_boundary_input_unresolved"
+            }
         }
     }
 
@@ -818,6 +830,12 @@ impl StaticLimitKind {
                  its future and drop it without `.await`, an executor or an async test \
                  attribute, so the changed body does not run in them. ripr does not claim reach \
                  or a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "The changed boundary compares a local, computed, iterator-derived or \
+                 closure-derived operand that ripr cannot map to a test call's arguments, so it \
+                 cannot tell which side of the boundary a test input lands on. The repair is \
+                 withheld; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1215,6 +1233,10 @@ mod tests {
             StaticLimitKind::RustFutureNeverPolled.as_str(),
             "rust_future_never_polled"
         );
+        assert_eq!(
+            StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
+            "activation_boundary_input_unresolved"
+        );
     }
 
     #[test]
@@ -1255,6 +1277,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
+            StaticLimitKind::ActivationBoundaryInputUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

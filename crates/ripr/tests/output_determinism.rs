@@ -17,7 +17,9 @@
 //! included: every workspace has weakly tested owners), and the baseline
 //! must name every changed owner, so the relation cannot pass over an empty
 //! or misparsed workspace. Formats whose documented contract stamps a
-//! per-run time (`check-findings-json`, `repo-*`) are left out.
+//! per-run time (`check-findings-json`, `repo-*`) are left out of that
+//! relation; `check-findings-json` is instead pinned under the opt-in
+//! `RIPR_GENERATED_AT` stamp, which makes its bytes repeatable too.
 
 #![cfg(any(
     feature = "lang-rust",
@@ -356,4 +358,128 @@ fn python_check_output_is_byte_identical_across_runs_workers_and_write_order() -
 fn typescript_check_output_is_byte_identical_across_runs_workers_and_write_order()
 -> Result<(), String> {
     assert_deterministic("typescript", &typescript_workspace())
+}
+
+/// One `check-findings-json` run on a freshly written tree, with
+/// `RIPR_GENERATED_AT` set to `stamp` or removed for `None`.
+#[cfg(feature = "lang-rust")]
+fn findings_artifact(
+    root: &Path,
+    files: &[(String, String)],
+    stamp: Option<&str>,
+) -> Result<std::process::Output, String> {
+    write_tree(root, files, false)?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(root)
+        .args([
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "change.diff",
+            "--format",
+            "check-findings-json",
+        ])
+        .env_remove("RIPR_LOG")
+        .env_remove("RIPR_CACHE_DIR");
+    match stamp {
+        Some(stamp) => command.env("RIPR_GENERATED_AT", stamp),
+        None => command.env_remove("RIPR_GENERATED_AT"),
+    };
+    command.output().map_err(|err| format!("spawn ripr: {err}"))
+}
+
+/// The value of the artifact's `generated_at` member.
+#[cfg(feature = "lang-rust")]
+fn generated_at(stdout: &[u8]) -> Option<String> {
+    const KEY: &str = "\"generated_at\":\"";
+    let text = String::from_utf8_lossy(stdout);
+    let start = text.find(KEY)? + KEY.len();
+    let end = text[start..].find('"')?;
+    Some(text[start..start + end].to_string())
+}
+
+/// `RIPR_GENERATED_AT` pins the one field that made `check-findings-json`
+/// differ between runs, so the artifact and the digest covering it repeat
+/// (#14230). A different pin changes the bytes, the default still reads the
+/// clock, and a value that is not `unix_ms:<millis>` is refused instead of
+/// being replaced by the clock.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn rust_check_findings_json_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200000";
+    const OTHER_PIN: &str = "unix_ms:1778179200001";
+    let workspace = rust_workspace();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-pinned-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+
+    let first = findings_artifact(&root, &workspace.files, Some(PIN))?;
+    if !matches!(first.status.code(), Some(0 | 1)) {
+        return Err(format!(
+            "pinned run exited {:?}:\n{}",
+            first.status.code(),
+            String::from_utf8_lossy(&first.stderr)
+        ));
+    }
+    let text = String::from_utf8_lossy(&first.stdout);
+    for owner in &workspace.owners {
+        if !text.contains(owner.as_str()) {
+            return Err(format!(
+                "pinned artifact does not name changed owner {owner}:\n{text}"
+            ));
+        }
+    }
+    if generated_at(&first.stdout).as_deref() != Some(PIN) {
+        return Err(format!(
+            "pinned artifact must carry generated_at {PIN}, got {:?}",
+            generated_at(&first.stdout)
+        ));
+    }
+
+    let second = findings_artifact(&root, &workspace.files, Some(PIN))?;
+    if second.stdout != first.stdout {
+        return Err(format!(
+            "two runs under the same pin differ at {}",
+            first_difference(&first.stdout, &second.stdout)
+        ));
+    }
+
+    let other = findings_artifact(&root, &workspace.files, Some(OTHER_PIN))?;
+    if other.stdout == first.stdout {
+        return Err("a different pin must change the artifact bytes".to_string());
+    }
+
+    let unpinned = findings_artifact(&root, &workspace.files, None)?;
+    let own_stamp = generated_at(&unpinned.stdout);
+    if !own_stamp
+        .as_deref()
+        .is_some_and(|stamp| stamp.starts_with("unix_ms:") && stamp != PIN)
+    {
+        return Err(format!(
+            "an unpinned run must stamp its own time, got {own_stamp:?}"
+        ));
+    }
+
+    let refused = findings_artifact(&root, &workspace.files, Some("1778179200000"))?;
+    // The refusal is the ordinary machine-readable one: exit 2, a
+    // `refused` document without an artifact envelope, and the reason on
+    // stderr.
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let document = String::from_utf8_lossy(&refused.stdout);
+    if refused.status.code() != Some(2)
+        || !document.contains("\"status\": \"refused\"")
+        || document.contains("\"artifact\"")
+        || generated_at(&refused.stdout).is_some()
+        || !stderr.contains("RIPR_GENERATED_AT must be unix_ms:")
+    {
+        return Err(format!(
+            "a malformed pin must be refused with no artifact; exit {:?}, stdout:\n{document}\nstderr:\n{stderr}",
+            refused.status.code()
+        ));
+    }
+    Ok(())
 }

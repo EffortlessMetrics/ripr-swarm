@@ -129,7 +129,7 @@ with the defaults.
 ## Commands
 
 Start with `ripr: Show Status`, `ripr: Show Output`, and
-`ripr: Refresh Diagnostics`. Finding-specific code actions appear on diagnostics.
+`ripr: Refresh Full Analysis`. Finding-specific code actions appear on diagnostics.
 The development extension also exposes the following commands:
 
 <details>

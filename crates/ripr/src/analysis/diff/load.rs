@@ -2934,11 +2934,20 @@ fn run_git_diff_bytes(
     // reading orderfile `''` — while /dev/null holds no patterns on any
     // platform git runs (verified on git-for-Windows 2.47.1, which maps it
     // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    // `diff.renames=true` pins git's own default (#14193). With an ambient
+    // `diff.renames=false` a renamed and edited file arrives as a deletion
+    // plus a whole new file, so every line of it is read as added and probed
+    // and the rename disclosure is lost; with `copies` a new file can arrive
+    // as a copy section that carries only its difference from another file.
+    // It is a config pin, not a flag, so a caller extra such as
+    // `--no-renames` still decides for its own invocation.
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
         "-c",
         "diff.orderFile=/dev/null",
+        "-c",
+        "diff.renames=true",
         "diff",
     ];
     args.extend_from_slice(extra_args);

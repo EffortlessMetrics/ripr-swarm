@@ -100,3 +100,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — python_bool_owner_formatted_patch (9)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_bool_owner_formatted_patch --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -550,7 +550,7 @@ mod tests {
     fn review_comments_help_discloses_cooperative_budget_boundary() -> Result<(), String> {
         let text = super::help_text_for("review-comments").ok_or("missing review-comments help")?;
         for required in [
-            "default 120000ms",
+            "default 600000ms",
             "safe boundaries",
             "Non-preemptible operations can overrun",
             "outer orchestration wrapper for a hard process bound",

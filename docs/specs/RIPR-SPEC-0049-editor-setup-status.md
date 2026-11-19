@@ -157,6 +157,15 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Named commands:
+
+- Given a status message, setup report or setting description tells the user
+  to run a ripr command, it names the command by the title the Command Palette
+  shows (for the refresh command, the contributed title of
+  `ripr.refreshDiagnostics`), and the command lists in
+  `docs/EDITOR_EXTENSION.md` and `docs/CONFIGURATION.md` match the contributed
+  commands.
+
 Server missing:
 
 - Given no usable server binary is resolved, status explains that the server is
@@ -174,6 +183,16 @@ Server download unreachable:
   guidance and does not suggest that the machine is offline.
 - This spec owns only how the unavailable state is explained; the download
   itself stays outside it (see Non-Goals).
+
+First-run walkthrough setup check:
+
+- Given the `ripr: Get Started` walkthrough, a step between opening a Rust
+  file and reading the first finding points at `ripr: Diagnose Setup`, and its
+  page names the `ripr: server missing` status and both fixes
+  (`ripr.server.path`, `ripr.server.downloadBaseUrl`) plus
+  `ripr: Restart Server`.
+- Every command link and completion event in that step is a contributed
+  command, and every setting the page names is a contributed setting.
 
 Preview disabled:
 

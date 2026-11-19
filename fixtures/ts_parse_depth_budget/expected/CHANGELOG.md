@@ -564,3 +564,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (47)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/human.txt`
