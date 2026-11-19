@@ -447,7 +447,12 @@ fn a_deleted_owner_beside_the_skip_still_reads_resolved() -> Result<(), String> 
 /// entry in the withheld owner's file reads `not_evaluated`, never resolved.
 #[test]
 fn a_legacy_baseline_without_changed_owner_is_not_read_as_resolved() -> Result<(), String> {
-    let (repo, baseline_path, skipped, _) = skipped_after_baseline(&lib_source(SKIP), WEAK_TESTS)?;
+    let Scenario {
+        repo,
+        baseline_path,
+        skipped,
+        ..
+    } = skipped_after_baseline(&lib_source(SKIP), WEAK_TESTS)?;
     let mut baseline = read_json(&baseline_path)?;
     for entry in baseline["entries"].as_array_mut().into_iter().flatten() {
         if let Some(object) = entry.as_object_mut() {
