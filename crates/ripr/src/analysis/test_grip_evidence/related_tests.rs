@@ -1,8 +1,9 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
-    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem,
+    owner_call_selects_generic_sibling, owner_dispatch_trait, owner_impl_identity_shadowed,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -24,6 +25,31 @@ pub(super) use context::{CompactTest, call_text_contains_named_call};
 pub(super) fn find_related_tests_with_context<'context, 'index>(
     seam: &RepoSeam,
     context: &'context CompactGripContext<'index>,
+) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    find_related_tests_in(seam, context, None)
+}
+
+/// True when `seam` relates to some test whose context position is in
+/// `pool`, by a reason `counts` accepts (#12940). Same rules as
+/// [`find_related_tests_with_context`]: other candidates are dropped after
+/// matching and before the per-test checks, and every later step only
+/// removes a test on its own facts and keeps its reason, so a pool test is
+/// related here, with that reason, exactly when it is related there.
+pub(super) fn relates_to_pool_test(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    pool: &BTreeSet<usize>,
+    counts: fn(RelationReason) -> bool,
+) -> bool {
+    !find_related_tests_in(seam, context, Some((pool, counts))).is_empty()
+}
+
+type RelationPool<'p> = (&'p BTreeSet<usize>, fn(RelationReason) -> bool);
+
+fn find_related_tests_in<'context, 'index>(
+    seam: &RepoSeam,
+    context: &'context CompactGripContext<'index>,
+    pool: Option<RelationPool<'_>>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
@@ -65,6 +91,12 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_owner_named_test(&mut candidates, context, prefix, &owner);
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
+    if let Some((pool, counts)) = pool {
+        candidates.retain(|test_index, reason| pool.contains(test_index) && counts(*reason));
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+    }
 
     // An inaccessible direct call cannot regain oracle credit through a
     // proximity or import fallback. An independently matched helper can
@@ -95,6 +127,24 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
             *reason == RelationReason::HelperOwnerCall
                 || context.tests.get(*test_index).is_none_or(|indexed| {
                     !crate::analysis::classify::test_calls_only_through_local_rival_module(
+                        context.index,
+                        owner_fn,
+                        indexed.test,
+                    )
+                })
+        });
+    }
+
+    // #14087: a test whose every call of the owner's name is a bare call
+    // bound by a test-local `const`, `static` or tuple `struct` of that name
+    // runs the item, not the owner: the same rule diff-mode applies.
+    if owner.free_function
+        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+    {
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    !crate::analysis::classify::test_calls_only_a_local_value_item(
                         context.index,
                         owner_fn,
                         indexed.test,
@@ -368,6 +418,15 @@ pub(super) fn match_direct_owner_call(
         }) {
             continue;
         }
+        // #14074: a test whose every call passes a value written as a
+        // sibling impl's trait argument (`Cents::from(2u32)` beside
+        // `impl From<&str> for Cents`) cannot run this owner; the
+        // finding-level relation refuses the same call.
+        if owner.function.is_some_and(|function| {
+            owner_call_selects_generic_sibling(indexed.test, function, context.index)
+        }) {
+            continue;
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -567,6 +626,11 @@ pub(super) fn match_same_test_file(
     for stem in stems {
         if let Some(indices) = context.tests_by_file_stem.get(&stem) {
             for test_index in indices {
+                // #7527: a shared leaf name is not module identity; the
+                // finding-level relation applies the same scope.
+                if !owner_file_admits_companion(owner, context, *test_index) {
+                    continue;
+                }
                 insert_related_candidate(
                     candidates,
                     context,
@@ -577,6 +641,20 @@ pub(super) fn match_same_test_file(
             }
         }
     }
+}
+
+fn owner_file_admits_companion(
+    owner: &OwnerContext<'_>,
+    context: &CompactGripContext<'_>,
+    test_index: usize,
+) -> bool {
+    let (Some(owner_file), Some(indexed)) = (
+        owner.function.and_then(|function| function.file.to_str()),
+        context.tests.get(test_index),
+    ) else {
+        return true;
+    };
+    crate::analysis::classify::companion_scope_admits(owner_file, &indexed.path_normalized)
 }
 
 pub(super) fn match_same_module(
@@ -743,6 +821,9 @@ pub(super) struct RelatedTestRankKey {
     relation_reason: u8,
     oracle_strength: Reverse<u8>,
     activation_overlap: Reverse<usize>,
+    /// The test calls the owner or a function that reaches it (#15026), so
+    /// it leads otherwise equal rows instead of name order.
+    owner_near: Reverse<bool>,
     file: PathBuf,
     test_name: String,
     line: usize,
@@ -797,6 +878,12 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             .as_ref()
             .is_none_or(|views| views.len() == related.len())
     );
+    // #15026: one bounded reverse name walk for the seam, and only when there
+    // is an order to decide. Not `owner_reach`: its dispatch and untraced-path
+    // work is unused here and `credited_related_tests` already pays it once.
+    let owner_near = owner_fn
+        .filter(|_| related.len() > 1)
+        .map(|owner| context.transitive_reach.owner_callers(&owner.name));
     let mut ranked: Vec<_> = related
         .iter()
         .enumerate()
@@ -821,8 +908,18 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 context.pin_syntax(),
                 boolean_pin.as_ref(),
             );
-            let key =
-                related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);
+            let near = owner_near
+                .as_ref()
+                .is_some_and(|reach| reach.test_calls_owner_or_caller(indexed.test));
+            let key = related_test_rank_key(
+                seam,
+                context,
+                indexed,
+                reason,
+                owner.as_ref(),
+                &oracle,
+                near,
+            );
             (key, entry, oracle)
         })
         .collect();
@@ -843,6 +940,7 @@ pub(super) fn related_test_rank_key(
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
     best_oracle: &BestOracle,
+    owner_near: bool,
 ) -> RelatedTestRankKey {
     let oracle_strength = &best_oracle.1;
     RelatedTestRankKey {
@@ -850,6 +948,7 @@ pub(super) fn related_test_rank_key(
         relation_reason: reason.priority(),
         oracle_strength: Reverse(oracle_strength.rank()),
         activation_overlap: Reverse(activation_overlap_score(seam, context, indexed, owner)),
+        owner_near: Reverse(owner_near),
         file: indexed.test.file.clone(),
         test_name: indexed.test.name.clone(),
         line: indexed.test.start_line,

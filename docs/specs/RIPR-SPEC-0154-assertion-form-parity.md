@@ -106,11 +106,15 @@ panic and bail refusals, are mapped in `.ripr/traceability.toml` (#5713).
 2. Accept: `if !matches!(value, 2) { return Err(()) }`
    credits `ExactValue`/`Strong`, equal to its assertion twin; the Err-return
    body does not make it an `ExactErrorVariant` oracle.
-3. Accept: a cfg(test) helper's `if result != expected { panic!(...) }`
-   seeds no repo probe while the production predicate still does.
+3. Accept: a production predicate beside a cfg(test) helper's
+   `if result != expected { panic!(...) }` guard still seeds a repo probe
+   (the helper's own guard is example 7).
 4. Reject: a guard with an opaque condition becoming an oracle.
 5. Reject: a broad `.contains` guard becoming ExactValue.
 6. Reject: the assert! twin and the guard diverging in kind or strength.
+7. [abstain] Accept: a cfg(test) helper's `if result != expected {
+   panic!(...) }` seeds no repo probe, so an edit to that guard reads zero
+   findings.
 
 ## Test Mapping
 

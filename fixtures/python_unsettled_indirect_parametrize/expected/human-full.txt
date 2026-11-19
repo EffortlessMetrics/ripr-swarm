@@ -59,5 +59,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_unsettled_indirect_parametrize/input --diff <cwd>/fixtures/python_unsettled_indirect_parametrize/diff.patch --mode fast probe:discount.py:python_preview:5ee0ee5a
   ripr context --root <cwd>/fixtures/python_unsettled_indirect_parametrize/input --diff <cwd>/fixtures/python_unsettled_indirect_parametrize/diff.patch --mode fast --at probe:discount.py:python_preview:5ee0ee5a
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

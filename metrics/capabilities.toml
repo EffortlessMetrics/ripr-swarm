@@ -1719,11 +1719,102 @@ spec = "RIPR-SPEC-0392"
 evidence = [
   "RIPR-SPEC-0392 defines wire language php, lang-php feature gating, Composer project context, exact-span probes, PHPUnit/Pest activation shared with #5542, oracle and relation law, typed dynamic limits, and preview-only authority boundary (#5620).",
   "Acceptance examples in the spec cover owners, trait/data-provider provenance, activation refusals, oracle strength, relations, and fail-closed limits; implementation fixtures and lang-php adapter remain future slices.",
+  "The accepted spec lists separate planned capability cells for PHPUnit and Pest in diff and repo mode, plus availability, parser, Composer, relation, actionability, and verification-route rows, all not_proven, with explicit support non-claims.",
   "Spec index, doc-artifacts, traceability, and capability rows register the contract; gates/badges/RIPR Zero/stable PHP claims stay false until later promotion evidence exists."
 ]
 fixtures = []
 next = "php-preview-adapter-and-corpus"
 metric = "language_adapter_php_findings_preview, language_adapter_php_owner_trait_provenance, language_adapter_php_static_limit_magic_method_dispatch, language_adapter_php_static_limit_dynamic_dispatch, language_adapter_php_static_limit_unresolved_composer_autoload, language_adapter_php_test_activation_unresolved"
+
+[[capability]]
+id = "dotnet_evidence_contract"
+cells = []
+name = ".NET shared project and C#/F#/VB evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0393"
+evidence = [
+  "RIPR-SPEC-0393 defines the shared .NET project fact envelope (solutions, projects, target frameworks, configurations, generated files, package and project references) as context only, plus separate ripr-csharp-evidence.v1, ripr-fsharp-evidence.v1, and ripr-visualbasic-evidence.v1 owner/probe/oracle/limit laws (#5632).",
+  "The spec's planned capability-cell registry lists separate xUnit, NUnit, MSTest, Expecto, and FsCheck rows per language at not_proven, plus a substrate-only project-facts row; unregistered repo-mode, actionability, and verification-route rows are explicit non-claims.",
+  "fixtures/dotnet-evidence-contract-corpus/corpus.json pins accept/reject acceptance shapes; adapter, routing, and repo-mode work remain #5633-#5645, and gates/badges/RIPR Zero/stable .NET claims stay false."
+]
+fixtures = ["fixtures/dotnet-evidence-contract-corpus"]
+next = "dotnet-project-facts-and-adapters"
+metric = "boundary_disclosure"
+
+[[capability]]
+id = "jvm_evidence_contract"
+cells = []
+name = "JVM shared build and Java/Kotlin/Scala evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0394"
+evidence = [
+  "RIPR-SPEC-0394 (accepted, #5646) defines the shared Maven/Gradle/sbt build and classpath substrate as context only, plus separate Java, Kotlin, and Scala semantic and test/oracle contracts.",
+  "The spec's planned capability-cell index keeps JUnit 4/5, TestNG, Kotest, ScalaTest, and MUnit diff cells plus per-language repo and repair-routing cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Findings project into the shared RIPR finding model with no JVM output schema. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "jvm-substrate-and-adapters"
+metric = "jvm_evidence_contract_registered"
+
+[[capability]]
+id = "apple_evidence_contract"
+cells = []
+name = "Apple shared project and Swift/Objective-C evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0395"
+evidence = [
+  "RIPR-SPEC-0395 (accepted, #5682) defines the shared SwiftPM/Xcode project, target, configuration, and platform substrate as context only, plus separate Swift and Objective-C evidence contracts.",
+  "The spec's planned capability-cell index keeps XCTest (Swift and Objective-C) and Swift Testing cells with platform-scoped rows and explicit unpromoted modes separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Appendix A registers typed Apple limits for macros, result builders, actors, selectors, swizzling, and bridging. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "apple-substrate-and-adapters"
+metric = "spec_contract_registered"
+
+[[capability]]
+id = "native_evidence_contract"
+cells = []
+name = "Native C/C++ translation-unit and evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0399"
+evidence = [
+  "RIPR-SPEC-0399 (accepted, #5696) defines the shared translation-unit, compile-database, and configuration substrate as context only, plus separate C and C++ evidence contracts.",
+  "The spec's planned capability-cell index keeps Unity, CMocka, GoogleTest, GoogleMock, Catch2, and doctest cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover preprocessing, templates, dispatch, undefined behavior, FFI, and test selectors; `no_static_path` is forbidden for unresolved compile context. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "native-substrate-and-adapters"
+metric = "traceability_behavior_registered"
+
+[[capability]]
+id = "powershell_evidence_contract"
+cells = []
+name = "PowerShell edition, pipeline, Pester, and system-effect evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0403"
+evidence = [
+  "RIPR-SPEC-0403 (accepted, #5710) defines the edition, platform, module, scope, pipeline, and stream contracts with Pester discovery/run activation kept distinct.",
+  "The spec's planned capability-cell index keeps Pester 5/4, pwsh 7 and Windows PowerShell 5.1, stream-typing, native-process, and system-effect cells separate at not_proven; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover dynamic invocation and dot-sourcing, remoting, providers, native processes, and .NET/COM edges. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "powershell-adapter-and-corpus"
+metric = "powershell_evidence_contract_registered"
+
+[[capability]]
+id = "sql_evidence_contract"
+cells = []
+name = "PostgreSQL/pgTAP schema, migration, and database-state evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0404"
+evidence = [
+  "RIPR-SPEC-0404 (accepted, #5736) defines the SQL project and migration substrate, PostgreSQL semantic contract, pgTAP test/oracle contract, and database-state disposition.",
+  "The spec's planned capability-cell index keeps PostgreSQL, pgTAP, PL/pgSQL, Flyway, Sqitch, and Liquibase cells separate at not_proven, with SQLite, MySQL, and ANSI-generic cells not_admitted; no runtime CAPABILITY_CELLS entry exists yet.",
+  "Typed limits cover dynamic SQL, procedural bodies, triggers, RLS, planner/runtime behavior, and live database state. Gates, badges, RIPR Zero, and stable claims stay false until implementation and eval evidence land."
+]
+fixtures = []
+next = "sql-substrate-and-adapters"
+metric = "sql_evidence_contract_registered"
 
 [[capability]]
 id = "python_repair_routing_loop"
@@ -1773,7 +1864,7 @@ evidence = [
   "Packet integrity boundary complete (Campaign 31 item 2): fingerprint recomputation, root/base/head/diff coherence, file-digest freshness, producer-capability compatibility, stable-ID checks, path normalization, and invalid/stale packet language_run states (#1454).",
   "Two-binary proof harness exists (Campaign 31 item 3): tests/perl_two_binary_harness.rs runs the Perl facts exporter | ripr check --perl-facts against the perl_cpan_alpha fixture; skips cleanly when no exporter is on PATH (producer data-plane dependency). Three producer-independent regression packets under fixtures/perl_cpan_alpha/expected/regression-packets/ prove the consumer emits ReachableUnrevealed (actionable), Exposed (already-observed), and partial+dynamic_dispatch-limitation (limited) outcomes (#1455).",
   "Perl fact-packet ingestion accepts canonical producer identity `perl-ripr-facts` plus compatibility wrappers `perllsp` and `perl-lsp`; the fixture guard and two-binary harness assert the same producer boundary without promoting Perl beyond planned/blocked producer-proof status.",
-  "Managed producer mode hardened (Campaign 31 item 4): SPEC-canonical arg surface, real timeout/kill, atomic packet writes, content-aware cache key, freshness validation, clean partial/unavailable states (#1456). Capability handshake deferred (producer probe surface).",
+  "Managed producer mode hardened (Campaign 31 item 4): SPEC-canonical arg surface, real timeout/kill, atomic packet writes, clean partial/unavailable states (#1456). Cached-packet reuse is disabled because the cache key omits diff content, so every run regenerates the packet (#14796). Capability handshake deferred (producer probe surface).",
   "Doctor Perl preview (Campaign 31 item 5): ripr doctor reports producer configured/found/version/schema, Perl markers, t/ and t2/ roots, Test::More/Test2/V1/V0/Suite frameworks, prove/yath/carton/dzil runners, and an exact next command (#1457).",
   "Bespoke perl_preview_card path formally scoped to advisory-only (Campaign 31 item 6): every authority-ready flag hard-pinned false by advisory_only_readiness(); mechanical invariant test guards against a future flip; ADR-0019 decommissioning deferred to the post-producer-proof PR (#1458).",
   "Architecture corrected: perl-lsp-swarm #3294 moved RIPR fact production into a dedicated perl-ripr-facts batch exporter over parser/workspace/semantic-facts crates. ripr-swarm terminology/config/doctor/harness align to treat the producer as a 'Perl facts exporter' (not the LSP server); perllsp/perl-lsp are compatibility wrappers only (#1461). RIPR never starts an LSP server, speaks JSON-RPC, or calls editor providers.",
