@@ -1,4 +1,4 @@
-use super::{run_command, unique_temp_workspace};
+use super::{git_init_root, run_command, unique_temp_workspace};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -15,6 +15,7 @@ fn init_ci_followup_explains_adoption_for_created_and_refreshed_workflows() -> T
             std::fs::create_dir_all(&root)?;
             let config = "[analysis]\nmode = \"instant\"\n";
             std::fs::write(root.join("ripr.toml"), config)?;
+            git_init_root(&root)?;
             let workflow = root.join(".github/workflows/ripr.yml");
             if refresh {
                 std::fs::create_dir_all(workflow.parent().ok_or("workflow parent")?)?;
@@ -72,6 +73,7 @@ fn init_ci_followup_does_not_claim_adoption_for_config_only_or_preview() -> Test
     let root = unique_temp_workspace("init-ci-guidance-controls");
     std::fs::create_dir_all(&root)?;
     let result: TestResult = (|| {
+        git_init_root(&root)?;
         let root_arg = root.to_str().ok_or("fixture root must be UTF-8")?;
         for args in [
             vec!["init", "--root", root_arg],
@@ -86,5 +88,92 @@ fn init_ci_followup_does_not_claim_adoption_for_config_only_or_preview() -> Test
         Ok(())
     })();
     std::fs::remove_dir_all(&root)?;
+    result
+}
+
+/// A fixture Git repository with a nested crate, for the #15389 refusal.
+fn init_ci_subdir_repo(label: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let repo = unique_temp_workspace(label);
+    std::fs::create_dir_all(repo.join("crates/core"))?;
+    std::fs::write(
+        repo.join("crates/core/Cargo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    git_init_root(&repo)?;
+    Ok(repo)
+}
+
+#[test]
+fn init_ci_refuses_a_root_below_the_git_toplevel_and_writes_nothing() -> TestResult {
+    let repo = init_ci_subdir_repo("init-ci-subdir-refuse")?;
+    let result: TestResult = (|| {
+        let sub = repo.join("crates/core");
+        let sub_arg = sub.to_str().ok_or("fixture root must be UTF-8")?;
+        let repo_name = repo
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture name must be UTF-8")?;
+        for provider in ["github", "gitlab"] {
+            for dry in [true, false] {
+                let mut args = vec!["init", "--ci", provider, "--root", sub_arg];
+                if dry {
+                    args.push("--dry-run");
+                }
+                let output = run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)?;
+                assert_eq!(
+                    output.status.code(),
+                    Some(2),
+                    "{provider} dry={dry} {output:?}"
+                );
+                assert!(output.stdout.is_empty(), "{output:?}");
+                let stderr = String::from_utf8(output.stderr)?;
+                let step = format!("Run `ripr init --ci {provider} --root ");
+                let tail = stderr
+                    .split_once(&step)
+                    .map(|(_, tail)| tail)
+                    .ok_or_else(|| format!("next step missing: {stderr}"))?;
+                let named_root = tail.split('`').next().unwrap_or_default();
+                assert!(
+                    named_root.trim_matches('\'').ends_with(repo_name),
+                    "next step must name the repository root: {stderr}"
+                );
+                assert!(stderr.contains("at the repository root"), "{stderr}");
+            }
+        }
+        assert!(!sub.join(".github").exists());
+        assert!(!sub.join(".gitlab-ci.yml").exists());
+        assert!(
+            !sub.join("ripr.toml").exists(),
+            "refusal must write nothing"
+        );
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&repo)?;
+    result
+}
+
+#[test]
+fn init_ci_keeps_the_toplevel_root_and_subdir_without_ci() -> TestResult {
+    let repo = init_ci_subdir_repo("init-ci-subdir-controls")?;
+    let result: TestResult = (|| {
+        let root_arg = repo.to_str().ok_or("fixture root must be UTF-8")?;
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["init", "--ci", "github", "--root", root_arg, "--dry-run"],
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8(output.stdout)?.contains(".github/workflows/ripr.yml"));
+        let sub = repo.join("crates/core");
+        let sub_arg = sub.to_str().ok_or("fixture root must be UTF-8")?;
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            None,
+            &["init", "--root", sub_arg, "--dry-run"],
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&repo)?;
     result
 }
