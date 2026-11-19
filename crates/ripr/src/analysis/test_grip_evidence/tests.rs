@@ -24958,6 +24958,26 @@ fn a_brace_in_a_char_literal_or_comment_does_not_reopen_a_closed_block() -> Resu
     Ok(())
 }
 
+/// #14569 review: a `let` inside a comment or a string is not a binding, so
+/// it cannot stand in for the real one the assertion reads.
+#[test]
+fn a_let_in_a_comment_or_string_is_not_the_binding_read() -> Result<(), String> {
+    for filler in [
+        "// let got = discounted_total(50, 100);",
+        "let _note = \"let got = discounted_total(50, 100);\";",
+    ] {
+        let test_body = format!(
+            "    let got = discounted_total(100, 50);\n    {filler}\n    assert_eq!(got, 90);\n"
+        );
+        assert_eq!(
+            discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", &test_body)?,
+            StageState::Yes,
+            "{filler}: the real binding's call reaches the then-branch return"
+        );
+    }
+    Ok(())
+}
+
 /// #14569: an owner `let` inside a nested block that closes before the seam's
 /// `if` shadows nothing the condition reads, so it no longer keeps credit for
 /// a call that takes the other branch.

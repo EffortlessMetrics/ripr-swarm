@@ -345,6 +345,7 @@ evidence-promotion honesty corpus.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_single_let_bound_reaching_call_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_closed_test_block_does_not_bind_the_asserted_value`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_brace_in_a_char_literal_or_comment_does_not_reopen_a_closed_block`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_comment_or_string_is_not_the_binding_read`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_closed_block_does_not_keep_an_unreached_seams_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_block_holding_the_seam_keeps_its_grip`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed`

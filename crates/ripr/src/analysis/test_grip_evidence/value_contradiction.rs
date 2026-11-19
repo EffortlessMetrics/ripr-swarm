@@ -1188,7 +1188,11 @@ fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
     let masked = anchor.map(|_| crate::analysis::mask_comments_and_strings(body));
     let mut found = None;
     let mut reaching = None;
-    for (at, _) in body.match_indices("let ") {
+    // With an anchor, a `let` inside a comment or string is not a binding
+    // (`// let got = owner(2);`), so candidates come from the masked body;
+    // the initializer text is still read from `body` at the same offsets.
+    let scan = masked.as_deref().unwrap_or(body);
+    for (at, _) in scan.match_indices("let ") {
         if body[..at]
             .chars()
             .next_back()
@@ -1221,19 +1225,23 @@ fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
         };
         let end = init.find(';')?;
         let initializer = init[..end].trim().to_string();
-        if let Some(anchor) = anchor
-            && at < anchor
-            && masked
-                .as_deref()
-                .and_then(|masked| masked.get(at..anchor))
-                .is_some_and(block_stays_open)
-        {
-            reaching = Some(initializer.clone());
-        }
-        if found.replace(initializer).is_some() {
+        match anchor {
+            Some(anchor) => {
+                if at < anchor
+                    && masked
+                        .as_deref()
+                        .and_then(|masked| masked.get(at..anchor))
+                        .is_some_and(block_stays_open)
+                {
+                    reaching = Some(initializer);
+                }
+            }
             // Without an anchor, a second plain binding is ambiguous.
-            anchor?;
-            found = None;
+            None => {
+                if found.replace(initializer).is_some() {
+                    return None;
+                }
+            }
         }
     }
     match anchor {
