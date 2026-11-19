@@ -314,8 +314,9 @@ impl Records {
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
             // The avoidable rate also depends on the derived flag, so its case
-            // identity binds it: a case whose spec citation turns Reject is a
-            // changed definition, not an analyzer improvement.
+            // identity binds it: a case whose spec citation comes to require
+            // an abstention is a changed definition, not an analyzer
+            // improvement.
             let avoidable_hash;
             let definition_hash = if oracle_rate {
                 oracle_hash
