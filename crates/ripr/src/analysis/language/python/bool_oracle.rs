@@ -114,8 +114,8 @@ pub(super) fn credit_bare_bool_asserts<'a>(
 /// `cases` are the test's own statically certain pytest parametrize cases
 /// (never Hypothesis `@example` rows). A name settles only when every case
 /// binds it after the body's own bindings are removed (an assignment, loop
-/// target, import, `del`, a nested scope all refuse; so does a walrus anywhere
-/// in the function text, which the statement walk never sees) and
+/// target, import, `del`, a nested scope all refuse; so does any `:=` in the
+/// function text, which the statement walk never sees) and
 /// `takes_value` says pytest passes it directly: a direct argname whose `indirect=` read settled, not a
 /// Hypothesis-generated input. Any other name, such as a fixture or a local,
 /// leaves the call unsettled and the assertion smoke.
@@ -139,10 +139,17 @@ pub(super) fn settle_parametrized_names(
         });
         call.names_settled = unbound.as_ref().is_some_and(|unbound| {
             call.name_arguments.iter().all(|name| {
-                unbound.binds(name) && takes_value(name) && !binds_by_walrus(function_text, name)
+                unbound.binds(name) && takes_value(name) && !may_walrus_bind(function_text, name)
             })
         });
     }
+}
+
+/// Whether a walrus in the test function may bind `name`. Any `:=` the
+/// spelled target check cannot pair with a name refuses too: a backslash
+/// continuation or a comment may sit between the target and the operator.
+fn may_walrus_bind(function_text: &str, name: &str) -> bool {
+    binds_by_walrus(function_text, name) || function_text.contains(":=")
 }
 
 /// The one function owner the test's call resolves to, by the same relation

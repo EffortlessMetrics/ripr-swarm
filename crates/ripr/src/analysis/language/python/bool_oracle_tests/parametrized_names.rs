@@ -107,6 +107,17 @@ fn given_a_name_no_parametrize_row_supplies_then_the_assertion_stays_smoke() {
             "line",
             "    rows = [(line := row) for row in [\"zzz\"]]\n    assert iscommentline(line)\n",
         ),
+        // A walrus target split from `:=` by a continuation or a comment.
+        (
+            "@pytest.mark.parametrize(\"line\", [\"#qwe\"])\n",
+            "line",
+            "    if (line \\\n            := \"zzz\"):\n        pass\n    assert iscommentline(line)\n",
+        ),
+        (
+            "@pytest.mark.parametrize(\"line\", [\"#qwe\"])\n",
+            "line",
+            "    if (line  # rebind\n            := \"zzz\"):\n        pass\n    assert iscommentline(line)\n",
+        ),
         // Augmented assignment, `del` and a binding after the assertion.
         (
             "@pytest.mark.parametrize(\"line\", [\"#qwe\"])\n",
