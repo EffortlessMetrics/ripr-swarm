@@ -4347,11 +4347,11 @@ mod tests {
 
     #[test]
     fn comparable_path_folds_dot_prefixes_and_backslashes() {
-        assert_eq!(comparable_path("./src/g.rs"), "src/g.rs");
-        assert_eq!(comparable_path(".\\src\\g.rs"), "src/g.rs");
-        assert_eq!(comparable_path("././src/g.rs"), "src/g.rs");
-        assert_eq!(comparable_path("src/g.rs"), "src/g.rs");
-        assert_ne!(comparable_path("../src/g.rs"), "src/g.rs");
+        assert_eq!(super::comparable_path("./src/g.rs"), "src/g.rs");
+        assert_eq!(super::comparable_path(".\\src\\g.rs"), "src/g.rs");
+        assert_eq!(super::comparable_path("././src/g.rs"), "src/g.rs");
+        assert_eq!(super::comparable_path("src/g.rs"), "src/g.rs");
+        assert_ne!(super::comparable_path("../src/g.rs"), "src/g.rs");
     }
 
     fn two_gap_baseline() -> &'static str {
