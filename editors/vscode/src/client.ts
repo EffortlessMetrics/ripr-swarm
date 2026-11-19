@@ -2877,7 +2877,9 @@ export class RiprClientController {
   async showTopLimitation(): Promise<void> {
     const client = this.client;
     if (!client) {
-      this.runtime.showInformationMessage('RIPR has not completed an analysis snapshot yet.');
+      this.runtime.showInformationMessage(
+        'ripr top limitation requires a running server; the server is not running. Run ripr: Restart Server, then try again.'
+      );
       return;
     }
     let response: Record<string, unknown> | null = null;
@@ -2922,7 +2924,8 @@ export class RiprClientController {
       this.output.appendLine(`  unlock_condition: ${unlock}`);
     }
     this.output.show();
-    const summary = status || category || repairRoute || 'See ripr output for limitation details.';
+    const rawSummary = status || category || repairRoute;
+    const summary = rawSummary ? rawSummary.replace(/_/g, ' ') : 'See ripr output for limitation details.';
     this.runtime.showInformationMessage(`ripr top limitation: ${summary}`);
   }
 

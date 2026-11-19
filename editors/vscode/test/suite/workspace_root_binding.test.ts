@@ -3,8 +3,9 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime, RiprWorkspaceRootState } from '../../src/client';
 import { RiprConfig } from '../../src/config';
+import { CRASH_RECOVERY_SESSION_BUDGET, CrashRecoveryController } from '../../src/crashRecovery';
 import {
-  pauseRemovedWorkspaceRootOnce, resetLifecycleCoordinatorForTests, restartServerOnce,
+  handleWorkspaceFoldersChanged, pauseRemovedWorkspaceRootOnce, startAfterWorkspaceTrust, resetLifecycleCoordinatorForTests, restartServerOnce,
   startAfterFirstWorkspaceFolder, startServerOnce, stopServerOnce, synchronizeWorkspaceRootOnce
 } from '../../src/extension';
 import { compatibleLspEvidence } from './testCompatibility';
@@ -67,7 +68,7 @@ function harness() {
     showWarningMessage: async () => undefined, showErrorMessage: async () => undefined
   };
   const controller = new RiprClientController(
-    {} as vscode.ExtensionContext, { appendLine: () => undefined } as unknown as vscode.LogOutputChannel, runtime
+    {} as vscode.ExtensionContext, { appendLine: () => undefined, show: () => undefined } as unknown as vscode.LogOutputChannel, runtime
   );
   // Production picker recovery uses the extension's coordinated restart.
   (runtime as RiprClientRuntime & { restartWorkspaceRoot: () => Promise<void> }).restartWorkspaceRoot =
@@ -380,5 +381,88 @@ suite('Workspace Root Binding Controller', () => {
       assert.deepStrictEqual(copied, []);
       assert.match(h.infos.at(-1) ?? '', /requires a running.*workspace root/);
     } finally { release(undefined); await stopServerOnce(h.controller); }
+  });
+
+  function openCircuit(controller: RiprClientController): CrashRecoveryController {
+    const recovery = (controller as unknown as { crashRecovery: CrashRecoveryController }).crashRecovery;
+    for (let i = 0; i < CRASH_RECOVERY_SESSION_BUDGET; i += 1) {
+      recovery.handleUnexpectedSessionEnd({ startGeneration: 0, readStartGeneration: () => 0, onRetry: () => undefined });
+      recovery.cancelPendingRetry();
+    }
+    assert.strictEqual(recovery.isCircuitOpen(), true, 'fixture must open the circuit');
+    return recovery;
+  }
+
+  test('a configuration-style coordinated restart resets an open crash circuit', async () => {
+    const h = harness();
+    try {
+      await startServerOnce(h.controller);
+      const recovery = openCircuit(h.controller);
+      await restartServerOnce(h.controller);
+      assert.strictEqual(recovery.isCircuitOpen(), false, 'restartServerOnce is an intentional restart');
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('an active-editor root switch resets an open crash circuit', async () => {
+    const h = harness();
+    try {
+      await startServerOnce(h.controller);
+      const recovery = openCircuit(h.controller);
+      h.select(beta.uri.fsPath);
+      await synchronizeWorkspaceRootOnce(h.controller);
+      assert.strictEqual(recovery.isCircuitOpen(), false);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('a workspace trust grant resets an open crash circuit', async () => {
+    const h = harness();
+    try {
+      await startServerOnce(h.controller);
+      const recovery = openCircuit(h.controller);
+      await startAfterWorkspaceTrust(h.controller);
+      assert.strictEqual(recovery.isCircuitOpen(), false);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('removing a non-session folder re-resolves an ambiguous window to the remaining folder', async () => {
+    const h = harness(); h.select(undefined);
+    const lines: string[] = [];
+    try {
+      await startServerOnce(h.controller);
+      assert.deepStrictEqual(h.events, [], 'ambiguous window starts no client');
+      assert.strictEqual(h.controller.awaitingWorkspaceRoot(), true);
+      h.removeBeta();
+      await handleWorkspaceFoldersChanged(h.controller, { added: [], removed: [beta] }, { appendLine: l => { lines.push(l); } });
+      assert.deepStrictEqual(h.events, [`start:${alpha.uri.fsPath}`]);
+      assert.strictEqual(h.controller.isRunning(), true);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('removing a folder while still ambiguous starts nothing', async () => {
+    const h = harness(); h.select(undefined);
+    try {
+      await startServerOnce(h.controller);
+      await handleWorkspaceFoldersChanged(h.controller, { added: [], removed: [beta] }, { appendLine: () => undefined });
+      assert.deepStrictEqual(h.events, []);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('Show Top Limitation with no running server names the stopped server, not a pending analysis', async () => {
+    const h = harness();
+    await h.controller.showTopLimitation();
+    const message = h.infos.at(-1) ?? '';
+    assert.match(message, /requires a running server/);
+    assert.match(message, /Restart Server/);
+    assert.doesNotMatch(message, /not completed an analysis snapshot/);
+  });
+
+  test('Show Top Limitation humanizes snake_case status tokens', async () => {
+    const h = harness();
+    h.setRequest(async () => ({ status: 'static_unknown_limit' }));
+    try {
+      await startServerOnce(h.controller);
+      await h.controller.showTopLimitation();
+      assert.strictEqual(h.infos.at(-1), 'ripr top limitation: static unknown limit');
+    } finally { await stopServerOnce(h.controller); }
   });
 });
