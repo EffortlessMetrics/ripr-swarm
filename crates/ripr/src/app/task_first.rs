@@ -2940,6 +2940,15 @@ pub(crate) fn check_repair_route(
     if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
         return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
     }
+    // A repair attempt starts only at the exact Git top-level. Under a
+    // subdirectory `--root` every start printed below (gap-bound or seam) would
+    // exit 2 after the before phase began, so name the state once, here, where
+    // every surface (human, JSON `finding_routes`, agent, MCP) reads it.
+    if !static_limited && let Some(top) = crate::edit_cage::enclosing_git_top_level_above(root) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::RootBelowGitTopLevel {
+            top: top.display().to_string(),
+        });
+    }
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical

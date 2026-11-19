@@ -320,6 +320,12 @@ fn gap_binding_from_snapshot(
 fn drive_before_phase_inner(
     mut options: agent::AgentRepairOptions,
 ) -> Result<(String, String), BeforePhaseError> {
+    // A repair attempt exists only at the exact Git top-level. Refuse a
+    // subdirectory root before the translator, the locks or any workflow write
+    // create state under that root's `target/ripr`.
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(refusal.into());
+    }
     // #8166 residual: a cross-namespace `--seam-id` (a `probe:` finding ID,
     // a canonical `gap:` ID, or a `file:line` location) that names exactly
     // one seam proceeds under that seam's ID, so the attempt identity, the
