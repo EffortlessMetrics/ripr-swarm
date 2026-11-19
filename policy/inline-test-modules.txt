@@ -34,6 +34,7 @@ crates/ripr-contract/src/domain/test_evidence_summary.rs|1
 crates/ripr-contract/src/domain/typescript_preview_related_test.rs|2
 crates/ripr-contract/src/path_identity.rs|1
 crates/ripr-contract/src/value_origins.rs|1
+crates/ripr/src/accepted_value.rs|1
 crates/ripr/src/agent/artifact.rs|1
 crates/ripr/src/agent/command_specs.rs|1
 crates/ripr/src/agent/loop_commands.rs|1
@@ -539,6 +540,7 @@ crates/ripr/src/output/baseline_delta.rs|1
 crates/ripr/src/output/baseline_update.rs|1
 crates/ripr/src/output/check_file_fact_cache.rs|1
 crates/ripr/src/output/ci_summary/annotations.rs|1
+crates/ripr/src/output/ci_summary/gate_verdict.rs|1
 crates/ripr/src/output/ci_summary/jq.rs|1
 crates/ripr/src/output/compact_json.rs|1
 crates/ripr/src/output/count_noun.rs|1

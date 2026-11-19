@@ -4,7 +4,7 @@ id = "RIPR-SPEC-0038"
 tests = [
   "crates/ripr/tests/generated_review_workflow.rs::a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary",
   "crates/ripr/src/output/ci_summary/tests.rs::a_decision_from_another_mode_is_not_this_runs_verdict",
-  "crates/ripr/src/output/ci_summary/gate_verdict/tests.rs::an_exception_policy_block_names_the_violation",
+  "crates/ripr/src/output/ci_summary/gate_verdict.rs::tests::an_exception_policy_block_names_the_violation",
 ]
 code = [
   "crates/ripr/src/output/ci_summary/gate_verdict.rs",
