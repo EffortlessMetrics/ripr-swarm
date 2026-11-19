@@ -3,9 +3,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 jobs:
-  proof:
+  loaded:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -14,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Loaded 50x full fixture
+      - name: Loaded 10x full fixture (shard ${{ matrix.shard }})
         run: |
           set -uo pipefail
           nproc
@@ -23,28 +27,40 @@ jobs:
           taskset -c 0 bash -c 'while :; do :; done' &
           b2=$!
           pass=0; fail=0
-          for i in $(seq 1 50); do
+          for i in $(seq 1 10); do
             if taskset -c 0 node --test tools/provision-dev.test.cjs > "run-$i.log" 2>&1; then
               pass=$((pass+1))
             else
               fail=$((fail+1))
-              echo "FAIL run $i"
+              echo "FAIL shard ${{ matrix.shard }} run $i"
               grep -n "not ok" "run-$i.log" || true
             fi
           done
           kill $b1 $b2 2>/dev/null || true
-          echo "loaded_pass=$pass loaded_fail=$fail"
-          echo "--- per-case across runs ---"
+          echo "shard=${{ matrix.shard }} loaded_pass=$pass loaded_fail=$fail"
           for n in 39 40 41; do
             ok=$(grep -h "^ok $n " run-*.log | wc -l)
             bad=$(grep -h "^not ok $n " run-*.log | wc -l)
-            echo "case_$n ok=$ok not_ok=$bad"
-          done
-          echo "--- raw TAP lines for 39/40/41 (first 6 of each) ---"
-          for n in 39 40 41; do
-            grep -h "^ok $n \|^not ok $n " run-*.log | head -6
+            echo "shard=${{ matrix.shard }} case_$n ok=$ok not_ok=$bad"
           done
           [ "$fail" -eq 0 ]
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proof-14934-logs-${{ matrix.shard }}
+          path: run-*.log
+          retention-days: 7
+  negative:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 262a2277d6fa34c6b86425c646de1d3a7e577731
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Negative control (descendant escapes the owned group)
         run: |
           set -uo pipefail
@@ -69,8 +85,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: proof-14934-logs
-          path: |
-            run-*.log
-            leak.log
+          name: proof-14934-leak-log
+          path: leak.log
           retention-days: 7
