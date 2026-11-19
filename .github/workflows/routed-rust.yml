@@ -928,7 +928,8 @@ jobs:
       # binary's help), docs/TROUBLESHOOTING.md (troubleshooting_guide),
       # docs/how-to/first-rust-test.md (user_journeys), README.md plus
       # docs/*.md, docs/interop/*.md and docs/status/*.md
-      # (documented_commands) and docs/ci/coverage.md (future_clippy). They
+      # (documented_commands), docs/CI.md's `Run RIPR` step
+      # (generated_review_workflow) and docs/ci/coverage.md (future_clippy). They
       # need a `ripr` build, so they run only when one of those paths changed;
       # other docs-only PRs build nothing extra. Same runner, token and trust
       # boundary as the precommit step above.
@@ -954,7 +955,8 @@ jobs:
               --test cli_reference_doc \
               --test troubleshooting_guide \
               --test user_journeys \
-              --test documented_commands
+              --test documented_commands \
+              --test generated_review_workflow
             cargo test -p repo-policy --test future_clippy
           else
             echo "No README.md, docs/*.md, docs/interop, docs/status, first-rust-test.md or coverage.md change; ripr and repo-policy markdown contract tests not needed."
