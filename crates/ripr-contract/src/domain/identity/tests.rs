@@ -675,3 +675,94 @@ fn missing_serialized_sibling_fails_the_registry_check() {
         "{violations:?}"
     );
 }
+
+fn has(violations: &[String], expected: &str) -> bool {
+    violations.iter().any(|violation| violation == expected)
+}
+
+#[test]
+fn contradictory_owners_are_named_in_sorted_order_whatever_the_registry_order() {
+    const SHARED: &[super::record::SerializationField] = &[test_field(
+        "snapshot_id",
+        FieldRole::Canonical,
+        AGENT_REQUEST,
+    )];
+    let mut attempt = blank(IdentityKind::AnalysisAttemptId);
+    attempt.serialization = SHARED;
+    let mut completed = blank(IdentityKind::CompletedAnalysisSnapshotId);
+    completed.serialization = SHARED;
+    let expected = format!(
+        "field `snapshot_id` on `{AGENT_REQUEST}` has contradictory owners `AnalysisAttemptId` and `CompletedAnalysisSnapshotId`"
+    );
+    for records in [
+        with_taxonomy(&[attempt, completed]),
+        with_taxonomy(&[completed, attempt]),
+    ] {
+        let violations = registry_violations(&records, &[]);
+        assert!(has(&violations, &expected), "{violations:?}");
+    }
+}
+
+/// A repair-attempt field collides with an analysis-attempt field only when
+/// both the name and the surface match.
+#[test]
+fn repair_attempt_collision_needs_the_same_name_on_the_same_surface() {
+    const REPAIR: &[super::record::SerializationField] = &[test_field(
+        "snapshot_id",
+        FieldRole::Canonical,
+        AGENT_REQUEST,
+    )];
+    const OTHER_SURFACE: &[super::record::SerializationField] = &[test_field(
+        "snapshot_id",
+        FieldRole::Canonical,
+        AGENT_SUCCESS,
+    )];
+    const OTHER_NAME: &[super::record::SerializationField] = &[test_field(
+        "attempt_id",
+        FieldRole::Canonical,
+        AGENT_REQUEST,
+    )];
+    let collision = format!(
+        "RepairAttemptId field `snapshot_id` on `{AGENT_REQUEST}` collides with `AnalysisAttemptId` and cannot be an analysis-attempt or snapshot alias"
+    );
+    let violations_with = |attempt_fields: &'static [super::record::SerializationField]| {
+        let mut repair = blank(IdentityKind::RepairAttemptId);
+        repair.serialization = REPAIR;
+        let mut attempt = blank(IdentityKind::AnalysisAttemptId);
+        attempt.serialization = attempt_fields;
+        registry_violations(&with_taxonomy(&[repair, attempt]), &[])
+    };
+    let same = violations_with(REPAIR);
+    assert!(has(&same, &collision), "{same:?}");
+    for near_miss in [OTHER_SURFACE, OTHER_NAME] {
+        let violations = violations_with(near_miss);
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("collides")),
+            "{violations:?}"
+        );
+    }
+}
+
+#[test]
+fn a_parent_edge_without_the_matching_child_edge_fails_the_registry_check() {
+    const PARENTS: &[IdentityKind] = &[IdentityKind::CanonicalItemId];
+    const CHILDREN: &[IdentityKind] = &[IdentityKind::InstructionInstanceId];
+    let one_sided = "identity `InstructionInstanceId` lists `CanonicalItemId` as a parent, but `CanonicalItemId` does not list `InstructionInstanceId` as a child";
+    let mut child = blank(IdentityKind::InstructionInstanceId);
+    child.parents = PARENTS;
+    let violations = registry_violations(&with_taxonomy(&[child]), &[]);
+    assert!(has(&violations, one_sided), "{violations:?}");
+
+    let mut parent = blank(IdentityKind::CanonicalItemId);
+    parent.children = CHILDREN;
+    let violations = registry_violations(&with_taxonomy(&[child, parent]), &[]);
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("as a parent, but")
+                || violation.contains("as a child, but")),
+        "a two-sided edge is consistent: {violations:?}"
+    );
+}
