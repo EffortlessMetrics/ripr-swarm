@@ -4,8 +4,9 @@ use super::fixtures::literal_owner_instance_fixture;
 use super::sink_alignment::AlignmentPrep;
 use super::source_utils::normalized_path;
 use super::{
-    PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
-    python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
+    PrefixScan, PythonImport, PythonOwner, PythonTest, first_python_string_literal,
+    line_prefix_before, python_callee_start_has_boundary, python_prefix_hides_code,
+    python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
 use rayon::prelude::*;
@@ -13,6 +14,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+#[cfg(test)]
+mod hidden_code_scan_tests;
 #[cfg(test)]
 mod verify_command_tests;
 
@@ -1293,10 +1296,9 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         _ => None,
     };
     let needle = format!("{builtin}(");
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(&needle)
-        .filter(|(idx, _)| {
-            python_callee_start_has_boundary(text, *idx) && !python_text_hides_code(text, *idx)
-        })
+        .filter(|(idx, _)| python_callee_start_has_boundary(text, *idx) && !hidden.hides(*idx))
         .filter(|(idx, _)| {
             let argument = text[idx + needle.len()..].trim_start();
             let inline = argument.starts_with(&construct) && {
@@ -4065,13 +4067,14 @@ fn augmented_assignment(body_text: &str, name: &str) -> bool {
 
 /// `name :=` with identifier boundaries, outside comments and strings.
 fn walrus_binds(body_text: &str, name: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(name).any(|(idx, _)| {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
             // `(r\n := [1])`: a line break is legal inside the brackets.
             && skip_blank_forward(&body_text[end..], true).starts_with(":=")
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4083,12 +4086,13 @@ fn contains_name_reference(body_text: &str, name: &str) -> bool {
     if !is_dotted_python_identifier(name) {
         return false;
     }
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(name).any(|(idx, _)| {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
             && !is_binding_target(body_text, end)
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4098,10 +4102,11 @@ fn contains_member_reference(body_text: &str, receiver: &str, member: &str) -> b
         return false;
     }
     let needle = format!("{receiver}.{member}");
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, idx + needle.len())
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4111,9 +4116,9 @@ fn contains_attribute_reference(body_text: &str, attr: &str) -> bool {
         return false;
     }
     let needle = format!(".{attr}");
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(&needle).any(|(idx, _)| {
-        !next_char_is_identifier(body_text, idx + needle.len())
-            && !python_text_hides_code(body_text, idx)
+        !next_char_is_identifier(body_text, idx + needle.len()) && !hidden.hides(idx)
     })
 }
 
@@ -4141,10 +4146,52 @@ fn is_dotted_python_identifier(name: &str) -> bool {
 
 /// Whether `idx` sits in a comment or string: a `#` or an open quote earlier on
 /// the same line, or an open triple-quoted string (docstring) from an earlier
-/// line.
+/// line. One question about one text; a caller that asks about many offsets of
+/// the same text keeps a `PythonHiddenCode` instead, which reads the text once.
 pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
-    python_prefix_hides_code(line_prefix_before(text, idx))
-        || inside_triple_quoted_string(text, idx)
+    PythonHiddenCode::new(text).hides(idx)
+}
+
+/// The `python_text_hides_code` answer for many offsets of one text. Offsets
+/// asked in increasing order (the order `match_indices` yields them) resume the
+/// two lexers where the previous question left them, so a pass over `k`
+/// matches reads the text once instead of `k` times (#14195). An offset before
+/// the previous one starts over; every answer equals the single-question
+/// function's.
+pub(super) struct PythonHiddenCode<'a> {
+    text: &'a str,
+    /// The previous offset asked about.
+    last: usize,
+    /// Byte offset where the line that holds `last` starts.
+    line_start: usize,
+    line: PrefixScan,
+    triple: TripleScan,
+}
+
+impl<'a> PythonHiddenCode<'a> {
+    pub(super) fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            last: 0,
+            line_start: 0,
+            line: PrefixScan::default(),
+            triple: TripleScan::default(),
+        }
+    }
+
+    /// Whether byte offset `idx` (a char boundary of the text) sits in a
+    /// comment or string.
+    pub(super) fn hides(&mut self, idx: usize) -> bool {
+        if idx < self.last {
+            *self = Self::new(self.text);
+        }
+        if let Some(newline) = self.text[self.last..idx].rfind('\n') {
+            self.line_start = self.last + newline + 1;
+            self.line = PrefixScan::default();
+        }
+        self.last = idx;
+        self.line.hides(&self.text[self.line_start..idx]) || self.triple.hides(self.text, idx)
+    }
 }
 
 /// Whether `idx` falls inside an open triple-quoted string. A small lexer:
@@ -4152,79 +4199,111 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
 /// comments do not open a docstring, and a backslash escapes the next char.
 /// The replacement fields of a triple-quoted f-string (`f"""{\n  helper(1)\n}"""`)
 /// are code, not string text, so a call inside one stays visible (#8787).
-fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    // `(delimiter, is_f_string)` of the open triple-quoted string.
-    let mut triple: Option<(&str, bool)> = None;
-    let mut cursor = 0;
-    while cursor < idx {
-        let rest = &text[cursor..];
-        if let Some((delimiter, formatted)) = triple {
-            if let Some(escaped) = rest.strip_prefix('\\') {
-                // In an f-string a backslash before a brace is a literal
-                // character on its own; the brace then lexes normally.
-                let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
-                cursor += 1 + if brace {
-                    0
+///
+/// The lexer's position between questions: the `(cursor, triple)` pair at the
+/// top of its loop does not depend on the offset asked about (only the step
+/// that holds the offset does), so a later offset continues from it.
+#[derive(Default)]
+struct TripleScan {
+    cursor: usize,
+    /// `(delimiter, is_f_string)` of the open triple-quoted string.
+    triple: Option<(&'static str, bool)>,
+    /// End of the comment or single-line string that starts at `cursor`, once
+    /// the step there is read; `0` before that.
+    span_end: usize,
+    /// That span is an f-string literal, whose replacement fields are code.
+    span_formatted: bool,
+    /// The step at `cursor` is a single-line f-string whose quote pairing
+    /// cannot be followed: every later offset is hidden.
+    hides_rest: bool,
+}
+
+impl TripleScan {
+    /// The answer for `idx`. `text` is the same text on every call and `idx`
+    /// does not decrease between calls.
+    fn hides(&mut self, text: &str, idx: usize) -> bool {
+        while self.cursor < idx {
+            let cursor = self.cursor;
+            let rest = &text[cursor..];
+            if let Some((delimiter, formatted)) = self.triple {
+                if let Some(escaped) = rest.strip_prefix('\\') {
+                    // In an f-string a backslash before a brace is a literal
+                    // character on its own; the brace then lexes normally.
+                    let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
+                    self.cursor += 1 + if brace {
+                        0
+                    } else {
+                        escaped.chars().next().map_or(0, char::len_utf8)
+                    };
+                } else if rest.starts_with(delimiter) {
+                    self.triple = None;
+                    self.cursor += delimiter.len();
+                } else if formatted && rest.starts_with("{{") {
+                    self.cursor += 2;
+                } else if formatted && rest.starts_with('{') {
+                    // A field the scanner cannot prove closed (unterminated, a
+                    // comment, or the string's own delimiter nested inside it)
+                    // hides the rest of the text: a miss, never an invented call.
+                    let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
+                        return true;
+                    };
+                    if field.target_hidden {
+                        return true;
+                    }
+                    if idx < cursor + field.len {
+                        return false;
+                    }
+                    self.cursor += field.len;
                 } else {
-                    escaped.chars().next().map_or(0, char::len_utf8)
-                };
-            } else if rest.starts_with(delimiter) {
-                triple = None;
-                cursor += delimiter.len();
-            } else if formatted && rest.starts_with("{{") {
-                cursor += 2;
-            } else if formatted && rest.starts_with('{') {
-                // A field the scanner cannot prove closed (unterminated, a
-                // comment, or the string's own delimiter nested inside it)
-                // hides the rest of the text: a miss, never an invented call.
-                let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
-                    return true;
-                };
-                if field.target_hidden {
-                    return true;
+                    self.cursor += rest.chars().next().map_or(1, char::len_utf8);
                 }
-                if idx < cursor + field.len {
-                    return false;
-                }
-                cursor += field.len;
-            } else {
-                cursor += rest.chars().next().map_or(1, char::len_utf8);
+                continue;
             }
-            continue;
-        }
-        let delimiter = ["\"\"\"", "'''"]
-            .into_iter()
-            .find(|delimiter| rest.starts_with(delimiter));
-        if let Some(delimiter) = delimiter {
-            triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
-            cursor += 3;
-        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides the rest of the text: a miss, never an invented call
-            // (#9230).
-            let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
-            if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars()) {
+            if self.hides_rest {
                 return true;
             }
-            let len = if rest.starts_with('#') {
-                rest.find('\n').unwrap_or(rest.len())
-            } else {
-                single_line_string_len(rest)
-            };
-            if idx < cursor + len {
-                // A replacement field of a single-line f-string is code, not
-                // string text, so a call there stays visible (#14754 review).
-                if !(formatted && single_line_fstring_offset_is_code(rest, idx - cursor)) {
+            if self.span_end > cursor {
+                // `idx` inside a comment or a (possibly backslash-continued)
+                // string literal is hidden code, not a call. A replacement
+                // field of a single-line f-string is code, not string text,
+                // so a call there stays visible (#14754 review).
+                if idx < self.span_end {
+                    return !(self.span_formatted
+                        && single_line_fstring_offset_is_code(rest, idx - cursor));
+                }
+                self.cursor = self.span_end;
+                continue;
+            }
+            let delimiter = ["\"\"\"", "'''"]
+                .into_iter()
+                .find(|delimiter| rest.starts_with(delimiter));
+            if let Some(delimiter) = delimiter {
+                self.triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
+                self.cursor += 3;
+            } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides the rest of the text: a miss, never an invented call
+                // (#9230).
+                let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
+                if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
+                {
+                    self.hides_rest = true;
                     return true;
                 }
+                self.span_formatted = formatted;
+                let len = if rest.starts_with('#') {
+                    rest.find('\n').unwrap_or(rest.len())
+                } else {
+                    single_line_string_len(rest)
+                };
+                self.span_end = cursor + len;
+            } else {
+                self.cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            cursor += len;
-        } else {
-            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
+        self.triple.is_some()
     }
-    triple.is_some()
 }
 
 /// Whether the string literal whose quote opens at `quote` carries an `f`
