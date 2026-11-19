@@ -97,16 +97,19 @@ jobs:
       - name: Build ripr from this commit
         run: cargo build --locked -p ripr --bin ripr
 
+      # The walk output lives outside target/: rust-cache saves target/ and
+      # restores this directory without the walk's ownership marker, so the next
+      # walk refused to clear it and the job failed on every warm cache.
       - name: Walk the first-run path against the ripr built from this commit
         run: >-
           cargo xtask first-run
           --ripr target/debug/ripr
-          --out target/ripr/first-run-main
+          --out "$RUNNER_TEMP/first-run-main"
 
       - name: Record the scoreboard
         run: >-
           cargo xtask dx-scoreboard --boards first_run
-          --ingest target/ripr/first-run-main/first-run-rows.jsonl
+          --ingest "$RUNNER_TEMP/first-run-main/first-run-rows.jsonl"
           --baseline metrics/dx-scoreboard/first-run-main-baseline.json
           --gate
 
@@ -121,7 +124,7 @@ jobs:
         with:
           name: first-run-main
           path: |
-            target/ripr/first-run-main/first-run.*
-            target/ripr/first-run-main/first-run-rows.jsonl
+            ${{ runner.temp }}/first-run-main/first-run.*
+            ${{ runner.temp }}/first-run-main/first-run-rows.jsonl
             target/ripr/reports/dx-scoreboard.*
           if-no-files-found: warn
