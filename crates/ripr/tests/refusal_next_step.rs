@@ -1076,7 +1076,7 @@ fn test_only_child_modules_names_out_of_line_test_modules() {
 #[cfg(test)]
 mod rows;
 #[cfg(test)]
-#[allow(dead_code)]
+#[doc(hidden)]
 pub(crate) mod helpers ;
 #[cfg(test)]
 mod inline_tests {}
