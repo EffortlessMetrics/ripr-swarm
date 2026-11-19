@@ -562,6 +562,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn cli_publication_hands_stdout_to_the_native_flag() -> Result<(), String> {
+        let native = Arc::new(AtomicBool::new(false));
+        let cli = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            native.clone(),
+        );
+        with_token(&cli, begin_cli_publication)?;
+        assert!(native.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn budget_token_keeps_caller_process_groups_and_reports_its_budget() {
         let started = Instant::now();
         let clock: AnalysisClock = Arc::new(move || started);
