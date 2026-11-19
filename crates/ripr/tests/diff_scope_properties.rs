@@ -17,19 +17,22 @@
 //!    including the order of the findings;
 //! 4. how much unchanged context a hunk carries, and whether the diff uses
 //!    CRLF line endings, leaves the report unchanged;
-//! 5. a second run over the same bytes renders the same JSON, byte for byte.
+//! 5. a second run over the same bytes renders the same JSON, byte for byte;
+//! 6. unrelated modules and tests added to the workspace, outside the diff,
+//!    leave the report unchanged.
 //!
 //! "The report" is the whole rendered `--format json` document, not only the
 //! findings. Relations 2 to 4 compare every field and name the few that
 //! describe the diff text itself and so may move: the input identity hash
 //! always, and the changed file and line counts when sections are added.
+//! Relation 6 compares two workspaces on disk, so only their root may move.
 //!
 //! Every case first asserts its fixture: the source diff alone produces
 //! exactly one predicate finding at each generated changed line, over the
 //! intended expression, and no finding anywhere else. A relation can therefore never hold over a workspace
 //! that was not analyzed. A control test shows the comparison is able to
 //! fail: dropping one source section from the diff is reported as a
-//! difference. These are static classes; nothing here claims a runtime
+//! difference, and a workspace test that pins a changed boundary is too. These are static classes; nothing here claims a runtime
 //! mutation outcome.
 //!
 //! The default case count is small so the required test run stays cheap. The
@@ -354,6 +357,8 @@ fn findings(report: &Value) -> Result<&Vec<Value>, String> {
         .ok_or_else(|| "check JSON has no findings array".to_string())
 }
 
+/// The workspace root the report names. Two workspaces on disk differ here.
+const ROOT: &str = ".root";
 /// The hash of the diff bytes. It moves whenever the diff text does.
 const INPUT_IDENTITY: &str = ".analysis_outcome.outcome.identity.input_identity";
 /// Counts of the files and lines the diff names, analyzable or not.
@@ -468,6 +473,56 @@ fn baseline(subject: &Subject, noise: &[Noise]) -> Result<Baseline, String> {
         sections,
         report,
     })
+}
+
+/// Unrelated code added to the workspace outside the diff: a module with a
+/// function the changed code never calls, and optionally tests for it.
+#[derive(Clone, Debug)]
+struct Extra {
+    /// Multiplier in the unrelated function; never one of the gate inputs.
+    factor: u8,
+    /// Whether the module carries its own `#[cfg(test)]` unit test.
+    unit_test: bool,
+    /// Whether an integration test file exercises the unrelated function.
+    integration_test: bool,
+}
+
+fn extra() -> impl Strategy<Value = Extra> {
+    (2u8..9, any::<bool>(), any::<bool>()).prop_map(|(factor, unit_test, integration_test)| Extra {
+        factor,
+        unit_test,
+        integration_test,
+    })
+}
+
+/// The subject's files plus the unrelated modules and tests in `extras`.
+/// Only `src/lib.rs` and new files change; the diff stays the same.
+fn files_with_extras(subject: &Subject, extras: &[Extra]) -> Vec<(String, String)> {
+    let mut files = subject.files();
+    for (slot, extra) in extras.iter().enumerate() {
+        let factor = extra.factor;
+        if let Some((_, lib)) = files.iter_mut().find(|(name, _)| name == "src/lib.rs") {
+            lib.push_str(&format!("mod extra{slot};\npub use extra{slot}::*;\n"));
+        }
+        let mut module =
+            format!("pub fn scaled{slot}(count: u64) -> u64 {{\n    count * {factor} + 1\n}}\n");
+        if extra.unit_test {
+            module.push_str(&format!(
+                "\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn scales() {{\n        assert_eq!(super::scaled{slot}(3), {});\n    }}\n}}\n",
+                3 * u64::from(factor) + 1
+            ));
+        }
+        files.push((format!("src/extra{slot}.rs"), module));
+        if extra.integration_test {
+            files.push((
+                format!("tests/extra{slot}.rs"),
+                format!(
+                    "use {CRATE}::*;\n\n#[test]\nfn scaled{slot}_adds_one() {{\n    assert_eq!(scaled{slot}(0), 1);\n}}\n"
+                ),
+            ));
+        }
+    }
+    files
 }
 
 fn fail(message: String) -> TestCaseError {
@@ -596,6 +651,35 @@ proptest! {
     }
 }
 
+proptest! {
+    #![proptest_config(config())]
+
+    /// Relation 6: unrelated modules and tests added to the workspace, outside
+    /// the diff, leave the report unchanged.
+    #[test]
+    fn unrelated_workspace_code_leaves_the_report_unchanged(
+        subject in subject(),
+        extras in prop::collection::vec(extra(), 1..4),
+    ) {
+        let base = baseline(&subject, &[]).map_err(fail)?;
+        let diff = base.sections.concat();
+        let grown = TempRepo::create(&files_with_extras(&subject, &extras)).map_err(fail)?;
+        let output = grown.check(&diff).map_err(fail)?;
+        assert_fixture(&subject, &output).map_err(fail)?;
+        let after = report(&output).map_err(fail)?;
+        // The two workspaces live in different temp directories, and the
+        // report names its root; nothing else may move.
+        let changed = differences(&base.report, &after, &[ROOT]);
+        prop_assert!(
+            changed.is_empty(),
+            "unrelated workspace code changed {:?} for {:?} with {:?}",
+            changed,
+            subject,
+            extras
+        );
+    }
+}
+
 fn control_subject() -> Subject {
     Subject {
         modules: vec![
@@ -675,6 +759,47 @@ fn allowed_fields_exist_and_describe_the_diff() -> Result<(), String> {
                 "{pointer} went from {before} to {after} for one added line in one unrelated file"
             ));
         }
+    }
+    Ok(())
+}
+
+/// Control for relation 6: a test added to the workspace that does pin a
+/// changed boundary is reported as a difference in the findings, so the
+/// workspace comparison is able to fail, and the root really does move.
+#[test]
+fn a_related_workspace_test_is_reported_as_a_difference() -> Result<(), String> {
+    let subject = control_subject();
+    let base = baseline(&subject, &[])?;
+    let unpinned = subject
+        .modules
+        .iter()
+        .position(|module| !module.pinned)
+        .ok_or("control premise: one module is not pinned")?;
+    let threshold = subject.modules[unpinned].threshold;
+    let mut files = subject.files();
+    files.push((
+        "tests/boundary.rs".to_string(),
+        format!(
+            "use {CRATE}::*;\n\n#[test]\nfn gate{unpinned}_boundary() {{\n    assert!(gate{unpinned}({threshold}));\n    assert!(!gate{unpinned}({}));\n}}\n",
+            threshold - 1
+        ),
+    ));
+    let grown = TempRepo::create(&files)?;
+    let output = grown.check(&base.sections.concat())?;
+    assert_fixture(&subject, &output)?;
+    let after = report(&output)?;
+    let mut moved = Vec::new();
+    collect_differences("", &base.report, &after, &mut moved);
+    if !moved.iter().any(|path| path == ROOT) {
+        return Err(format!(
+            "the root did not move between workspaces: {moved:?}"
+        ));
+    }
+    let changed = differences(&base.report, &after, &[ROOT]);
+    if !changed.iter().any(|path| path.starts_with(".findings")) {
+        return Err(format!(
+            "a test pinning the changed boundary did not change the findings: {changed:?}"
+        ));
     }
     Ok(())
 }
