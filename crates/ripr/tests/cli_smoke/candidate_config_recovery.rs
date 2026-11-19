@@ -54,12 +54,17 @@ fn malformed_candidate_config_names_recovery_without_changing_json_refusal() -> 
                 let message = value["run_limitations"][0]["message"]
                     .as_str()
                     .ok_or("missing refusal message")?;
+                // The machine message is the stderr location line plus the
+                // parser's source-free reason (#14441).
+                let location = stderr
+                    .lines()
+                    .next()
+                    .and_then(|line| line.strip_prefix("ripr: "))
+                    .ok_or("missing stderr location line")?;
                 assert_eq!(
-                    Some(message),
-                    stderr
-                        .lines()
-                        .next()
-                        .and_then(|line| line.strip_prefix("ripr: "))
+                    message,
+                    format!("{location}; unclosed array, expected `]`"),
+                    "{stderr}"
                 );
                 let stdout = String::from_utf8(output.stdout)?;
                 assert!(!stdout.contains("canary_candidate_config_9244"), "{stdout}");

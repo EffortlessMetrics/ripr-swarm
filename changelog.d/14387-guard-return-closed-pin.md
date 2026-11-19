@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust exact pin such as `assert_eq!(discount(200), 20)` now credits a changed early `return total / 5;` inside a guard when the call's literal arguments take that guard and the old and new code provably return different values there. A literal that skips the guard, a value neither version returns, or a non-literal argument keeps the earlier `weakly_exposed` reading (#14387).

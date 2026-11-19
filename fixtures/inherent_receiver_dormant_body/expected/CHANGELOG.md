@@ -142,3 +142,50 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (13)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (14)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (15)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (16)
+
+Reason:
+RIPR-SPEC-0094: a literal-only assertion reads no value and supplies no oracle (#14968)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

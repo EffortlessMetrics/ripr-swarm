@@ -12,9 +12,9 @@ ripr agent repair --root . --seam-id <seam-id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work. When the captured edit-cage baseline is ambiguous — the capture could not prove the exact worktree state it measured, which stale `target/` state on Windows correlates with (#7204) — the before phase replaces the edit instruction with the disclosure on stderr ("`ambiguous: true`", the artifact that records it, and the Incomparable consequence) and records a `limitations` entry on the manifest: that attempt can only end in an `Incomparable` refusal, so resolve the workspace condition and run the same `--phase before` command again from a clean state if a scorable attempt is wanted.
+The before phase prints the exact `--attempt` command to run next: `ripr continue --root <root> --attempt <repair-attempt-id>` in the plain summary, which runs the same after phase as the `ripr agent repair ... --attempt <repair-attempt-id> --phase after` form above. With `--json` the `repair_attempt` block carries that `--phase after` form and the attempt manifest path; `ripr agent status` reaches the manifest either way. Preserve that command across agent sessions, process restarts, and concurrent work. When the captured edit-cage baseline is ambiguous — the capture could not prove the exact worktree state it measured, which stale `target/` state on Windows correlates with (#7204) — the before phase replaces the edit instruction with the disclosure on stderr ("`ambiguous: true`", the artifact that records it, and the Incomparable consequence) and records a `limitations` entry on the manifest: that attempt can only end in an `Incomparable` refusal, so resolve the workspace condition and run the same `--phase before` command again from a clean state if a scorable attempt is wanted.
 
-The repair packet is written to `target/ripr/workflow/agent-packet.json`. By default stdout is a short summary, in a terminal and in a pipe alike: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, the packet path, and the exact `--attempt ... --phase after` command. With `--json` stdout is exactly one JSON document, like every other agent command: the packet envelope (`schema_version` `0.5`, see [Output Schema](OUTPUT_SCHEMA.md) § "Agent Seam Packets") with an additive `repair_attempt` block naming the attempt id, the attempt manifest path, the packet path, and the exact `--attempt ... --phase after` command to run after the edit. A driver that captures only stdout can therefore complete before → edit → after without reading stderr; when the captured baseline is ambiguous (#7204) that same stdout carries the disclosure instead — the `repair_attempt` block gains `baseline_ambiguous: true`, and the plain summary replaces the bare after-edit directive with the warning and the clean-state restart route — the packet content itself stays unchanged from the file, and the stdout document is not part of the attempt's digest bindings — the packet file is. Both the document and the stderr narration print only after the attempt is durably published, so a refused preparation never emits a success document. The packet file is the machine artifact either way.
+The repair packet is written to `target/ripr/workflow/agent-packet.json`. By default stdout is a short summary, in a terminal and in a pipe alike: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, the packet path, the command that runs the suggested test, and a `Next, after the test edit:` line with the exact `ripr continue --root <root> --attempt <repair-attempt-id>` command. With `--json` stdout is exactly one JSON document, like every other agent command: the packet envelope (`schema_version` `0.5`, see [Output Schema](OUTPUT_SCHEMA.md) § "Agent Seam Packets") with an additive `repair_attempt` block naming the attempt id, the attempt manifest path, the packet path, and the exact `--attempt ... --phase after` command to run after the edit. A driver that captures only stdout can therefore complete before → edit → after without reading stderr; when the captured baseline is ambiguous (#7204) that same stdout carries the disclosure instead — the `repair_attempt` block gains `baseline_ambiguous: true`, and the plain summary replaces the bare after-edit directive with the warning and the clean-state restart route — the packet content itself stays unchanged from the file, and the stdout document is not part of the attempt's digest bindings — the packet file is. Both the document and the stderr narration print only after the attempt is durably published, so a refused preparation never emits a success document. The packet file is the machine artifact either way.
 
 `--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
 
@@ -27,7 +27,7 @@ canonical packet stays behind the card's explicit detail route and
 
 ## Governed Python sequence
 
-The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag.
+The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag. Once a compliant finish records the result, the finish summary, `ripr status` and `ripr agent status` report it as `Test run: reported by the caller, not run by ripr: N test(s) ran in <file> (P passed, F failed)` and name a reported failure; without one they say `Test run: none recorded`. The static movement is unaffected: a reported failure still reads `improved` when the static grip improved.
 
 Start with an accepted repair-trust selection manifest and its selected row ID
 ([RIPR-SPEC-0176](specs/RIPR-SPEC-0176-python-repair-trust-attempts.md)).
@@ -372,6 +372,18 @@ To gain a repair target for such a seam, keep exactly one inline
 test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
 owns the seam, then rerun pilot. Until then, inspect the ranked seams by
 hand: they are still worth reading, just not repairable through RIPR.
+
+### Line-ending-only changes
+
+A file whose only change is its line endings is not counted as an edit when
+Git itself normalizes that path (`core.autocrlf`, or a `text` attribute). A
+checkout or `git stash pop` can rewrite CRLF bytes that way while `git status`
+stays clean. The after phase lists such files in
+`after.line_ending_only_paths`, beside the verdict rather than inside it, and
+names them in one line that starts `not counted as edits:`. The list leaves the
+bound delta digest and the receipt binding unchanged. A line-ending flip on a
+path Git does not normalize is still an edit, and so is any real content change
+to the same file.
 
 ### Replacing an issued compatibility receipt
 

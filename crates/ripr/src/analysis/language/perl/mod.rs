@@ -320,6 +320,7 @@ impl LanguageAdapter for PerlAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: Default::default(),
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -3308,6 +3309,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod actionability_proptest_tests;
 #[cfg(test)]
 mod boundary_input_projection_tests;
 #[cfg(test)]

@@ -373,6 +373,35 @@ pub(crate) fn callback_case_assertions(
     }
     let text: &str = source;
     let body = text.get(body_span.clone())?;
+    substituted_case_assertions(
+        text,
+        callback_span,
+        body_span,
+        body,
+        &params,
+        rows,
+        bindings,
+        returns_to_runner,
+    )
+}
+
+/// The assertions of a callback whose body (`body`, standing for the text at
+/// `body_span`) is read once per row with `params` replaced by that row's
+/// cells, or `None` when any row fails closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the callback/body spans and the rewritten body are one substitution input"
+)]
+fn substituted_case_assertions(
+    text: &str,
+    callback_span: std::ops::Range<usize>,
+    body_span: std::ops::Range<usize>,
+    body: &str,
+    params: &[String],
+    rows: &[Vec<String>],
+    bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
+) -> Option<Vec<TypeScriptAssertion>> {
     // A non-ASCII identifier could abut a parameter name the ASCII
     // scanner would then substitute inside it: fail closed.
     if !body.is_ascii() {
@@ -386,7 +415,7 @@ pub(crate) fn callback_case_assertions(
     }
     let mut assertions = Vec::new();
     for row in rows {
-        let substituted = substitute_row(body, &params, row)?;
+        let substituted = substitute_row(body, params, row)?;
         let callback_text = format!(
             "{}{}{}",
             text.get(callback_span.start..body_span.start)?,
@@ -402,6 +431,298 @@ pub(crate) fn callback_case_assertions(
         )?);
     }
     Some(assertions)
+}
+
+/// The second parameter of a Vitest `test.for` callback, which Vitest binds
+/// to the running test's `TestContext` (#10760).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ForTestContext {
+    /// The callback declares no second parameter.
+    Absent,
+    /// A plain identifier: its `.skip()` / `.todo()` calls end the test.
+    Named(String),
+    /// Exactly `{ expect }`: the runner `expect` comes from the context.
+    DestructuredExpect,
+}
+
+/// The context role of a `test.for` callback's second parameter, or `None`
+/// for any other shape (a default, a rest element, other destructured
+/// members, more than two parameters), which leaves the registration
+/// disclosed rather than read.
+pub(crate) fn for_test_context(callback: &oxc_ast::ast::Argument<'_>) -> Option<ForTestContext> {
+    let params = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return None,
+    };
+    if params.rest.is_some() || params.items.len() > 2 {
+        return None;
+    }
+    let Some(second) = params.items.get(1) else {
+        return Some(ForTestContext::Absent);
+    };
+    if second.initializer.is_some() {
+        return None;
+    }
+    match &second.pattern {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => {
+            Some(ForTestContext::Named(ident.name.to_string()))
+        }
+        oxc_ast::ast::BindingPattern::ObjectPattern(object) => {
+            let [property] = object.properties.as_slice() else {
+                return None;
+            };
+            (object.rest.is_none()
+                && !property.computed
+                && property.key.static_name().as_deref() == Some("expect")
+                && matches!(
+                    &property.value,
+                    oxc_ast::ast::BindingPattern::BindingIdentifier(ident)
+                        if ident.name.as_str() == "expect"
+                ))
+            .then_some(ForTestContext::DestructuredExpect)
+        }
+        _ => None,
+    }
+}
+
+/// The assertions of every row of an inline literal Vitest `test.for`
+/// table (#10760), or `None` when the table or the row binding is not
+/// resolvable.
+///
+/// Vitest hands each row to the callback WHOLE as its first argument (an
+/// array row is not spread as `.each` spreads it), so the row binding is
+/// read from the first parameter only:
+///
+/// - `([a, b]) => ...`: plain identifiers destructure an array row; the
+///   element count must equal every row's length.
+/// - `(n) => ...` over a table of literal scalars binds the scalar.
+/// - `(row) => ...` over array rows reads only `row[<digit index>]`; any
+///   other mention of `row` (a whole-row pass, a member, a write, a spaced
+///   index) fails closed.
+/// - `() => ...` reads the body once: no row value reaches it.
+///
+/// The second parameter is the `TestContext` and is decided by the caller
+/// through [`for_test_context`]. Defaults, rest, holes, object rows and
+/// non-literal tables fail closed.
+pub(crate) fn for_table_row_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    callback: &oxc_ast::ast::Argument<'_>,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    let Expression::CallExpression(for_call) = &call.callee else {
+        return None;
+    };
+    let text: &str = source;
+    if !text
+        .get(call.span.start as usize..call.span.end as usize)
+        .is_some_and(row_text_is_inert)
+    {
+        return None;
+    }
+    let [oxc_ast::ast::Argument::ArrayExpression(table)] = for_call.arguments.as_slice() else {
+        return None;
+    };
+    let (params, callback_span, body_span) = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
+            (&arrow.params, arrow.span, arrow.body.span)
+        }
+        // A generator callback only builds an iterator: its body never runs.
+        oxc_ast::ast::Argument::FunctionExpression(function) if !function.generator => (
+            &function.params,
+            function.span,
+            function.body.as_ref()?.span,
+        ),
+        _ => return None,
+    };
+    if params.rest.is_some() || params.items.len() > 2 {
+        return None;
+    }
+    // `delete row[0]` (or of any other binding) changes what a later read
+    // sees, which the per-row substitution cannot represent: fail closed.
+    let callback_text = text.get(callback_span.start as usize..callback_span.end as usize)?;
+    if !super::mock_payload_guard::identifier_offsets(
+        &super::tests_extract::mask_comments_and_strings_text(callback_text),
+        "delete",
+    )
+    .is_empty()
+    {
+        return None;
+    }
+    let callback_span = callback_span.start as usize..callback_span.end as usize;
+    let body_span = body_span.start as usize..body_span.end as usize;
+    let body = text.get(body_span.clone())?;
+    let Some(first) = params.items.first() else {
+        // No row binding: every row runs the same body, so it is read once.
+        // The table must still be a resolvable literal table.
+        literal_array_rows(table, source).or_else(|| literal_scalar_rows(table, source))?;
+        return substituted_case_assertions(
+            text,
+            callback_span,
+            body_span,
+            body,
+            &[],
+            &[Vec::new()],
+            bindings,
+            true,
+        );
+    };
+    if first.initializer.is_some() {
+        return None;
+    }
+    match &first.pattern {
+        oxc_ast::ast::BindingPattern::ArrayPattern(pattern) => {
+            if pattern.rest.is_some() {
+                return None;
+            }
+            let mut names = Vec::new();
+            for element in &pattern.elements {
+                // A hole or a defaulted element is not a plain binding.
+                let Some(oxc_ast::ast::BindingPattern::BindingIdentifier(ident)) = element.as_ref()
+                else {
+                    return None;
+                };
+                if !ident.name.is_ascii() {
+                    return None;
+                }
+                names.push(ident.name.to_string());
+            }
+            let rows = literal_array_rows(table, source)?;
+            if rows.iter().any(|row| row.len() != names.len()) {
+                return None;
+            }
+            substituted_case_assertions(
+                text,
+                callback_span,
+                body_span,
+                body,
+                &names,
+                &rows,
+                bindings,
+                true,
+            )
+        }
+        oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => {
+            let name = ident.name.as_str();
+            if !name.is_ascii() || local_identifier_declared_in_test_body(body, name) {
+                return None;
+            }
+            if let Some(rows) = literal_scalar_rows(table, source) {
+                return substituted_case_assertions(
+                    text,
+                    callback_span,
+                    body_span,
+                    body,
+                    &[name.to_string()],
+                    &rows,
+                    bindings,
+                    true,
+                );
+            }
+            let rows = literal_array_rows(table, source)?;
+            let width = rows.first()?.len();
+            if rows.iter().any(|row| row.len() != width) {
+                return None;
+            }
+            let (rewritten, placeholders) = rewrite_indexed_row_reads(body, name, width)?;
+            substituted_case_assertions(
+                text,
+                callback_span,
+                body_span,
+                &rewritten,
+                &placeholders,
+                &rows,
+                bindings,
+                true,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Prefix of the stand-in names an indexed row read is rewritten to.
+const INDEXED_ROW_PLACEHOLDER: &str = "__ripr_for_row_";
+
+/// `body` with every `row[<i>]` (no spaces, a decimal index below `width`)
+/// replaced by a stand-in identifier, plus the stand-in for each index, or
+/// `None` when `row` appears in code any other way (a whole-row read, a
+/// member, a spaced or computed index) or the stand-in prefix already
+/// occurs. Strings and comments are masked, so a quoted `row[0]` stays text.
+fn rewrite_indexed_row_reads(body: &str, row: &str, width: usize) -> Option<(String, Vec<String>)> {
+    if body.contains(INDEXED_ROW_PLACEHOLDER) {
+        return None;
+    }
+    let masked = super::tests_extract::mask_comments_and_strings_text(body);
+    let masked_bytes = masked.as_bytes();
+    let mut out = String::with_capacity(body.len());
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(rel) = masked.get(from..)?.find(row) {
+        let at = from + rel;
+        let end = at + row.len();
+        from = end;
+        let before = masked.get(..at)?.trim_end();
+        // A spread (`...row`) reads the whole row: not an indexed read.
+        if before.ends_with("...") {
+            return None;
+        }
+        // A member name (`x.row`, `x?.row`, `x. row`) is not the row.
+        let before_ok =
+            (at == 0 || !is_identifier_part(masked_bytes[at - 1])) && !before.ends_with('.');
+        let after_ok = masked_bytes
+            .get(end)
+            .is_none_or(|byte| !is_identifier_part(*byte));
+        if !before_ok || !after_ok {
+            continue;
+        }
+        let rest = masked.get(end..)?;
+        let digits = rest.strip_prefix('[')?;
+        let len = digits.bytes().take_while(u8::is_ascii_digit).count();
+        if len == 0 || len > 3 || digits.as_bytes().get(len) != Some(&b']') {
+            return None;
+        }
+        let index: usize = digits.get(..len)?.parse().ok()?;
+        if index >= width {
+            return None;
+        }
+        out.push_str(body.get(copied..at)?);
+        out.push_str(INDEXED_ROW_PLACEHOLDER);
+        out.push_str(&index.to_string());
+        copied = end + 1 + len + 1;
+        from = copied;
+    }
+    out.push_str(body.get(copied..)?);
+    let placeholders = (0..width)
+        .map(|index| format!("{INDEXED_ROW_PLACEHOLDER}{index}"))
+        .collect();
+    Some((out, placeholders))
+}
+
+/// The single-cell rows of an inline array of one-line literal scalars
+/// (`test.for([1, 2, 3])`).
+fn literal_scalar_rows(
+    table: &oxc_ast::ast::ArrayExpression<'_>,
+    source: &SourceText<'_>,
+) -> Option<Vec<Vec<String>>> {
+    if table.elements.is_empty() || table.elements.len() > MAX_TABLE_ROWS {
+        return None;
+    }
+    let text: &str = source;
+    let mut rows = Vec::new();
+    for element in &table.elements {
+        let cell = element.as_expression()?;
+        if !is_literal_cell(cell) {
+            return None;
+        }
+        let span = cell.span();
+        let cell_text = text.get(span.start as usize..span.end as usize)?;
+        if cell_text.contains(['\n', '\r']) {
+            return None;
+        }
+        rows.push(vec![cell_text.to_string()]);
+    }
+    Some(rows)
 }
 
 /// The cell texts of `each(<array of arrays of literals>)`.

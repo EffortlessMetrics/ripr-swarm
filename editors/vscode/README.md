@@ -19,7 +19,9 @@ advisory, not runtime mutation results.
 Install `EffortlessMetrics.ripr` and open a Rust/Cargo workspace. The released
 extension uses a compatible `ripr` already on your `PATH` and otherwise
 downloads and caches its matching native server, so you do not need to build
-that server with `cargo install ripr`. Workspace analysis and
+that server with `cargo install ripr`. A `PATH` binary older than the
+extension's expected server version does not skip that download; if no
+download is possible, the extension still uses it and warns once. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
 ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
@@ -127,7 +129,7 @@ with the defaults.
 ## Commands
 
 Start with `ripr: Show Status`, `ripr: Show Output`, and
-`ripr: Refresh Diagnostics`. Finding-specific code actions appear on diagnostics.
+`ripr: Refresh Full Analysis`. Finding-specific code actions appear on diagnostics.
 The development extension also exposes the following commands:
 
 <details>

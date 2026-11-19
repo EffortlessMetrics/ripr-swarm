@@ -44,6 +44,15 @@
       "items": { "$ref": "#/$defs/finding" }
     },
     "suppression_policy": { "type": "object" },
+    "owner_opt_outs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["withheld", "reason"],
+      "properties": {
+        "withheld": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["owner_mutants_skip"] }
+      }
+    },
     "language_runs": {
       "type": "array",
       "items": { "$ref": "#/$defs/language_run" }
@@ -82,6 +91,53 @@
         }
       }
     },
+    "file_fact_cache": {
+      "description": "Verbose-only (`-v`/`--verbose`) bounded Rust file-fact cache receipt (#4975). Names hits (reused), misses (missing entries computed), corrupt entries ignored (also recomputed), stores, and capped store-failure rows. Absent from default JSON.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "hits",
+            "misses",
+            "invalidated",
+            "corrupt_ignored",
+            "stores",
+            "store_errors",
+            "store_failures",
+            "store_failures_dropped"
+          ],
+          "properties": {
+            "schema_version": { "const": "0.1" },
+            "hits": { "type": "integer", "minimum": 0 },
+            "misses": { "type": "integer", "minimum": 0 },
+            "invalidated": { "type": "integer", "minimum": 0 },
+            "corrupt_ignored": { "type": "integer", "minimum": 0 },
+            "stores": { "type": "integer", "minimum": 0 },
+            "store_errors": { "type": "integer", "minimum": 0 },
+            "store_failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "stage", "error"],
+                "properties": {
+                  "path": { "type": ["string", "null"] },
+                  "stage": { "type": "string" },
+                  "error": { "type": "string" }
+                }
+              }
+            },
+            "store_failures_dropped": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "file_fact_cache_limitation": {
+      "description": "Verbose-only reason `file_fact_cache` is null (#4975).",
+      "enum": ["not_observed", "zero_work"]
+    },
     "scope_disclosures": {
       "type": "array",
       "items": { "type": "object" }
@@ -112,20 +168,38 @@
       "items": { "$ref": "#/$defs/finding_route" }
     },
     "rendering": {
-      "description": "Rendering profile of the document. Only `terse` is defined: emitted exclusively by `ripr check --format json-terse`, which codes repeated evidence prose against `evidence_legend` and omits same-value alias fields (listed in `dropped_aliases`). Absent from `json` and `json-compact` output, whose parsed values are the full document.",
+      "description": "Rendering profile of the document. Only `terse` is defined: emitted exclusively by `ripr check --format json-terse`, which codes repeated evidence prose against `evidence_legend` and omits same-value alias fields (listed in `dropped_aliases`) and hoists repeated related-test row cores into `related_test_table`. Absent from `json` and `json-compact` output, whose parsed values are the full document.",
       "const": "terse"
     },
     "evidence_legend": {
-      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing`, `assertion_texts`, `ripr.<stage>.summary` and `related_tests[].oracle` / `related_tests[].why` values (including `related_test_table[].oracle`); expanding every code through this legend reconstructs the exact original document strings.",
       "type": "object",
       "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
-      "description": "json-terse only: the known suggested_next_action alias, recorded once when omitted from any finding. Its exact value remains in that finding's recommended_next_step. No other field may be omitted as an alias.",
+      "description": "json-terse only: each known alias, recorded once when omitted from any finding. suggested_next_action keeps its exact value in that finding's recommended_next_step; observed_values and missing_discriminators keep theirs in that finding's activation block; canonical_gap_id keeps its value in canonical_gap.id; evidence_stages rows are restored from the finding's ripr stages (stage, state, confidence, in reach..discriminate order). No other field may be omitted as an alias.",
       "type": "array",
       "minItems": 1,
-      "maxItems": 1,
-      "items": { "const": "suggested_next_action" }
+      "maxItems": 5,
+      "items": { "enum": ["suggested_next_action", "observed_values", "missing_discriminators", "canonical_gap_id", "evidence_stages"] }
+    },
+    "related_test_table": {
+      "description": "json-terse only (#13673): related-test row cores that repeat across rows, each emitted once in first-appearance order. A core is the name, file, line, oracle, oracle_kind and oracle_strength fields a row carries. A finding's related_tests row that used a core omits those fields and carries table_row, the zero-based index into this array; restore the row by merging that core back in and removing table_row. A core may hold an evidence_legend code in oracle. Rows whose core appears once stay verbatim; table_row is a reference only when this array is present, and nothing is hoisted when a producer row already carries a table_row key.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "name": {},
+          "file": {},
+          "line": {},
+          "oracle": {},
+          "oracle_kind": {},
+          "oracle_strength": {}
+        }
+      }
     }
   },
   "if": { "required": ["rendering", "dropped_aliases"] },
@@ -317,6 +391,7 @@
           }
         },
         "suppressed_by_policy": { "type": "integer", "minimum": 0 },
+        "withheld_by_owner_opt_out": { "type": "integer", "minimum": 1 },
         "conflicting_expressions": { "type": "integer", "minimum": 1 },
         "proof_harness_only": { "type": "integer", "minimum": 1 }
       }
@@ -465,8 +540,6 @@
         "missing",
         "assertion_texts",
         "activation",
-        "observed_values",
-        "missing_discriminators",
         "related_tests_total",
         "related_tests",
         "stop_reasons",
@@ -479,6 +552,8 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "withheld_by": { "enum": ["owner_mutants_skip"] },
+        "withheld_scope": { "enum": ["fn", "impl", "trait", "module", "file"] },
         "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
@@ -500,6 +575,13 @@
           }
         },
         "confidence_why_capped": { "type": "string", "minLength": 1 },
+        "evidence_stages": {
+          "description": "Additive (RIPR-SPEC-0423, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage. No row carries test or assertion references (producer-backed stage attribution is #13453).",
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/evidence_stage_row" }
+        },
         "probe": { "$ref": "#/$defs/probe" },
         "ripr": { "$ref": "#/$defs/ripr" },
         "evidence_path": { "type": "array", "items": { "type": "string" } },
@@ -631,6 +713,29 @@
         "state": { "type": "string", "minLength": 1 },
         "confidence": { "type": "string", "minLength": 1 },
         "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_stage_row": {
+      "description": "One staged-evidence row (RIPR-SPEC-0423): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "state", "confidence"],
+      "properties": {
+        "stage": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "string", "minLength": 1 },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "activation": {

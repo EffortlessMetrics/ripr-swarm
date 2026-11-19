@@ -180,12 +180,12 @@ origin witnesses.
    `outer()` may lead to changed owner `inner`. Result: `no_static_path` plus
    `static_limit_kind: rust_integration_public_api_path_unresolved`.
    Fixture: `fixtures/rust_transitive_reach_positive/`.
-2. **Integration test helper chain**: `tests/version_req.rs` calls
+2. [abstain] **Integration test helper chain**: `tests/version_req.rs` calls
    `assert_public_api_accepts`, which calls crate public API that may lead to
    changed owner `matches_greater`. Result: `no_static_path` plus
    `static_limit_kind: rust_integration_public_api_path_unresolved`.
    Fixture: `fixtures/rust_transitive_reach_test_helper_chain/`.
-3. **Pinned external semver launch point**: the semver boundary patch emits
+3. [abstain] **Pinned external semver launch point**: the semver boundary patch emits
    `rust_integration_public_api_path_unresolved`, discloses the exact witness
    and limitation detail, and stays non-actionable.
 4. **Facade re-export**: `facade` depends on `inner`, has `pub use inner::*;`
@@ -196,7 +196,7 @@ origin witnesses.
    repair gap. A dev-dependency-only edge, a cfg-gated or nested `pub use`, a
    braced list not naming the owner, or a private owner keeps the plain
    `no_static_path`.
-5. **Non-integration helper chain**: a transitive witness from ordinary Rust
+5. [abstain] **Non-integration helper chain**: a transitive witness from ordinary Rust
    source keeps `rust_transitive_reach_unresolved`.
 
 ## Required Evidence

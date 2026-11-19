@@ -193,7 +193,7 @@ adjacent commits. Matching heads still do not mean matching working trees.
 /// flag mining for typo suggestions and the help tests read the full text.
 pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Common options:
   --base REV        Compare against this revision; when omitted, ripr uses
@@ -221,14 +221,14 @@ Exit status: 0 for a completed run, including findings that are `exposed` or wea
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
-  ripr check
+  ripr check [src/lib.rs]   (a PATH keeps only that changed file, like --path)
   ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
@@ -263,11 +263,13 @@ Options:
                            or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
                            Applied before the diff-size limits, so they measure
                            only the chosen files. Changed files outside the
-                           scope are named in a language_scope_unsupported
-                           limitation and have no finding: the outcome is
-                           partial_with_limitations, never clean. A scope that
+                           scope are named in a requested_scope_excluded
+                           scope note and have no finding; the outcome stays
+                           complete. Built-in generated skips still make the
+                           run partial. A scope that
                            leaves no changed file is an error. Not supported
-                           for repo-scoped formats.
+                           for repo-scoped formats. A bare PATH argument
+                           (`ripr check src/lib.rs`) is the same as --path.
   --exclude GLOB           Skip changed files matching GLOB (repeatable;
                            wins over --path). Same pattern shapes, same
                            disclosure as --path.
@@ -468,19 +470,20 @@ Environment variables:
                                           non-consumable limited artifact.
                                           Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
-                                          before check stops with
-                                          diff_scope_oversized. With --json, stdout
-                                          carries a non-consumable limited artifact.
-                                          Default: 2000.
+                                          analyzed. A larger diff degrades into a
+                                          limited_partial_scope partition; check
+                                          stops with diff_scope_oversized only when
+                                          no changed file fits within it. With
+                                          --json, stdout carries a non-consumable
+                                          limited artifact. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
-                                          lines before check stops with
-                                          diff_scope_oversized (the Rust guard's
-                                          memory bound for the Python adapter).
-                                          Default: 2000.
+                                          lines analyzed (the Rust guard's memory
+                                          bound for the Python adapter); degrades
+                                          like the Rust limit. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
                                           diff lines (the routed .ts/.tsx/.mts/
-                                          .cts/.js/.jsx/.mjs/.cjs family) before
-                                          check stops with diff_scope_oversized.
+                                          .cts/.js/.jsx/.mjs/.cjs family)
+                                          analyzed; degrades like the Rust limit.
                                           Default: 2000.
   RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
                                           index before check stops with
@@ -615,6 +618,9 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -662,26 +668,34 @@ Performance:
   re-classifying every changed behavior — useful for large diffs and scripted workflows
   that run check, explain, and context in sequence.
 "#;
-pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
+pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and related tests for an agent or script.
 
-The packet is always JSON, for an agent or tool to consume; `--json` is
-accepted and changes nothing. To read the same finding as prose, run
-`ripr explain` with the same selector.
+Use this when an agent or tool needs the facts behind one `ripr check`
+finding: the changed expression ripr examined, the tests that appear to
+reach it, the values they check, and any assertion that seems to be missing.
+Output is always JSON. To read the same finding as prose, run `ripr explain`
+with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --at <finding-id|file:line>
+               Required. The finding to describe: an id from
+               `ripr check --json`, or a changed `file:line`.
+  --finding ID
+               Same as --at.
+  --max-related-tests N
+               List at most N related tests. Defaults to
+               `reports.max_related_tests` in ripr.toml, otherwise 5.
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
                `file:line` selector binds to the directory you ran from like
                `ripr explain`; --diff and --from paths are read as typed from
                the current directory.
-  --finding ID
-               Select the finding by id or `file:line`, like `--at`.
-  --quiet      Suppress analysis progress and heartbeats on stderr, like
-               `ripr check --quiet`. Does not change stdout, exit codes, or
-               error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -699,8 +713,8 @@ Options:
                analysis (same identity check as explain --from).
                Stdin (--diff -) cannot verify a recorded diff identity;
                create and reuse the artifact with a named --diff PATH.
-               --max-related-tests is a render-time knob honored fresh,
-               including beyond the check --json render cap.
+               --max-related-tests still applies, including beyond the
+               check --json render cap.
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
@@ -714,6 +728,19 @@ Options:
                Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+  --json       Output is already JSON; passing it also makes usage errors
+               and selector misses print a `cli_refusal` JSON document.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+
+Exit status:
+  0  the JSON packet was printed
+  2  usage error (no selector, conflicting flags), a selector that matches
+     no finding or several, or a failed analysis. Once the arguments are
+     accepted, a failure also prints a JSON refusal document on stdout.
+     Usage errors and selector misses keep stdout empty unless `--json` is
+     passed, which prints the `cli_refusal` document instead.
 
 Filesystem effects:
   Fresh analysis may create or refresh disposable cache files under

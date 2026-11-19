@@ -104,6 +104,17 @@ pub fn ripr::domain::guarded_edit::verify_source_text
 # re-exported at the cli boundary; covered_by: cargo test -p ripr --lib cli,
 # cargo test -p ripr --bin ripr, cargo xtask check-public-api.
 pub use ripr::cli::extract_global_verbose
+# `--name=value` argv normalizer (#14292): owner cli; reason: the binary
+# startup route normalizes argv before MCP routing and must apply the same
+# rewrite as `ripr::cli::run`, so the owner is re-exported at the cli
+# boundary; covered_by: cargo test -p ripr --lib cli,
+# cargo test -p ripr --bin ripr, cargo xtask check-public-api.
+pub use ripr::cli::split_long_flag_values
+# RIPR_VERBOSE environment twin of the global verbose flag: owner cli;
+# reason: the binary startup route enables verbose before MCP routing and
+# must read the same switch as `ripr::cli::run`; covered_by: cargo test -p
+# ripr --lib cli::progress, cargo xtask check-public-api.
+pub fn ripr::cli::verbose_requested_by_env
 pub fn ripr::domain::language_availability::resolve_language_availability
 pub fn ripr::domain::language_availability::resolve_language_availability_all
 pub fn ripr::domain::language_availability::unavailable_recovery
@@ -143,6 +154,11 @@ pub fn ripr::output::start_here_state::normalize_start_here_output_state
 pub fn ripr::output::start_here_state::start_here_output_state_is_known
 pub fn ripr::process_owner::bind_process_lifetime
 pub fn ripr::set_verbose
+# Stderr-only verbose level for RIPR_VERBOSE: owner lib; reason: the binary
+# MCP route turns on stderr diagnostics without the stdout-widening `-v`
+# contract; covered_by: cargo test -p ripr --test cli_progress,
+# cargo xtask check-public-api.
+pub fn ripr::set_stderr_diagnostics
 pub mod ripr::analysis
 pub mod ripr::app
 pub mod ripr::app::pr_evidence
@@ -306,6 +322,7 @@ pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
 pub use ripr::analysis::LanguageRun
 pub use ripr::analysis::LanguageRunStatus
+pub use ripr::analysis::OverLimitFile
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
@@ -354,7 +371,7 @@ pub use ripr::app::pr_summary::render_evidence_summary_md
 pub use ripr::app::pr_summary::render_pr_evidence_summary_json
 pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::app::repo_seam_inventory_input
-pub use ripr::app::run_impacted_evidence_at
+pub use ripr::cli::run_impacted_evidence_at
 pub use ripr::check_workspace
 pub use ripr::check_workspace_with_config
 pub use ripr::collect_context

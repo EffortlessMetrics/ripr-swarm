@@ -1,0 +1,38 @@
+# Independent no-promotion controls for the route-response read credit (#13869).
+[[extend]]
+id = "RIPR-SPEC-0238"
+fixtures = [
+  "fixtures/python_route_response_sibling",
+  "fixtures/python_route_response_json_patch",
+  "fixtures/python_route_response_equivalent_number",
+  "fixtures/python_route_response_float_floor_division",
+  "fixtures/python_route_response_list_subscript",
+  "fixtures/python_route_response_adjacent_list_tokens",
+  "fixtures/python_route_response_duplicate_old_key",
+  "fixtures/python_route_response_shadowed_dict",
+  "fixtures/python_route_response_tuple_dict",
+  "fixtures/python_route_response_unpacked_options",
+  "fixtures/python_route_response_parenthesized_alias",
+  "fixtures/python_route_response_compact_loop",
+  "fixtures/python_route_response_replaced_content",
+  "fixtures/python_route_response_docs_route",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_route_response_sibling",
+  "fixtures/python_route_response_json_patch",
+  "fixtures/python_route_response_equivalent_number",
+  "fixtures/python_route_response_float_floor_division",
+  "fixtures/python_route_response_list_subscript",
+  "fixtures/python_route_response_adjacent_list_tokens",
+  "fixtures/python_route_response_duplicate_old_key",
+  "fixtures/python_route_response_shadowed_dict",
+  "fixtures/python_route_response_tuple_dict",
+  "fixtures/python_route_response_unpacked_options",
+  "fixtures/python_route_response_parenthesized_alias",
+  "fixtures/python_route_response_compact_loop",
+  "fixtures/python_route_response_replaced_content",
+  "fixtures/python_route_response_docs_route",
+]

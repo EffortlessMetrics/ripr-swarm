@@ -25,6 +25,12 @@ pub(super) const GET_TOP_LIMITATION_TOOL_NAME: &str = "ripr_get_top_limitation";
 pub(super) const PREPARE_REPAIR_TOOL_NAME: &str = "ripr_prepare_repair";
 pub(super) const GET_REPAIR_ATTEMPT_TOOL_NAME: &str = "ripr_get_repair_attempt";
 pub(super) const GET_RECEIPT_STATUS_TOOL_NAME: &str = "ripr_get_receipt_status";
+/// One short line per argument the tools share. An argument with no
+/// description leaves the agent to guess: `snapshot_id` is best omitted (each
+/// tool description already names `stale_snapshot`), and a `canonical_id`
+/// only ever comes from the listing.
+const SNAPSHOT_ID_ARGUMENT: &str = "Omit for the current snapshot.";
+const CANONICAL_ID_ARGUMENT: &str = "From ripr_list_gaps.";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";
 pub(super) const SNAPSHOT_RESOURCE_TEMPLATE: &str = "ripr://snapshot/{snapshot_id}";
 pub(super) const GAP_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}";
@@ -43,6 +49,7 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
         "analysis_in_flight",
         "stale_snapshot",
         "item_not_found",
+        super::workspace::CODE_OWNER_OPT_OUT,
         super::workspace::CODE_INVALID_ARGUMENT,
         "result_too_large",
         CODE_ATTEMPT_NOT_FOUND,
@@ -65,23 +72,23 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; `ripr_refresh` defaults to the committed default-branch diff and stores a completed session snapshot. `ripr_list_gaps` lists the bounded working set; read evidence with `ripr_get_gap` or ripr://gap/{canonical_id}; for repair prefer `ripr_get_repair_card` (ripr://repair-card/{canonical_id}). With established producer readiness, `ripr_prepare_repair` creates or replays one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), inspect receipts with `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), and list every durable attempt with `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only MCP session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. By default: committed input only; staged and unstaged tracked edits and untracked files are outside. Opt in with `ripr_refresh` `source: \"worktree\"` to include saved staged and unstaged tracked edits; unsaved buffers and untracked files remain outside. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Refresh after edits. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. `ripr check --committed` reads committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. By default, like `ripr check`, input is saved staged and unstaged tracked edits when any exist, else committed (`requested_source` and `captured_source` say which ran); `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
-const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state — call this first in a session: it is the root-discovery, authority, and session read. Covers repository-root discovery state (validated or unavailable; root error detail names why), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good, freshness, typed AnalysisOutcome, and profile facts (project_config loaded, built-in defaults, or detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands. To run analysis, call ripr_refresh.";
+const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the default-branch diff (optional `base` selects another revision) through shared check authority; store its completed session snapshot. `source: \"worktree\"` includes saved tracked edits. Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and after edits. Returns fresh_for_working_tree and a verify route (re-check after editing tests). Blocks until: completed (snapshot identity returned), failed (isError; typed code, detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. By default: committed input only; saved tracked edits require `source: \"worktree\"`; unsaved buffers and untracked files remain outside; see INSTRUCTIONS for the scope routes.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (optional snapshot_id must match, else stale_snapshot). Call this after ripr_refresh to choose which items merit a detail read. The response carries counts, omitted identities with reasons, the selection basis, and one small summary per selected item (fields in the outputSchema). Selection is the shared CLI/LSP budget authority: MCP does not re-rank, never truncates silently, and infers no business risk; overflow is disclosed with reasons. Optional file, class, language, and repair_ready filters narrow the stored selection conjunctively before paging; offset and limit page the narrowed set in snapshot order, disclosed through page.has_more and page.next_offset. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root (restart with --root <repository>), invalid_argument, and result_too_large on an over-bound page. Per-item detail: ripr_get_gap or ripr://gap/{canonical_id}.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, already-gripped exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
-const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded analysis evidence from the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). This is the read for analysis evidence when no repair intent exists — prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. repair_packet_ready now reports the committed producer repair-readiness facts. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large — follow the failure's captured-root/base/source CLI recovery outside MCP (a bounded summary, not immutable snapshot replay); retrying ripr_get_gap cannot shrink the item. Fails closed with no_snapshot before the first successful ripr_refresh and workspace_unavailable on an unavailable root. The resource ripr://gap/{canonical_id} returns the same document.";
+const GET_GAP_TOOL_DESCRIPTION: &str = "Return one item's complete bounded analysis evidence from the snapshot. Prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. result_too_large means the item exceeds the response bound: follow the failure's CLI recovery (a bounded summary, not snapshot replay), because retrying ripr_get_gap cannot shrink the item. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}.";
 
-const GET_TOP_LIMITATION_TOOL_DESCRIPTION: &str = "Return the earliest committed producer limitation that prevents a safe repair route for one canonical item of the current completed snapshot (optional snapshot_id must match, else stale_snapshot): kind, stage, reason, recovery, restart identity, retryable, and the stronger claim that stays prohibited. Producer static limits outrank readiness gates; an item with none returns kind no_limitation_established, never null. Reads committed facts only, with no analysis rerun. Fails closed with item_not_found, no_snapshot, and workspace_unavailable. The resource ripr://gap/{canonical_id}/limitation returns the same document.";
+const GET_TOP_LIMITATION_TOOL_DESCRIPTION: &str = "Return the earliest committed producer limitation blocking a safe repair route for one item: kind, stage, reason, recovery, retryable and the stronger claim that stays prohibited. An item with none returns kind no_limitation_established, never null. Reads stored facts, with no analysis rerun. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}/limitation.";
 
-const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When every committed producer repair-readiness gate reads established, create — or replay — one bounded in-memory repair transaction for one canonical item of the current completed snapshot. Call this when the agent intends to repair an item from ripr_list_gaps; the readiness gates are on that item's evidence. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The outputSchema enumerates the complete document. Repeating the call for the same snapshot, item, and root replays the identical document — never a second transaction. When a gate is not established the tool returns isError: true, repair_packet_ready: false, the typed ineligibility reason, a next step and attempt: null — it never guesses a missing field and never creates a misleading attempt. This tool never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root, and item_not_found on unknown canonical ids.";
+const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When the agent intends to repair an item from ripr_list_gaps and its readiness gates are established, create (or replay, for the same snapshot, item and root) one bounded in-memory repair transaction. A gate that is not established returns isError with repair_packet_ready: false, the reason, a next step and attempt: null; it never guesses a missing field. It never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable.";
 
-const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair transaction by its attempt identity, without executing anything it names. Call this with an attempt id from ripr_prepare_repair or the durable store, before acting on it. Session transactions from ripr_prepare_repair answer first: immutable packet, awaiting_edit state, snapshot and root identity binding, resource links. Otherwise the shared repair-attempt authority reads the durable attempt store of this root: a valid manifest projects state, repository head, seam identity, artifact digest bindings, follow-up command display string, and typed CommandSpec routes when the retained packet carries valid ones — the human display is never execution authority and shell_required or manual modes are visibly non-direct; the host-local root path is never projected. A manifest that fails canonical validation fails closed with attempt_invalid; an unknown identity fails closed with attempt_not_found. An attempt bound to a stale snapshot fails closed with the reserved superseded state and the current snapshot identity. Superseded tombstones older than the 64-entry session bound read attempt_not_found instead. Never edits source, launches a process, or executes verification or mutation commands. The resource ripr://repair-attempt/{attempt_id} returns the same document.";
+const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair attempt by its attempt identity (from ripr_prepare_repair or the durable store) before acting on it: state, snapshot and seam binding, artifact digests, and typed command routes when the retained packet carries valid ones. A display string is never execution authority. Failures: attempt_not_found (also for superseded entries past the 64-entry session bound), attempt_invalid, and the superseded state with the current snapshot identity for a stale binding. Same document: ripr://repair-attempt/{attempt_id}.";
 
-const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "Read the current receipt state for one attempt identity (receipt ids are attempt-bound: one retained receipt per durable attempt). Call this after external verification finished to learn whether the attempt improved, regressed, or stayed unchanged — and before trusting an old receipt that the snapshot may have outrun. The status vocabulary is awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid. Session transactions report awaiting_edit with an explicit null receipt: RIPR performs no verification and issues no receipt. Durable attempts report their producer state mapped onto the same vocabulary; the terminal mapping is owned by the same reading as CLI status and is documented on the outputSchema status field. A finished digest-bound terminal receipt projects the receipt document with exact byte bindings — and receipt presence alone never reports closed; a manifest or receipt that fails canonical validation reports invalid or attempt_invalid rather than a reconstructed state. Status binds exact before/after/verify bytes, repository identity, candidate item, and currentness, re-validated on every read — never mtime or latest-file convention. Static movement and focused runtime test execution remain separate evidence axes — this document reports static receipt state only. This read edits nothing and executes nothing. The resource ripr://receipt/{receipt_id} returns the same document.";
+const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "After external verification, read one attempt's receipt state (receipt ids are attempt-bound): awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid, mapped by the same reading as CLI status. For a session transaction RIPR performs no verification and issues no receipt; receipt presence alone never reports closed. Status binds exact before/after/verify bytes and is re-validated on every read. Static receipt state only, not runtime proof. Failures: attempt_not_found, attempt_invalid, superseded. Same document: ripr://receipt/{receipt_id}.";
 
 const LIMITATION_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's earliest producer limitation, the same document ripr_get_top_limitation returns: typed kind, stage, reason, recovery, retryable, restart identity, and the prohibited stronger claim. The item must exist in the current completed snapshot (else item_not_found).";
 
@@ -97,32 +104,33 @@ const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one 
 
 const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from a completed session snapshot by shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found, seam_not_found, or policy_omitted).";
 
-const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Fails closed with no_snapshot before the first successful ripr_refresh and seam_not_found for an item with no seam binding. The resource ripr://repair-card/{canonical_id} returns the same document.";
+const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "When the agent intends to repair, read one item's repair card (prefer it over ripr_get_gap, the lighter read when only analysis evidence is wanted): the same repair_card.v1 document as `ripr agent card` and the editor, naming seam, witness, fix instruction, edit cage, attempt state and next action. The attempt block is re-read from the durable store at read time; in-memory session transactions never ride a card. Never a repair authorization: the external client's approval and sandbox policy remains authoritative. Failures include seam_not_found, policy_omitted, item_not_found, stale_snapshot, no_snapshot, workspace_unavailable, and incomplete_inventory (refresh again once edits settle). Same document: ripr://repair-card/{canonical_id}.";
 
 /// Environment variable that selects [`ToolsListMode`] for one server process.
 pub(super) const TOOLS_LIST_ENV: &str = "RIPR_MCP_TOOLS_LIST";
 
 /// Whether `tools/list` advertises each tool's `outputSchema` (#11621).
 ///
-/// `Full` (the default) keeps every `outputSchema`, about two thirds of the
-/// payload, so a host that validates results against them keeps working.
-/// `Slim` is an opt-in for hosts that never read them: the schemas are
-/// omitted, `structuredContent` is unchanged and still carries
-/// `schema_version`, and the document shapes stay in `docs/interop/mcp.md`.
-/// An unrecognized value keeps the default: a typo must never remove a
-/// contract a validating host relies on.
+/// `Slim` (the default since #13803) omits every `outputSchema`: they were
+/// about two thirds of the payload every session pays at start, and coding
+/// agents do not read them. `structuredContent` is unchanged and still
+/// carries `schema_version`, and the document shapes stay in
+/// `docs/interop/mcp.md`; MCP makes `outputSchema` optional, so a host
+/// without one accepts the result unvalidated. `Full` is the opt-in
+/// (`RIPR_MCP_TOOLS_LIST=full`) for a host that validates results against the
+/// advertised schemas. Any other value keeps the slim default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum ToolsListMode {
-    #[default]
     Full,
+    #[default]
     Slim,
 }
 
 impl ToolsListMode {
     pub(super) fn from_env_value(value: Option<&str>) -> Self {
         match value.map(str::trim) {
-            Some(value) if value.eq_ignore_ascii_case("slim") => Self::Slim,
-            _ => Self::Full,
+            Some(value) if value.eq_ignore_ascii_case("full") => Self::Full,
+            _ => Self::Slim,
         }
     }
 
@@ -131,6 +139,9 @@ impl ToolsListMode {
     }
 }
 
+/// The full listing, `outputSchema` documents included: the contract the
+/// descriptor unit tests below inspect, and what `RIPR_MCP_TOOLS_LIST=full`
+/// serves.
 #[cfg(test)]
 pub(super) fn tools_list_result() -> Value {
     tools_list_result_for(ToolsListMode::Full)
@@ -477,8 +488,13 @@ pub(super) fn tool_result_flagged(
 /// Every value is a projection of `structuredContent`, with control
 /// characters escaped so a document string cannot forge a line.
 fn brief_text(document: &Value) -> String {
-    let is_gap_list = document.get("schema_version").and_then(Value::as_str)
-        == Some(super::gaps::GAP_LIST_SCHEMA_VERSION);
+    let schema = document.get("schema_version").and_then(Value::as_str);
+    if schema == Some(super::gaps::GAP_SCHEMA_VERSION)
+        && let Some(item) = document.get("item").filter(|item| item.is_object())
+    {
+        return gap_brief_text(document, item);
+    }
+    let is_gap_list = schema == Some(super::gaps::GAP_LIST_SCHEMA_VERSION);
     let Some(items) = document
         .get("items")
         .and_then(Value::as_array)
@@ -533,6 +549,32 @@ fn brief_text(document: &Value) -> String {
             readiness
         ));
     }
+    if let Some(hidden) = document.get("exposed_omitted").and_then(Value::as_u64) {
+        lines.push(format!(
+            "exposed_omitted: {hidden} (seam already gripped by existing tests); call ripr_list_gaps with class: \"exposed\" to list them"
+        ));
+    }
+    // #14138: findings `ripr check` withholds for an owner opt-out are not
+    // items. A text-only host must still see that zero items means withheld,
+    // not "no gaps".
+    if let Some(opt_outs) = document
+        .get("owner_opt_outs")
+        .filter(|value| value.is_object())
+    {
+        let all = if opt_outs.get("all_withheld").and_then(Value::as_bool) == Some(true) {
+            "; every finding is withheld, so this is not a clean result"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "owner_opt_outs: {} withheld ({}: the changed owner carries #[mutants::skip]); not repair targets{all}",
+            opt_outs
+                .get("withheld")
+                .and_then(Value::as_u64)
+                .map_or_else(|| "?".to_string(), |number| number.to_string()),
+            text(opt_outs, "reason"),
+        ));
+    }
     if let Some(next) = document
         .pointer("/page/next_offset")
         .and_then(Value::as_u64)
@@ -550,6 +592,198 @@ fn brief_text(document: &Value) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// Most missing discriminators and related tests one gap brief lists; the
+/// rest stay in `structuredContent` and the brief says how many.
+const GAP_BRIEF_LISTED: usize = 3;
+
+/// The opt-in `brief` text for one `ripr_get_gap` document (#14327): the
+/// facts a test author acts on, in the order the agent-format gap row gives
+/// them (class, location, owner, changed expression, what no test pins, the
+/// related tests and the next step), one line each. Like the list brief,
+/// every value is read from `structuredContent` and escaped, absent fields
+/// are marked `?` or `none listed` rather than inferred (an explicit `null`
+/// reads `none`), identities are never clipped, and bulk evidence is left to
+/// the structured copy.
+fn gap_brief_text(document: &Value, item: &Value) -> String {
+    let text = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .map_or_else(|| "?".to_string(), clip_summary_string)
+    };
+    // Identities an agent passes back to a tool are escaped but never
+    // clipped: a truncated id would only fail as `item_not_found`.
+    let identity = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .map_or_else(|| "?".to_string(), escape_summary)
+    };
+    let number = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_u64)
+            .map_or_else(|| "?".to_string(), |number| number.to_string())
+    };
+    // An explicit `null` is the producer saying "none"; a missing key says
+    // nothing and stays `?`.
+    let nullable = |value: Option<&Value>| match value {
+        None => "?".to_string(),
+        Some(Value::Null) => "none".to_string(),
+        Some(Value::String(text)) => clip_summary_string(text),
+        Some(other) => clip_summary_string(&other.to_string()),
+    };
+    let mut lines = vec![format!(
+        "ripr gap: {} {}:{} owner={}. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with {TEXT_CONTENT_ENV}=full for the full JSON here.",
+        text(item.get("class")),
+        identity(item.pointer("/location/file")),
+        number(item.pointer("/location/line")),
+        text(item.pointer("/causal_attribution/owner")),
+    )];
+    lines.push(format!(
+        "canonical_id: {}; snapshot_id: {}",
+        identity(item.get("canonical_id")),
+        identity(document.get("snapshot_id")),
+    ));
+    let changed = item.get("changed_behavior");
+    let before = changed.and_then(|changed| changed.get("before"));
+    let after = changed.and_then(|changed| changed.get("after"));
+    let mut changed_line = match (
+        before.and_then(Value::as_str),
+        after.and_then(Value::as_str),
+    ) {
+        (Some(_), Some(_)) => format!("changed: {} -> {}", text(before), text(after)),
+        _ => format!(
+            "changed: {}",
+            text(changed.and_then(|changed| changed.get("expression")))
+        ),
+    };
+    // Any present, non-null result is shown (a non-string as its compact
+    // JSON) rather than silently dropped; the projection never fails a read.
+    if let Some(result) = changed
+        .and_then(|changed| changed.get("arm_result"))
+        .filter(|result| !result.is_null())
+    {
+        changed_line.push_str(&format!("; arm result: {}", nullable(Some(result))));
+    }
+    changed_line.push_str(&format!(
+        "; probe: {}",
+        text(changed.and_then(|changed| changed.get("probe_family")))
+    ));
+    lines.push(changed_line);
+    let discriminators = item
+        .pointer("/discriminator_availability/missing_discriminators")
+        .and_then(Value::as_array)
+        .filter(|entries| !entries.is_empty());
+    let missing_prose = item
+        .get("missing")
+        .and_then(Value::as_array)
+        .filter(|entries| !entries.is_empty());
+    match (discriminators, missing_prose) {
+        (Some(entries), _) => {
+            for entry in entries.iter().take(GAP_BRIEF_LISTED) {
+                let mut line = format!("missing: {}", text(entry.get("value")));
+                if let Some(reason) = entry.get("reason").filter(|reason| reason.is_string()) {
+                    line.push_str(&format!(" ({})", text(Some(reason))));
+                }
+                lines.push(line);
+            }
+            push_more(
+                &mut lines,
+                "missing",
+                entries.len().min(GAP_BRIEF_LISTED),
+                entries.len(),
+            );
+        }
+        (None, Some(entries)) => {
+            for entry in entries.iter().take(GAP_BRIEF_LISTED) {
+                lines.push(format!("missing: {}", text(Some(entry))));
+            }
+            push_more(
+                &mut lines,
+                "missing",
+                entries.len().min(GAP_BRIEF_LISTED),
+                entries.len(),
+            );
+        }
+        (None, None) => lines.push("missing: none listed".to_string()),
+    }
+    let tests = item
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    for test in tests.iter().take(GAP_BRIEF_LISTED) {
+        lines.push(format!(
+            "test: {} {}:{} oracle={} miss={}: {}",
+            text(test.get("name")),
+            identity(test.get("file")),
+            number(test.get("line")),
+            text(test.get("oracle_strength")),
+            nullable(test.get("miss")),
+            nullable(test.get("oracle")),
+        ));
+    }
+    let stated_total = item
+        .get("related_tests_total")
+        .and_then(Value::as_u64)
+        .and_then(|total| usize::try_from(total).ok());
+    let tests_total = stated_total.unwrap_or(0).max(tests.len());
+    if tests_total == 0 {
+        // "none related" only when the producer said so; a document with
+        // neither the array nor the count says nothing about tests.
+        lines.push(
+            if stated_total == Some(0) || item.get("related_tests").is_some_and(Value::is_array) {
+                "test: none related".to_string()
+            } else {
+                "test: ?".to_string()
+            },
+        );
+    }
+    push_more(
+        &mut lines,
+        "test",
+        tests.len().min(GAP_BRIEF_LISTED),
+        tests.len(),
+    );
+    // The producer's count can exceed the retained rows; those matches are
+    // not in `structuredContent` either, so say so instead of pointing there.
+    if tests_total > tests.len() {
+        lines.push(format!(
+            "+{} more related tests matched but not retained in this document",
+            tests_total - tests.len()
+        ));
+    }
+    let readiness = item.get("readiness");
+    let ready = match readiness
+        .and_then(|readiness| readiness.get("repair_packet_ready"))
+        .and_then(Value::as_bool)
+    {
+        Some(flag) => flag.to_string(),
+        None => "?".to_string(),
+    };
+    let static_limitation = nullable(item.get("static_limitation"));
+    lines.push(format!(
+        "readiness: repair_ready={ready} ({}); static_limitation: {static_limitation}; source: {}",
+        text(readiness.and_then(|readiness| readiness.get("reason"))),
+        text(item.get("source_currentness")),
+    ));
+    if let Some(step) = item
+        .get("recommended_next_step")
+        .filter(|step| step.is_string())
+    {
+        lines.push(format!("next: {}", text(Some(step))));
+    }
+    lines.join("\n")
+}
+
+/// `+N more <what> entries in structuredContent` when a gap brief listed
+/// fewer than the producer's `total`.
+fn push_more(lines: &mut Vec<String>, what: &str, shown: usize, total: usize) {
+    if total > shown {
+        lines.push(format!(
+            "+{} more {what} entries in structuredContent",
+            total - shown
+        ));
+    }
 }
 
 /// Keep the semantic state of an outcome visible without reproducing its
@@ -847,12 +1081,12 @@ fn refresh_tool_descriptor() -> Value {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256,
-                    "description": "Optional Git revision (branch, tag or commit) to diff against instead of the resolved default branch. Use it when the repository's default branch is not main or master, or when refresh fails with base_unresolvable. Omit it to use the default branch."
+                    "description": "Git revision (branch, tag or commit) to diff against. Omit for the default branch; set it when refresh fails with analysis_failed naming candidate branches."
                 },
                 "source": {
                     "type": "string",
                     "enum": ["committed", "worktree"],
-                    "description": "Input to analyze. Omit for `committed` (the committed diff). `worktree` analyzes saved staged and unstaged tracked edits; cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Refresh after edits; unsaved buffers and untracked files remain outside."
+                    "description": "Input to analyze. Omit to read saved tracked edits if any, else the committed diff (as `ripr check`). `committed` or `worktree` forces one; cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Refresh after edits; unsaved buffers and untracked files remain outside."
                 }
             },
             "additionalProperties": false
@@ -880,7 +1114,7 @@ fn list_gaps_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "snapshot_id": { "type": "string" },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT },
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
@@ -889,7 +1123,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "omitted_offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
+                    "description": "Start index within the omitted identities, which page on their own axis; follow continuation.next_omitted_page. Default 0."
                 },
                 "independent_pages": {
                     "type": "boolean",
@@ -899,17 +1133,23 @@ fn list_gaps_tool_descriptor() -> Value {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
-                    "description": "Maximum narrowed-item summaries to return in this page (the working-set bound; a larger value is refused as invalid_argument)."
+                    "description": "Maximum item summaries in this page; a larger value is refused as invalid_argument."
                 },
                 "file": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or trailing-matches this path (one leading `./` is ignored on both sides)."
+                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or ends with this path at `/` boundaries (a leading `./` is ignored)."
                 },
                 "class": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Narrow to one exposure-class wire token (for example `exposed` or `weakly_exposed`)."
+                    // The server refuses any other token (invalid_argument
+                    // naming this list), so advertise it up front.
+                    "enum": crate::domain::ExposureClass::ALL
+                        .iter()
+                        .map(crate::domain::ExposureClass::as_str)
+                        .collect::<Vec<_>>(),
+                    "description": "Narrow to one exposure class."
                 },
                 "language": {
                     "type": "string",
@@ -918,11 +1158,11 @@ fn list_gaps_tool_descriptor() -> Value {
                         .iter()
                         .map(crate::domain::LanguageId::as_str)
                         .collect::<Vec<_>>(),
-                    "description": "Narrow to one language wire string (for example `rust` or `python`)."
+                    "description": "Narrow to one language."
                 },
                 "repair_ready": {
                     "type": "boolean",
-                    "description": "Narrow to repair-ready items (true) or not-ready items (false), using the commit-time readiness projection."
+                    "description": "Narrow to repair-ready (true) or not-ready (false) items."
                 }
             },
             "additionalProperties": false
@@ -945,8 +1185,8 @@ fn get_gap_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -969,8 +1209,8 @@ fn get_top_limitation_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -1039,8 +1279,8 @@ fn prepare_repair_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -1067,7 +1307,7 @@ fn get_repair_attempt_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "attempt_id": { "type": "string", "minLength": 1 }
+                "attempt_id": { "type": "string", "minLength": 1, "description": "From ripr_prepare_repair or ripr_list_repair_attempts." }
             },
             "required": ["attempt_id"],
             "additionalProperties": false
@@ -1090,7 +1330,7 @@ fn get_receipt_status_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "receipt_id": { "type": "string", "minLength": 1 }
+                "receipt_id": { "type": "string", "minLength": 1, "description": "The attempt_id whose receipt to read." }
             },
             "required": ["receipt_id"],
             "additionalProperties": false
@@ -1113,8 +1353,8 @@ fn get_repair_card_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -1201,6 +1441,26 @@ pub(super) fn typed_failure_document_schema(schema_version: &str) -> Value {
             "failure": failure_schema()
         },
         "required": ["schema_version", "failure"],
+        "additionalProperties": false
+    })
+}
+
+/// The additive owner opt-out disclosure (#14138): present only when a
+/// finding is withheld, so `withheld` is at least one. The same closed shape
+/// rides the gap list, the refresh `snapshot` summary and the status
+/// `last_completed_snapshot`.
+fn owner_opt_outs_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "withheld": { "type": "integer", "minimum": 1 },
+            "reason": {
+                "type": "string",
+                "const": crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip.as_str()
+            },
+            "all_withheld": { "type": "boolean", "const": true }
+        },
+        "required": ["withheld", "reason"],
         "additionalProperties": false
     })
 }
@@ -1424,14 +1684,17 @@ pub(super) fn status_success_schema() -> Value {
                             "base": { "type": "string", "enum": ["default_branch", "explicit"] },
                             "base_revision": { "type": "string" },
                             "source": { "type": "string", "const": "worktree" },
-                            "mode": { "type": "string", "const": "draft" },
+                            "mode": { "type": "string", "enum": ["instant", "draft", "fast", "deep", "ready"] },
                             "scope": { "type": "string", "const": "diff" }
                         },
                         "required": ["kind", "base", "mode", "scope"],
                         "additionalProperties": false
                     },
                     "scope": scope_disclosure_schema(),
-                    "last_completed_snapshot": { "type": ["object", "null"] },
+                    "last_completed_snapshot": {
+                        "type": ["object", "null"],
+                        "properties": { "owner_opt_outs": owner_opt_outs_schema() }
+                    },
                     "last_known_good": { "type": ["object", "null"] },
                     "last_failure": { "type": ["object", "null"] },
                     "freshness": {
@@ -1479,7 +1742,7 @@ pub(super) fn status_success_schema() -> Value {
                     "profile": {
                         "type": "object",
                         "properties": {
-                            "mode": { "type": "string", "const": "draft" },
+                            "mode": { "type": "string", "enum": ["instant", "draft", "fast", "deep", "ready"] },
                             "languages": {
                                 "type": "array",
                                 "items": { "type": "string" }
@@ -1608,9 +1871,12 @@ fn refresh_output_schema() -> Value {
                         "required": ["why", "pass_base", "pass_source"],
                         "additionalProperties": false
                     },
-                    "requested_source": { "type": "string", "enum": ["committed", "worktree"] },
+                    "requested_source": { "type": "string", "enum": ["committed", "worktree", "default"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
-                    "snapshot": { "type": ["object", "null"] },
+                    "snapshot": {
+                        "type": ["object", "null"],
+                        "properties": { "owner_opt_outs": owner_opt_outs_schema() }
+                    },
                     "last_known_good": { "type": ["object", "null"] },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1684,6 +1950,12 @@ fn gap_list_output_schema() -> Value {
                     "eligible": { "type": "integer", "minimum": 0 },
                     "selected": { "type": "integer", "minimum": 0 },
                     "filtered": { "type": "integer", "minimum": 0 },
+                    "exposed_omitted": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "exposed_route": { "type": "string" },
+                    "owner_opt_outs": owner_opt_outs_schema(),
                     "proof_harness_only": {
                         "type": "integer",
                         "minimum": 1,
@@ -2463,6 +2735,259 @@ mod tests {
         Ok(())
     }
 
+    /// A `ripr-mcp-gap-v1` document shaped like the one `ripr_get_gap`
+    /// serves for a `>` to `>=` boundary change (field names from
+    /// `gaps::gap_evidence_core`).
+    fn brief_gap_document() -> Value {
+        json!({
+            "schema_version": "ripr-mcp-gap-v1",
+            "snapshot_id": "snapshot-123",
+            "claim_boundary": "static evidence only; ".repeat(20),
+            "limitations": ["evidence is static analysis only"],
+            "item": {
+                "canonical_id": "gap:rust:src/lib.rs:shipping_cents:predicate_boundary",
+                "class": "weakly_exposed",
+                "location": {"file": "./src/lib.rs", "line": 5, "column": 1},
+                "causal_attribution": {"owner": "shipping_cents"},
+                "changed_behavior": {
+                    "before": "order_cents > FREE_SHIPPING_CENTS",
+                    "after": "order_cents >= FREE_SHIPPING_CENTS",
+                    "expression": "order_cents >= FREE_SHIPPING_CENTS",
+                    "probe_family": "predicate",
+                },
+                "discriminator_availability": {
+                    "missing_discriminators": [{
+                        "value": "order_cents == FREE_SHIPPING_CENTS",
+                        "reason": "No related test call uses order_cents equal to FREE_SHIPPING_CENTS; target FREE_SHIPPING_CENTS value: 5_000",
+                    }],
+                    "observed_values": vec![json!({"value": "order_cents = 10_000", "text": "assert_eq!(shipping_cents(10_000), 0);"}); 12],
+                },
+                "evidence": vec!["Related tests appear to reach shipping_cents"; 6],
+                "missing": ["Missing check value: order_cents == FREE_SHIPPING_CENTS"],
+                "related_tests_total": 2,
+                "related_tests": [
+                    {"name": "big_orders_ship_free", "file": "tests/existing.rs", "line": 4, "oracle": "assert_eq!(shipping_cents(10_000), 0);", "oracle_strength": "strong", "miss": "missing_input"},
+                    {"name": "small_orders_pay", "file": "tests/existing.rs", "line": 9, "oracle": "assert!(shipping_cents(100) > 0);", "oracle_strength": "weak", "miss": "weak_assertion"},
+                ],
+                "readiness": {"repair_packet_ready": true, "reason": "every evaluated producer fact is established"},
+                "static_limitation": Value::Null,
+                "source_currentness": "candidate_current",
+                "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+                "links": {"gap": "ripr://gap/gap:rust:src/lib.rs:shipping_cents:predicate_boundary"},
+            },
+        })
+    }
+
+    fn brief_text_of(document: Value) -> Result<String, String> {
+        let envelope = tool_result_with(
+            document.clone(),
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Brief,
+        )?;
+        if envelope.get("structuredContent") != Some(&document) {
+            return Err("brief must not change structuredContent".into());
+        }
+        envelope
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "brief omitted text".to_string())
+    }
+
+    /// #14327: a `brief` gap is the agent-row facts (owner, location,
+    /// changed expression, what no test pins, related tests, readiness, next
+    /// step), every one read from `structuredContent`, and far smaller than
+    /// the JSON copy because bulk evidence stays structured.
+    #[test]
+    fn brief_gap_text_carries_the_test_author_facts_and_drops_bulk_evidence() -> Result<(), String>
+    {
+        let document = brief_gap_document();
+        let text = brief_text_of(document.clone())?;
+        let expected = [
+            "ripr gap: weakly_exposed ./src/lib.rs:5 owner=shipping_cents. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with RIPR_MCP_TEXT_CONTENT=full for the full JSON here.",
+            "canonical_id: gap:rust:src/lib.rs:shipping_cents:predicate_boundary; snapshot_id: snapshot-123",
+            "changed: order_cents > FREE_SHIPPING_CENTS -> order_cents >= FREE_SHIPPING_CENTS; probe: predicate",
+            "missing: order_cents == FREE_SHIPPING_CENTS (No related test call uses order_cents equal to FREE_SHIPPING_CENTS; target FREE_SHIPPING_CENTS value: 5_000)",
+            "test: big_orders_ship_free tests/existing.rs:4 oracle=strong miss=missing_input: assert_eq!(shipping_cents(10_000), 0);",
+            "test: small_orders_pay tests/existing.rs:9 oracle=weak miss=weak_assertion: assert!(shipping_cents(100) > 0);",
+            "readiness: repair_ready=true (every evaluated producer fact is established); static_limitation: none; source: candidate_current",
+            "next: Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+        ];
+        let lines: Vec<&str> = text.lines().collect();
+        if lines != expected {
+            return Err(format!("gap brief drifted:\n{text}"));
+        }
+        let full = serde_json::to_string(&document).map_err(|error| error.to_string())?;
+        if text.len() * 3 > full.len() {
+            return Err(format!(
+                "gap brief ({}) should be under a third of the JSON copy ({})",
+                text.len(),
+                full.len()
+            ));
+        }
+        // The full mode still carries the lossless copy.
+        let lossless = tool_result_with(
+            document.clone(),
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Full,
+        )?;
+        if lossless.pointer("/content/0/text").and_then(Value::as_str) != Some(full.as_str()) {
+            return Err("full mode must keep the JSON copy of a gap".into());
+        }
+        // A match-arm result, when the producer reads one, joins the line.
+        let mut arm = document;
+        arm["item"]["changed_behavior"]["arm_result"] = json!("450");
+        if !brief_text_of(arm.clone())?.contains("; arm result: 450; probe: predicate") {
+            return Err("an arm result in the document must reach the brief".into());
+        }
+        // A non-string result is shown as JSON, a null one is left out.
+        arm["item"]["changed_behavior"]["arm_result"] = json!(450);
+        if !brief_text_of(arm.clone())?.contains("; arm result: 450; probe: predicate") {
+            return Err("a non-string arm result must not be dropped".into());
+        }
+        arm["item"]["changed_behavior"]["arm_result"] = Value::Null;
+        if brief_text_of(arm)?.contains("arm result") {
+            return Err("a null arm result must not be rendered".into());
+        }
+        Ok(())
+    }
+
+    /// Discriminating negatives for the gap brief: absent facts are marked,
+    /// never invented; long lists say how many stay structured; a hostile
+    /// string cannot forge a line; and a gap-schema document without an
+    /// `item` object keeps the summary digest.
+    #[test]
+    fn brief_gap_text_marks_absent_facts_bounds_lists_and_cannot_forge_lines() -> Result<(), String>
+    {
+        let sparse = json!({
+            "schema_version": "ripr-mcp-gap-v1",
+            "snapshot_id": "snapshot-123",
+            "item": {"canonical_id": "gap:x", "class": "static_unknown", "related_tests_total": 0},
+        });
+        let text = brief_text_of(sparse)?;
+        for needle in [
+            "ripr gap: static_unknown ?:? owner=?.",
+            "changed: ?; probe: ?",
+            "missing: none listed",
+            "test: none related",
+            "readiness: repair_ready=? (?); static_limitation: ?; source: ?",
+        ] {
+            if !text.contains(needle) {
+                return Err(format!("absent fact not marked {needle:?}:\n{text}"));
+            }
+        }
+        if text.contains("next:") || text.contains("repair_ready=true") {
+            return Err(format!("the brief invented a fact:\n{text}"));
+        }
+        // No count and no array says nothing about tests: never "none related".
+        let silent = json!({
+            "schema_version": "ripr-mcp-gap-v1",
+            "item": {"canonical_id": "gap:x", "static_limitation": Value::Null},
+        });
+        let text = brief_text_of(silent)?;
+        if !text.contains("\ntest: ?\n") || !text.contains("static_limitation: none;") {
+            return Err(format!(
+                "absent tests or explicit null limitation misread:\n{text}"
+            ));
+        }
+        // A count above the listed array never reads as "none related".
+        let mut counted = brief_gap_document();
+        counted["item"]["related_tests"] = json!([]);
+        counted["item"]["related_tests_total"] = json!(4);
+        let text = brief_text_of(counted)?;
+        if text.contains("none related")
+            || text.contains("more test entries")
+            || !text.contains("+4 more related tests matched but not retained")
+        {
+            return Err(format!("a nonzero test count was hidden:\n{text}"));
+        }
+        // Retained rows beyond the three listed are in `structuredContent`;
+        // matches the producer did not retain are disclosed separately.
+        let mut retained = brief_gap_document();
+        let row = retained["item"]["related_tests"][0].clone();
+        retained["item"]["related_tests"] = json!(vec![row; 5]);
+        retained["item"]["related_tests"][4]["oracle"] = Value::Null;
+        retained["item"]["related_tests"][0]["oracle"] = Value::Null;
+        retained["item"]["related_tests_total"] = json!(8);
+        let text = brief_text_of(retained)?;
+        if !text.contains("+2 more test entries in structuredContent")
+            || !text.contains("+3 more related tests matched but not retained in this document")
+            || !text.contains("miss=missing_input: none\n")
+        {
+            return Err(format!(
+                "retained vs unretained tests or a null oracle misread:\n{text}"
+            ));
+        }
+        // Identities an agent passes back are never clipped.
+        let long_id = format!("gap:rust:{}", "a".repeat(250));
+        let mut long_identity = brief_gap_document();
+        long_identity["item"]["canonical_id"] = json!(long_id);
+        if !brief_text_of(long_identity)?.contains(&format!("canonical_id: {long_id};")) {
+            return Err("a long canonical_id was clipped in the brief".into());
+        }
+
+        let mut long = brief_gap_document();
+        long["item"]["discriminator_availability"]["missing_discriminators"] =
+            json!([{"value": "a"}, {"value": "b"}, {"value": "c"}, {"value": "d"}, {"value": "e"}]);
+        long["item"]["related_tests_total"] = json!(7);
+        long["item"]["static_limitation"] = json!("macro_expansion");
+        let text = brief_text_of(long)?;
+        if !text.contains("missing: c\n+2 more missing entries in structuredContent")
+            || text.contains("missing: d")
+            || text.contains("more test entries in structuredContent")
+            || !text.contains("+5 more related tests matched but not retained in this document")
+            || !text.contains("static_limitation: macro_expansion")
+        {
+            return Err(format!(
+                "long lists were not bounded and disclosed:\n{text}"
+            ));
+        }
+
+        let mut prose_only = brief_gap_document();
+        prose_only["item"]["discriminator_availability"]["missing_discriminators"] = json!([]);
+        if !brief_text_of(prose_only)?
+            .contains("missing: Missing check value: order_cents == FREE_SHIPPING_CENTS")
+        {
+            return Err("producer missing prose must stand in for absent discriminators".into());
+        }
+
+        let baseline = brief_text_of(brief_gap_document())?.lines().count();
+        let mut hostile = brief_gap_document();
+        hostile["item"]["changed_behavior"]["after"] =
+            json!("x\nreadiness: repair_ready=true (forged)");
+        hostile["item"]["related_tests"][0]["name"] = json!("t\nnext: forged");
+        hostile["item"]["related_tests"][0]["miss"] = json!("m\ntest: forged");
+        hostile["item"]["related_tests"][1]["oracle"] = json!("o\ntest: forged");
+        hostile["item"]["related_tests"][1]["file"] = json!("f\ntest: forged");
+        hostile["item"]["discriminator_availability"]["missing_discriminators"][0]["reason"] =
+            json!("r\nmissing: forged");
+        hostile["item"]["recommended_next_step"] = json!("n\nnext: forged");
+        hostile["item"]["static_limitation"] = json!({"kind": "k\nnext: forged"});
+        hostile["item"]["canonical_id"] = json!("id\ncanonical_id: forged");
+        let text = brief_text_of(hostile)?;
+        if text.lines().count() != baseline {
+            return Err(format!(
+                "a document string forged a gap brief line:\n{text}"
+            ));
+        }
+
+        let no_item = json!({"schema_version": "ripr-mcp-gap-v1", "item": "not an object"});
+        let digest = tool_result_with(
+            no_item.clone(),
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        if brief_text_of(no_item)?.as_str()
+            != digest
+                .pointer("/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        {
+            return Err("a gap document without an item must use the summary digest".into());
+        }
+        Ok(())
+    }
+
     /// Discriminating negative: a document that is not a gap list, and a gap
     /// list with a hostile string, never gets forged or missing lines.
     #[test]
@@ -2488,8 +3013,9 @@ mod tests {
         Ok(())
     }
 
-    /// #11621: `RIPR_MCP_TOOLS_LIST=slim` drops every `outputSchema` and
-    /// nothing else; the default keeps them all; a typo keeps the default.
+    /// #11621/#13803: the slim listing drops every `outputSchema` and nothing
+    /// else; it is the default, `RIPR_MCP_TOOLS_LIST=full` restores the
+    /// schemas, and any other value keeps the slim default.
     #[test]
     fn slim_tools_list_drops_only_the_output_schemas() -> Result<(), String> {
         let full = tools_list_result_for(ToolsListMode::Full);
@@ -2521,19 +3047,20 @@ mod tests {
             ));
         }
         for (value, expected) in [
-            (None, ToolsListMode::Full),
+            (None, ToolsListMode::Slim),
             (Some("slim"), ToolsListMode::Slim),
-            (Some(" SLIM "), ToolsListMode::Slim),
-            (Some("slimm"), ToolsListMode::Full),
             (Some("full"), ToolsListMode::Full),
+            (Some(" FULL "), ToolsListMode::Full),
+            (Some("fulll"), ToolsListMode::Slim),
+            (Some(""), ToolsListMode::Slim),
         ] {
             if ToolsListMode::from_env_value(value) != expected {
                 return Err(format!("{value:?} did not select {expected:?}"));
             }
         }
-        // The default tools/list keeps the schema a validating host needs.
-        if tools_list_result() != full {
-            return Err("the default tools/list must be the full list".into());
+        // The default a session gets is the slim list (#13803).
+        if tools_list_result_for(ToolsListMode::default()) != slim {
+            return Err("the default tools/list must be the slim list".into());
         }
         Ok(())
     }
@@ -2636,21 +3163,23 @@ mod tests {
     ) -> Result<usize, String> {
         // #9935: enumerate the published catalogs, rather than a parallel
         // list of description constants that can omit a published tool.
-        // #10541: descriptions keep purpose + when-to-pick + failure codes;
-        // document-shape detail lives in the outputSchema. Ceilings sit just
-        // above the tightened surfaces (the exact total below is the real
-        // pin); the complete ceiling adds only the inventory's 1,090 bytes.
+        // #10541/#13803: descriptions keep purpose + when-to-pick + safety
+        // boundary + failure codes; document-shape detail lives in the
+        // outputSchema (`RIPR_MCP_TOOLS_LIST=full`) and docs/interop/mcp.md.
+        // Ceilings sit just above the tightened surfaces (the exact total
+        // below is the real pin); the complete ceiling adds only the
+        // inventory's 580 bytes.
         let mut budgets = std::collections::BTreeMap::from([
-            ("tool ripr_workspace_status", 945),
-            ("tool ripr_refresh", 1400),
-            ("tool ripr_list_gaps", 1050),
-            ("tool ripr_get_gap", 904),
-            ("tool ripr_get_top_limitation", 640),
-            ("tool ripr_prepare_repair", 1235),
-            ("tool ripr_get_repair_attempt", 1315),
-            ("tool ripr_get_receipt_status", 1495),
-            ("tool ripr_get_repair_card", 1475),
-            ("tool ripr_list_repair_attempts", 1090),
+            ("tool ripr_workspace_status", 555),
+            ("tool ripr_refresh", 1085),
+            ("tool ripr_list_gaps", 530),
+            ("tool ripr_get_gap", 490),
+            ("tool ripr_get_top_limitation", 440),
+            ("tool ripr_prepare_repair", 625),
+            ("tool ripr_get_repair_attempt", 630),
+            ("tool ripr_get_receipt_status", 665),
+            ("tool ripr_get_repair_card", 760),
+            ("tool ripr_list_repair_attempts", 580),
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
             ("template ripr-gap-evidence", 486),
@@ -2702,14 +3231,14 @@ mod tests {
         if let Some(surface) = budgets.keys().next() {
             return Err(format!("{surface} is missing from its published catalog"));
         }
-        if previous_surfaces > 15453 {
+        if previous_surfaces > 10730 {
             return Err(format!(
-                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 15453"
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 10730"
             ));
         }
-        if total > 16543 {
+        if total > 11300 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 16543"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 11300"
             ));
         }
         Ok(total)
@@ -2723,12 +3252,15 @@ mod tests {
             &resource_templates_list_result(),
             INSTRUCTIONS,
         )?;
-        // Independent literal accounting after #10541's tightening: purpose,
-        // when-to-pick trigger, and failure codes per surface; the receipt
-        // terminal mapping moved onto the outputSchema status field.
+        // Independent literal accounting after #13803's cut (16,298 before):
+        // purpose, when-to-pick trigger, safety boundary and failure codes
+        // per tool; the receipt terminal mapping lives on the outputSchema
+        // status field.
         // Intentional metadata changes need to reconcile this byte count as
-        // well as the ceilings.
-        assert_eq!(total, 16298);
+        // well as the ceilings. #14461: the instructions state each
+        // route once and safety boundaries the annotations and instructions
+        // already carry are not repeated per read tool.
+        assert_eq!(total, 10673);
         Ok(())
     }
 
@@ -2745,9 +3277,15 @@ mod tests {
         let original = inventory["description"]
             .as_str()
             .ok_or("inventory description")?;
-        let grown = format!("{original}éé");
-        assert_eq!(grown.len(), 1091);
-        assert!(grown.chars().count() <= 1090);
+        // Pad to one byte under the 580-byte budget, then add a two-byte
+        // char: 581 UTF-8 bytes in 580 chars, so only a byte count catches it.
+        let mut grown = original.to_string();
+        while grown.len() < 579 {
+            grown.push('a');
+        }
+        grown.push('é');
+        assert_eq!(grown.len(), 581);
+        assert!(grown.chars().count() <= 580);
         inventory["description"] = json!(grown);
         let error = match check_description_byte_budgets(
             &tools,
@@ -2758,8 +3296,7 @@ mod tests {
             Err(error) => error,
             Ok(total) => return Err(format!("inventory growth escaped its budget: {total}")),
         };
-        if !error.contains("tool ripr_list_repair_attempts") || !error.contains("1091 UTF-8 bytes")
-        {
+        if !error.contains("tool ripr_list_repair_attempts") || !error.contains("581 UTF-8 bytes") {
             return Err(format!(
                 "inventory growth lost its surface/byte diagnosis: {error}"
             ));
@@ -2822,12 +3359,13 @@ mod tests {
         }
         let description = json_str(&tools, "/tools/0/description")?;
         for required in [
-            "repository-root discovery state",
-            "source edit, verification execution, mutation execution, and model provider are all none",
-            "not that analysis ran or that no issues were found",
-            "session facts only: no gap evidence",
-            "never edits source, runs tests or mutation, executes verification commands",
-            "To run analysis, call ripr_refresh",
+            "Call this first",
+            "repository-root discovery",
+            "source edit, verification, mutation and model provider are all none",
+            "not that analysis ran or found nothing",
+            "No gap evidence",
+            "never edits source, runs tests or mutation, or executes verification commands",
+            "call ripr_refresh to analyze",
         ] {
             if !description.contains(required) {
                 return Err(format!(
@@ -2905,9 +3443,9 @@ mod tests {
                 &[
                     "shared check authority",
                     "omitting `base` returns to the default branch",
+                    "A `base` starting with `-` or naming no commit fails closed",
                     "never edits source, executes verification or mutation commands",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
-                    "only transport teardown abandons one before it commits",
                     "a superseded attempt is never committed",
                     "workspace_unavailable",
                     "unsupported_profile",
@@ -2931,14 +3469,12 @@ mod tests {
                 GET_GAP_TOOL_NAME,
                 &[
                     "complete bounded analysis evidence",
-                    "prefer ripr_get_repair_card when the intent is to repair",
-                    "repair_packet_ready now reports the committed producer repair-readiness facts",
+                    "Prefer ripr_get_repair_card when the intent is to repair",
                     "never authorizes an edit",
                     "item_not_found",
                     "ripr://gap/{canonical_id}",
                     "result_too_large",
-                    "follow the failure's captured-root/base/source CLI recovery outside MCP",
-                    "a bounded summary, not immutable snapshot replay",
+                    "follow the failure's CLI recovery",
                     "retrying ripr_get_gap cannot shrink the item",
                 ],
             ),
@@ -2947,7 +3483,6 @@ mod tests {
                 GET_TOP_LIMITATION_TOOL_NAME,
                 &[
                     "earliest committed producer limitation",
-                    "Producer static limits outrank readiness gates",
                     "no_limitation_established, never null",
                     "no analysis rerun",
                     "item_not_found",
@@ -2958,8 +3493,8 @@ mod tests {
                 "/tools/5/description",
                 PREPARE_REPAIR_TOOL_NAME,
                 &[
-                    "create — or replay — one bounded in-memory repair transaction",
-                    "never guesses a missing field and never creates a misleading attempt",
+                    "create (or replay, for the same snapshot, item and root) one bounded in-memory repair transaction",
+                    "never guesses a missing field",
                     "never edits source, never launches a process",
                     "the external client's approval and sandbox policy remains authoritative",
                     "item_not_found",
@@ -2969,11 +3504,11 @@ mod tests {
                 "/tools/6/description",
                 GET_REPAIR_ATTEMPT_TOOL_NAME,
                 &[
-                    "Read one repair transaction by its attempt identity",
-                    "typed CommandSpec routes when the retained packet carries valid ones",
+                    "Read one repair attempt by its attempt identity",
+                    "typed command routes when the retained packet carries valid ones",
+                    "never execution authority",
                     "attempt_invalid",
-                    "attempt_not_found",
-                    "Superseded tombstones older than the 64-entry session bound read attempt_not_found instead",
+                    "attempt_not_found (also for superseded entries past the 64-entry session bound)",
                     "ripr://repair-attempt/{attempt_id}",
                 ],
             ),
@@ -2981,12 +3516,12 @@ mod tests {
                 "/tools/7/description",
                 GET_RECEIPT_STATUS_TOOL_NAME,
                 &[
-                    "awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid",
+                    "awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid",
                     "RIPR performs no verification and issues no receipt",
                     "attempt-bound",
                     "the same reading as CLI status",
                     "receipt presence alone never reports closed",
-                    "Static movement and focused runtime test execution remain separate evidence axes",
+                    "Static receipt state only, not runtime proof",
                     "ripr://receipt/{receipt_id}",
                 ],
             ),
@@ -2994,11 +3529,12 @@ mod tests {
                 "/tools/8/description",
                 GET_REPAIR_CARD_TOOL_NAME,
                 &[
-                    "prefer this card over ripr_get_gap when the agent intends to repair",
-                    "same versioned repair_card.v1 document `ripr agent card` and the standard language server project",
-                    "assembled by the shared application authority",
-                    "The durable attempt store is re-read at card-read time",
-                    "never a repair authorization",
+                    "When the agent intends to repair",
+                    "prefer it over ripr_get_gap, the lighter read",
+                    "in-memory session transactions never ride a card",
+                    "same repair_card.v1 document as `ripr agent card` and the editor",
+                    "re-read from the durable store at read time",
+                    "Never a repair authorization",
                     "no_snapshot",
                     "seam_not_found",
                     "ripr://repair-card/{canonical_id}",
@@ -3144,6 +3680,141 @@ mod tests {
         Ok(())
     }
 
+    /// Every argument of every published tool, with its description (or
+    /// `None`) and its tool's description, in listing order.
+    fn published_arguments(tools: &Value) -> Result<Vec<(String, Option<String>, String)>, String> {
+        let mut arguments = Vec::new();
+        for tool in tools["tools"].as_array().ok_or("tools/list lost tools")? {
+            let name = tool["name"].as_str().ok_or("unnamed tool")?;
+            let properties = tool
+                .pointer("/inputSchema/properties")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("{name} lost its inputSchema properties"))?;
+            for (argument, schema) in properties {
+                arguments.push((
+                    format!("{name}.{argument}"),
+                    schema
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    tool["description"].as_str().unwrap_or_default().to_string(),
+                ));
+            }
+        }
+        Ok(arguments)
+    }
+
+    /// #9360: an argument description is read before the first call, so it
+    /// must exist, and a failure code it names must be one the wire can
+    /// carry and its own tool's description names. `ripr_refresh.base` named `base_unresolvable`, a shared-check
+    /// identity this server always reports as `analysis_failed`.
+    fn check_argument_descriptions(tools: &Value) -> Result<usize, String> {
+        let vocabulary = failure_vocabulary();
+        let mut total = 0usize;
+        for (argument, description, tool_description) in published_arguments(tools)? {
+            let description = description
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format!("{argument} has no description"))?;
+            total += description.len();
+            for marker in ["fails with ", "refused as "] {
+                for (index, _) in description.match_indices(marker) {
+                    let code: String = description[index + marker.len()..]
+                        .chars()
+                        .take_while(|character| character.is_ascii_lowercase() || *character == '_')
+                        .collect();
+                    if !vocabulary.contains(&code.as_str()) {
+                        return Err(format!(
+                            "{argument} names failure code {code:?}, which this server never returns"
+                        ));
+                    }
+                    // The vocabulary is server-wide and includes reserved
+                    // codes, so also require the argument's own tool to
+                    // name the code: a code another tool returns is as
+                    // misleading here as one nobody returns.
+                    if !tool_description.contains(code.as_str()) {
+                        return Err(format!(
+                            "{argument} names failure code {code:?}, which its tool description does not"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn every_tool_argument_is_described_with_wire_failure_codes_only() -> Result<(), String> {
+        let total = check_argument_descriptions(&tools_list_result())?;
+        // Argument descriptions ride every session start inside the slim
+        // `tools/list` budget below. An intentional change reconciles this
+        // exact count, the same way the tool descriptions reconcile theirs.
+        assert_eq!(total, 1615);
+        Ok(())
+    }
+
+    #[test]
+    fn argument_description_check_rejects_a_missing_text_and_an_unreachable_code()
+    -> Result<(), String> {
+        let mut undescribed = tools_list_result();
+        undescribed["tools"][3]["inputSchema"]["properties"]["snapshot_id"]
+            .as_object_mut()
+            .ok_or("ripr_get_gap.snapshot_id schema")?
+            .remove("description")
+            .ok_or("ripr_get_gap.snapshot_id description")?;
+        match check_argument_descriptions(&undescribed) {
+            Err(error) if error == "ripr_get_gap.snapshot_id has no description" => {}
+            other => return Err(format!("missing description was not refused: {other:?}")),
+        }
+
+        let mut unreachable = tools_list_result();
+        unreachable["tools"][1]["inputSchema"]["properties"]["base"]["description"] =
+            json!("Use it when refresh fails with base_unresolvable.");
+        match check_argument_descriptions(&unreachable) {
+            Err(error)
+                if error.contains("ripr_refresh.base names failure code \"base_unresolvable\"") => {
+            }
+            other => return Err(format!("unreachable code was not refused: {other:?}")),
+        }
+
+        // A real code that only another tool returns is refused too.
+        let mut foreign = tools_list_result();
+        foreign["tools"][1]["inputSchema"]["properties"]["base"]["description"] =
+            json!("Use it when refresh fails with attempt_not_found.");
+        match check_argument_descriptions(&foreign) {
+            Err(error)
+                if error
+                    == "ripr_refresh.base names failure code \"attempt_not_found\", which its tool description does not" =>
+                {}
+            other => return Err(format!("foreign code was not refused: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// The `class` filter refuses any token outside the exposure classes, so
+    /// the schema advertises exactly that list instead of a free string.
+    #[test]
+    fn list_gaps_class_argument_advertises_the_exposure_classes() -> Result<(), String> {
+        let tools = tools_list_result();
+        let advertised = tools
+            .pointer("/tools/2/inputSchema/properties/class/enum")
+            .ok_or("ripr_list_gaps.class lost its enum")?;
+        let expected = json!([
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "propagation_unknown",
+            "static_unknown"
+        ]);
+        if advertised != &expected {
+            return Err(format!(
+                "class enum drifted from the exposure classes: {advertised}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn tools_list_byte_budget_pins_the_session_context_sink() -> Result<(), String> {
         // #9852: `tools/list` is paid by every LLM consumer at session start
@@ -3154,15 +3825,33 @@ mod tests {
         // headroom for small additive contract growth; a failing assert
         // here means a descriptor change grew the per-session sink and
         // needs an explicit budget decision, not a silent ceiling bump.
-        const TOOLS_LIST_BUDGET: usize = 49_800;
-        let payload = tools_list_result();
-        let bytes = serde_json::to_vec(&payload)
-            .map_err(|error| format!("measure tools/list payload: {error}"))?
-            .len();
-        if bytes > TOOLS_LIST_BUDGET {
-            return Err(format!(
-                "tools/list is {bytes} bytes, over the {TOOLS_LIST_BUDGET}-byte session budget"
-            ));
+        // #13803 made the slim listing the default and cut the descriptions:
+        // the default budget is what every session pays; the full budget is
+        // the opt-in a validating host pays.
+        // #14327 budget decision: the full listing's `ripr_list_gaps`
+        // output schema gains the additive `exposed_omitted`/`exposed_route`
+        // disclosure (+83 bytes, measured 41,065); the slim default every
+        // session pays is unchanged, so only the opt-in full budget moves.
+        // #14138 budget decision: the full listing declares the optional
+        // closed `owner_opt_outs` disclosure on the gap list, refresh
+        // `snapshot` and status `last_completed_snapshot`, and every typed
+        // failure branch gains the `owner_opt_out` code (measured 41,576).
+        // The slim default is unchanged.
+        // #9360 budget decision: describing the thirteen bare arguments and
+        // advertising the `class` enum is paid in both listings. Measured
+        // on the tree composed with the two decisions above: slim 12,007,
+        // inside its unchanged ceiling; full 42,198, so only the opt-in
+        // full budget moves, from 41,700 to 42,300.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_300)] {
+            let payload = tools_list_result_for(mode);
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|error| format!("measure tools/list payload: {error}"))?
+                .len();
+            if bytes > budget {
+                return Err(format!(
+                    "{mode:?} tools/list is {bytes} bytes, over the {budget}-byte session budget"
+                ));
+            }
         }
         Ok(())
     }
@@ -3254,7 +3943,7 @@ mod tests {
         // at that block instead of duplicating the routes into every
         // session's tools/list payload.
         for required in [
-            "By default: committed input only",
+            "By default, like `ripr check`",
             "staged and unstaged tracked edits only",
             "unsaved buffers and untracked files remain outside",
             "cards require established producer custody",
@@ -3271,14 +3960,15 @@ mod tests {
         }
         let tools = tools_list_result();
         let refresh = json_str(&tools, "/tools/1/description")?;
-        if !refresh.contains("By default: committed input only")
+        if !refresh.contains("By default, like `ripr check`")
+            || !refresh.contains("source: \"committed\"")
             || !refresh.contains("source: \"worktree\"")
             || !refresh.contains("INSTRUCTIONS")
             || refresh.contains("Scope: committed input only")
             || INSTRUCTIONS.contains("Scope: committed input only")
         {
             return Err(format!(
-                "refresh description must name the committed-input boundary and point at INSTRUCTIONS: {refresh}"
+                "refresh description must name the default input selection and point at INSTRUCTIONS: {refresh}"
             ));
         }
         Ok(())

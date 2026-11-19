@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:62
   Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
@@ -34,7 +34,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 18 more detail line(s) in --format human-full
+    - 19 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

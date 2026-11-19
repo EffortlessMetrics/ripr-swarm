@@ -64,6 +64,13 @@ The report should:
   in `matched_total`. The rows keep `unknown` / `no_runtime_data`; the
   Summary must not read as observed runtime corroboration. This does not
   change the `matched_total` metric or refuse the join;
+- render imported text (mutant ids, operators, runtime outcomes, test
+  commands and paths) in the Markdown tables through the shared Markdown
+  helpers, so a rendered report shows the imported value: `<` does not open
+  raw HTML (a generic such as `Option<Vec<String>>` keeps its type
+  arguments), `@name` does not notify an account, a `|` or line ending does
+  not split a row, and a backtick in an id does not close its code span.
+  Emphasis markers are left as written. JSON output is unaffected;
 - summarize static/runtime agreement in advisory buckets;
 - label imported static/runtime agreement as confidence context without changing
   static classifications;
@@ -398,6 +405,7 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reports_equal_and_crossing_overlaps_and_multiline_containment`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_ranks_containment_over_line_fallback_and_seam_id_over_both`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::merging_runtime_records_keeps_complete_spans_and_refuses_conflicts`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::markdown_tables_show_imported_text_literally`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::untrusted_runtime_locations_stay_unmatched`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::id_less_runtime_records_sort_independently_of_input_order`

@@ -790,11 +790,13 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
             module_values: &module_values,
             standard_unittest_list: false,
             subclassed: false,
+            async_case: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
                 &dotted_dir(file),
-            ),
+            )
+            .with_swallowing_wrappers(source, &module.body, &imports),
         },
         &mut snapshot.tests,
     );
@@ -825,7 +827,13 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
                     _ => false,
                 })));
     with_module_rebinding(source, &module.body, &module_constants, &mut snapshot.tests);
-    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(
+        source,
+        &module.body,
+        &imports,
+        &mut snapshot.tests,
+    );
+    super::test_activation::withhold_shadowed_skips(&module.body, &mut snapshot.tests);
     let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
     let header_reach = super::admission::module_header_effects(source, &module.body, &imports);
     for test in &mut snapshot.tests {
