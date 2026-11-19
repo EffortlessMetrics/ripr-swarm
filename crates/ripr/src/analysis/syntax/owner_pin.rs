@@ -1892,8 +1892,9 @@ fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
 /// preludes whose published export lists (checked against creusot-std
 /// 0.14.0, vstd 0.0.0-2026-10-25-0158, prusti-contracts 0.3.3, proptest
 /// 1.12.0 and rayon 1.12.0) contain no macro named like a trusted assertion,
-/// so the glob cannot rebind `assert_eq!` and its kin. Each entry is the exact glob path; the crate must also resolve to the
-/// registry package (`drop_in_verified`) and not be shadowed.
+/// so the glob cannot rebind `assert_eq!` and its kin. Each entry is the
+/// exact glob path; the crate must also resolve to the registry package
+/// (`drop_in_verified`) and not be shadowed.
 const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
     &["creusot_std", "prelude"],
     &["vstd", "prelude"],
