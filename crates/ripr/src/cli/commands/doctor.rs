@@ -714,6 +714,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
         lines.push(compact_tilde_line(evidence));
     }
+    if let Some(check) = check_named(report, "git_operation") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(compact_tilde_line(evidence));
+    }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
             "Generated workflow: {advisory}"

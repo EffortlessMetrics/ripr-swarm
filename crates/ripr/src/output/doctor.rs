@@ -2020,6 +2020,14 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     }
                     crate::analysis::HeadRefState::Unknown => {}
                 }
+                // An interrupted merge/rebase leaves conflicted files that
+                // `ripr check` refuses to read as changes (exit 2); name it
+                // here instead of recommending a check that cannot complete.
+                if let Some(message) =
+                    crate::analysis::git_operation_advisory(root, Some(DOCTOR_TOOL_TIMEOUT))
+                {
+                    report.add_advisory_check("git_operation", message);
+                }
             }
             Some(WorkTreeProbe::Refused(message)) => {
                 report.add_check("git_repository", DoctorStatus::Fail, Some(message));

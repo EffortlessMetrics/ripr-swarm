@@ -20,7 +20,8 @@ pub(crate) use load::bare_repository_message;
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
     AnalyzedRevisions, HeadRefState, LoadedDiff, default_base_unresolved_message,
-    probe_head_ref_state, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
+    git_operation_advisory, probe_head_ref_state, resolve_analyzed_revisions,
+    working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
     another_base_candidate, base_is_checked_out_head_with_parent, is_shallow_repository,
