@@ -3606,15 +3606,21 @@ mod tests {
     #[test]
     fn goldens_clean_verdict_writes_only_for_the_joint_command() {
         let mut out = Vec::new();
-        super::write_goldens_clean_verdict(&mut out, true, 3).expect("joint verdict");
+        assert!(matches!(
+            super::write_goldens_clean_verdict(&mut out, true, 3),
+            Ok(())
+        ));
         assert_eq!(
-            String::from_utf8(out).expect("utf8"),
+            String::from_utf8_lossy(&out),
             "goldens check-with-fixtures: pass (3 fixtures compared)\n"
         );
 
         // Plain `goldens check` passes the flag as false and must stay silent.
         let mut out = Vec::new();
-        super::write_goldens_clean_verdict(&mut out, false, 3).expect("plain check");
+        assert!(matches!(
+            super::write_goldens_clean_verdict(&mut out, false, 3),
+            Ok(())
+        ));
         assert!(out.is_empty());
     }
 
