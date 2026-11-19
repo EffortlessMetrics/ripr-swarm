@@ -545,6 +545,7 @@ tests = [
   "crates/ripr-contract/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
   "crates/ripr-contract/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
   "crates/ripr-contract/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+  "xtask/src/reports/fixtures.rs::tests::goldens_clean_verdict_writes_only_for_the_joint_command",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
