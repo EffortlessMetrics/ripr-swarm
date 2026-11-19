@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -180,6 +181,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
 /// versions, across the Rust, TypeScript and Python fact stores this build
 /// knows. `ripr cache status` reports it; the next store prunes most of it.
 pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
     let mut total = RepoFileFactCache::at_base(base).reclaimable();
     #[cfg(feature = "lang-typescript")]
     total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
@@ -766,7 +771,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// typed `activation_boundary_input_unresolved` token and the evidence record
 /// no longer derives that category from the sentence (#14951), so a cached
 /// summary without the token would lose its category.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.183";
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -990,7 +997,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.183";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1216,7 +1224,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1465,8 +1474,10 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use build_retention::{
-    BuildRetention, Reclaimable, analyzer_version_from_entry_prefix, integer_schema_rank,
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
 };
 mod export;
 pub(crate) mod path_dependencies;
@@ -5728,7 +5739,8 @@ mod tests {
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.183");
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5892,8 +5904,9 @@ mod tests {
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.185");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.185");
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

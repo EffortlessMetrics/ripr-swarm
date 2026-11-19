@@ -88,6 +88,19 @@ Open VSX extension:
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
 
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
+
 ### Server Resolution
 
 On activation, the extension resolves the server in this order and records the
@@ -168,8 +181,11 @@ separate supply-chain boundary.
   needed. Defaults to `true`.
 - `ripr.server.version`: pinned server version. Empty means match the extension
   version.
-- `ripr.server.downloadBaseUrl`: override the manifest base URL for internal
-  mirrors.
+- `ripr.server.downloadBaseUrl`: the `https://` address of the folder that
+  holds the ripr release files, for an internal mirror. Give the folder, not
+  the manifest file. Empty uses GitHub Releases. A value that is not a plain
+  `https://` folder address skips the managed download, and the
+  unavailable-server message names the setting and what is wrong with it.
 - `ripr.check.mode`: preferred editor check mode for LSP diagnostics and
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.

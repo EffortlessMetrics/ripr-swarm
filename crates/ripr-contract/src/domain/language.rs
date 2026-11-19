@@ -1339,6 +1339,48 @@ mod tests {
     }
 
     #[test]
+    fn rust_markers_reach_one_child_directory_and_no_deeper() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-rust-markers-child-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tools/nested"))
+            .map_err(|err| format!("create dirs: {err}"))?;
+        std::fs::write(root.join("tools/nested/deep.rs"), "fn f() {}\n")
+            .map_err(|err| format!("write deep.rs: {err}"))?;
+        let grandchild_only = rust_markers_at(&root);
+        std::fs::write(root.join("tools/build.rs"), "fn main() {}\n")
+            .map_err(|err| format!("write build.rs: {err}"))?;
+        let child = rust_markers_at(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!grandchild_only, "a grandchild .rs is not a marker");
+        assert!(child, "a .rs in one child directory is a marker");
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_match_arm_rewrites_the_assertion_context_spelling() {
+        use super::super::ProbeFamily;
+        let kind = StaticLimitKind::RustAssertionContextUnresolved;
+        let match_arm = kind.describe_for_family(&ProbeFamily::MatchArm);
+        assert!(match_arm.contains("`assert!`"));
+        assert!(!match_arm.contains("`assert_eq!`"));
+        assert_eq!(
+            kind.describe_for_family(&ProbeFamily::Predicate),
+            kind.describe()
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
+    }
+
+    #[test]
     fn every_language_wire_token_round_trips_and_others_are_unknown() {
         for language in LanguageId::ALL {
             assert_eq!(LanguageId::from_wire(language.as_str()), Some(language));
@@ -1361,25 +1403,5 @@ mod tests {
                 assert_eq!(language.enable_prerequisite(), None, "{language:?}");
             }
         }
-    }
-
-    #[test]
-    fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
-        use crate::domain::ProbeFamily;
-        let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
-        let base = unresolved.describe();
-        assert!(base.contains("`assert_eq!`"), "{base}");
-        let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
-        assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
-        assert!(!arm.contains("`assert_eq!`"));
-        assert_eq!(
-            unresolved.describe_for_family(&ProbeFamily::Predicate),
-            base
-        );
-        let other = StaticLimitKind::DynamicDispatch;
-        assert_eq!(
-            other.describe_for_family(&ProbeFamily::MatchArm),
-            other.describe()
-        );
     }
 }

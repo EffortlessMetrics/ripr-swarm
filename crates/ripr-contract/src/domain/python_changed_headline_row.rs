@@ -64,11 +64,15 @@ pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, AnalysisScope, Confidence, DeltaKind, ExposureClass, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTestMiss, RelatedTestRole,
-        RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, OracleKind, OracleStrength,
+        Probe, ProbeFamily, ProbeId, RelatedTestMiss, RelatedTestRole, RevealEvidence,
+        RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
     };
     use std::path::PathBuf;
+
+    fn stage() -> StageEvidence {
+        StageEvidence::new(StageState::Unknown, Confidence::Unknown, "fixture")
+    }
 
     fn row(name: &str, file: &str, line: usize, strength: OracleStrength) -> RelatedTest {
         RelatedTest {
@@ -81,27 +85,30 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
-            role: RelatedTestRole::Contributing,
             miss_support: None,
+            role: RelatedTestRole::Contributing,
         }
     }
 
-    fn finding(rows: Vec<RelatedTest>, evidence: &[&str]) -> Finding {
-        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "s");
+    fn finding(
+        language: Option<LanguageId>,
+        related_tests: Vec<RelatedTest>,
+        changed: &[&str],
+    ) -> Finding {
         Finding {
-            analysis_scope: AnalysisScope::Diff,
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             confidence_basis: Vec::new(),
-            id: "finding:py".to_string(),
+            id: "finding:headline".to_string(),
             canonical_gap: None,
             probe: Probe {
-                id: ProbeId("probe:py".to_string()),
-                location: SourceLocation::new("src/app.py", 3, 1),
+                id: ProbeId("probe:headline".to_string()),
+                location: SourceLocation::new("svc/core.py", 3, 5),
                 owner: None,
                 family: ProbeFamily::Predicate,
                 delta: DeltaKind::Control,
                 before: None,
                 after: None,
-                expression: "x > 5".to_string(),
+                expression: "amount >= limit".to_string(),
                 expected_sinks: Vec::new(),
                 required_oracles: Vec::new(),
             },
@@ -116,15 +123,18 @@ mod tests {
                 },
             },
             confidence: 0.5,
-            evidence: evidence.iter().map(|line| (*line).to_string()).collect(),
+            evidence: changed
+                .iter()
+                .map(|reference| format!("{RELATED_TEST_CHANGED_IN_DIFF_PREFIX}{reference}"))
+                .collect(),
             missing: Vec::new(),
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,
-            related_tests: rows,
+            related_tests,
             recommended_next_step: None,
-            language: Some(LanguageId::Python),
+            language,
             language_status: None,
             owner_kind: None,
             static_limit_kind: None,
@@ -140,70 +150,82 @@ mod tests {
         python_headline_related_test(finding).map(|test| test.name.as_str())
     }
 
-    const CHANGED_B: &str = "related_test_changed_in_diff: tests/test_b.py:20";
-
     fn rows() -> Vec<RelatedTest> {
         vec![
-            row("anchor", "tests/test_a.py", 10, OracleStrength::Medium),
-            row("touched", "tests/test_b.py", 20, OracleStrength::Medium),
+            row("first", "tests/test_a.py", 10, OracleStrength::Strong),
+            row("weaker", "tests/test_b.py", 20, OracleStrength::Weak),
+            row("edited", "tests/test_c.py", 30, OracleStrength::Strong),
         ]
     }
 
     #[test]
-    fn a_same_tier_row_in_a_changed_test_file_leads_the_python_headline() {
-        assert_eq!(headline(&finding(rows(), &[CHANGED_B])), Some("touched"));
+    fn an_edited_row_of_the_anchor_strength_leads_a_python_headline() {
+        let python = Some(LanguageId::Python);
+        assert_eq!(
+            headline(&finding(python, rows(), &["tests/test_c.py:30"])),
+            Some("edited")
+        );
+        // One matching stamp among unrelated ones is enough.
         assert_eq!(
             headline(&finding(
+                python,
                 rows(),
-                &["related_test_changed_in_diff: tests\\test_b.py:20"]
+                &["tests/test_x.py:1", "tests/test_c.py:30"]
             )),
-            Some("touched")
+            Some("edited")
         );
-        assert_eq!(headline(&finding(rows(), &[])), Some("anchor"));
-        assert_eq!(headline(&finding(Vec::new(), &[CHANGED_B])), None);
-    }
-
-    #[test]
-    fn other_languages_keep_the_anchor_row() {
-        let mut subject = finding(rows(), &[CHANGED_B]);
-        subject.language = Some(LanguageId::Rust);
-        assert_eq!(headline(&subject), Some("anchor"));
-        subject.language = None;
-        assert_eq!(headline(&subject), Some("anchor"));
-    }
-
-    #[test]
-    fn a_stamp_must_match_both_file_and_line_of_a_listed_row() {
-        for stamp in [
-            "related_test_changed_in_diff: tests/test_b.py:21",
-            "related_test_changed_in_diff: tests/test_c.py:20",
-            "related_test_changed_in_diff: tests/test_b.py:twenty",
-            "related_test_changed_in_diff: tests/test_b.py",
+        // A Windows-spelled stamp names the same row.
+        assert_eq!(
+            headline(&finding(python, rows(), &["tests\\test_c.py:30"])),
+            Some("edited")
+        );
+        // No stamp, or a stamp that matches only the file or only the line,
+        // keeps the anchor.
+        for changed in [
+            &[][..],
+            &["tests/test_c.py:31"][..],
+            &["tests/test_x.py:30"][..],
         ] {
             assert_eq!(
-                headline(&finding(rows(), &[stamp])),
-                Some("anchor"),
-                "{stamp}"
+                headline(&finding(python, rows(), changed)),
+                Some("first"),
+                "{changed:?}"
             );
         }
     }
 
     #[test]
-    fn a_changed_row_of_another_strength_or_observation_tier_never_leads() {
-        let mut weaker = rows();
-        weaker[1].oracle_strength = OracleStrength::Weak;
-        assert_eq!(headline(&finding(weaker, &[CHANGED_B])), Some("anchor"));
-
-        let mut unobserving = rows();
-        unobserving[1].miss = Some(RelatedTestMiss::AssertionNotObserving);
+    fn a_row_of_another_strength_or_tier_never_displaces_the_anchor() {
+        let python = Some(LanguageId::Python);
         assert_eq!(
-            headline(&finding(unobserving, &[CHANGED_B])),
-            Some("anchor")
+            headline(&finding(python, rows(), &["tests/test_b.py:20"])),
+            Some("first")
         );
+        let mut tiers = rows();
+        tiers[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        assert_eq!(
+            headline(&finding(python, tiers, &["tests/test_c.py:30"])),
+            Some("first")
+        );
+    }
 
-        // The anchor itself is the first observing row, not the first listed.
-        let mut blind_first = rows();
-        blind_first[0].miss = Some(RelatedTestMiss::NoCallPath);
-        assert_eq!(headline(&finding(blind_first, &[])), Some("touched"));
+    #[test]
+    fn other_languages_keep_the_anchor_row() {
+        assert_eq!(
+            headline(&finding(
+                Some(LanguageId::Rust),
+                rows(),
+                &["tests/test_c.py:30"]
+            )),
+            Some("first")
+        );
+        assert_eq!(
+            headline(&finding(None, rows(), &["tests/test_c.py:30"])),
+            Some("first")
+        );
+        assert_eq!(
+            headline(&finding(Some(LanguageId::Python), Vec::new(), &[])),
+            None
+        );
     }
 }

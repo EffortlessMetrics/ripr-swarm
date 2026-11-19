@@ -499,6 +499,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_owner_calls_establish_reach_and_assertion_affinity_only_without_a_function() {
+        for reason in [
+            RelationReason::DirectOwnerCall,
+            RelationReason::HelperOwnerCall,
+            RelationReason::ReExportChainFollowed,
+        ] {
+            assert!(reason.establishes_reach(true), "{reason:?}");
+            assert!(reason.establishes_reach(false), "{reason:?}");
+        }
+        assert!(!RelationReason::AssertionTargetAffinity.establishes_reach(true));
+        assert!(RelationReason::AssertionTargetAffinity.establishes_reach(false));
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            assert!(!reason.establishes_reach(true), "{reason:?}");
+            assert!(!reason.establishes_reach(false), "{reason:?}");
+        }
+    }
+
     const ALL_REASONS: [RelationReason; 11] = [
         RelationReason::DirectOwnerCall,
         RelationReason::HelperOwnerCall,
@@ -512,36 +538,6 @@ mod tests {
         RelationReason::ReExportChainFollowed,
         RelationReason::SeamCalleeCall,
     ];
-
-    /// Only a captured path to running the owner is reach; an assertion
-    /// affinity counts only for an owner with no function body.
-    #[test]
-    fn only_call_paths_establish_reach_for_a_function_owner() {
-        let reach_for = |owner_is_function: bool| -> Vec<&str> {
-            ALL_REASONS
-                .iter()
-                .filter(|reason| reason.establishes_reach(owner_is_function))
-                .map(|reason| reason.as_str())
-                .collect()
-        };
-        assert_eq!(
-            reach_for(true),
-            [
-                "direct_owner_call",
-                "helper_owner_call",
-                "re_export_chain_followed"
-            ]
-        );
-        assert_eq!(
-            reach_for(false),
-            [
-                "direct_owner_call",
-                "helper_owner_call",
-                "assertion_target_affinity",
-                "re_export_chain_followed"
-            ]
-        );
-    }
 
     #[test]
     fn proximity_only_reasons_are_file_module_or_token_nearness() {
