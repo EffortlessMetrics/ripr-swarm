@@ -216,6 +216,7 @@ fn parse_lines<'a, E>(
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
+        deleted_paths: state.deleted_paths().to_vec(),
         submodule_file_count: state.submodule_file_count(),
         symlink_file_count: state
             .symlink_paths()

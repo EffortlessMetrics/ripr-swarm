@@ -284,6 +284,24 @@ file. Such a diff gets the skipped-submodule notice and never the "non-source
 file" explanation, and a document that quotes a commit line is not mistaken for
 a gitlink (#10648).
 
+### Deleted files and sources git printed as binary (#15324)
+
+A deleted file has no new-side code and seeds no probe. When the result has
+no findings, `check` names the deleted files on stderr whatever else changed:
+`ripr: diff deleted N file(s) (<paths>); ...`. With no other analyzable
+change the line keeps its deletion-only wording; beside another changed file
+it says the result covers only the other changed files.
+
+Git prints `Binary files a/<path> and b/<path> differ` instead of hunks for a
+file it treats as binary, which for a source file usually means a `-diff` or
+`binary` attribute in `.gitattributes`, or a NUL byte in the file. A section
+like that for a path in a language ripr routes carries a
+`language_scope_unsupported` limitation at the `diff_parse` stage that names
+the files, the likely cause and the recovery (remove the attribute for source
+files, or pass a `git diff --text` patch with `--diff`), so the outcome is
+never complete over the unread change. Binary assets and deleted files keep
+their existing handling. Paths in both lines are written terminal-safe.
+
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
@@ -367,6 +385,9 @@ a gitlink (#10648).
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead` (#14265: the contained-HEAD predicate and its refusals, including an unresolved base tip)
 - `crates/ripr/src/output/human.rs::tests::a_base_that_already_contains_head_names_that_cause_in_the_headline` (#14265: the contained-HEAD headline in both human forms, beside the same-commit, working-tree and changed-files controls)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named` (#15324: a deleted file beside another changed file is named on stderr; a diff with no deletion prints no deletion line)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section makes the outcome incomplete with a typed limitation; a binary asset and a text-only diff stay complete)
+- `crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::binary_sentinels_on_analyzed_sources_are_named_and_others_are_not` (#15324: modified, added, renamed and spaced source paths are named; deleted, asset and malformed sentinels are not)
 - `crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause` (#14265: built binary on a branch behind `main`, both `HEAD~1` arms, explicit `--base`, and a feature-branch control)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
 - `crates/ripr/src/output/github.rs::tests::render_no_scope_outcome_is_a_warning_not_a_clean_notice` (#13658: a producer-declared `NoScope` outcome emits the `ripr nothing analyzed` warning, never the all-clear notice)
@@ -385,6 +406,7 @@ a gitlink (#10648).
 - `crates/ripr/src/output/github.rs` — emits the `ripr no analysis scope` annotation with the same range wording; also emits the `ripr nothing analyzed` warning for a producer-declared `NoScope` outcome (#13658).
 - `crates/ripr/src/output/human/agent.rs` — refuses `done` and prints the `stop=nothing was in scope` line for a producer-declared `NoScope` outcome (#13658).
 - `crates/ripr/src/output/json/report.rs` — emits additive `scope_disclosures[]` when `no_scope_provided`.
+- `crates/ripr/src/analysis/diff_intake_disclosure.rs` — the deleted-file stderr line and the binary-rendered source paths, detail and recovery (#15324); `crates/ripr/src/analysis/diff/parse.rs` records each deleted section's path.
 
 ## CI Proof
 

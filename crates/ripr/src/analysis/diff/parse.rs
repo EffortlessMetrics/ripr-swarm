@@ -146,6 +146,9 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
 pub(crate) struct ParsedDiff {
     pub(crate) changed_files: Vec<ChangedFile>,
     pub(crate) deleted_file_count: usize,
+    /// #15324: the old-side path of each deleted file section, in diff
+    /// order, so an empty result can name what the diff removed.
+    pub(crate) deleted_paths: Vec<PathBuf>,
     pub(crate) submodule_file_count: usize,
     /// Symlink (mode `120000`) file sections, counted once per section (#13659).
     pub(crate) symlink_file_count: usize,
@@ -422,6 +425,7 @@ mod parser_state {
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
+        deleted_paths: Vec<PathBuf>,
         submodule_section: bool,
         submodule_counted: bool,
         submodule_new_file: bool,
@@ -522,6 +526,10 @@ mod parser_state {
 
         pub(super) fn deleted_file_count(&self) -> usize {
             self.deleted_file_count
+        }
+
+        pub(super) fn deleted_paths(&self) -> &[PathBuf] {
+            &self.deleted_paths
         }
 
         pub(super) fn symlink_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
@@ -856,8 +864,12 @@ mod parser_state {
         }
 
         fn record_deleted_file_if_ready(&mut self) {
-            if self.deletion_section && !self.deletion_counted && self.section_old_path.is_some() {
+            if self.deletion_section
+                && !self.deletion_counted
+                && let Some(path) = self.section_old_path.clone()
+            {
                 self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                self.deleted_paths.push(path);
                 self.deletion_counted = true;
             }
         }
@@ -1624,6 +1636,7 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(deleted);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/old.rs")]);
 
         let empty = "diff --git a/src/empty.rs b/src/empty.rs\ndeleted file mode 100644\n";
         let parsed = parse_unified_diff_with_metadata(empty);
@@ -1634,11 +1647,13 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(binary);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/blob.bin")]);
 
         let changed = parse_unified_diff_with_metadata(
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
         );
         assert_eq!(changed.deleted_file_count, 0);
+        assert!(changed.deleted_paths.is_empty());
         assert_eq!(changed.changed_files.len(), 1);
     }
 
@@ -1654,6 +1669,11 @@ deleted file mode 100644
         assert_eq!(
             parse_unified_diff_with_metadata(traversal).deleted_file_count,
             0
+        );
+        assert!(
+            parse_unified_diff_with_metadata(traversal)
+                .deleted_paths
+                .is_empty()
         );
     }
 

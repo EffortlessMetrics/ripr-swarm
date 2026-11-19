@@ -1,0 +1,17 @@
+# Registers the diff intake disclosures (#15324) under RIPR-SPEC-0083: deleted
+# files are named whatever else changed, and a source file git printed as
+# binary makes the outcome incomplete with a typed limitation.
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::a_deletion_beside_other_changes_names_the_file_and_the_narrower_scope",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::a_deletion_only_diff_keeps_its_wording_and_names_the_files",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::a_control_character_in_a_deleted_path_is_written_escaped",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::binary_sentinels_on_analyzed_sources_are_named_and_others_are_not",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::mnemonic_and_quoted_sides_pair_by_path",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::hostile_names_keep_the_detail_inside_the_limitation_cap",
+  "crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::the_binary_source_detail_counts_and_escapes_the_paths",
+  "crates/ripr/src/analysis/diff/parse.rs::tests::metadata_counts_deleted_file_sections_without_registering_new_files",
+  "crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named",
+  "crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete",
+]
