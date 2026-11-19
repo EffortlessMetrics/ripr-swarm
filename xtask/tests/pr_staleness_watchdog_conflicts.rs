@@ -145,6 +145,27 @@ fn run_block() -> Result<String, String> {
         .join("\n"))
 }
 
+/// Runs the workflow's script block with bash against the fake `gh` under `dir/bin`.
+fn spawn_block(dir: &Path, summary_path: &Path) -> Result<std::process::Output, String> {
+    Command::new("bash")
+        .arg(dir.join("block.sh"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("FAKE_DIR", dir)
+        .env("GH_TOKEN", "unused")
+        .env("REPOSITORY", "o/r")
+        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
+        .env("GITHUB_STEP_SUMMARY", summary_path)
+        .output()
+        .map_err(|e| e.to_string())
+}
+
 fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
     let dir: PathBuf =
         std::env::temp_dir().join(format!("watchdog-conflicts-{}-{case}", std::process::id()));
@@ -336,21 +357,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
     }
     let summary_path = dir.join("summary.md");
-    let path = format!(
-        "{}:{}",
-        dir.join("bin").display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let output = Command::new("bash")
-        .arg(dir.join("block.sh"))
-        .env("PATH", path)
-        .env("FAKE_DIR", &dir)
-        .env("GH_TOKEN", "unused")
-        .env("REPOSITORY", "o/r")
-        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
-        .env("GITHUB_STEP_SUMMARY", &summary_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = spawn_block(&dir, &summary_path)?;
     if !output.status.success() {
         return Err(format!(
             "block exited {:?}: {}",
@@ -1210,23 +1217,7 @@ fn an_unreadable_open_pr_list_fails_the_sweep_after_retrying_and_says_so() -> Re
         fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
     }
     let summary_path = dir.join("summary.md");
-    let output = Command::new("bash")
-        .arg(dir.join("block.sh"))
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.join("bin").display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .env("FAKE_DIR", &dir)
-        .env("GH_TOKEN", "unused")
-        .env("REPOSITORY", "o/r")
-        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
-        .env("GITHUB_STEP_SUMMARY", &summary_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = spawn_block(&dir, &summary_path)?;
     let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
     let summary = fs::read_to_string(&summary_path).unwrap_or_default();
     let _ = fs::remove_dir_all(&dir);
