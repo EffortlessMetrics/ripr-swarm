@@ -341,6 +341,13 @@ fn unknown_command_message(command: &str) -> String {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
             .to_string();
     }
+    // A word that is exactly a family's subcommand (`ripr ci-summary`) is that
+    // nested command typed without its family; name the full path.
+    if let Some(path) = crate::cli::command_catalog::nested_route_for_subcommand(command) {
+        return format!(
+            "unknown command {command:?}. Did you mean `ripr {path}`? Run `ripr --help`."
+        );
+    }
     match closest_command(command) {
         Some(suggestion) => {
             format!("unknown command {command:?}. Did you mean `{suggestion}`? Run `ripr --help`.")
@@ -773,6 +780,18 @@ mod tests {
             Some("impacted-evidence")
         );
         assert_eq!(closest_command("pls"), Some("plus"));
+    }
+
+    #[test]
+    fn nested_subcommand_at_top_level_suggests_full_path() {
+        assert_eq!(
+            unknown_command_message("ci-summary"),
+            "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
+        );
+        assert_eq!(
+            unknown_command_message("ci-packet"),
+            "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
+        );
     }
 
     #[test]
