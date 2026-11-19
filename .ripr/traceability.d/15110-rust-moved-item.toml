@@ -7,6 +7,7 @@ tests = [
   "crates/ripr/src/analysis/probes/moved_item.rs::tests::a_complete_item_moved_in_its_owner_is_neutral",
   "crates/ripr/src/analysis/probes/moved_item.rs::tests::a_move_that_can_change_meaning_stays_probed",
   "crates/ripr/src/analysis/probes/moved_item.rs::tests::a_move_with_an_edit_or_into_a_comment_stays_probed",
+  "crates/ripr/src/analysis/probes/moved_item.rs::tests::owner_qualifiers_and_inner_attributes",
   "crates/ripr/tests/rust_moved_item.rs::a_function_moved_within_its_file_reports_nothing",
   "crates/ripr/tests/rust_moved_item.rs::a_move_that_changes_the_program_keeps_its_finding",
 ]
