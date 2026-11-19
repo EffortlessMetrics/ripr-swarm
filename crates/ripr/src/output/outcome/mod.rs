@@ -916,7 +916,7 @@ fn build_targeted_test_outcome_report_from_snapshots(
 
 /// The base key of an owner id that `disambiguate_duplicate_symbol_ids`
 /// suffixed with `#L<start_line>`, or `None` when the id carries no suffix.
-fn duplicate_owner_base(owner: &str) -> Option<&str> {
+pub(crate) fn duplicate_owner_base(owner: &str) -> Option<&str> {
     let (base, line) = owner.rsplit_once("#L")?;
     (!base.is_empty() && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
         .then_some(base)

@@ -289,6 +289,27 @@ pub(crate) fn build_baseline_update_remove_resolved(
                     ));
                     kept_entries.push(entry.clone());
                 } else if input.remove_resolved
+                    && let Some(absence) = crate::output::baseline_delta::owner_opt_out_absence(
+                        &absence_scope,
+                        &crate::output::baseline_delta::AbsentBaselineEntry {
+                            path: string_field(entry.get("path"))
+                                .or_else(|| string_field(entry.pointer("/placement/path")))
+                                .as_deref(),
+                            seam_id: identity.seam_id.as_deref(),
+                            changed_owner: entry.get("changed_owner").and_then(Value::as_str),
+                        },
+                    )
+                {
+                    // #14898: delta reads this absence as withheld (or
+                    // not evaluated), so update must keep the live debt.
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence because {}",
+                        identity.sort_key(),
+                        absence.reason(),
+                    ));
+                    kept_entries.push(entry.clone());
+                } else if input.remove_resolved
                     && let Some(reason) =
                         crate::output::baseline_delta::absence_not_evaluated_reason(
                             &absence_scope,

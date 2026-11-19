@@ -114,6 +114,10 @@ struct DeltaItem {
     /// analysis scope (issue #9301 F2): the entry is `not_evaluated`, never
     /// `resolved`. `None` on every in-scope item, so those render unchanged.
     not_evaluated: Option<String>,
+    /// #14898: `Some("owner_mutants_skip")` when the entry is absent because
+    /// the current side withheld its owner by an owner opt-out: the entry is
+    /// `suppressed`, never `resolved`. `None` on every other item.
+    withheld_by: Option<&'static str>,
 }
 
 /// The baseline and current sides' producing analyzer builds for one
@@ -252,6 +256,10 @@ struct BaselineRecord {
     /// (issue #1964). `None` on entries written before root preservation: those
     /// stay comparable under the documented compatibility window.
     root: Option<String>,
+    /// #14898: the changed owner `baseline create` recorded from the gate
+    /// decision's `repair_route.changed_owner`. `None` on entries written
+    /// before it was recorded.
+    changed_owner: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -479,6 +487,28 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
                     });
                 }
                 MatchResult::None => {
+                    // #14898: an entry whose owner the current side withheld
+                    // by an owner opt-out is absent because it was opted
+                    // out, not because a test now catches it.
+                    if let Some(absence) = owner_opt_out_absence(
+                        &absence_scope,
+                        &AbsentBaselineEntry::of_record(baseline_record),
+                    ) {
+                        warnings.push(format!(
+                            "baseline entry {} is absent from current evidence because {}",
+                            baseline_record.identity.sort_key(),
+                            absence.reason(),
+                        ));
+                        items.push(match absence {
+                            OwnerOptOutAbsence::Withheld(reason) => {
+                                withheld_item(baseline_record, reason)
+                            }
+                            OwnerOptOutAbsence::Ambiguous(reason) => {
+                                not_evaluated_item(baseline_record, reason)
+                            }
+                        });
+                        continue;
+                    }
                     // IDENTITY DISCONTINUITY (issue #7421): an unmatched
                     // baseline entry across an analyzer-build boundary is
                     // disclosed as stale, never silently resolved. The join
@@ -784,6 +814,26 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         }
     }
 
+    // Owner opt-out disclosure (#14898): entries absent because the current
+    // side withheld their owner. Exhaustive, like the not-evaluated list.
+    let withheld_items = report
+        .items
+        .iter()
+        .filter(|item| item.withheld_by.is_some())
+        .collect::<Vec<_>>();
+    if !withheld_items.is_empty() {
+        out.push_str(&format!(
+            "\nWithheld by owner opt-out ({OWNER_MUTANTS_SKIP}, {} total):\n",
+            withheld_items.len()
+        ));
+        for item in withheld_items {
+            out.push_str(&format!("- {}\n", item_headline(item)));
+        }
+        out.push_str(
+            "  Not resolved: the owner carries `#[mutants::skip]`, so the current analysis withholds its seams.\n",
+        );
+    }
+
     // Not-evaluated disclosure (issue #9301): entries absent from current
     // evidence whose file the current analysis did not cover. Exhaustive.
     let not_evaluated_items = report
@@ -1056,6 +1106,7 @@ fn baseline_record_from_value(value: &Value) -> Option<BaselineRecord> {
         evidence: evidence_from_value(value),
         review: review_metadata_from_value(value.get("review")),
         root: string_field(value.get("root")),
+        changed_owner: string_field(value.get("changed_owner")),
     })
 }
 
@@ -1344,6 +1395,7 @@ fn push_missing_input_items(
             canonical_replacement_candidate: None,
             analyzer_version_discontinuity: None,
             not_evaluated: None,
+            withheld_by: None,
         });
     }
 }
@@ -1381,6 +1433,7 @@ fn matched_item(
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     };
     // Every fallback-only join is a reviewable compatibility event (issue
     // #1964): the match kind, the warning flag, the retained legacy identity,
@@ -1426,6 +1479,7 @@ fn unmatched_current_item(current: &CurrentDecision) -> DeltaItem {
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     }
 }
 
@@ -1459,6 +1513,7 @@ fn resolved_item(baseline: &BaselineRecord) -> DeltaItem {
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     }
 }
 
@@ -1481,6 +1536,7 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     }
 }
 
@@ -1489,6 +1545,16 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
 pub(super) struct PreparedAnalysisScope<'a> {
     scope: Option<&'a Value>,
     analyzed_files: Option<BTreeSet<&'a str>>,
+    /// #14898: `analysis_scope.owner_opt_outs`, read once. `None` when the
+    /// scope discloses none; `Some(Err(()))` when the disclosure does not
+    /// name every withheld seam and at least one owner.
+    owner_opt_outs: Option<Result<ScopeOwnerOptOuts<'a>, ()>>,
+}
+
+/// What the current side withheld by an owner opt-out (#14898).
+struct ScopeOwnerOptOuts<'a> {
+    seam_ids: BTreeSet<&'a str>,
+    owners: BTreeSet<&'a str>,
 }
 
 impl<'a> PreparedAnalysisScope<'a> {
@@ -1499,9 +1565,145 @@ impl<'a> PreparedAnalysisScope<'a> {
             })
             .and_then(|scope| scope.get("corpus"))
             .and_then(crate::output::gap_source_subject::analyzed_production_files);
+        let owner_opt_outs = scope
+            .and_then(|scope| scope.get("owner_opt_outs"))
+            .map(scope_owner_opt_outs);
         Self {
             scope,
             analyzed_files,
+            owner_opt_outs,
+        }
+    }
+}
+
+/// Read an `owner_opt_outs` disclosure the way `ripr outcome` does: it must
+/// name every withheld seam (`withheld` equals the `seam_ids` count) and at
+/// least one owner, or no withheld seam can be told from a resolved one.
+fn scope_owner_opt_outs(disclosure: &Value) -> Result<ScopeOwnerOptOuts<'_>, ()> {
+    let strings = |key: &str| -> Option<BTreeSet<&str>> {
+        disclosure
+            .get(key)?
+            .as_array()?
+            .iter()
+            .map(Value::as_str)
+            .collect()
+    };
+    let withheld = disclosure.get("withheld").and_then(Value::as_u64);
+    match (withheld, strings("seam_ids"), strings("owners")) {
+        (Some(withheld), Some(seam_ids), Some(owners))
+            if u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty() =>
+        {
+            Ok(ScopeOwnerOptOuts { seam_ids, owners })
+        }
+        _ => Err(()),
+    }
+}
+
+/// The identity of a baseline entry absent from current evidence, as the
+/// owner opt-out check reads it (#14898).
+pub(super) struct AbsentBaselineEntry<'a> {
+    pub(super) path: Option<&'a str>,
+    pub(super) seam_id: Option<&'a str>,
+    pub(super) changed_owner: Option<&'a str>,
+}
+
+impl<'a> AbsentBaselineEntry<'a> {
+    fn of_record(record: &'a BaselineRecord) -> Self {
+        Self {
+            path: record.path.as_deref(),
+            seam_id: record.identity.seam_id.as_deref(),
+            changed_owner: record.changed_owner.as_deref(),
+        }
+    }
+}
+
+/// Why an absent baseline entry is not resolved: the current side withheld
+/// its owner by an owner opt-out (#14898).
+pub(super) enum OwnerOptOutAbsence {
+    /// The entry's seam id, or its unsuffixed owner, is withheld.
+    Withheld(String),
+    /// A withheld owner may be this entry's, but identity is not
+    /// established (a line-suffixed same-named owner, a legacy entry with no
+    /// recorded owner, or a malformed disclosure). Not evaluated.
+    Ambiguous(String),
+}
+
+impl OwnerOptOutAbsence {
+    pub(super) fn reason(&self) -> &str {
+        match self {
+            Self::Withheld(reason) | Self::Ambiguous(reason) => reason,
+        }
+    }
+}
+
+/// Whether a baseline entry absent from current evidence is absent because
+/// the current side withheld its owner by an owner opt-out (#14898). Shared
+/// by the delta and `baseline update --remove-resolved`, so neither reads a
+/// `#[mutants::skip]` added after the baseline as resolved debt.
+///
+/// A seam id hashes its byte offset, so inserting the attribute line gives
+/// the owner's seams new ids; the owner is matched too, by the rule `ripr
+/// outcome` uses. A same-named owner (`cfg` twins) carries a `#L<line>`
+/// suffix the inserted line moves, so a base-only or suffixed match names
+/// no single owner: that entry is disclosed as ambiguous rather than read as
+/// the opted-out owner's (a sibling's genuine change stays visible as not
+/// evaluated, never resolved and never silently opted out).
+pub(super) fn owner_opt_out_absence(
+    analysis_scope: &PreparedAnalysisScope<'_>,
+    entry: &AbsentBaselineEntry<'_>,
+) -> Option<OwnerOptOutAbsence> {
+    let opt_outs = match analysis_scope.owner_opt_outs.as_ref()? {
+        Ok(opt_outs) => opt_outs,
+        Err(()) => {
+            return Some(OwnerOptOutAbsence::Ambiguous(
+                "the current analysis_scope.owner_opt_outs does not name every withheld seam in `seam_ids` and its owners in `owners`, so a withheld entry cannot be told from a resolved one; regenerate the repo-exposure report, gap ledger and gate decision with a current build".to_string(),
+            ));
+        }
+    };
+    if let Some(seam_id) = entry.seam_id.filter(|id| opt_outs.seam_ids.contains(id)) {
+        return Some(OwnerOptOutAbsence::Withheld(format!(
+            "the current analysis withholds its seam `{seam_id}` by an owner opt-out (owner_mutants_skip)"
+        )));
+    }
+    let base = |owner: &'_ str| -> String {
+        crate::output::outcome::duplicate_owner_base(owner)
+            .unwrap_or(owner)
+            .to_string()
+    };
+    match entry.changed_owner {
+        Some(owner) => {
+            let suffixed = crate::output::outcome::duplicate_owner_base(owner).is_some();
+            if !suffixed && opt_outs.owners.contains(owner) {
+                return Some(OwnerOptOutAbsence::Withheld(format!(
+                    "the current analysis withholds its owner `{owner}` by an owner opt-out (owner_mutants_skip)"
+                )));
+            }
+            let owner_base = base(owner);
+            opt_outs
+                .owners
+                .iter()
+                .find(|withheld| base(withheld) == owner_base)
+                .map(|withheld| {
+                    OwnerOptOutAbsence::Ambiguous(format!(
+                        "the current analysis withholds `{withheld}` by an owner opt-out (owner_mutants_skip), a same-named owner of this entry's `{owner}`; line-suffixed owner keys move when the attribute line is inserted, so it is not established which owner opted out"
+                    ))
+                })
+        }
+        None => {
+            let path = entry.path?;
+            opt_outs
+                .owners
+                .iter()
+                .find(|withheld| {
+                    withheld
+                        .split_once("::")
+                        .is_some_and(|(file, _)| file == path)
+                })
+                .map(|withheld| {
+                    OwnerOptOutAbsence::Ambiguous(format!(
+                        "the current analysis withholds `{withheld}` in this entry's file by an owner opt-out (owner_mutants_skip), and the entry records no changed_owner to tell whether it is that owner's; re-create the baseline with a current build"
+                    ))
+                })
         }
     }
 }
@@ -1762,6 +1964,24 @@ fn not_evaluated_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
     item
 }
 
+/// #14898: a baseline entry absent because the current side withheld its
+/// owner by an owner opt-out. Suppressed, never resolved.
+fn withheld_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
+    let mut item = stale_item(
+        baseline,
+        format!(
+            "Reviewed baseline identity is absent from current gate-decision evidence because {reason}. It is withheld, not resolved; remove the attribute to analyze it again."
+        ),
+    );
+    item.bucket = Bucket::Suppressed;
+    item.repair = repair_for_bucket(Bucket::Suppressed);
+    item.withheld_by = Some(OWNER_MUTANTS_SKIP);
+    item
+}
+
+/// The owner opt-out reason vocabulary (`OwnerOptOutReason::MutantsSkip`).
+const OWNER_MUTANTS_SKIP: &str = "owner_mutants_skip";
+
 fn missing_current_input_item(baseline: &BaselineRecord) -> DeltaItem {
     DeltaItem {
         bucket: Bucket::MissingCurrentInput,
@@ -1781,6 +2001,7 @@ fn missing_current_input_item(baseline: &BaselineRecord) -> DeltaItem {
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     }
 }
 
@@ -1812,6 +2033,7 @@ fn invalid_baseline_item(value: &Value) -> DeltaItem {
         canonical_replacement_candidate: None,
         analyzer_version_discontinuity: None,
         not_evaluated: None,
+        withheld_by: None,
     }
 }
 
@@ -2035,6 +2257,13 @@ fn item_json(item: &DeltaItem, causal_projection: Option<&CausalDeltaArtifact>) 
     {
         object.insert("evaluation".to_string(), json!("not_evaluated"));
         object.insert("not_evaluated_reason".to_string(), json!(reason));
+    }
+    // Additive (#14898): present only on entries withheld by an owner
+    // opt-out, so every other item renders byte-identical to before.
+    if let Some(reason) = item.withheld_by
+        && let Some(object) = output.as_object_mut()
+    {
+        object.insert("withheld_by".to_string(), json!(reason));
     }
     output
 }
@@ -3863,6 +4092,223 @@ mod tests {
             },
         })
         .to_string()
+    }
+
+    /// #14898: a diff-scoped current decision covering `src/g.rs` (so an
+    /// absent entry there could read as resolved) that withholds `owners`
+    /// and `seam_ids` by an owner opt-out.
+    fn opted_out_gate_decision(owner_opt_outs: Value) -> String {
+        serde_json::json!({
+            "schema_version": "0.1",
+            "decisions": [],
+            "analysis_scope": {
+                "scope": "diff_scoped_changed_files",
+                "run_status": "limited_diff_scope",
+                "changed_files": ["src/g.rs"],
+                "changed_production_files": ["src/g.rs"],
+                "cap_omitted_seams": 0,
+                "omitted_by_policy": 0,
+                "owner_opt_outs": owner_opt_outs,
+            },
+        })
+        .to_string()
+    }
+
+    /// Baseline entries in `src/g.rs`, one per `(seam_id, changed_owner)`.
+    fn owner_baseline(entries: &[(&str, Option<&str>)]) -> String {
+        let entries: Vec<Value> = entries
+            .iter()
+            .enumerate()
+            .map(|(line, (seam_id, owner))| {
+                let mut entry = serde_json::json!({
+                    "identity": {"seam_id": seam_id, "canonical_gap_id": format!("gap:rust:{seam_id}")},
+                    "path": "src/g.rs",
+                    "line": line + 1,
+                    "static_class": "weakly_gripped",
+                    "decision": "advisory",
+                });
+                if let Some(owner) = owner {
+                    entry["changed_owner"] = Value::String((*owner).to_string());
+                }
+                entry
+            })
+            .collect();
+        serde_json::json!({"schema_version": "0.1", "kind": "gate_baseline", "entries": entries})
+            .to_string()
+    }
+
+    /// Bucket and markers of the delta item for each seam id.
+    fn owner_delta(baseline: &str, current: &str) -> Result<BTreeMap<String, (String, Value, Value)>, String> {
+        let report = build_baseline_delta_report(BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: Ok(baseline.to_string()),
+            current_gate_decision_json: Ok(current.to_string()),
+        });
+        let rendered: Value = serde_json::from_str(&render_baseline_delta_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        Ok(rendered["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                Some((
+                    item["identity"]["seam_id"].as_str()?.to_string(),
+                    (
+                        item["bucket"].as_str()?.to_string(),
+                        item["withheld_by"].clone(),
+                        item["evaluation"].clone(),
+                    ),
+                ))
+            })
+            .collect())
+    }
+
+    /// The seam ids `baseline update --remove-resolved` keeps.
+    fn owner_update_keeps(baseline: &str, current: &str) -> Result<BTreeSet<String>, String> {
+        let report = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: baseline.to_string(),
+                current_gate_decision_json: current.to_string(),
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        let rendered: Value = serde_json::from_str(
+            &crate::output::baseline_update::render_baseline_update_json(&report)?,
+        )
+        .map_err(|err| err.to_string())?;
+        Ok(rendered["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["identity"]["seam_id"].as_str().map(String::from))
+            .collect())
+    }
+
+    #[test]
+    fn owner_opt_outs_withhold_matched_entries_and_keep_others_resolvable() -> Result<(), String> {
+        // `exact` is the unsuffixed withheld owner (its ids moved), `by_id`
+        // is named by seam id, `plain` is a genuine fix (positive control).
+        let baseline = owner_baseline(&[
+            ("exact", Some("src/g.rs::skipped")),
+            ("by_id", Some("src/g.rs::moved")),
+            ("plain", Some("src/g.rs::fixed")),
+        ]);
+        let current = opted_out_gate_decision(serde_json::json!({
+            "withheld": 2,
+            "reason": "owner_mutants_skip",
+            "seam_ids": ["by_id", "fresh0001"],
+            "owners": ["src/g.rs::skipped"],
+        }));
+        let items = owner_delta(&baseline, &current)?;
+        let withheld = (
+            "suppressed".to_string(),
+            serde_json::json!("owner_mutants_skip"),
+            Value::Null,
+        );
+        assert_eq!(items.get("exact"), Some(&withheld), "{items:?}");
+        assert_eq!(items.get("by_id"), Some(&withheld), "{items:?}");
+        assert_eq!(
+            items.get("plain"),
+            Some(&("resolved".to_string(), Value::Null, Value::Null)),
+            "{items:?}"
+        );
+        let kept = owner_update_keeps(&baseline, &current)?;
+        assert_eq!(
+            kept,
+            BTreeSet::from(["exact".to_string(), "by_id".to_string()]),
+            "{kept:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn suffixed_cfg_twins_are_disclosed_as_ambiguous_not_opted_out() -> Result<(), String> {
+        // Two same-named `cfg` twins: the skipped one was `gate#L2` and is
+        // now `gate#L3` (the inserted attribute line). The sibling was
+        // `gate#L3`, the very key the skipped twin now holds. Neither old
+        // key establishes which owner opted out, so both are disclosed as
+        // not evaluated: never resolved, and the sibling is never silently
+        // read as opted out. An unrelated owner in the same file still
+        // resolves.
+        let baseline = owner_baseline(&[
+            ("twin_skipped", Some("src/g.rs::gate#L2")),
+            ("twin_sibling", Some("src/g.rs::gate#L3")),
+            ("unrelated", Some("src/g.rs::other")),
+            ("unsuffixed", Some("src/g.rs::gate")),
+        ]);
+        let current = opted_out_gate_decision(serde_json::json!({
+            "withheld": 1,
+            "reason": "owner_mutants_skip",
+            "seam_ids": ["fresh0001"],
+            "owners": ["src/g.rs::gate#L3"],
+        }));
+        let items = owner_delta(&baseline, &current)?;
+        let ambiguous = (
+            "stale_baseline_entry".to_string(),
+            Value::Null,
+            serde_json::json!("not_evaluated"),
+        );
+        for twin in ["twin_skipped", "twin_sibling", "unsuffixed"] {
+            assert_eq!(items.get(twin), Some(&ambiguous), "{twin}: {items:?}");
+        }
+        assert_eq!(
+            items.get("unrelated"),
+            Some(&("resolved".to_string(), Value::Null, Value::Null)),
+            "{items:?}"
+        );
+        let kept = owner_update_keeps(&baseline, &current)?;
+        assert!(!kept.contains("unrelated"), "{kept:?}");
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_entries_and_malformed_disclosures_fail_closed() -> Result<(), String> {
+        // A legacy entry (no changed_owner) in a file holding a withheld
+        // owner is not evaluated; one in another file still resolves.
+        let mut baseline: Value =
+            serde_json::from_str(&owner_baseline(&[("legacy", None), ("elsewhere", None)]))
+                .map_err(|err| err.to_string())?;
+        baseline["entries"][1]["path"] = serde_json::json!("src/h.rs");
+        let baseline = baseline.to_string();
+        let mut current: Value = serde_json::from_str(&opted_out_gate_decision(serde_json::json!({
+            "withheld": 1,
+            "reason": "owner_mutants_skip",
+            "seam_ids": ["fresh0001"],
+            "owners": ["src/g.rs::skipped"],
+        })))
+        .map_err(|err| err.to_string())?;
+        current["analysis_scope"]["changed_files"] = serde_json::json!(["src/g.rs", "src/h.rs"]);
+        current["analysis_scope"]["changed_production_files"] =
+            serde_json::json!(["src/g.rs", "src/h.rs"]);
+        let items = owner_delta(&baseline, &current.to_string())?;
+        assert_eq!(
+            items.get("legacy").map(|item| item.2.clone()),
+            Some(serde_json::json!("not_evaluated")),
+            "{items:?}"
+        );
+        assert_eq!(
+            items.get("elsewhere").map(|item| item.0.as_str()),
+            Some("resolved"),
+            "{items:?}"
+        );
+        // A disclosure that does not name every withheld seam refuses every
+        // absent entry, the plain one too.
+        current["analysis_scope"]["owner_opt_outs"]["withheld"] = serde_json::json!(2);
+        let items = owner_delta(&baseline, &current.to_string())?;
+        for id in ["legacy", "elsewhere"] {
+            assert_eq!(
+                items.get(id).map(|item| item.2.clone()),
+                Some(serde_json::json!("not_evaluated")),
+                "{id}: {items:?}"
+            );
+        }
+        Ok(())
     }
 
     fn two_gap_baseline() -> &'static str {
