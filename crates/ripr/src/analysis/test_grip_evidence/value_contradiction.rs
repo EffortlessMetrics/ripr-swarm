@@ -554,6 +554,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             // withhold credit, never grant it.
             let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
                 .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+                .or_else(|| qualified_owner_call_arguments(actual, &owner.name))
             else {
                 return false;
             };
@@ -1734,6 +1735,34 @@ fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<S
     let rest = trimmed[name_end..].trim_start();
     let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
     owner_call_arguments(inner, owner_name)
+}
+
+/// The owner call's arguments when `operand` is a path-qualified call
+/// `crate_or_module::owner(..)`, optionally awaited (#15414). Invisibility
+/// only: equal values at every asserted input can only withhold credit, so
+/// reading a path the assertion alone cannot resolve to the owner's module
+/// risks a missed credit, never a false one. [`owner_call_arguments`] keeps
+/// refusing the path for its credit-granting callers (#6701 review).
+fn qualified_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
+    let trimmed = operand.trim();
+    let call = trimmed.strip_suffix(".await").unwrap_or(trimmed).trim_end();
+    let open = super::named_call_open_paren_index(call, owner_name)?;
+    let name_start = open - owner_name.len();
+    let path = call[..name_start].strip_suffix("::")?;
+    let path = path.strip_prefix("::").unwrap_or(path);
+    // Plain identifier segments only (`billing::fees::`): a receiver, a
+    // generic or a turbofish names something the fold does not model.
+    let plain_segment = |segment: &str| {
+        !segment.is_empty()
+            && !segment.starts_with(|ch: char| ch.is_ascii_digit())
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    if !path.split("::").all(plain_segment) {
+        return None;
+    }
+    owner_call_arguments(&call[name_start..], owner_name)
 }
 
 /// Evaluate the owner's body as a pure integer function of `arguments`.

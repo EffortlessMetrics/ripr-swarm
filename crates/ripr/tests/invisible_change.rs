@@ -302,3 +302,89 @@ fn an_assertion_that_reads_the_changed_default_keeps_the_credit() -> Result<(), 
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn a_path_qualified_call_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    // #15414: `invisible::capped(3)` is the same call as `capped(3)`; both
+    // versions return 3, so the qualified spelling must not earn credit.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "#[test]\nfn low() {\n    assert_eq!(invisible::capped(3), 3);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_crate_rooted_qualified_call_at_an_agreeing_input_does_not_expose_the_change()
+-> Result<(), String> {
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "#[test]\nfn first() {\n    assert_eq!(::invisible::backoff_ms(0, 100), 100);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_path_qualified_call_at_a_separating_input_keeps_the_credit() -> Result<(), String> {
+    // Control: `invisible::capped(9)` is 6 changed and 5 before.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "#[test]\nfn high() {\n    assert_eq!(invisible::capped(9), 6);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_method_call_through_a_path_is_not_read_as_the_owner() -> Result<(), String> {
+    // Control: `invisible::other().capped(3)` is not a plain path to the
+    // owner, so the qualified reading declines and nothing is claimed.
+    let lib = "pub fn capped(attempt: u32) -> u32 {\n    attempt.min(6)\n}\n\npub struct S;\npub fn other() -> S { S }\nimpl S { pub fn capped(&self, a: u32) -> u32 { a + 100 } }\n";
+    let findings = findings(
+        lib,
+        MIN_OLD,
+        "#[test]\nfn low() {\n    assert_eq!(invisible::other().capped(3), 103);\n}\n",
+    )?;
+    for finding in &findings {
+        assert!(
+            !finding
+                .ripr
+                .infect
+                .summary
+                .contains("evaluate to the same value"),
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
