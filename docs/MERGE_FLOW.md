@@ -211,7 +211,9 @@ only a head that matches it:
   resolve from the loader;
 - each added file is the Rust-resolved file of one relocated module and carries
   its body token for token (multi-character operators are single tokens, doc
-  comments stay in place as tokens) and its comments unchanged. rustfmt may
+  comments stay in place as tokens, non-ASCII identifiers are single tokens and
+  other non-ASCII outside strings and comments refuses) and its comments
+  unchanged and between the same identifiers and literals. rustfmt may
   re-wrap lines, add or drop a trailing comma before a closer (not a 1-tuple's,
   and not inside macros other than the standard comma-neutral ones), and drop
   the braces of a one-expression closure body (whose opening `|` follows `=`,

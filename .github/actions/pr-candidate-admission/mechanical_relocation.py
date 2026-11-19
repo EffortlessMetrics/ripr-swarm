@@ -107,8 +107,10 @@ class Token:
 _RAW_STR = re.compile(r'(?:b|c)?r(#*)"')
 _STR = re.compile(r'(?:b|c)?"')
 _CHAR = re.compile(r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,6}\}|.)|[^\\'\n])'", re.S)
-_IDENT = re.compile(r"(?:r#)?[A-Za-z_][A-Za-z0-9_]*")
-_LIFETIME = re.compile(r"'(?:r#)?[A-Za-z_][A-Za-z0-9_]*")
+# Identifiers include non-ASCII word characters (`fn façade_x`), so whitespace
+# can never split one into tokens that compare equal (`mutéx` vs `mut é x`).
+_IDENT = re.compile(r"(?:r#)?[^\W\d]\w*")
+_LIFETIME = re.compile(r"'(?:r#)?[^\W\d]\w*")
 _NUMBER = re.compile(r"[0-9][0-9A-Za-z_]*(?:\.[0-9][0-9A-Za-z_]*)?")
 # Multi-character punctuation, longest first: `a && b` and `a & &b` differ.
 _PUNCT = ("<<=", ">>=", "...", "..=", "&&", "||", "::", "->", "=>", "==", "!=", "<=", ">=", "<<", ">>",
@@ -193,6 +195,9 @@ def lex(text: str) -> list[Token]:
             tokens.append(Token("ident", i, m.end()))
             i = m.end()
             continue
+        if ord(c) > 127:
+            # Any other non-ASCII character outside a string or comment.
+            raise Refusal(f"non-ASCII character {c!r} outside a string or comment")
         width = next((len(p) for p in _PUNCT if text.startswith(p, i)), 1)
         tokens.append(Token("punct", i, i + width))
         i += width
@@ -447,14 +452,20 @@ def significant(text: str) -> list[str]:
     return normalize(raw_tokens(text))
 
 
-def comment_texts(text: str) -> list[str]:
+def comment_texts(text: str) -> list[tuple[int, str]]:
     """Comments in order with their indentation-independent content, so a
     relocation cannot drop or edit one (line comments compared trimmed,
-    block comments line by line trimmed)."""
+    block comments line by line trimmed). Each is anchored by the number of
+    identifier, literal and lifetime tokens before it, which normalization
+    never adds or removes, so a comment cannot move to another item
+    (a `// covered-by:` marker above `fn a` cannot reattach to `fn b`)."""
     out = []
+    words = 0
     for t in lex(text):
         if t.kind == "comment":
-            out.append("\n".join(line.strip() for line in text[t.start : t.end].split("\n")))
+            out.append((words, "\n".join(line.strip() for line in text[t.start : t.end].split("\n"))))
+        elif t.kind in ("ident", "str", "lifetime"):
+            words += 1
     return out
 
 
@@ -496,25 +507,27 @@ def is_test_only_cfg(attr: str) -> bool:
     m = _TEST_ONLY_CFG.fullmatch(attr.strip())
     if not m:
         return False
-    pred = " ".join(m.group(1).split())
-    if pred == "test":
+    # Tokenized, so a `)` or `,` inside a string literal is not structure.
+    pred = raw_tokens(m.group(1))
+    if pred == ["test"]:
         return True
-    inner = re.fullmatch(r"all\s*\((.*)\)", pred)
-    if not inner:
+    if len(pred) < 4 or pred[:2] != ["all", "("] or pred[-1] != ")":
         return False
-    depth, part, parts = 0, "", []
-    for ch in inner.group(1):
-        if ch == "(":
+    depth, part, parts = 0, [], []
+    for tok in pred[2:-1]:
+        if tok in ("(", "["):
             depth += 1
-        elif ch == ")":
+        elif tok in (")", "]"):
             depth -= 1
-        if ch == "," and depth == 0:
-            parts.append(part.strip())
-            part = ""
+            if depth < 0:
+                return False  # `all(a) , test (b)`: the `all` closed early
+        if tok == "," and depth == 0:
+            parts.append(part)
+            part = []
         else:
-            part += ch
-    parts.append(part.strip())
-    return "test" in parts
+            part.append(tok)
+    parts.append(part)
+    return depth == 0 and ["test"] in parts
 
 
 def top_level_test_modules(text: str) -> list[InlineModule]:
@@ -647,7 +660,7 @@ def expected_body_tokens(move: Move) -> list[str]:
                 if depth == 0:
                     break
                 j += 1
-            if "path" in raw[open_k:j]:
+            if any(_bare(t) == "path" for t in raw[open_k:j]):
                 raise Refusal(f"{move.owner}: a `path` attribute inside `{move.name}` would resolve from a new base")
         if tok in INCLUDE_MACROS and k + 3 < len(raw) and raw[k + 1] == "!" and raw[k + 2] == "(":
             if raw[k + 3 : k + 10] == ["concat", "!", "(", "env", "!", "(", '"CARGO_MANIFEST_DIR"']:
@@ -1229,6 +1242,24 @@ def self_test() -> None:
     refused({**good, target: (None, head_target.replace("1);", "2);"))}, "not the token-identical body")
     refused({**good, target: (None, head_target.replace("keep\n", "kept\n"))}, "not the token-identical body")
     refused({**good, target: (None, head_target.replace("// keeps its comment", "// edited"))}, "comments")
+    # A comment may not reattach to another item: `// covered-by:` above `fn a`
+    # moved above `fn b` keeps the same comment list but not its anchor.
+    moved_comment = head_target.replace("// keeps its comment\n", "").replace(
+        "#[test]\nfn reads", "// keeps its comment\n#[test]\nfn reads"
+    )
+    assert moved_comment != head_target, moved_comment
+    refused({**good, target: (None, moved_comment)}, "comments")
+    # A non-ASCII identifier is one token, so whitespace cannot split it into
+    # tokens that compare equal; other non-ASCII outside strings refuses.
+    assert raw_tokens("let mutéx = 1;") == ["let", "mutéx", "=", "1", ";"]
+    assert significant("fn f() { let mutéx = 1; }") != significant("fn f() { let mut é x = 1; }")
+    try:
+        lex("let x = 1 − 2;")
+    except Refusal as why:
+        assert "non-ASCII" in str(why), why
+    else:
+        raise AssertionError("a non-ASCII operator was lexed")
+    assert len(lex('let s = "−"; // −')) > 0
     refused({**good, owner: (base_owner, head_owner.replace("1\n}", "2\n}", 1))}, "beyond the relocated module")
     refused({**good, "crates/ripr/src/other.rs": ("fn a() {}\n", "fn b() {}\n")}, "relocated no inline test module")
     refused({**good, "README.md": ("a\n", "b\n")}, "not an owner, a new test file or relocation metadata")
@@ -1360,6 +1391,10 @@ def self_test() -> None:
     assert top_level_test_modules(any_gate) == []
     assert top_level_test_modules(base_owner.replace("#[cfg(test)]", "#[cfg(not(test))]")) == []
     assert len(top_level_test_modules(base_owner.replace("#[cfg(test)]", "#[cfg(all(unix, test))]"))) == 1
+    # A `)` inside a string literal is not structure: this gate compiles on Linux.
+    assert not is_test_only_cfg('#[cfg(all(unix, any(target_os = ")", test, target_os = "linux")))]')
+    assert not is_test_only_cfg("#[cfg(all(unix), test(x))]")
+    assert is_test_only_cfg('#[cfg(all(target_os = ",)", test))]')
     # Spelling inside strings is data.
     assert top_level_test_modules('const S: &str = "#[cfg(test)]\\nmod tests {}";\n') == []
 
@@ -1369,6 +1404,8 @@ def self_test() -> None:
         ("let _ = line!();", "`line!`"),
         ('#[path = "x.rs"]\n    mod x;', "`path` attribute"),
         ('#[cfg_attr(test, path = "x.rs")]\n    mod x;', "`path` attribute"),
+        ('#[r#path = "x.rs"]\n    mod x;', "`path` attribute"),
+        ('#[cfg_attr(test, r#path = "x.rs")]\n    mod x;', "`path` attribute"),
         ("let _ = r#line!();", "`r#line!`"),
         ("use std::line as here;", "imports ['line']"),
         ("use std::{column, vec};", "imports ['column', 'vec']"),
