@@ -61,7 +61,7 @@ fn config() -> Config {
 /// step by the exhaustive match in `static_limit_kind_ordinal`: a new variant
 /// fails to compile there, and a variant added to the match but not to this
 /// array fails `static_limit_kind_list_is_complete_and_ordered`.
-const STATIC_LIMIT_KINDS: [StaticLimitKind; 36] = [
+const STATIC_LIMIT_KINDS: [StaticLimitKind; 37] = [
     StaticLimitKind::DynamicDispatch,
     StaticLimitKind::Metaprogramming,
     StaticLimitKind::MissingImportGraph,
