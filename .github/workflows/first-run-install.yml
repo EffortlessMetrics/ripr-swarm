@@ -97,9 +97,10 @@ jobs:
       - name: Build ripr from this commit
         run: cargo build --locked -p ripr --bin ripr
 
-      # The walk output lives outside target/: rust-cache saves target/ and
-      # restores this directory without the walk's ownership marker, so the next
-      # walk refused to clear it and the job failed on every warm cache.
+      # The walk output lives outside target/, which rust-cache saves. With the
+      # output under target/, the walk often found a restored directory without
+      # its ownership marker and refused to clear it (suspected cached-output
+      # collision, #15190).
       - name: Walk the first-run path against the ripr built from this commit
         run: >-
           cargo xtask first-run
