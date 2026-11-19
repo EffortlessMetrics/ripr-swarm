@@ -105,9 +105,9 @@ pub(crate) fn staged_crates(scratch: &Path, version: &str) -> Result<(PathBuf, P
         "publish stage: HEAD {} checked out; {} inline #[cfg(test)] modules ({} bytes) stripped from {} ripr source files",
         report.commit, report.stripped_modules, report.stripped_bytes, report.stripped_files
     );
-    // `cargo package` re-resolves and may rewrite
-    // Cargo.lock; restore the committed one afterwards, so the kept stage
-    // differs from HEAD only by the strip and its marker.
+    // `cargo package` re-resolves and may rewrite Cargo.lock; restore the
+    // committed one afterwards, so the kept stage differs from HEAD only by
+    // the strip and its marker.
     let lock_path = stage.join("Cargo.lock");
     let lock_backup = fs::read(&lock_path).ok();
     let packaged = package_from_stage(&scratch, &stage, version);
@@ -145,7 +145,6 @@ fn package_from_stage(
             "--allow-dirty",
         ],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
-        None,
         stage,
     )?;
     let contract_crate = pick_crate_file(&target.join("package"), "ripr-contract", version)?;
@@ -239,19 +238,9 @@ fn upload_size_guard(contract_crate: &Path, ripr_crate: &Path) -> Result<(), Str
     }
 }
 
-fn run_cargo(
-    args: &[&str],
-    envs: &[(&str, &str)],
-    configs: Option<&[String]>,
-    cwd: &Path,
-) -> Result<(), String> {
+fn run_cargo(args: &[&str], envs: &[(&str, &str)], cwd: &Path) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command.current_dir(cwd);
-    if let Some(configs) = configs {
-        for config in configs {
-            command.args(["--config", config]);
-        }
-    }
     command.args(args).envs(envs.iter().copied());
     let status = command
         .status()
