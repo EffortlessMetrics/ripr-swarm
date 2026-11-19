@@ -948,7 +948,10 @@ fn bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested() -> Resu
     // does not build `benches/load.rs` and `t` never runs; the library's
     // changed `f` has no running discriminator.
     let lib = lib_source("");
-    let files = [("src/lib.rs", lib.as_str()), ("benches/load.rs", BENCH_TESTS)];
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("benches/load.rs", BENCH_TESTS),
+    ];
     let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
     assert_no_static_path_in_every_mode(&skipped, "a default bench")?;
     // Control: `test = true` makes `cargo test` build and run the bench's

@@ -227,8 +227,8 @@ fn withhold_tests_outside_module_tree(index: &mut RustIndex, outside: &BTreeSet<
 /// operand dynamically, and cargo metadata may list the file as no live or
 /// unmodeled target (#14962 review). The scan asks about every ancestry
 /// member except a lib or bin root metadata lists as skipped: an
-/// undiscovered root and a skipped example root are asked too (#14972
-/// review). The verdict then does not depend on how much of the workspace
+/// undiscovered root and a skipped example or bench root are asked too
+/// (#14972 review, #15262). The verdict then does not depend on how much of the workspace
 /// the run indexed. A holder whose own package
 /// manifest switches nothing off is never asked, even when `#[path]` places
 /// it under another package's skipped root (it keeps its credit).
@@ -283,9 +283,9 @@ fn files_in_skipped_unit_test_targets(
     let mut verdicts: BTreeMap<PathBuf, bool> = BTreeMap::new();
     // Skipped roots the mount scan still asks about like any other ancestry
     // member (#14972): a root cargo did not discover (metadata pins no
-    // target to it) and a skipped example root, since a running target can
-    // mount an example through `include!` inside a module body, an edge the
-    // index does not record (#14972 review). Lib and bin `test = false`
+    // target to it) and a skipped example or bench root, since a running
+    // target can mount one through `include!` inside a module body, an edge
+    // the index does not record (#14972 review, #15262). Lib and bin `test = false`
     // roots stay exempt (#14962).
     let mut scanned_roots: BTreeSet<PathBuf> = BTreeSet::new();
     let mut mounts: Option<Option<WorkspaceMountScan>> = None;
@@ -354,7 +354,8 @@ fn files_in_skipped_unit_test_targets(
         // "src/container.rs"`) or that another source mounts compiles the
         // holder into a target `cargo test` runs (#14962 review, Devin). A
         // root cargo did not discover is no listed target, and a skipped
-        // example is no target another crate builds (#14972), so a source
+        // example or bench is no target another crate builds (#14972,
+        // #15262), so a source
         // outside the chain that names either may mount it into a running
         // target where the indexed edges do not show it.
         let ancestry_may_run = chain.iter().any(|member| {
@@ -819,9 +820,10 @@ struct SkipPremise {
 
 /// Cheap premise for the metadata probe (#14962): the package manifest sets
 /// `test = false` on its `[lib]` table or on a `[[bin]]` entry, a `[[bin]]`
-/// names `required-features`, an `[[example]]` table exists, or a
-/// `[package]` `auto*` key is false (#14972). Sources under `examples/`
-/// are a premise on their own (the caller adds it). Anything else cannot
+/// names `required-features`, an `[[example]]` or `[[bench]]` table exists,
+/// or a `[package]` `auto*` key is false (#14972, #15262). Sources under
+/// `examples/` or `benches/` are a premise on their own (the caller adds
+/// it). Anything else cannot
 /// skip a crate root's unit tests, so no `cargo metadata` subprocess is
 /// spent. An unreadable or unparsable manifest is no premise.
 fn manifest_skip_premise(workspace_root: &Path, package_dir: &Path) -> SkipPremise {

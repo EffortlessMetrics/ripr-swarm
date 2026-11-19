@@ -982,7 +982,7 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
 }
 
 /// The crate-root unit-test run state of one metadata target (#14962).
-/// `cargo test` builds a `lib`-family, `bin`, `example` or `test` target as
+/// `cargo test` builds a `lib`-family, `bin`, `example`, `bench` or `test` target as
 /// a libtest binary exactly when its effective `test` flag holds, so a live
 /// one of those kinds `Runs`. Only `lib`-family, `bin`, `example` and `bench`
 /// targets establish a skip: a skipped `test` target already has its owner
