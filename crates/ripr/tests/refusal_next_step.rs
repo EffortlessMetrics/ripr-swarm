@@ -571,12 +571,63 @@ fn child_module_dir(path: &Path) -> PathBuf {
     }
 }
 
-/// Names of out-of-line child modules declared under `#[cfg(test)]`, such as
-/// `#[cfg(test)] mod rows;` or `#[cfg(test)] #[allow(x)] pub(crate) mod rows;`.
-/// A module with a `#[path]` attribute is left to the per-item cut.
+/// Spans of inline `mod name { .. }` blocks: (open brace, close brace, name).
+fn inline_module_spans(source: &str) -> Vec<(usize, usize, String)> {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut spans = Vec::new();
+    let mut open: Vec<(usize, usize, String)> = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut depth = 0usize;
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        match lexeme {
+            Lexeme::Code(b'm')
+                if bytes[at..].starts_with(b"mod")
+                    && (at == 0 || !is_ident(bytes[at - 1]))
+                    && bytes.get(at + 3).is_some_and(u8::is_ascii_whitespace) =>
+            {
+                let name: String = source[at + 3..]
+                    .trim_start()
+                    .chars()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect();
+                pending = (!name.is_empty()).then_some(name);
+            }
+            Lexeme::Code(b';') => pending = None,
+            Lexeme::Code(b'{') => {
+                depth += 1;
+                if let Some(name) = pending.take() {
+                    open.push((at, depth, name));
+                }
+            }
+            Lexeme::Code(b'}') => {
+                if open.last().is_some_and(|(_, level, _)| *level == depth)
+                    && let Some((start, _, name)) = open.pop()
+                {
+                    spans.push((start, at, name));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        at = next;
+    }
+    spans.sort();
+    spans
+}
+
+/// Paths, relative to the file's child-module directory, of out-of-line
+/// modules declared under `#[cfg(test)]`, such as `#[cfg(test)] mod rows;` or
+/// `#[cfg(test)] #[doc(hidden)] pub(crate) mod rows;`. A declaration inside
+/// inline modules keeps their names, so `mod nested { #[cfg(test)] mod rows; }`
+/// gives `nested/rows`. A module with a `#[path]` attribute is left to the
+/// per-item cut.
 fn test_only_child_modules(source: &str) -> Vec<String> {
     const MARKER: &str = "#[cfg(test)]";
     let in_code = code_positions(source);
+    let spans = inline_module_spans(source);
     let mut names = Vec::new();
     let mut search = 0;
     while let Some(found) = source[search..].find(MARKER) {
@@ -616,7 +667,13 @@ fn test_only_child_modules(source: &str) -> Vec<String> {
             .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
             .collect();
         if !name.is_empty() && after[name.len()..].trim_start().starts_with(';') {
-            names.push(name);
+            let mut path: Vec<&str> = spans
+                .iter()
+                .filter(|(open, close, _)| *open < at && at < *close)
+                .map(|(_, _, module)| module.as_str())
+                .collect();
+            path.push(&name);
+            names.push(path.join("/"));
         }
     }
     names
@@ -1084,12 +1141,25 @@ mod inline_tests {}
 #[path = "elsewhere.rs"]
 mod moved;
 mod production;
+mod nested {
+    mod inner {
+        #[cfg(test)]
+        mod rows;
+    }
+    #[cfg(test)]
+    mod helpers;
+}
 // #[cfg(test)] mod commented;
 const NOTE: &str = "#[cfg(test)] mod quoted;";
 "##;
     assert_eq!(
         test_only_child_modules(source),
-        vec!["rows".to_string(), "helpers".to_string()]
+        vec![
+            "rows".to_string(),
+            "helpers".to_string(),
+            "nested/inner/rows".to_string(),
+            "nested/helpers".to_string(),
+        ]
     );
     assert_eq!(
         child_module_dir(Path::new("src/a/b.rs")),
