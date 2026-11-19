@@ -71,8 +71,7 @@ pub(crate) use python::{
     is_declared_handwritten_python_path, is_detectable_excluded_python_path,
     is_detectable_generated_python_path, is_detectable_python_source_name,
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
-    root_contains_detectable_python,
-    source_dir_contains_detectable_python,
+    root_contains_detectable_python, source_dir_contains_detectable_python,
 };
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{
