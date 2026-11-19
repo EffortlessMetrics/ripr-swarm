@@ -1,0 +1,22 @@
+diff --git a/src/quotedWithTitle.ts b/src/quotedWithTitle.ts
+index 0000000..1111111 100644
+--- a/src/quotedWithTitle.ts
++++ b/src/quotedWithTitle.ts
+@@ -1,5 +1,5 @@
+ export function quotedWithTitle(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/realEval.ts b/src/realEval.ts
+index 0000000..1111111 100644
+--- a/src/realEval.ts
++++ b/src/realEval.ts
+@@ -1,5 +1,5 @@
+ export function realEval(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";

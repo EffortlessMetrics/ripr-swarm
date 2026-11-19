@@ -107,6 +107,140 @@ fn names_no_row_literal(source: &str) {
 const TWO_ROWS: &str = "    [999, \"silver\"],\n    [1000, \"gold\"],";
 
 #[test]
+fn loop_title_quoting_with_resolves_rows() -> Result<(), String> {
+    let body = "    expect(loyaltyTier(points)).toBe(tier); // works with spaces";
+    let source = loop_test(TWO_ROWS, body);
+    assert_eq!(
+        observed(&source),
+        vec![
+            (
+                Some("loyaltyTier(999)".to_string()),
+                Some("\"silver\"".to_string()),
+                9
+            ),
+            (
+                Some("loyaltyTier(1000)".to_string()),
+                Some("\"gold\"".to_string()),
+                9
+            ),
+        ]
+    );
+    assert_eq!(
+        tier_class("loop-quoted-with-title", &source)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_body_real_eval_keeps_the_loop_unresolved() -> Result<(), String> {
+    let body = "    expect(loyaltyTier(points)).toBe(tier);\n    eval(\"tier = 'x'\");";
+    let source = loop_test("    [1000, \"gold\"],", body);
+    keeps_loop_variable(&source);
+    assert_eq!(
+        tier_class("loop-real-eval", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+/// A loop test whose callback is `async` (or not) with `setup` between the
+/// table and the loop (#12572).
+fn loop_test_with_setup(is_async: bool, setup: &str, body: &str) -> String {
+    let callback = if is_async { "async () =>" } else { "() =>" };
+    format!(
+        "import {{ loyaltyTier }} from \"../src/tier\";\n\ntest(\"tiers\", {callback} {{\n  const rows = [\n{TWO_ROWS}\n  ];\n{setup}\n  for (const [points, tier] of rows) {{\n{body}\n  }}\n}});\n"
+    )
+}
+
+fn names_row_literals(source: &str) {
+    let calls: Vec<Option<String>> = observed(source)
+        .into_iter()
+        .map(|(call, _, _)| call)
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            Some("loyaltyTier(999)".to_string()),
+            Some("loyaltyTier(1000)".to_string())
+        ],
+        "{source}"
+    );
+}
+
+/// An indirect eval through a member (`globalThis.eval`, `globalThis["eval"]`)
+/// can rewrite the global matcher or the table just like a direct call, so
+/// the loop keeps its loop-variable assertion.
+#[test]
+fn indirect_eval_in_the_test_body_keeps_the_loop_assertion() -> Result<(), String> {
+    for setup in [
+        "  globalThis.eval(\"globalThis.expect = () => ({ toBe() {} })\");",
+        "  globalThis[\"eval\"](\"rows.length = 0\");",
+        "  globalThis[`eval`](\"rows.length = 0\");",
+        "  const e = eval; e(\"rows.length = 0\");",
+    ] {
+        let source = loop_test_with_setup(false, setup, ASSERT);
+        keeps_loop_variable(&source);
+    }
+    let source = loop_test_with_setup(
+        false,
+        "  globalThis.eval(\"globalThis.expect = () => ({ toBe() {} })\");",
+        ASSERT,
+    );
+    assert_eq!(
+        tier_class("loop-indirect-eval", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+/// A string that merely mentions `eval` outside a computed key is not a route.
+#[test]
+fn quoted_eval_in_the_test_body_still_resolves_rows() {
+    let source = loop_test_with_setup(false, "  const note = \"no eval with rows\";", ASSERT);
+    names_row_literals(&source);
+}
+
+/// An async test that awaits setup, or awaits inside the loop, still parses
+/// in an async wrapper, so a quoted word does not unresolve its rows; a real
+/// `eval` in the same async shape is still refused.
+#[test]
+fn async_test_with_quoted_words_resolves_rows() -> Result<(), String> {
+    let quoted_body = "    expect(loyaltyTier(points)).toBe(tier); // works with spaces";
+    let source = loop_test_with_setup(
+        true,
+        "  await Promise.resolve(); // with setup",
+        quoted_body,
+    );
+    names_row_literals(&source);
+    assert_eq!(
+        tier_class("loop-async-quoted", &source)?,
+        ExposureClass::Exposed
+    );
+    let awaiting_body = "    await Promise.resolve();\n    expect(loyaltyTier(points)).toBe(tier); // works with spaces";
+    names_row_literals(&loop_test_with_setup(true, "", awaiting_body));
+    let real_eval = loop_test_with_setup(
+        true,
+        "  await Promise.resolve();\n  eval(\"rows.length = 0\");",
+        ASSERT,
+    );
+    keeps_loop_variable(&real_eval);
+    Ok(())
+}
+
+/// `??` and optional chaining can skip the assertion per row, as the raw
+/// fallback's `?` check assumed.
+#[test]
+fn short_circuit_in_the_body_keeps_the_loop_assertion() {
+    for body in [
+        "    points ?? expect(loyaltyTier(points)).toBe(tier);",
+        "    expect(loyaltyTier(points))?.toBe(tier);",
+    ] {
+        names_no_row_literal(&loop_test(TWO_ROWS, body));
+    }
+}
+
+#[test]
 fn a_non_literal_cell_keeps_the_loop_assertion() -> Result<(), String> {
     let source = loop_test("    [999, \"silver\"],\n    [base + 1, \"gold\"],", ASSERT);
     keeps_loop_variable(&source);
