@@ -5481,6 +5481,7 @@ fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
 /// #14148: the real `reports ci-summary` reads the run's event from the
 /// environment, and a manual run says it has no pull request where a
 /// `pull_request` run of the same tree does not.
+#[cfg(unix)]
 #[test]
 fn a_manual_run_summary_says_there_is_no_pull_request() -> Result<(), Box<dyn Error>> {
     let root = replay::unique_temp_dir("manual-run-summary")?;
