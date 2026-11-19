@@ -139,6 +139,18 @@ pub(crate) fn ts_literal_arm_witness(
             )
             .is_some();
             if !observes_owner_call {
+                // A member, transform or wrapper of the owner's result, or a
+                // local that may hold it, can observe the arm without
+                // spelling its old result: only an observation naming none
+                // of those is unrelated.
+                if may_observe_owner_indirectly(
+                    candidate.test,
+                    assertion.observed_expression.as_deref(),
+                    &names,
+                    &receivers,
+                ) {
+                    return LiteralArmWitness::Kept;
+                }
                 continue;
             }
             // A snapshot, a structural matcher or a dynamic expected side on
@@ -176,6 +188,34 @@ pub(crate) fn ts_literal_arm_unpinned_line(
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+/// Whether an assertion's observed side, not itself a whole owner call, may
+/// still carry the owner's result: it is unreadable, or it names the owner,
+/// one of its call names or receivers, or a local the test body declares.
+fn may_observe_owner_indirectly(
+    test: &TypeScriptTest,
+    observed: Option<&str>,
+    names: &[&str],
+    receivers: &[String],
+) -> bool {
+    let Some(observed) = observed else {
+        return true;
+    };
+    let masked = ts_mask_literals_and_comments(observed);
+    masked
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '$')))
+        .filter(|token| {
+            token
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '_' | '$'))
+        })
+        .any(|token| {
+            names.contains(&token)
+                || receivers.iter().any(|receiver| receiver == token)
+                || local_identifier_declared_in_test_body(&test.body_text, token)
+        })
 }
 
 /// Whether expected-side source text spells `constant` anywhere: a quoted

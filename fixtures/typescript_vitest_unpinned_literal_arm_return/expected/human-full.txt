@@ -1,0 +1,97 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_vitest_unpinned_literal_arm_return/input
+config: <cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/dir.ts:4
+  id: probe:src_dir.ts:typescript_preview:4d8774a1
+
+Changed
+  after:        return 'uno';
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  typescript:src/dir.ts::dir
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: unknown
+  category: missing_target_shape
+  repair packet ready: false
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
+  repair route: add probe-specific discriminator extraction for this expression before repair packet projection
+  missing fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
+  raw evidence: src/dir.ts:4 (typescript_preview_probe) source=probe:src_dir.ts:typescript_preview:4d8774a1 owner=dir
+
+Static exposure
+  infection_unknown (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related test(s) found for owner `dir`
+  - infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)
+  - discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704)
+  - local flow reaches returned value: return 'uno'; (line 4)
+  - related test test/dir.test.ts:5 dir maps two uses strong exact value oracle: expect(...).toBe(...)
+
+Weakness
+  - The change to `dir` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior
+  - No exact assertion on `dir` expects `'one'`, the result only the changed arm returned; every exact assertion on `dir` expects another arm's result (`'two'`), so each passes on both versions
+
+Stop reasons:
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: dir
+  owner kind: function
+  changed behavior: return_value changed at src/dir.ts:4: `return 'uno';`
+  related test: test/dir.test.ts:5 dir maps two
+  oracle: exact_value (strong)
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  verify: npx --no-install vitest run test/dir.test.ts
+  repair packet ready: false
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
+  repair route: add probe-specific discriminator extraction for this expression before repair packet projection
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
+  next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
+
+Next step
+  TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/input --diff <cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/diff.patch --mode fast probe:src_dir.ts:typescript_preview:4d8774a1
+  ripr context --root <cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/input --diff <cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/diff.patch --mode fast --at probe:src_dir.ts:typescript_preview:4d8774a1
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

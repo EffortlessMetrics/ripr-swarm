@@ -95,10 +95,10 @@ fn nested_function_returns_are_not_the_owners_and_semicolons_are_optional() {
     );
     // `if (...) return` on one line is not a plain return line.
     assert_eq!(change, None);
-    let change = literal_arm_return(&owner(source), 14, "  return 'z'", Some("  return 'zero'"));
+    let change = literal_arm_return(&owner(source), 14, "  return 'zero'", Some("  return 'z'"));
     assert_eq!(
         change.map(|change| change.old_value),
-        Some(ArmConstant::Text("zero".to_string()))
+        Some(ArmConstant::Text("z".to_string()))
     );
 }
 
@@ -128,12 +128,12 @@ fn a_class_method_owner_parses_inside_a_class_wrapper() {
     let change = literal_arm_return(
         &owner(method),
         12,
-        "      return 11;",
-        Some("      return 10;"),
+        "      return 10;",
+        Some("      return 11;"),
     );
     assert_eq!(
         change.map(|change| change.old_value),
-        Some(ArmConstant::Number(10.0))
+        Some(ArmConstant::Number(11.0))
     );
 }
 
@@ -297,6 +297,35 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         "snapshot: {:?}",
         snapshot.missing
     );
+    // A member of the owner's result, directly or through a local, observes
+    // the changed arm without spelling its old result.
+    for (label, body) in [
+        (
+            "arm-derived-member",
+            "    expect(dir(2)).toBe('two');\n    expect(dir(1).length).toBe(3);\n",
+        ),
+        (
+            "arm-derived-local",
+            "    expect(dir(2)).toBe('two');\n    const got = dir(1);\n    expect(got.length).toBe(3);\n",
+        ),
+    ] {
+        let finding = finding_at(
+            label,
+            DIR,
+            4,
+            "      return 'one';",
+            "      return 'uno';",
+            &vitest(body),
+        )?;
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|line| line.contains("expects another arm's result")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }
 
