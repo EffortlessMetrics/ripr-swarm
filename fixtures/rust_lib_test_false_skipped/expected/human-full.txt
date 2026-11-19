@@ -1,0 +1,94 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_lib_test_false_skipped/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:c50f7064
+
+Changed
+  before: a + 1
+  after:  a + 2
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::f
+  gap id (for scripts): gap:rust:src/lib.rs:f:return_value:return_value:a+2
+
+Static exposure
+  no_static_path (warning, confidence 0.48)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: No reachable tests were found, so infection cannot be established
+  - propagation yes: Complete propagation witness reaches returned value: a + 2
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches returned value: a + 2 (line 2)
+
+Next step
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_lib_test_false_skipped/input --diff <cwd>/fixtures/rust_lib_test_false_skipped/diff.patch --mode fast probe:src_lib.rs:return_value:c50f7064
+  ripr context --root <cwd>/fixtures/rust_lib_test_false_skipped/input --diff <cwd>/fixtures/rust_lib_test_false_skipped/diff.patch --mode fast --at probe:src_lib.rs:return_value:c50f7064
+
+NOTE ./src/lib.rs:2
+  id: probe:src_lib.rs:static_unknown:6f25dfb1
+
+Changed
+  before: a + 1
+  expr:   a + 1
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Change type
+  a change ripr could not classify
+  family: static_unknown
+  delta:  unknown (kind of change not determined)
+  owner:  src/lib.rs::f
+  gap id (for scripts): gap:rust:src/lib.rs:f:static_unknown:static_unknown:a+1
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+
+Weakness
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Next step
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_lib_test_false_skipped/input --diff <cwd>/fixtures/rust_lib_test_false_skipped/diff.patch --mode fast probe:src_lib.rs:static_unknown:6f25dfb1
+  ripr context --root <cwd>/fixtures/rust_lib_test_false_skipped/input --diff <cwd>/fixtures/rust_lib_test_false_skipped/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:6f25dfb1
+
+Note: ripr established no static test path for any of the 2 changed expression(s) in this diff (1
+  found no path, 1 could not be classified). Scope analyzed: 1 changed Rust file(s), 2 changed
+  expression(s), and 0 statically linked related test(s). This is not a coverage assessment. A test
+  may already exercise these changes through macros, helper-call chains, or integration tests that
+  ripr's static model does not yet trace; if none does, add co-located tests that observe the
+  changed behavior.
