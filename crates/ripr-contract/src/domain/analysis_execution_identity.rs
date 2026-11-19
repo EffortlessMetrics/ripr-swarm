@@ -288,8 +288,9 @@ mod tests {
             "snapshot:input:abc",
             "snapshot:other:x",
         ] {
-            assert!(
-                CompletedAnalysisSnapshotId::parse(accepted).is_ok(),
+            assert_eq!(
+                CompletedAnalysisSnapshotId::parse(accepted).map(|id| id.as_str().to_string()),
+                Ok(accepted.to_string()),
                 "{accepted:?}"
             );
         }
@@ -307,9 +308,10 @@ mod tests {
 
     #[test]
     fn diagnostic_result_needs_a_known_prefix_and_sixteen_hex_digits() {
-        assert!(
-            DiagnosticResultId::from_producer_id("ripr-workspace-diagnostics-v2:0123456789abcdef")
-                .is_ok()
+        let workspace = "ripr-workspace-diagnostics-v2:0123456789abcdef";
+        assert_eq!(
+            DiagnosticResultId::from_producer_id(workspace).map(|id| id.as_str().to_string()),
+            Ok(workspace.to_string())
         );
         for refused in [
             "ripr-document-diagnostics-v2:0123456789abcde",
