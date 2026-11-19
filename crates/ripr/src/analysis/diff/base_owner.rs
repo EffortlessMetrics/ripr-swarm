@@ -153,6 +153,48 @@ pub(crate) fn verified_base_owner(
     })
 }
 
+/// #15104: whether a test may run some other function in place of the
+/// new-side function `name` spanning `start_line..=end_line` of
+/// `new_source`. This is the new-side half of [`verified_base_owner`]'s
+/// gate decision, for a claim that reads only the new item (no base-side
+/// body): `true` when a `cfg` or `cfg_attr` sits on the function, an
+/// enclosing item or the file, when another function of that name shares
+/// its attribute-free path (a `cfg` twin), when `modules` reports a gated
+/// or changed declaration on the owner file's module chain, or when any of
+/// that cannot be read (fail closed).
+pub(crate) fn owner_may_be_swapped(
+    new_source: &str,
+    owner_file: &Path,
+    modules: &ModuleDeclarations,
+    name: &str,
+    start_line: usize,
+    end_line: usize,
+) -> bool {
+    let chain = module_chain_names(owner_file);
+    if modules.chain_changed(&chain) || modules.chain_gated(&chain) {
+        return true;
+    }
+    let name = unraw(name);
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(new_source) else {
+        return true;
+    };
+    let root = parse.tree().syntax().clone();
+    // Innermost last, as in `verified_base_owner`.
+    let Some(function) = named_functions(&root, name)
+        .filter(|function| {
+            node_lines(new_source, function.syntax())
+                .is_some_and(|(first, last)| first <= start_line && end_line <= last)
+        })
+        .next_back()
+    else {
+        return true;
+    };
+    let Some(bare) = bare_path(new_source, &function) else {
+        return true;
+    };
+    cfg_gated(&function) || !unique_under(new_source, &root, name, &bare)
+}
+
 fn named_functions<'a>(
     root: &'a SyntaxNode,
     name: &'a str,
@@ -654,6 +696,63 @@ mod tests {
             "pub struct A;\nimpl A {\n    pub fn ready(&self) -> bool {\n        true\n    }\n}\n";
         let new = "pub struct A;\nimpl Flag for A {\n    fn ready(&self) -> bool {\n        false\n    }\n}\n";
         assert_eq!(verify(old, new, "ready", "false")?, None);
+        Ok(())
+    }
+
+    /// #15104: the new-side gate decision for a claim that reads no
+    /// base-side body. Twins, gates on the item or an enclosing module, a
+    /// gated module declaration on the owner's chain and an unparseable file
+    /// may swap the owner; an ungated unique owner, a same-named function on
+    /// another path and an unrelated gated module do not.
+    #[test]
+    fn owner_swap_reads_new_side_gates_and_twins() -> Result<(), String> {
+        let lib = Path::new("src/lib.rs");
+        let unchanged = |source: &str| -> Result<ModuleDeclarations, String> {
+            let changed_file = changed(source, source)?;
+            Ok(ModuleDeclarations::read(
+                [source],
+                [(&changed_file, Some(source))],
+            ))
+        };
+        let swapped = |source: &str, file: &Path, line: usize| -> Result<bool, String> {
+            Ok(owner_may_be_swapped(
+                source,
+                file,
+                &unchanged(source)?,
+                "ready",
+                line,
+                line,
+            ))
+        };
+        let plain = "pub fn ready() -> i32 {\n    2\n}\n";
+        assert!(!swapped(plain, lib, 2)?, "plain");
+        let elsewhere = "pub fn ready() -> i32 {\n    2\n}\npub mod other {\n    pub fn ready() -> i32 {\n        5\n    }\n}\n";
+        assert!(!swapped(elsewhere, lib, 2)?, "same name on another path");
+        let unrelated = "pub fn ready() -> i32 {\n    2\n}\n#[cfg(test)]\nmod fake {\n    pub fn stub() -> i32 {\n        2\n    }\n}\n";
+        assert!(!swapped(unrelated, lib, 2)?, "unrelated cfg(test) module");
+        let twins = "#[cfg(not(test))]\npub fn ready() -> i32 {\n    2\n}\n#[cfg(test)]\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(twins, lib, 3)?, "function-level twin");
+        let bare_twins = "pub fn ready() -> i32 {\n    2\n}\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(bare_twins, lib, 2)?, "same-path twin");
+        let gated_mod =
+            "#[cfg(not(test))]\nmod m {\n    pub fn ready() -> i32 {\n        2\n    }\n}\n";
+        assert!(swapped(gated_mod, lib, 3)?, "gated enclosing module");
+        let file_gate = "#![cfg(unix)]\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(file_gate, lib, 3)?, "file inner attribute");
+        assert!(swapped("pub fn ready( {\n", lib, 1)?, "unparseable");
+        assert!(swapped(plain, lib, 9)?, "no function encloses the span");
+        // The owner's file is declared by a gated `mod real;` elsewhere.
+        let parent = "#[cfg(not(test))]\nmod real;\n";
+        let changed_file = changed(plain, plain)?;
+        let modules = ModuleDeclarations::read([parent], [(&changed_file, Some(plain))]);
+        assert!(
+            owner_may_be_swapped(plain, Path::new("src/real.rs"), &modules, "ready", 2, 2),
+            "gated module declaration on the chain"
+        );
+        assert!(
+            owner_may_be_swapped(plain, lib, &ModuleDeclarations::unread(), "ready", 2, 2),
+            "unread declarations"
+        );
         Ok(())
     }
 
