@@ -805,6 +805,31 @@ fn unresolved_commit_id_base_names_the_commit_fetch() -> Result<(), String> {
 }
 
 #[test]
+fn fetched_only_base_advice_is_a_capitalized_sentence_with_the_short_spelling() -> Result<(), String>
+{
+    let scratch = Scratch::new("trackbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    git(&root, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
+    let stderr = base_refusal(&root, "master")?;
+    if !stderr.contains(
+        "(the analysis did not run). The fetched branch is `origin/master`, not a local `master`: pass `--base origin/master`",
+    ) {
+        return Err(format!(
+            "expected a capitalized sentence naming the short spelling\n{stderr}"
+        ));
+    }
+    // A tag named like the short form shadows it: only the full ref is safe.
+    git(&root, &["tag", "origin/master", "HEAD~1"])?;
+    let stderr = base_refusal(&root, "master")?;
+    if !stderr.contains("pass `--base refs/remotes/origin/master`") {
+        return Err(format!(
+            "a shadowed short spelling must not be named\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn unresolved_release_tag_base_names_the_tag_fetch() -> Result<(), String> {
     let scratch = Scratch::new("tagbase")?;
     let root = repo_with_origin(&scratch, "r")?;

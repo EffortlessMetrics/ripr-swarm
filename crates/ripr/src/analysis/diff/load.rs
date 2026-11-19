@@ -2477,11 +2477,19 @@ fn remote_tracking_advice(
         .collect();
     match found.as_slice() {
         [] => None,
-        [only] => Some(format!(
-            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
-        )),
+        [only] => {
+            let short = only.strip_prefix("refs/remotes/").unwrap_or(only);
+            let spelling = if short_spelling_is_unambiguous(root, short, only, git_timeout) {
+                short
+            } else {
+                only
+            };
+            Some(format!(
+                "The fetched branch is `{spelling}`, not a local `{missing_ref}`: pass `{flag} {spelling}`"
+            ))
+        }
         _ => Some(format!(
-            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            "The fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
             found
                 .iter()
                 .map(|tracking| format!("`{tracking}`"))
@@ -2489,6 +2497,31 @@ fn remote_tracking_advice(
                 .join(", ")
         )),
     }
+}
+
+/// Whether the short `<remote>/<ref>` spelling resolves to exactly the
+/// `refs/remotes/...` ref `full`, so quoting it cannot be shadowed by a tag
+/// or local branch of that name.
+fn short_spelling_is_unambiguous(
+    root: &Path,
+    short: &str,
+    full: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--symbolic-full-name",
+            short,
+        ],
+        git_timeout,
+    )
+    .is_ok_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == full
+    })
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -5679,6 +5712,28 @@ mod tests {
                 "{branch} stays branch advice, got: {repair}"
             );
         }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_prefers_the_short_tracking_spelling_when_unambiguous()
+    -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-short-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "master", "--base", None);
+        assert_eq!(
+            repair,
+            "The fetched branch is `origin/master`, not a local `master`: pass `--base origin/master`"
+        );
 
         ignore_remove_dir_all(&dir);
         Ok(())
