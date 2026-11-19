@@ -67,10 +67,9 @@ pub(super) fn every_call_selects_generic_sibling(
     // declares or imports an item of that name (`use aliases::u8;`).
     let owner_is_primitive = PRIMITIVE_TYPES.contains(&owner_head.as_str())
         && !owner_argument.contains("::")
-        && index
-            .files()
-            .get(&owner.file)
-            .is_some_and(|file| !file_rebinds_name(file.data().source.as_ref(), &owner_head));
+        && index.files().get(&owner.file).is_some_and(|file| {
+            !file_rebinds_name(file.data().source.as_ref(), &owner_head, owner.start_line)
+        });
     if has_unnamed_route(owner.name.as_str(), &masked)
         || !every_site_passes_sibling_type(
             test,
@@ -452,13 +451,17 @@ fn literal_kind_rules_out_owner(
 
 /// Whether `source` declares an item named `name` or names it in a `use`
 /// statement, so an unqualified `name` may not be the primitive. A glob
-/// import of an alias with a primitive's name is not read.
-fn file_rebinds_name(source: &str, name: &str) -> bool {
+/// import whose module encloses the owner (which starts on `owner_line`,
+/// 1-based) may bring in an alias of that name, so it counts too.
+fn file_rebinds_name(source: &str, name: &str, owner_line: usize) -> bool {
     const DECLARING: [&str; 5] = ["type", "struct", "enum", "union", "trait"];
     let masked = mask_comments_and_strings(source);
-    // A glob import (`use aliases::*;`) shadows a primitive name with any
-    // item of that name it brings in, which this reading cannot see.
-    if has_glob_import(&masked) {
+    let owner_at = masked
+        .split_inclusive('\n')
+        .take(owner_line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    if has_glob_import_enclosing(&masked, owner_at) {
         return true;
     }
     masked.match_indices(name).any(|(at, found)| {
@@ -482,75 +485,66 @@ fn file_rebinds_name(source: &str, name: &str) -> bool {
     })
 }
 
-/// Whether masked source has a glob import outside a `#[cfg(test)]`
-/// module: a `*` written as a path segment (after `::`, `{` or `,`) in a
-/// statement with a `use` keyword after the previous `;`. A test module's
-/// glob (`use super::*;`) cannot rebind a name for production code outside
-/// it, and the owner is production code. A dereference after `{` or `,`
-/// that happens to share a statement with a `use` only keeps the direct
-/// call, which is the conservative answer.
-fn has_glob_import(masked: &str) -> bool {
-    let test_modules = cfg_test_module_spans(masked);
+/// Whether masked source has a glob import in a block that also holds byte
+/// `owner_at`: a `*` written as a path segment (after `::`, `{` or `,`) in a
+/// statement with a `use` keyword after the previous `;`, where the block
+/// around that `use` (or the file, at the top level) encloses the owner. A
+/// glob in a sibling or nested module (a test module's `use super::*;`)
+/// cannot rebind a name the owner's signature resolves. A dereference after
+/// `{` or `,` that happens to share a statement with a `use` only keeps the
+/// direct call, which is the conservative answer.
+fn has_glob_import_enclosing(masked: &str, owner_at: usize) -> bool {
     masked.match_indices('*').any(|(at, _)| {
-        if test_modules.iter().any(|span| span.contains(&at)) {
-            return false;
-        }
         let before = masked[..at].trim_end();
         if !before.ends_with(['{', ',']) && !before.ends_with("::") {
             return false;
         }
-        let statement = &before[before.rfind(';').map_or(0, |i| i + 1)..];
+        let statement_start = before.rfind(';').map_or(0, |i| i + 1);
+        let statement = &before[statement_start..];
         statement
             .match_indices("use")
-            .any(|(start, matched)| ident_boundary(statement, start, start + matched.len()))
+            .filter(|(start, matched)| ident_boundary(statement, *start, start + matched.len()))
+            .any(|(start, _)| {
+                enclosing_block(masked, statement_start + start)
+                    .is_none_or(|block| block.contains(&owner_at))
+            })
     })
 }
 
-/// The byte spans of `#[cfg(test)] mod name { .. }` bodies in masked
-/// source. An attribute not followed by an inline module (a `mod name;`
-/// file module, or another item) contributes nothing.
-fn cfg_test_module_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
-    let mut spans = Vec::new();
-    for (at, matched) in masked.match_indices("#[cfg(test)]") {
-        let mut rest = masked[at + matched.len()..].trim_start();
-        // Further attributes between `#[cfg(test)]` and the item.
-        while let Some(attribute) = rest.strip_prefix("#[") {
-            let Some(close) = attribute.find(']') else {
-                break;
-            };
-            rest = attribute[close + 1..].trim_start();
+/// The byte range of the innermost `{ .. }` block around byte `at` in
+/// masked source, or `None` at the top level. An unclosed block runs to the
+/// end of the source.
+fn enclosing_block(masked: &str, at: usize) -> Option<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let open = (0..at).rev().find(|&i| match bytes[i] {
+        b'}' => {
+            depth += 1;
+            false
         }
-        rest = rest.strip_prefix("pub").map_or(rest, str::trim_start);
-        let Some(after_mod) = rest.strip_prefix("mod") else {
-            continue;
-        };
-        if !after_mod.starts_with(char::is_whitespace) {
-            continue;
+        b'{' if depth == 0 => true,
+        b'{' => {
+            depth -= 1;
+            false
         }
-        let after_mod = after_mod.trim_start();
-        let name_end = after_mod
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(after_mod.len());
-        let Some(body) = after_mod[name_end..].trim_start().strip_prefix('{') else {
-            continue;
-        };
-        let open = masked.len() - body.len();
-        let mut depth = 1usize;
-        for (offset, byte) in body.bytes().enumerate() {
-            match byte {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        spans.push(open..open + offset);
-                        break;
-                    }
-                }
-                _ => {}
+        _ => false,
+    })?;
+    let mut depth = 0usize;
+    let close = (open + 1..bytes.len())
+        .find(|&i| match bytes[i] {
+            b'{' => {
+                depth += 1;
+                false
             }
-        }
-    }
-    spans
+            b'}' if depth == 0 => true,
+            b'}' => {
+                depth -= 1;
+                false
+            }
+            _ => false,
+        })
+        .unwrap_or(bytes.len());
+    Some(open..close)
 }
 
 /// Whether any `let` in `text` binds `name` in its pattern (`let (n,) = ..`,
@@ -833,35 +827,56 @@ mod tests {
 
     #[test]
     fn file_rebinds_name_reads_declarations_and_imports() {
-        for (source, expected) in [
-            ("impl Scale<u8> for Bar {}", false),
-            ("type u8 = f64;", true),
-            ("pub struct str;", true),
-            ("use aliases::u8;", true),
-            ("use aliases::{u8, i32};", true),
-            ("use aliases::f32 as u8;", true),
-            ("use aliases::other; fn f(x: u8) {}", false),
-            ("// type u8 = f64;\nfn f(x: u8) {}", false),
-            ("let s = \"use u8\"; fn f(x: u8) {}", false),
-            ("fn u8_count() {}", false),
-            ("use aliases::*;", true),
-            ("use aliases::{*, other};", true),
-            ("use aliases::{other, inner::*};", true),
-            ("use super::*;\nimpl Scale<u8> for Bar {}", true),
+        for (source, owner_line, expected) in [
+            ("impl Scale<u8> for Bar {}", 1, false),
+            ("type u8 = f64;", 1, true),
+            ("pub struct str;", 1, true),
+            ("use aliases::u8;", 1, true),
+            ("use aliases::{u8, i32};", 1, true),
+            ("use aliases::f32 as u8;", 1, true),
+            ("use aliases::other; fn f(x: u8) {}", 1, false),
+            ("// type u8 = f64;\nfn f(x: u8) {}", 2, false),
+            ("let s = \"use u8\"; fn f(x: u8) {}", 1, false),
+            ("fn u8_count() {}", 1, false),
+            ("use aliases::*;\nimpl Scale<u8> for Bar {}", 2, true),
             (
-                "impl Scale<u8> for Bar {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+                "use aliases::{*, other};\nimpl Scale<u8> for Bar {}",
+                2,
+                true,
+            ),
+            (
+                "use aliases::{other, inner::*};\nimpl Scale<u8> for Bar {}",
+                2,
+                true,
+            ),
+            // A glob in the owner's own module counts.
+            (
+                "mod m {\n    use super::*;\n    impl Scale<u8> for Bar {}\n}",
+                3,
+                true,
+            ),
+            // A glob in another module, before or after the owner, does not.
+            (
+                "impl Scale<u8> for Bar {}\nmod tests {\n    use super::*;\n}\n",
+                1,
                 false,
             ),
             (
-                "#[cfg(test)]\n#[doc(hidden)]\npub mod tests { use super::*; }\nuse aliases::*;",
+                "mod other { use aliases::*; }\nimpl Scale<u8> for Bar {}",
+                2,
+                false,
+            ),
+            (
+                "mod tests;\nuse aliases::*;\nimpl Scale<u8> for Bar {}",
+                3,
                 true,
             ),
-            ("#[cfg(test)]\nmod tests;\nuse aliases::*;", true),
-            ("fn f(x: &mut u8, y: u8) { *x = 2 * y; }", false),
-            ("fn f(x: &mut u8) { let a = (1, *x); }", false),
+            ("fn f(x: &mut u8, y: u8) { *x = 2 * y; }", 1, false),
+            ("fn f(x: &mut u8) { let a = (1, *x); }", 1, false),
         ] {
             assert_eq!(
-                file_rebinds_name(source, "u8") || file_rebinds_name(source, "str"),
+                file_rebinds_name(source, "u8", owner_line)
+                    || file_rebinds_name(source, "str", owner_line),
                 expected,
                 "{source}"
             );
