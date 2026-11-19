@@ -227,7 +227,18 @@ ripr-server-v<VERSION>-<target>.zip
 ripr-server-v<VERSION>-<target>.tar.gz
 ripr-server-manifest-v<VERSION>.json
 SHA256SUMS
+ripr-server-v<VERSION>-<target>.zip.sha256
+ripr-server-v<VERSION>-<target>.tar.gz.sha256
 ```
+
+Each per-archive `.sha256` file holds only the bare lowercase digest and a
+newline, not `<sha256>  <file_name>`, so `sha256sum -c <archive>.sha256` fails
+with "no properly formatted checksum lines". Check one with
+`echo "$(cat <archive>.sha256)  <archive>" | sha256sum -c -` (the quickstart
+snippet), or use `SHA256SUMS`. The archives are flat (members are `./ripr`,
+`./LICENSE-MIT`, ...), so extract into a new directory with `tar xzf <archive>
+-C <dir>` rather than into a repository, where the license files would
+overwrite its own.
 
 The `SHA256SUMS` sidecar is `sha256sum -c SHA256SUMS`-compatible (one
 `<sha256>  <file_name>` line per asset). Releases through `v0.7.0` published the
