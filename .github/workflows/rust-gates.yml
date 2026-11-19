@@ -606,6 +606,17 @@ jobs:
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
 
+      # #14263: the Rust-only build (`--no-default-features --features lang-rust`)
+      # is a supported configuration, and between Nov 11 and Nov 18 main added
+      # seven preview-only items that warned there because nothing failed. Lint
+      # its library here on routes that run tests in this job; with
+      # `test-shards: 2` shard 2 of rust-test-shards.yml runs the same command,
+      # off this job's critical path. Library only: test helpers still warn.
+      - name: Strict Rust-only ripr library Clippy
+        id: rust_only_clippy
+        if: inputs.test-shards == 1
+        run: cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
+
       # Skipped only when the caller passes `test-shards: 2`; it then owns running
       # the same tests as two partitions in rust-test-shards.yml and must fail
       # the required result unless that workflow passes (routed-rust.yml `result`).
