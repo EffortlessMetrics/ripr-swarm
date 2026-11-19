@@ -321,11 +321,21 @@ fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
         return (Lexeme::Skip, end);
     }
     if byte == b'/' && bytes.get(at + 1) == Some(&b'*') {
+        // Rust block comments nest: `/* a /* b */ c */` is one comment.
+        let mut depth = 1usize;
         let mut end = at + 2;
-        while end + 1 < bytes.len() && !(bytes[end] == b'*' && bytes[end + 1] == b'/') {
-            end += 1;
+        while end < bytes.len() && depth > 0 {
+            if bytes[end] == b'/' && bytes.get(end + 1) == Some(&b'*') {
+                depth += 1;
+                end += 2;
+            } else if bytes[end] == b'*' && bytes.get(end + 1) == Some(&b'/') {
+                depth -= 1;
+                end += 2;
+            } else {
+                end += 1;
+            }
         }
-        return (Lexeme::Skip, (end + 2).min(bytes.len()));
+        return (Lexeme::Skip, end.min(bytes.len()));
     }
     if let Some((hashes, quote)) = raw_string_open(bytes, at) {
         let end = string_end(bytes, quote, Some(hashes));
@@ -545,6 +555,73 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// The directory that holds the files of `path`'s child modules:
+/// `a/mod.rs`, `lib.rs` and `main.rs` own their own directory, `a/b.rs`
+/// owns `a/b/`.
+fn child_module_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if matches!(stem.as_str(), "mod" | "lib" | "main") {
+        parent
+    } else {
+        parent.join(stem)
+    }
+}
+
+/// Names of out-of-line child modules declared under `#[cfg(test)]`, such as
+/// `#[cfg(test)] mod rows;` or `#[cfg(test)] #[allow(x)] pub(crate) mod rows;`.
+/// A module with a `#[path]` attribute is left to the per-item cut.
+fn test_only_child_modules(source: &str) -> Vec<String> {
+    const MARKER: &str = "#[cfg(test)]";
+    let in_code = code_positions(source);
+    let mut names = Vec::new();
+    let mut search = 0;
+    while let Some(found) = source[search..].find(MARKER) {
+        let at = search + found;
+        search = at + MARKER.len();
+        if !in_code[at] {
+            continue;
+        }
+        let mut rest = source[search..].trim_start();
+        // Skip further attributes on the same item.
+        let mut has_path = false;
+        while let Some(attr) = rest.strip_prefix("#[") {
+            let Some(close) = attr.find(']') else {
+                break;
+            };
+            has_path |= attr[..close].trim_start().starts_with("path");
+            rest = attr[close + 1..].trim_start();
+        }
+        if has_path {
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("pub") {
+            rest = after.trim_start();
+            if let Some(scoped) = rest.strip_prefix('(') {
+                let Some(close) = scoped.find(')') else {
+                    continue;
+                };
+                rest = scoped[close + 1..].trim_start();
+            }
+        }
+        let Some(after) = rest.strip_prefix("mod ") else {
+            continue;
+        };
+        let after = after.trim_start();
+        let name: String = after
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect();
+        if !name.is_empty() && after[name.len()..].trim_start().starts_with(';') {
+            names.push(name);
+        }
+    }
+    names
+}
+
 fn fragment_name(relative: &str) -> String {
     format!("{}.txt", relative.replace(['/', '\\'], "__"))
 }
@@ -554,8 +631,23 @@ fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
     let mut files = Vec::new();
     source_files(&src, &mut files)?;
     files.sort();
+    let mut test_only = Vec::new();
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let dir = child_module_dir(path);
+        for name in test_only_child_modules(&source) {
+            test_only.push(dir.join(&name));
+            test_only.push(dir.join(format!("{name}.rs")));
+        }
+    }
     let mut by_file = BTreeMap::new();
     for path in files {
+        // A file whose `mod` declaration is `#[cfg(test)]` is test-only as a
+        // whole, and so is everything below its directory.
+        if test_only.iter().any(|module| path.starts_with(module)) {
+            continue;
+        }
         let relative = format!(
             "crates/ripr/src/{}",
             path.strip_prefix(&src)
@@ -956,6 +1048,60 @@ fn after() -> Result<(), String> {
     assert_eq!(
         offender_messages(source),
         vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn scan_treats_a_nested_block_comment_as_one_comment() {
+    // Rust block comments nest, so the inner `*/` does not end the outer one.
+    let source = r#"
+/* outer /* inner */
+fn retired() -> Result<(), String> {
+    Err("commented-out message is not found".to_string())
+}
+*/
+fn live() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn test_only_child_modules_names_out_of_line_test_modules() {
+    let source = r##"
+#[cfg(test)]
+mod rows;
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod helpers ;
+#[cfg(test)]
+mod inline_tests {}
+#[cfg(test)]
+#[path = "elsewhere.rs"]
+mod moved;
+mod production;
+// #[cfg(test)] mod commented;
+const NOTE: &str = "#[cfg(test)] mod quoted;";
+"##;
+    assert_eq!(
+        test_only_child_modules(source),
+        vec!["rows".to_string(), "helpers".to_string()]
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/b.rs")),
+        PathBuf::from("src/a/b")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/mod.rs")),
+        PathBuf::from("src/a")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/lib.rs")),
+        PathBuf::from("src")
     );
 }
 
