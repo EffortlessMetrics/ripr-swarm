@@ -2230,6 +2230,18 @@ fn missing_ref_repair(
          then re-run"
             .to_string();
     }
+    // A full or abbreviated commit id is never a branch: a fetch creates no
+    // `origin/<sha>`, so branch-shaped advice cannot restore it. Name the
+    // commit fetch instead (and the history it needs in a shallow clone).
+    if looks_like_commit_id(missing_ref)
+        && let Some(remote) = commit_fetch_remote(root, git_timeout)
+    {
+        return if is_shallow_repository(root, git_timeout) {
+            format!("Fetch the commit (for example `git fetch --unshallow {remote} {missing_ref}`)")
+        } else {
+            format!("Fetch the commit (for example `git fetch {remote} {missing_ref}`)")
+        };
+    }
     if is_shallow_repository(root, git_timeout) {
         // An ancestor offset of a present commit (`HEAD~5`) needs depth
         // only. A branch, or an offset of one that is absent
@@ -2286,6 +2298,15 @@ fn missing_ref_repair(
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
+    // A `v1.2.3`-shaped name is a release tag far more often than a branch,
+    // and `git fetch <remote>` does not bring tags that no fetched branch
+    // reaches. Shape only: asking the remote which tags exist costs a network
+    // round trip this local diagnosis never makes.
+    if looks_like_release_tag(missing_ref)
+        && let Some(remote) = commit_fetch_remote(root, git_timeout)
+    {
+        return format!("Fetch the tags (for example `git fetch --tags {remote}`)");
+    }
     let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {
         Some([]) if !plain_branch => format!(
@@ -2310,6 +2331,38 @@ fn missing_ref_repair(
             // collapse into `Some([])` and report "no remote" unobserved.
             "Fetch the ref (for example `git fetch`)".to_string()
         }
+    }
+}
+
+/// Whether `name` is spelled like a commit id: 7 to 64 hex digits (an
+/// abbreviated id up to a SHA-256 object id).
+fn looks_like_commit_id(name: &str) -> bool {
+    (7..=64).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Whether `name` is spelled like a release tag (`v1`, `v2.0.1`): a `v`
+/// followed by a digit, and no slash or other branch-path shape.
+fn looks_like_release_tag(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next() == Some(b'v')
+        && bytes.next().is_some_and(|byte| byte.is_ascii_digit())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+/// The remote a commit fetch names: `origin` when configured or when the
+/// remote list is unknown, otherwise the first plain remote. `None` when no
+/// remote is configured, so the add-remote advice applies instead.
+fn commit_fetch_remote(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    match configured_remotes(root, git_timeout) {
+        None => Some("origin".to_string()),
+        Some(remotes) if remotes.iter().any(|remote| remote == "origin") => {
+            Some("origin".to_string())
+        }
+        Some(remotes) => remotes
+            .into_iter()
+            .find(|remote| remote_name_is_plain(remote)),
     }
 }
 
@@ -5563,6 +5616,69 @@ mod tests {
                 && !head_repair.contains("--base"),
             "the head repair must name its own flag, got: {head_repair}"
         );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_commit_fetch_for_a_hex_id() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-hex-id")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let repair = missing_ref_repair(&dir, sha, "--base", None);
+        assert!(
+            repair.contains(&format!("`git fetch origin {sha}`")),
+            "a commit id needs the commit fetch, got: {repair}"
+        );
+        assert!(
+            !repair.contains("fetched branch") && !repair.contains("origin/0123"),
+            "a commit id is never a branch, got: {repair}"
+        );
+        // A short id still names its commit fetch; a hex-less name does not.
+        let short = missing_ref_repair(&dir, "0123abc", "--base", None);
+        assert!(short.contains("`git fetch origin 0123abc`"), "{short}");
+        let branch = missing_ref_repair(&dir, "feature-x", "--base", None);
+        assert!(
+            branch.contains("fetched branch is named `origin/feature-x`"),
+            "{branch}"
+        );
+        // Six hex digits is below the abbreviation floor: branch advice.
+        let tiny = missing_ref_repair(&dir, "abcdef", "--base", None);
+        assert!(!tiny.contains("Fetch the commit"), "{tiny}");
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_tag_fetch_for_a_release_tag_shape() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tag-shape")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        for tag in ["v9.9.9", "v2"] {
+            let repair = missing_ref_repair(&dir, tag, "--base", None);
+            assert!(
+                repair.contains("`git fetch --tags origin`") && !repair.contains("fetched branch"),
+                "{tag} needs the tag fetch, got: {repair}"
+            );
+        }
+        for branch in ["velocity", "v", "version-2"] {
+            let repair = missing_ref_repair(&dir, branch, "--base", None);
+            assert!(
+                !repair.contains("--tags") && repair.contains("fetched branch"),
+                "{branch} stays branch advice, got: {repair}"
+            );
+        }
 
         ignore_remove_dir_all(&dir);
         Ok(())

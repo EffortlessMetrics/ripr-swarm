@@ -764,6 +764,61 @@ fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result
     Ok(())
 }
 
+/// A repository with an `origin` remote that has no fetched refs, so every
+/// unresolved `--base` reaches the fetch advice.
+fn repo_with_origin(scratch: &Scratch, name: &str) -> Result<PathBuf, String> {
+    let root = plain(scratch, name)?;
+    git(
+        &root,
+        &["remote", "add", "origin", "https://example.invalid/x.git"],
+    )?;
+    Ok(root)
+}
+
+fn base_refusal(root: &Path, base: &str) -> Result<String, String> {
+    let ran = ripr(root, &["check", "--base", base], &[])?;
+    assert_sane(&ran, base)?;
+    if ran.code != Some(2) || !ran.stderr.contains("does not resolve to a commit") {
+        return Err(format!(
+            "{base}: expected an unresolved-base refusal\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(ran.stderr)
+}
+
+#[test]
+fn unresolved_commit_id_base_names_the_commit_fetch() -> Result<(), String> {
+    let scratch = Scratch::new("hexbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let stderr = base_refusal(&root, sha)?;
+    if !stderr.contains(&format!("`git fetch origin {sha}`")) || stderr.contains("fetched branch") {
+        return Err(format!("a commit id needs the commit fetch\n{stderr}"));
+    }
+    // A name that is not hex keeps the branch advice.
+    let stderr = base_refusal(&root, "feature-x")?;
+    if !stderr.contains("fetched branch is named `origin/feature-x`") {
+        return Err(format!("a branch name keeps branch advice\n{stderr}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn unresolved_release_tag_base_names_the_tag_fetch() -> Result<(), String> {
+    let scratch = Scratch::new("tagbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    let stderr = base_refusal(&root, "v9.9.9")?;
+    if !stderr.contains("`git fetch --tags origin`") || stderr.contains("fetched branch") {
+        return Err(format!("a release-tag name needs the tag fetch\n{stderr}"));
+    }
+    let stderr = base_refusal(&root, "velocity")?;
+    if stderr.contains("--tags") || !stderr.contains("fetched branch is named `origin/velocity`") {
+        return Err(format!("a non-tag name keeps branch advice\n{stderr}"));
+    }
+    Ok(())
+}
+
 /// A changed package larger than the 1,200-file narrowing threshold runs at
 /// default settings: that threshold bounds time, and only the higher
 /// `RIPR_MAX_DIFF_INDEX_FILES` memory guard refuses. Before the split, the
