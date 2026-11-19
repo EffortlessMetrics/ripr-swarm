@@ -3322,9 +3322,7 @@ impl RustAdapter {
                             // lexical test keeps a file the index could not
                             // parse, which then reads as unreadable.
                             !facts.module_declarations.is_empty()
-                                || facts.source.lines().any(|line| {
-                                    line.contains("mod ") && line.trim_end().ends_with(';')
-                                })
+                                || crate::analysis::diff::may_declare_module(&facts.source)
                         })
                         .map(|(_, facts)| facts.data().source.as_ref()),
                     changed_files.iter().map(|changed| {

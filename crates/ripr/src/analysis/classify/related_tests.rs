@@ -361,10 +361,7 @@ impl RelatedTestCandidateIndex {
                 .iter()
                 .filter(|(_, facts)| {
                     !facts.module_declarations.is_empty()
-                        || facts
-                            .source
-                            .lines()
-                            .any(|line| line.contains("mod ") && line.trim_end().ends_with(';'))
+                        || crate::analysis::diff::may_declare_module(&facts.source)
                 })
                 .map(|(_, facts)| facts.data().source.as_ref()),
             std::iter::empty(),

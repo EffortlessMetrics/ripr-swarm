@@ -589,6 +589,20 @@ impl ModuleDeclarations {
     }
 }
 
+/// Whether `source` may hold a `mod` declaration: the keyword `mod` as a
+/// whole word followed by whitespace, anywhere (comments and strings
+/// included). A superset for [`ModuleDeclarations::read`]'s declaring
+/// sources, so a file the index could not parse still reaches it and reads
+/// as unreadable, whatever its comments or line breaks (#15104).
+pub(crate) fn may_declare_module(source: &str) -> bool {
+    source.match_indices("mod").any(|(at, _)| {
+        let before = source.get(..at).and_then(|text| text.chars().next_back());
+        let after = source.get(at + 3..).and_then(|text| text.chars().next());
+        before.is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+            && after.is_some_and(char::is_whitespace)
+    })
+}
+
 /// Every out-of-line `mod name;` declaration under `node`.
 fn out_of_line_modules(node: &SyntaxNode) -> Vec<ast::Module> {
     node.descendants()
@@ -846,6 +860,19 @@ mod tests {
             "unread declarations"
         );
         Ok(())
+    }
+
+    /// #15104: the lexical prefilter keeps every file that may declare a
+    /// module, whatever its comments or line breaks.
+    #[test]
+    fn may_declare_module_keeps_any_mod_keyword() {
+        assert!(may_declare_module("mod real;"));
+        assert!(may_declare_module("mod real; // comment"));
+        assert!(may_declare_module("#[cfg(x)]\nmod\n    real;"));
+        assert!(may_declare_module("pub(crate) mod a {}"));
+        assert!(!may_declare_module("fn model() {}"));
+        assert!(!may_declare_module("let xmod = 1;"));
+        assert!(!may_declare_module("fn f() -> u8 { 7 }"));
     }
 
     /// #15104: a `#[path]` declaration gates only the owners it may move: a
