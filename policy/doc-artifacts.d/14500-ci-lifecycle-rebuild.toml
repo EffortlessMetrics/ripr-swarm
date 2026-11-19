@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-PLAN-0064"
+kind = "plan"
+path = "plans/ci-lifecycle-rebuild/implementation-plan.md"
+status = "proposed"
+owner = "repo-infra"
+standalone_reason = "Sequences the existing #4984/#14500 lifecycle and #8198/#11566 execution owners under the current CI and ProductGatePlan contracts; no new scheduler, status registry, protection or activation authority."

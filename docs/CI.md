@@ -7,6 +7,199 @@ configuration are mature enough to support opt-in failure policies.
 New to RIPR in CI? Start with the short ordered path in
 [Adopting RIPR in CI](ADOPTING_IN_CI.md); this page is the long reference.
 
+## Qualification rebuild architecture
+
+This is the execution target under #4984, #14500 and #8198, not an activation
+claim. [Current state](ci/current-state.md) records the inspected installed
+route. [Merge flow](MERGE_FLOW.md) remains the operational request/landing
+procedure; [ProductGatePlan](ci/PRODUCT_GATE_PLAN.md) owns gate propositions and
+applicability. The [implementation plan](../plans/ci-lifecycle-rebuild/implementation-plan.md)
+connects the existing candidates, proof requirements and rollback boundaries.
+
+### Lifecycle, cost and placement
+
+Development and review use focused local evidence. Draft, Ready, ordinary
+updates and reviews start no automatic CI, including skipped or cheap wrappers.
+The target explicit merge request performs cheap, trusted, exact-H admission.
+GitHub's native queue then qualifies the actual combined G once for its complete
+applicable portfolio. Landing reads back M without routine main product replay.
+The current full label-requested PR qualification remains until this replacement
+is qualified and enforced.
+
+The primary economics target is **under 20 total raw runner-minutes per complete
+required qualification**. Wall-clock completion, queue wait, failed/replaced
+work and runner-minutes per landed PR are separate measures. A 19-minute critical
+path on many machines does not meet that compute target. Enabling changes may
+land with narrower measured acceptance; they do not close the parent target.
+
+Keep the existing hosted execution route as the baseline. No new machine,
+self-hosted fleet, Hermes dependency, controller service or second queue is a
+prerequisite. Native grouping, actual dispatch count and product-execution count
+are different facts; a merge-group size setting does not batch workflow builds.
+
+### One semantic plan, explicit effects
+
+Extend the existing pure typed ProductGatePlan and its staged owner (#13514).
+Do not introduce a parallel obligation registry. The plan describes required
+obligations, conservative applicability, preparation compatibility, dependencies
+and acceptable completion evidence. Placement is a separate projection: packing
+or splitting jobs must not change selected behavior.
+
+Use narrow ports for repository/GitHub state, Cargo execution, process ownership
+and artifacts. Keep business decisions in their existing Rust semantic owners.
+YAML should declare platform events, permissions, allocations, dependencies and
+invocations, not another copy of admission or gate truth. A large general-purpose
+script replacing large YAML is not the intended boundary.
+
+Keep these identities separate and join them explicitly:
+
+| Identity | Required information |
+| --- | --- |
+| Qualification subject | Repository, authorized destination, frozen protected comparison base B0, complete ordered PR/H membership and dependency edges, exact G and tree |
+| Control and obligation plan | Protected control generation C, plan/schema version, selected obligations, applicability reasons and expected nonempty inventories |
+| Prepared build family | Exact source/input identity, Cargo/toolchain and nextest versions, host/target, resolved features, profile, flags, relevant build environment and output manifest |
+| Execution | Admission transaction, run/job/producer attempt, worker outcome, verifier/finalizer attempt, reuse provenance and current eligibility |
+
+A filename, matching test count, cache key or caller-supplied SHA is not enough.
+Trusted control C is distinct from candidate G and from the event's immediate
+base. The latter can itself be a speculative prefix. Read complete membership;
+do not infer the whole group from the last PR, queue position 1, or a ref suffix.
+
+### Preparation and consumers
+
+Prepare once **per compatible build family**, not once for every configuration
+by assertion. Start with a same-runner locality reference and compare a small
+number of placements before introducing transport. A shared archive is an option
+to qualify, not a dependency of the redesign.
+
+- The native test producer supplies its exact compiled inventory to the
+  existing file-policy validator. Package-only and workspace-unified inventories
+  can differ through features/host/configuration; retain distinct preparation
+  when equivalence is not established. Static test scanning is not a native
+  compiled-inventory substitute.
+- Guide/CLI consumers borrow the Cargo-selected exact-candidate executable and
+  its validated context. A process-local OnceLock is not cross-process
+  preparation. CI must expose whether a consumer reused the product or fell
+  back to Cargo; accepting an arbitrary PATH or target-directory binary is
+  not the repair.
+- Tests whose assertion is compiler/build/install behavior retain that behavior
+  in a private bounded fixture. Do not prohibit all nested Cargo indiscriminately.
+- Default-feature workspace tests, separate doctests, default-feature Clippy and
+  all-features RIPR Clippy retain their distinct propositions. Do not add back
+  the already-removed redundant cargo check.
+- Keep nextest's current selection, ignored-test, isolation and exact-cover
+  contract for the first migration. Resource-only scheduling changes need
+  parity; a later pure-test batching experiment needs per-case result parity
+  and state-contamination controls before changing the runner contract.
+- Goldens, fixtures, corpora, packet schemas and applicable extension proof
+  remain mandatory where selected. The 13 core ProductGatePlan IDs alone are
+  not permission to discard additional installed required producers.
+
+Share immutable prepared outputs, not mutable target/report/fixture workspaces.
+Consumers own private writable state. Seal retained results only after child
+process groups have terminated and been reaped; a parent exiting does not
+release a still-writing descendant's resource.
+
+Cache restoration is optional acceleration. Preserve trusted writer/reader
+boundaries, exact compatibility and a complete cold route. Measure producer,
+archive, transfer, extraction and every consumer together. A new key generation
+is adopted only when the real reader uses it; a merged producer is not a saving.
+Do not restore main replay just to warm caches.
+
+### Compiler boundaries and resource budgets
+
+Follow accepted [ADR 0027](adr/0027-one-user-facing-package-lockstep-support-crates.md),
+not an aesthetic microcrate rewrite. Extract private production implementation
+together with its private tests into measured lockstep support crates, preserving
+the public ripr facade and package/install contract. Continue the existing
+contract/outcome prerequisites, then TypeScript, Python and LSP/MCP boundaries
+as measurement justifies them.
+
+The existing criterion is an attributed largest compiler-unit peak at or below
+8,000,000,000 bytes. It is not an 8-GB aggregate-host claim. Track simultaneous
+process-tree memory and host headroom separately; an integration-binary count
+reduction does not establish a smaller monolithic libtest compiler.
+
+One execution unit has one CPU/memory/disk budget across Cargo, test workers,
+fixture compilers and cleanup. Cache enablement must not multiply compiler
+concurrency. Use the existing resource/process owners; do not add a new global
+lease registry or require a perfect descendant graph before a safely bounded
+discovery process may start. Keep ordinary local checks focused rather than
+moving the hosted suite into commit/push hooks.
+
+### Documentation and evidence paths
+
+A Markdown suffix is not a proof of product independence. Classify asserting
+readers and their inputs: pure prose/policy can use the lightweight repo-policy
+owner; CLI help, command examples, adapter/agent contracts and other product
+consumers retain the required executable tests. Unknown or mixed scope widens.
+A lower code/extension member plus an upper docs-only member must select the
+complete applicable G portfolio.
+
+The landed docs-gate interface covers a subset. Migrate retained obligations
+individually, demonstrate report/verdict parity and actual consumer adoption,
+then switch the workflow. Do not label the current heavy docs route as cheap
+because a lightweight command exists.
+
+Separate mandatory packet/schema integrity from costly analysis within PR
+evidence. Reuse exact-base and exact-G facts where valid and bound repeated
+analysis. A timeout disclosed as unavailable can be honest and still waste
+minutes. Changing which analysis is required needs an explicit policy decision;
+do not silently move a current mandatory obligation into advisory/nightly work.
+
+### Authoritative finalization, retry and retirement
+
+The finalizer consumes the expected plan and authoritative GitHub producer facts
+without executing candidate code. Missing, failed, cancelled, timed-out,
+wrong-subject, incompatible, incomplete or superseded required work cannot
+become success. A policy-authorized not-applicable row is explicit; a skipped
+aggregate is not product qualification.
+
+Prefer a qualified repository-native protected-workflow mechanism. The
+merge-group-only ruleset-workflow validation failure is a separate reproduced
+provider issue under #14500. Do not add PR triggers to evade it. A narrowly
+scoped App-bound publisher is a fallback to qualify if the native mechanism
+cannot enforce provenance, not a presumed Hermes dependency.
+
+Check attachment and check authenticity are different controls. A protected
+workflow_dispatch that checks out H does not move its automatic workflow check
+from the dispatch ref to H. An explicit exact-H check must be bound correctly;
+a familiar context name or the Actions issuer alone does not distinguish a
+candidate-created same-name result. The isolated omit-the-trusted-callee and
+spoofed-success controls must fail before any protection cutover.
+
+Separate admission identity, producer attempt and finalizer attempt. A transient
+finalizer failure may reuse complete authenticated exact-G producers only under
+the qualified reuse contract. A newer failed/cancelled producer that uploaded
+nothing still supersedes an older success when the attempt policy says so;
+artifact presence alone cannot decide.
+
+Cancel only positively retired exact-G lifetimes or work made unnecessary by a
+known required failure. A newer run, advancing main, or a lower member landing
+does not by itself invalidate another G. Distinguish successful prefix settlement
+from withdrawal/recomposition. Use a tested existing-controller liveness helper
+before expensive phases and, if needed, a bounded read-only in-job watchdog.
+An optional protected reconciler cancels exact retired run IDs without running
+candidate content. API uncertainty is unknown, not authority to cancel or pass.
+Never key whole-queue cancellation simply by PR or main.
+
+GitHub's Actions merge_group event supports checks_requested; the separate
+destroyed webhook is not an available Actions activity type. Do not implement a
+nonexistent destroyed Actions trigger.
+
+### Acceptance and activation
+
+Every optimization needs complete subject/obligation conservation, wrong-input
+controls, cold correctness and whole-route cost. Retain counterexamples and
+failed runs. Use focused local experiments first, then selected hosted
+qualification; do not run every alternative through the full matrix.
+
+The settings transaction remains separately authorized and guarded by native
+singleton, multi-member and bad-middle canaries, trusted-source spoofing controls,
+retry/retirement controls and rollback. A known-good isolated small-crate
+rehearsal does not establish dynamic full-product production qualification.
+
+
 ## Python wheel applicability (#4987)
 
 The Python wheel workflow retains its callable and explicit manual
@@ -207,7 +400,9 @@ builds are gone. Callable qualification leaves remain available to the existing
 #8082 owner; explicit manual proof and separately purposed security, corpus and
 maintenance schedules retain their declared scope. #14500 retires main product
 replay and makes the sentinel a native-proof observer; full H/G qualification
-remains. The hosted App, label cutover and #4842 timer retirement remain open.
+remains. Trusted finalization, label cutover and #4842 timer retirement remain
+open. Prefer a qualified GitHub-native protected source boundary; a dedicated
+App is a conditional fallback, not an assumed dependency.
 
 Native activation remains incomplete; these event edges are bootstrap debt:
 
@@ -277,13 +472,15 @@ CI is a product surface. A contributor should be able to tell what ran, why it
 ran, what it cost, what it produced, and which explicit label or follow-up
 artifact changes that behavior.
 
-`ripr` uses **Local Evidence Minutes** (LEM) as the planning unit for CI cost.
+`ripr` retains **Local Evidence Minutes** (LEM) as an approximate planning unit.
 One LEM is approximately one minute of hosted CI time on one normal GitHub
 runner, including setup, toolchain/cache work, command runtime, report writing,
 and artifact upload for that lane. LEM is intentionally approximate until
 `target/ci/ci-actuals.json` exists; PRs should still estimate the order of
 magnitude so reviewers can notice when a small docs change starts paying for a
-release-style proof.
+release-style proof. These forecasts do not replace the measured raw
+runner-minute target in [Qualification rebuild architecture](#qualification-rebuild-architecture).
+The bands classify cost, not permission to omit a required obligation.
 
 Budget bands:
 
@@ -299,19 +496,19 @@ workflow file.
 
 | Posture | Purpose | Examples | Default behavior |
 | --- | --- | --- | --- |
-| Required | Cheap merge-safety and policy invariants. | `fmt`, `cargo check`, clippy, focused tests, static-language, file/workflow/process/dependency policy, output-contract checks for schema/output changes. | Blocking on ordinary PRs that touch the relevant surface. |
-| Advisory | Evidence that helps review but should not block routine work until calibrated. | coverage, Test Analytics, `ripr` self-dogfood, SARIF upload, agent-loop artifacts, Droid review, future Clippy lints, broad security posture scans. | Upload artifacts or comments; do not fail the PR by default. |
-| On-demand / release | Expensive, slow, or release-bearing proof. | `cargo package`, `cargo publish --dry-run`, VSIX packaging, server archive checks, release readiness, full workspace proof. | Run only from each lane's wired `main`, manual dispatch, `release-check`, or `full-ci` trigger; avoid default PR blocking. |
+| Required | The complete applicable merge-safety portfolio, whether cheap or expensive today. | Formatting, both selected Clippy configurations, all required compiled tests, doctests, policy, product contracts, applicable extension and evidence checks. | Runs on explicit qualification today; the target runs product proof once on actual G after cheap H admission, not on ordinary development events. |
+| Advisory | Evidence with a separately declared nonblocking purpose. | Test Analytics, separately scoped coverage, future Clippy and diagnostic artifacts. | Use only the lane's retained explicit or separately purposed trigger. Advisory classification cannot remove a current required producer. |
+| Release / deep proof | Release-bearing or separately selected proof beyond the required qualification portfolio. | `cargo package`, `cargo publish --dry-run`, release VSIX packaging, server archive and release-readiness checks. | Use the existing explicit release/deep contract; no new automatic main replay or default PR subscriber. |
 
-The current `ci.yml` still carries some release-like proof in the primary Rust
-job. Treat that as legacy posture while the CI split is rolled out. New CI work
-should move toward small required gates at the front door, advisory evidence by
-default, and label-gated release proof.
+Full required workspace tests are not an optional release lane. Their current
+cost is a preparation/execution problem, not authority to demote them. The
+removed standalone workspace `cargo check` must not be restored as a duplicate
+of established compilation-unit coverage. See the
+[installed-state inventory](ci/current-state.md) for actual producer commands.
 
-This section defines the target policy. It does not mean the current workflows
-already implement PR planning, label-gated lane selection, CI actuals, or
-budget enforcement. Until those later PRs land, the "Current Workflows" section
-below remains the source of truth for what GitHub Actions runs today.
+This section does not establish installed queue-only admission, measured
+budget compliance, or activation of a staged plan. Current workflow source and
+native evidence remain authoritative for what executes.
 
 ## Codex CI-Efficiency Compatibility Invariants (Hard Guardrails)
 
@@ -341,8 +538,8 @@ workflow behavior documented in [Current Workflows](#current-workflows).
 
 - Do **not** build a future planner that routes all changed files through Rust
   CI.
-- Treat metadata/control-plane surfaces as candidates for light paths unless
-  mixed with real Rust/build/test changes, including:
+- Treat metadata/control-plane surfaces as candidates for light paths only
+  after resolving their actual behavioral readers, including:
   - `docs/**`, markdown-only edits, `README*`, `CHANGELOG*`, `SECURITY*`,
     `CONTRIBUTING*`;
   - `policy/**`, `plans/**`, `badges/**`, `AGENTS.md`;
@@ -354,23 +551,28 @@ workflow behavior documented in [Current Workflows](#current-workflows).
   - not docs-light;
   - route to minimal hosted workflow safety/validation unless policy requires
     more.
+- A Markdown or policy file consumed by a Rust behavioral test still selects
+  that proof. Filename suffixes and policy metadata do not establish a
+  product-free route. Unknown readers select the conservative required route.
 - Until a classifier is implemented and validated, the active workflows remain
   the source of truth. Do not claim a docs-only PR skipped Rust proof unless the
   check run evidence shows that it did.
 
 ### 3) Target PR planner policy
 
-The target planner should classify first, then choose the cheapest truthful
-lane:
+The target planner classifies obligations before choosing execution placement:
 
-- docs/control-plane-only -> no Rust compile;
-- workflow-only -> hosted YAML/workflow validation, no full Rust by default;
-- Rust source/build/test touched -> routed Rust-small;
-- hardware/GPU/receipt-only -> syntax/receipt validation only;
-- mixed or unknown -> Rust-small, not full CI.
+- Reader-free docs/control-plane changes select product-free checks.
+- Workflow changes select workflow safety plus the behavior they change.
+- Product/build/test changes select the complete applicable required portfolio.
+- Hardware/GPU/receipt changes retain their syntax, provenance and actual
+  behavioral consumers; they are not automatically product-free.
+- Mixed or unknown inputs select conservative required proof, not an empty or
+  arbitrarily smaller success.
 
-Full CI is opt-in by policy trigger (label/manual dispatch/release/
-schedule/merge queue), not the default PR path.
+Ordinary PR events request no hosted qualification. This target selection
+applies at the explicit lifecycle boundary; it does not make required workspace
+proof optional or change the installed `merge-ready` bootstrap route.
 
 ### 4) Hosted fallback boundary
 

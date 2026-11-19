@@ -12,8 +12,10 @@ no-queue and conditional-activation prose below is retained only as history.
 
 Steven selected native queue-time qualification on October 21, 2026 under
 [#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-That target is now live; it does not weaken review, proof, protected squash, or
-separate release authority.
+The native queue portion is live. Cheap H admission and one complete applicable
+combined-G qualification remain the cutover target; the installed full PR
+qualification is not that replacement. Neither target weakens review, proof,
+protected squash, or separate release authority.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
@@ -21,7 +23,11 @@ earned once per queue entry on the exact queued merge commit (see
 `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit
 must form a linear single-parent squash chain, bind to its live PR head and
 queue entry, pass candidate/cut/review/thread admission, and belong to the
-base repository before self-hosted runners are selected. The workflow also
+base repository before self-hosted runners are selected. This describes the
+installed event-range walk, not acceptance of complete native-stack membership:
+an upper event's immediate base can be a speculative lower G. The #14500
+reconstruction must freeze the protected B0 and complete ordered membership
+independently. The workflow also
 still requests full PR qualification on the explicit `merge-ready` label and
 retains manual dispatch. Ordinary main/master product replay is retired;
 [the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
@@ -39,8 +45,10 @@ accepted remain separate states.
 ## Who owns the change
 
 Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. Label cutover and hosted App activation remain
-open. Main replay is retired with full H/G protection, opportunistic caches and
+#4842 auxiliary-trigger retirement. Label cutover and trusted finalization remain
+open. Repository-native mechanisms are preferred; Hermes and a new App are not
+presumed dependencies (#14500's November 18 direction). Main replay is retired
+with full H/G protection, opportunistic caches and
 mandatory cold recomputation; no recurring warmer is introduced (#7827).
 See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
 
@@ -139,8 +147,11 @@ Start native canaries with build concurrency 1, one-entry landing, squash and
 all entries required to pass. These are bootstrap settings, not a universal
 throughput ceiling. Merge limits do not batch builds. Tune from measured first-G
 pass rate, invalidations, queue age, capacity and cost per accepted change.
-The normal <=20-minute complete-active-qualification target remains; queue delay
-and failed/retried work are accounted separately, not omitted.
+The newer primary target is under 20 total raw runner-minutes for complete
+required qualification. Historical complete-active elapsed targets remain a
+separate latency measure; queue delay and failed/retried work are also recorded,
+not omitted. See the [execution architecture](CI.md#qualification-rebuild-architecture)
+and [bounded implementation sequence](../plans/ci-lifecycle-rebuild/implementation-plan.md).
 
 ## Existing implementation owners and cutover order
 
