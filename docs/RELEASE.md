@@ -268,8 +268,21 @@ crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
 remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
 test adds to them (#14198).
 
-So `ripr` is packaged from a **publish stage**, never straight from the
-checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+The publish stage below is a **temporary uploadability bridge** (#14198): it
+gets the source package under the upload limit, and it does not separate
+development tests from what customers download. It strips only inline modules
+marked exactly `#[cfg(test)]` under `crates/ripr/src`. Other test cfgs (for
+example `#[cfg(all(test, not(windows)))]`), test-only items outside such
+modules, out-of-line test support not matched by the `include` exclusions, the
+`ripr-contract` tests and the packaged CLI help harness all stay in the source
+packages. Native executables already omit test code, because they come from an
+ordinary non-test `cargo build`. The intended layout puts tests in owner-local
+test files that Cargo's package rules exclude, for both crates, enforced by
+package-content checks. Once that lands, the strip has nothing left to remove,
+and the stage can be retired.
+
+Until then, `ripr` is packaged from a **publish stage**, never straight from
+the checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
 clone of the workspace checked out at `HEAD` (the workspace members, the root
 files and `.cargo/`; uncommitted edits are not staged) and, in
 `crates/ripr/src` only, removes every inline module whose attributes include

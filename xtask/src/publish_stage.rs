@@ -4,9 +4,12 @@
 //! `include` list in `crates/ripr/Cargo.toml` already leaves out out-of-line
 //! unit-test files, but about a third of the remaining source is inline
 //! `#[cfg(test)] mod tests { .. }` blocks, and that share grows with every
-//! test added. Moving those blocks into files is a 400k-line diff.
+//! test added.
 //!
-//! Instead the package is built from a publish stage: a sparse local clone of
+//! This stage is a temporary uploadability bridge, not the test/payload
+//! boundary: the intended layout keeps tests in owner-local files that the
+//! package rules exclude (see `docs/RELEASE.md`, Crate tarball contents). Until
+//! then the package is built from a publish stage: a sparse local clone of
 //! the workspace checked out at `HEAD`, holding the workspace members and the
 //! root files, in which `crates/ripr/src` has each inline module whose
 //! attributes include exactly `#[cfg(test)]` removed with its attributes and
