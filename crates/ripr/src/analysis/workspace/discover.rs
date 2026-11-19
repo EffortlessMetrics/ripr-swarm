@@ -533,8 +533,9 @@ pub(crate) fn discover_python_test_files(
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
 /// shell, ...), with their language names, skipping the same directories as
 /// the other discovery walks plus virtualenv and tool-cache directories (a
-/// `.venv`'s `activate.ps1` is not repository source). Pilot uses it so a repository written in such a
-/// language gets a named non-claim instead of an empty "complete" ranking.
+/// `.venv`'s `activate.ps1` is not repository source). Pilot uses it so a
+/// repository written in such a language gets a named non-claim instead of an
+/// empty "complete" ranking.
 pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
     visit_classified(root, root, &mut out, &unanalyzed_source_language, true);
@@ -547,8 +548,10 @@ pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str
 /// One short-circuiting walk with the same ignored directories as the other
 /// discovery walks; only regular files count, so a dangling link or FIFO
 /// named like a source file does not make a root look inspectable (#9922).
+/// Inside virtualenv and tool-cache directories an unanalyzed-language file
+/// does not count, matching [`discover_unanalyzed_source_files`] (#15283).
 pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
-    fn inspectable(path: &Path) -> bool {
+    fn inspectable(path: &Path, in_vendored: bool) -> bool {
         RustAdapter.accepts_path(path)
             || route(path).is_some_and(|language| {
                 matches!(
@@ -559,9 +562,9 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
                         | LanguageId::Perl
                 )
             })
-            || unanalyzed_source_language(path).is_some()
+            || (!in_vendored && unanalyzed_source_language(path).is_some())
     }
-    fn walk(dir: &Path) -> bool {
+    fn walk(dir: &Path, in_vendored: bool) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return false;
         };
@@ -575,16 +578,18 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
             };
             if kind.is_dir() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if !DEFAULT_IGNORED_DIRS.contains(&name) && walk(&path) {
+                if !DEFAULT_IGNORED_DIRS.contains(&name)
+                    && walk(&path, in_vendored || is_vendored_dir(&path, name))
+                {
                     return true;
                 }
-            } else if kind.is_file() && inspectable(&path) {
+            } else if kind.is_file() && inspectable(&path, in_vendored) {
                 return true;
             }
         }
         false
     }
-    walk(root)
+    walk(root, false)
 }
 
 fn visit_classified<T>(
