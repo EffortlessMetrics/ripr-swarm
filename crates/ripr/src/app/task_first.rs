@@ -3001,10 +3001,13 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
+    // `gap.file` is stable path text (`%` escaped as `%25`); the seam
+    // classifier opens the file, so it needs the native name.
+    let gap_file = crate::analysis::decode_stable_path_text(&gap.file);
     let Ok(classified) = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
-        Path::new(&gap.file),
+        &gap_file,
         &evidence_files,
         seam_index,
     ) else {

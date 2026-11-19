@@ -3294,6 +3294,8 @@ pub(crate) fn edit_cage_policy_from_packet(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
     };
+    let selected_target_text = packet_path_text(selected_target_text)?;
+    let selected_target_text = selected_target_text.as_str();
     // The one exception (#5210): a production Rust file may be the selected
     // target only as its one governed inline `#[cfg(test)]` module. The
     // policy then confines the edit to that module; the baseline capture
@@ -3319,6 +3321,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
+                    .and_then(packet_path_text)
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3330,9 +3333,10 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
             let mut allowed = Vec::new();
             for (index, entry) in entries.iter().enumerate() {
-                let path = entry.as_str().ok_or_else(|| {
+                let path = packet_path_text(entry.as_str().ok_or_else(|| {
                     "repair packet allowed_edit_surface contains a non-string path".to_string()
-                })?;
+                })?)?;
+                let path = path.as_str();
                 // Only the selected target itself may be the confined inline
                 // module file; every other allowed path is a test surface.
                 let confined_selected_target = index == 0 && inline_test_module_target;
@@ -3351,6 +3355,8 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
+            let file = packet_path_text(file)?;
+            let file = file.as_str();
             if !is_test_surface_path(file) && !inline_test_module_target {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
@@ -3411,8 +3417,10 @@ pub(crate) fn edit_cage_policy_from_packet(
             let proposed_file = value
                 .get("recommended_test")
                 .and_then(|test| test.get("file"))
-                .and_then(serde_json::Value::as_str);
-            if proposed_file != Some(selected_target.path()) {
+                .and_then(serde_json::Value::as_str)
+                .map(packet_path_text)
+                .transpose()?;
+            if proposed_file.as_deref() != Some(selected_target.path()) {
                 return Err(format!(
                     "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
                     selected_target.path()
@@ -3439,6 +3447,20 @@ pub(crate) fn edit_cage_policy_from_packet(
         external_test_file_target,
         new_test_proposal,
     })
+}
+
+/// A packet's path text in its native spelling. Packets render every file
+/// through the shared stable-path encoder, which escapes a literal `%` as
+/// `%25` so the text stays lossless; the edit cage compares rules with the
+/// paths Git reports and the baseline capture opens the file, so both need
+/// the decoded name. Without this, `src/a%b.rs` became the rule
+/// `src/a%25b.rs`, a file that does not exist.
+fn packet_path_text(text: &str) -> Result<String, String> {
+    let decoded = crate::analysis::decode_stable_path_text(text);
+    decoded
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))
 }
 
 /// A non-test-surface selected target that may still be routed as its inline
@@ -6392,6 +6414,44 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A packet spells paths in stable path text, so a literal `%` in a file
+    /// name arrives as `%25`. The cage rules and the baseline capture need
+    /// the native name: `src/a%25b.rs` names no file on disk.
+    #[test]
+    fn cage_policy_decodes_a_percent_escaped_packet_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/a%25b.rs"],
+            "forbidden_files": ["src/c%25d.rs"],
+            "recommended_test": { "file": "src/a%25b.rs", "target_kind": "new_inline_test_module" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "src/a%b.rs"
+            || !policy.inline_test_module_target
+            || policy.allowed_edit_surface.first().map(|rule| rule.path()) != Some("src/a%b.rs")
+            || policy.forbidden_paths.first().map(|rule| rule.path()) != Some("src/c%d.rs")
+            || policy
+                .new_test_proposal
+                .as_ref()
+                .map(|proposal| proposal.file.as_str())
+                != Some("src/a%b.rs")
+        {
+            return Err(format!("packet path was not decoded: {policy:?}"));
+        }
+        // A test-surface path in the recommended-test form decodes too.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "recommended_test": { "file": "tests/100%25.rs" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" || policy.inline_test_module_target {
+            return Err(format!("recommended test path was not decoded: {policy:?}"));
         }
         Ok(())
     }
