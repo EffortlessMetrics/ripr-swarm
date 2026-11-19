@@ -824,7 +824,7 @@ twins' or `#[path]` targets' functions therefore refuses. Any other
 difference inside the item (comments included) refuses, and so does a gate:
 a `cfg` or `cfg_attr` on the function, an enclosing item, the file, a
 matching `mod` declaration, an item enclosing it or its declaring file, or
-the presence of any `#[path]` declaration. A constant is built only from `bool`, integer,
+a `#[path]` declaration that may reach the owner (below). A constant is built only from `bool`, integer,
 byte, `char` and string literals, `!` on a `bool`, `-` on an integer, the
 `bool` operators `&&`, `||`, `&`, `|`, `^`, `==` and `!=` (integer `==` only
 in `i8` range), parentheses, arrays and an unrebound bare `vec![..]` (not the
@@ -1570,13 +1570,16 @@ declarations cannot be read, no witness completes and propagation reads
 `unknown` (`cfg_gated_owner`), so the finding reads no stronger than
 `propagation_unknown`. Ungated owners, an owner beside an unrelated
 `cfg(test)` module and a same-named function on another path keep the
-credit. A `#[path]` module declaration is read as able to retarget any
-owner outside a default crate root (`src/lib.rs`, `src/main.rs`); a crate
-root stays ungated unless a `#[path]` literal names its file name or a
-target cannot be read as a literal, since a `mod` declaration cannot move
-or compile out a crate root. Limit: owners outside crate roots in a
-workspace with any `#[path]` declaration withhold this credit until
-`#[path]` targets are resolved per owner.
+credit. A `#[path]` module declaration gates the owners it may reach:
+the file its literal names, resolved against the declaring file's
+directory (case-insensitively, with a backslash read as a separator), any file under
+that file's directory, where its own `mod` declarations resolve, except a
+default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
+can move or compile out), and any file whose path spells the declaration's
+name. A target that is not a literal on an out-of-line declaration (an
+inline module's `#[path]`, a non-literal value) gates every owner. Limit:
+the declarations inside a target file are not followed, so every file under
+its directory is gated.
 
 ### Format owner tails (#6578)
 

@@ -22,7 +22,7 @@ use ra_ap_syntax::{
     ast::{self, HasName},
 };
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// A function whose base-side item is verified to be the same item.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -372,13 +372,14 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
 /// an owner when its name equals a component of the owner file's path. That
 /// over-approximates the declaration chain, so among `mod` declarations it
 /// can only gate or refuse more owners, never fewer. A `#[path]` declaration
-/// breaks the name mapping, so its presence gates every owner and a change
-/// to one refuses every owner, except an owner in a default crate root
-/// (`src/lib.rs`, `src/main.rs`) whose file name no `#[path]` literal names,
-/// case-insensitively, while every `#[path]` target reads as a literal on an
-/// out-of-line declaration: a `mod` declaration cannot move or compile out a
-/// crate root, and the only file a `#[path]` can add as a module is the one
-/// it names (#15104). Gates that live outside a `mod` declaration
+/// breaks the name mapping, so its presence gates, and a change to one
+/// refuses, every owner it may reach: the file its literal names (resolved
+/// against the declaring file's directory, case-insensitively), any file
+/// under that file's directory except a default crate root (`src/lib.rs`,
+/// `src/main.rs`), and any file whose path spells the declaration's name.
+/// A target that does not read as a literal on an out-of-line declaration
+/// (an inline module's `#[path]`, a non-literal value) reaches every owner
+/// (#15104). Gates that live outside a `mod` declaration
 /// (a `cfg` on `include!`, on a `pub use` re-export, or a `mod` emitted by
 /// `macro_rules!`) are not read here; see #14952.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -388,9 +389,14 @@ pub(crate) struct ModuleDeclarations {
     gated: BTreeSet<String>,
     /// Some declaration carries `#[path]` (directly or through `cfg_attr`).
     retargeted: bool,
-    /// File names (last path component) that a `#[path]` literal on a
-    /// read or changed declaration names.
-    retarget_files: BTreeSet<String>,
+    /// Files a `#[path]` literal on a read or changed declaration names,
+    /// resolved against its declaring file's directory and normalized
+    /// lexically (lowercase, so a case-insensitive file system cannot hide a
+    /// match).
+    retarget_targets: BTreeSet<PathBuf>,
+    /// Names of `#[path]` declarations: a file whose path spells one may be
+    /// the module that declaration replaced.
+    retarget_names: BTreeSet<String>,
     /// A `#[path]` declaration's target could not be read as a literal.
     retarget_opaque: bool,
     /// Names of declarations the diff touched: an added or removed line on
@@ -412,16 +418,16 @@ impl ModuleDeclarations {
         }
     }
 
-    /// Read `declaring_sources` (new-side text of every workspace file that
-    /// may declare a module; a superset is fine) and `changed_files` (each
-    /// changed file with its new-side text, `None` when it is not
-    /// available). A non-Rust changed file is skipped.
+    /// Read `declaring_sources` (the path and new-side text of every
+    /// workspace file that may declare a module; a superset is fine) and
+    /// `changed_files` (each changed file with its new-side text, `None`
+    /// when it is not available). A non-Rust changed file is skipped.
     pub(crate) fn read<'a>(
-        declaring_sources: impl IntoIterator<Item = &'a str>,
+        declaring_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
         changed_files: impl IntoIterator<Item = (&'a ChangedFile, Option<&'a str>)>,
     ) -> Self {
         let mut reading = Self::default();
-        for source in declaring_sources {
+        for (declaring_file, source) in declaring_sources {
             let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
                 reading.unreadable = true;
                 continue;
@@ -439,7 +445,7 @@ impl ModuleDeclarations {
                 };
                 if module_retargets(&module) {
                     reading.retargeted = true;
-                    reading.note_retarget_files(&module);
+                    reading.note_retarget_targets(declaring_file, &module);
                 }
                 if cfg_gated_node(module.syntax()) {
                     reading.gated.insert(unraw(name.text()).to_string());
@@ -462,7 +468,7 @@ impl ModuleDeclarations {
                 continue;
             };
             let added: BTreeSet<usize> = changed.added_lines.iter().map(|line| line.line).collect();
-            reading.note_touched(new_source, &added);
+            reading.note_touched(&changed.path, new_source, &added);
             if changed.removed_lines.is_empty() {
                 continue;
             }
@@ -472,13 +478,13 @@ impl ModuleDeclarations {
             };
             let removed: BTreeSet<usize> =
                 changed.removed_lines.iter().map(|line| line.line).collect();
-            reading.note_touched(&old_source, &removed);
+            reading.note_touched(&changed.path, &old_source, &removed);
         }
         reading
     }
 
     /// Record every declaration of `source` that a line in `lines` touches.
-    fn note_touched(&mut self, source: &str, lines: &BTreeSet<usize>) {
+    fn note_touched(&mut self, file: &Path, source: &str, lines: &BTreeSet<usize>) {
         if lines.is_empty() {
             return;
         }
@@ -525,7 +531,7 @@ impl ModuleDeclarations {
             {
                 if module_retargets(&declaration) {
                     self.changed_retarget = true;
-                    self.note_retarget_files(&declaration);
+                    self.note_retarget_targets(file, &declaration);
                 }
                 match declaration.name() {
                     Some(name) => {
@@ -537,9 +543,15 @@ impl ModuleDeclarations {
         }
     }
 
-    /// Record the file name each `#[path]` literal on `module` names, or
-    /// that one could not be read.
-    fn note_retarget_files(&mut self, module: &ast::Module) {
+    /// Record the file each `#[path]` literal on `module` (declared in
+    /// `declaring_file`) names, or that one could not be read.
+    fn note_retarget_targets(&mut self, declaring_file: &Path, module: &ast::Module) {
+        match module.name() {
+            Some(name) => {
+                self.retarget_names.insert(unraw(name.text()).to_string());
+            }
+            None => self.retarget_opaque = true,
+        }
         let mut named = false;
         for attr in ast::HasAttrs::attrs(module) {
             if !matches!(attr_name(&attr).as_deref(), Some("path" | "cfg_attr")) {
@@ -551,10 +563,14 @@ impl ModuleDeclarations {
                 .filter_map(|element| element.into_token())
                 .filter_map(ast::String::cast)
             {
-                match literal.value().ok().as_deref().and_then(retarget_file_name) {
-                    Some(file) => {
+                match literal
+                    .value()
+                    .ok()
+                    .and_then(|target| retarget_target(declaring_file, &target))
+                {
+                    Some(target) => {
                         named = true;
-                        self.retarget_files.insert(file.to_ascii_lowercase());
+                        self.retarget_targets.insert(target);
                     }
                     None => self.retarget_opaque = true,
                 }
@@ -565,41 +581,53 @@ impl ModuleDeclarations {
         }
     }
 
-    /// Whether a `#[path]` declaration may move or duplicate `owner_file`.
-    fn retarget_reaches(&self, owner_file: &Path) -> bool {
-        self.retarget_opaque
-            || !default_crate_root(owner_file)
-            || owner_file
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_none_or(|name| self.retarget_files.contains(&name.to_ascii_lowercase()))
+    /// Whether a `#[path]` declaration may move, duplicate or replace
+    /// `owner_file` (whose module chain names are `chain`): its target is the
+    /// owner's file, the owner's file sits under the target's directory,
+    /// where the target's own `mod` declarations resolve (a default crate
+    /// root is never such a child module), or the owner's path spells the
+    /// declaration's name, whose default file it replaced.
+    fn retarget_reaches(&self, owner_file: &Path, chain: &BTreeSet<String>) -> bool {
+        if self.retarget_opaque || !self.retarget_names.is_disjoint(chain) {
+            return true;
+        }
+        let Some(owner) = normalized(owner_file) else {
+            return true;
+        };
+        let root = default_crate_root(owner_file);
+        self.retarget_targets.iter().any(|target| {
+            target.is_absolute() != owner.is_absolute()
+                || *target == owner
+                || (!root && target.parent().is_some_and(|dir| owner.starts_with(dir)))
+        })
     }
 
     /// Whether the diff may have changed which module `chain` names, or how
     /// its declarations are gated.
     fn chain_changed(&self, owner_file: &Path, chain: &BTreeSet<String>) -> bool {
         self.unreadable
-            || (self.changed_retarget && self.retarget_reaches(owner_file))
+            || (self.changed_retarget && self.retarget_reaches(owner_file, chain))
             || !self.changed.is_disjoint(chain)
     }
 
     /// Whether a declaration on `chain` may be compiled out or retargeted.
     fn chain_gated(&self, owner_file: &Path, chain: &BTreeSet<String>) -> bool {
-        (self.retargeted && self.retarget_reaches(owner_file)) || !self.gated.is_disjoint(chain)
+        (self.retargeted && self.retarget_reaches(owner_file, chain))
+            || !self.gated.is_disjoint(chain)
     }
 }
 
 /// Whether `source` may hold a `mod` declaration: the keyword `mod` as a
-/// whole word followed by whitespace, anywhere (comments and strings
-/// included). A superset for [`ModuleDeclarations::read`]'s declaring
+/// whole word, anywhere (comments and strings included), so `mod real;`,
+/// `mod\nreal;` and `mod/* gap */real;` all count. A superset for [`ModuleDeclarations::read`]'s declaring
 /// sources, so a file the index could not parse still reaches it and reads
 /// as unreadable, whatever its comments or line breaks (#15104).
 pub(crate) fn may_declare_module(source: &str) -> bool {
     source.match_indices("mod").any(|(at, _)| {
         let before = source.get(..at).and_then(|text| text.chars().next_back());
         let after = source.get(at + 3..).and_then(|text| text.chars().next());
-        before.is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
-            && after.is_some_and(char::is_whitespace)
+        let word_edge = |c: char| !(c.is_alphanumeric() || c == '_');
+        before.is_none_or(word_edge) && after.is_some_and(word_edge)
     })
 }
 
@@ -620,13 +648,37 @@ fn module_retargets(module: &ast::Module) -> bool {
     })
 }
 
-/// The last component of a `#[path]` target, `None` when it is empty.
-fn retarget_file_name(target: &str) -> Option<String> {
-    target
-        .rsplit(['/', '\\'])
-        .next()
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
+/// The file a `#[path]` literal on an out-of-line declaration in
+/// `declaring_file` names: relative to the declaring file's directory,
+/// with a backslash read as a separator. `None` when it names no file.
+fn retarget_target(declaring_file: &Path, target: &str) -> Option<PathBuf> {
+    let target = target.replace('\\', "/");
+    if target.is_empty() || target.ends_with('/') {
+        return None;
+    }
+    let dir = declaring_file.parent().unwrap_or_else(|| Path::new(""));
+    normalized(&dir.join(target))
+}
+
+/// `path` with `.` dropped, `..` folded into its parent where one exists
+/// and every component lowercased; `None` when it is not valid UTF-8.
+fn normalized(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else {
+                    out.push("..");
+                }
+            }
+            Component::Normal(name) => out.push(name.to_str()?.to_ascii_lowercase()),
+            Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
+        }
+    }
+    Some(out)
 }
 
 /// Whether `file` is `src/lib.rs` or `src/main.rs` of some package.
@@ -731,7 +783,8 @@ mod tests {
             .ok_or("fixture premise: line missing")?
             + 1;
         let changed = changed(old, new)?;
-        let modules = ModuleDeclarations::read([new], [(&changed, Some(new))]);
+        let modules =
+            ModuleDeclarations::read([(Path::new("src/lib.rs"), new)], [(&changed, Some(new))]);
         Ok(verified_base_owner(
             new,
             Path::new("src/lib.rs"),
@@ -816,7 +869,7 @@ mod tests {
         let unchanged = |source: &str| -> Result<ModuleDeclarations, String> {
             let changed_file = changed(source, source)?;
             Ok(ModuleDeclarations::read(
-                [source],
+                [(lib, source)],
                 [(&changed_file, Some(source))],
             ))
         };
@@ -850,7 +903,7 @@ mod tests {
         // The owner's file is declared by a gated `mod real;` elsewhere.
         let parent = "#[cfg(not(test))]\nmod real;\n";
         let changed_file = changed(plain, plain)?;
-        let modules = ModuleDeclarations::read([parent], [(&changed_file, Some(plain))]);
+        let modules = ModuleDeclarations::read([(lib, parent)], [(&changed_file, Some(plain))]);
         assert!(
             owner_may_be_swapped(plain, Path::new("src/real.rs"), &modules, "ready", 2, 2),
             "gated module declaration on the chain"
@@ -870,14 +923,17 @@ mod tests {
         assert!(may_declare_module("mod real; // comment"));
         assert!(may_declare_module("#[cfg(x)]\nmod\n    real;"));
         assert!(may_declare_module("pub(crate) mod a {}"));
+        assert!(may_declare_module("mod/* gap */real;"));
         assert!(!may_declare_module("fn model() {}"));
         assert!(!may_declare_module("let xmod = 1;"));
+        assert!(!may_declare_module("let mod_count = 1;"));
         assert!(!may_declare_module("fn f() -> u8 { 7 }"));
     }
 
-    /// #15104: a `#[path]` declaration gates only the owners it may move: a
-    /// default crate root stays ungated unless a `#[path]` literal names its
-    /// file or a target cannot be read.
+    /// #15104: a `#[path]` declaration gates only the owners it may move:
+    /// its named file, files under that file's directory (never a default
+    /// crate root), files whose path spells its name, or every owner when a
+    /// target cannot be read.
     #[test]
     fn path_declarations_gate_only_the_files_they_may_move() -> Result<(), String> {
         let plain = "pub fn ready() -> i32 {\n    2\n}\n";
@@ -889,7 +945,7 @@ mod tests {
                 changed(&source, &source)?
             };
             let modules = ModuleDeclarations::read(
-                [source.as_str()],
+                [(Path::new("src/lib.rs"), source.as_str())],
                 [(&changed_file, Some(source.as_str()))],
             );
             Ok(owner_may_be_swapped(
@@ -971,6 +1027,23 @@ mod tests {
                 )?,
                 "an inline module's #[path] (touched {touched})"
             );
+            let mount = "#[path = \"../../b/src/noop.rs\"]\nmod noop;\n";
+            assert!(
+                !swapped(mount, "src/shared.rs", touched)?,
+                "a target in another package leaves this one's files alone (touched {touched})"
+            );
+            assert!(
+                swapped(mount, "src/noop.rs", touched)?,
+                "the default file the declaration replaced (touched {touched})"
+            );
+            assert!(
+                swapped(mount, "../b/src/inner/x.rs", touched)?,
+                "a file under the target's directory (touched {touched})"
+            );
+            assert!(
+                swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "src/sub/f.rs", touched)?,
+                "a child the target may declare (touched {touched})"
+            );
         }
         Ok(())
     }
@@ -989,8 +1062,10 @@ mod tests {
         let old = twin("not(test)", "true", "test", "false");
         let new = twin("not(test)", "false", "test", "false");
         let changed_file = changed(&old, &new)?;
-        let modules =
-            ModuleDeclarations::read([new.as_str()], [(&changed_file, Some(new.as_str()))]);
+        let modules = ModuleDeclarations::read(
+            [(Path::new("src/lib.rs"), new.as_str())],
+            [(&changed_file, Some(new.as_str()))],
+        );
         assert_eq!(
             verified_base_owner(
                 &new,
@@ -1076,7 +1151,11 @@ mod tests {
                 changed_files.push((changed_at(other, other_old, other_new)?, *other_new));
             }
         }
-        let sources = std::iter::once(new).chain(others.iter().map(|(_, _, new)| *new));
+        let sources = std::iter::once((Path::new(path), new)).chain(
+            others
+                .iter()
+                .map(|(other, _, new)| (Path::new(*other), *new)),
+        );
         let modules = ModuleDeclarations::read(
             sources,
             changed_files
@@ -1220,8 +1299,10 @@ mod tests {
         // A changed file whose new side is not available.
         let owner = changed_at("src/real.rs", REAL_OLD, REAL_NEW)?;
         let lib = changed_at("src/lib.rs", "mod real;\n", "mod real;\nfn f() {}\n")?;
-        let modules =
-            ModuleDeclarations::read([REAL_NEW], [(&owner, Some(REAL_NEW)), (&lib, None)]);
+        let modules = ModuleDeclarations::read(
+            [(Path::new("src/real.rs"), REAL_NEW)],
+            [(&owner, Some(REAL_NEW)), (&lib, None)],
+        );
         assert_eq!(
             verified_base_owner(
                 REAL_NEW,

@@ -12,7 +12,9 @@
   be parsed refuses the credit too. Other returned shapes (`format!`,
   `concat!`, `Ok(..)` and early-return tails) are not covered yet (#15198).
 - Rust: a `#[path]` module declaration (such as a
-  `#[cfg(test)] #[path = "test_support.rs"] mod tests;`) no longer gates
-  owners in a default crate root (`src/lib.rs`, `src/main.rs`) whose file
-  name no `#[path]` literal names; other owners still read it as able to
-  retarget them (#15104).
+  `#[cfg(test)] #[path = "test_support.rs"] mod tests;`) now gates only the
+  owners it may reach: the file it names, files under that file's directory
+  other than a default crate root (`src/lib.rs`, `src/main.rs`), and files
+  whose path spells the declaration's name. Owners elsewhere, such as files
+  of another package, keep their bool, unary and integer tail credit
+  (#15104).

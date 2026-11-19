@@ -363,7 +363,7 @@ impl RelatedTestCandidateIndex {
                     !facts.module_declarations.is_empty()
                         || crate::analysis::diff::may_declare_module(&facts.source)
                 })
-                .map(|(_, facts)| facts.data().source.as_ref()),
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
             std::iter::empty(),
         );
         self.with_module_declarations(modules)
