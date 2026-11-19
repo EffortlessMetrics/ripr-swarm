@@ -11827,7 +11827,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_open_workspace_calls_no_type_plain",
   "crates/ripr/tests/cli_smoke/discarded_matches.rs::moved_repair_start_projection_never_masks_another_seam_kind",
 ]
-fixtures = ["fixtures/human_full_shared_parse_port"]
+fixtures = ["fixtures/human_full_shared_parse_port", "fixtures/hidden_row_span_fallback"]
 code = [
   "crates/ripr/src/edit_cage/mod.rs",
   "crates/ripr/src/app/task_first.rs",
