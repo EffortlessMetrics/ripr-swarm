@@ -10322,6 +10322,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "tools/repo-policy/src/coverage_diagnostics/memory.rs",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids.rs",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs",
   "tools/repo-policy/src/coverage_diagnostics.rs",
