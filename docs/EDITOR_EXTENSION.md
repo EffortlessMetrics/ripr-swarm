@@ -88,6 +88,19 @@ Open VSX extension:
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
 
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
+
 ### Server Resolution
 
 On activation, the extension resolves the server in this order and records the
@@ -152,6 +165,12 @@ separate supply-chain boundary.
 ## Settings
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
+  Use the full path; a leading `~` means your home directory (for example
+  `~/.cargo/bin/ripr`). A relative path such as `./target/debug/ripr` is
+  refused, because it would not be resolved against the workspace folder. On
+  Windows the full path starts with a drive letter, a colon and a separator,
+  or with a UNC root; `C:ripr.exe` and `\tools\ripr.exe` are refused the same way. A
+  bare command name is looked up on `PATH`.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
   actions. Defaults to `true`; set it to `false` to hide the main status-bar
   item and skip starting the language server. `ripr: Show Status` still names

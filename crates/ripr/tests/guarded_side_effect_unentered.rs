@@ -775,3 +775,45 @@ fn an_uncalled_wrapper_names_the_guard_but_a_live_impl_inside_one_does_not() -> 
     }
     Ok(())
 }
+
+#[test]
+fn a_trait_method_owner_names_no_guard_and_an_inherent_one_does() -> Result<(), String> {
+    // #15010: a trait method runs from calls that never name it (`.into()`
+    // reaches `From::from`), so a test outside the related set may enter the
+    // guard. The inherent associated function with the same body, reached by
+    // the same `Bag::from(4)` call, is the control: it names the guard.
+    let owner = |header: &str, vis: &str, push: &str| {
+        format!(
+            "pub struct Bag(pub Vec<u32>);\n\n{header} {{\n    {vis}fn from(x: u32) -> Self {{\n        \
+let mut v = Vec::new();\n        if x > 10 {{\n            {push}\n        }}\n        Bag(v)\n    }}\n}}\n"
+        )
+    };
+    let test = "use guarded_side_effect::Bag;\n\n#[test]\nfn builds() {\n    let bag = Bag::from(4);\n    \
+assert_eq!(bag.0, Vec::<u32>::new());\n}\n";
+    let changed_line = 7;
+    let findings = |header: &str, vis: &str| {
+        custom_findings(
+            &owner(header, vis, "v.push(x);"),
+            &owner(header, vis, "v.push(x * 1);"),
+            changed_line,
+            test,
+        )
+    };
+    let inherent = findings("impl Bag", "pub ")?;
+    assert!(
+        inherent.iter().any(names_unentered_guard),
+        "an inherent owner names the guard: {:?}",
+        inherent
+            .iter()
+            .map(|finding| &finding.ripr.infect)
+            .collect::<Vec<_>>()
+    );
+    for finding in findings("impl From<u32> for Bag", "")? {
+        assert!(
+            !names_unentered_guard(&finding),
+            "a trait method owner names no guard: {:?}",
+            finding.ripr.infect
+        );
+    }
+    Ok(())
+}

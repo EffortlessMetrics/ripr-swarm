@@ -164,6 +164,15 @@ The review summary should answer:
 - what the reviewer should inspect;
 - which static limits remain.
 
+The receipt is review evidence only when it records the `advisory` status.
+A receipt that is `invalid` or `incomplete`, or that records no recognized
+status, keeps the summary `incomplete`: the recorded movement is still shown,
+with a fixed statement that it is not review evidence, and the remaining step
+is to reissue the receipt over a complete analysis outcome. A receipt file
+that is present but yields no movement (unreadable, not JSON, or without a
+seam) is reported as unreadable or invalid, never as a missing receipt; only
+an absent file is "missing".
+
 The executable status command embedded in a review-summary surface uses the
 native selected root for both its `--root` argument and anchored redirect.
 It shares command authority with the top-level continuation even though the

@@ -215,6 +215,7 @@ impl CommittedSourceOverlay {
         root == self.root || self.canonical_root.as_deref() == Some(root)
     }
 
+    #[cfg(any(test, feature = "lang-typescript"))]
     fn snapshot_inputs_differ_in(&self, root: &Path, directory: &Path) -> bool {
         if !self.serves(root) {
             return false;
@@ -356,6 +357,7 @@ pub(crate) fn ignored_authority_file_is_absent(root: &Path, relative: &Path) -> 
 /// (RIPR-SPEC-0258) in `directory` that differs from `HEAD`, or `directory`
 /// sits in an ignored directory. Without an overlay the working tree matches
 /// `HEAD` for every such file, so this is `false`.
+#[cfg(any(test, feature = "lang-typescript"))]
 pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
     CURRENT_OVERLAY.with(|slot| {
         slot.borrow()

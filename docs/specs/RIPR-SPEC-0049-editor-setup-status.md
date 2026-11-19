@@ -157,6 +157,16 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Activation and expected version:
+
+- Given a workspace folder whose root holds any project marker the extension
+  checks before analysis (Rust, `ripr.toml`, Python or TypeScript markers),
+  the manifest activates the extension for it; the `workspaceContains`
+  activation list and that marker set are the same.
+- Given `ripr.server.version` is empty, the expected server version and the
+  extension version shown in status come from the extension's own manifest,
+  never from a fixed release number.
+
 Named commands:
 
 - Given a status message, setup report or setting description tells the user
@@ -193,6 +203,18 @@ First-run walkthrough setup check:
   `ripr: Restart Server`.
 - Every command link and completion event in that step is a contributed
   command, and every setting the page names is a contributed setting.
+
+Configured server path:
+
+- Given `ripr.server.path` starts with `~` followed by a path separator (or is
+  `~` alone), the server is looked up under the user's home directory. `~user`
+  and a `~` elsewhere in the path are left as written.
+- Given `ripr.server.path` is a relative path with a directory part, no server
+  is probed and the unavailable-server message names the setting and asks for
+  the full path. A bare command name is still looked up on `PATH`.
+- On Windows, a drive-relative value (`C:ripr.exe`) and a rooted value
+  without a drive (`\tools\ripr.exe`) are refused the same way; a drive plus
+  separator or a UNC root is accepted.
 
 Preview disabled:
 
