@@ -839,6 +839,9 @@ fn recompute_after_verdict_binding_of_delta(
                 &baseline,
                 &manifest_relative_path(manifest),
             )?;
+            if bundle.is_some() {
+                crate::edit_cage::omit_derived_cache_bundle(&mut candidate, &baseline);
+            }
             let candidate = normalize(&candidate);
             // The absent gap projection and present A-to-B receipt slot
             // are disjoint identities; both may need reconstruction before
