@@ -184,7 +184,9 @@ pub(crate) struct DeclaredModuleFiles {
 /// `<dir>/<stem>` for any other file. Test gating honors the same exact `#[cfg(test)]` spelling as
 /// [`production_text_regions`]. Declarations nested in inline modules are
 /// not resolved (their files then stay fully scanned, the over-report
-/// direction), and an unparsed file declares nothing.
+/// direction), and an unparsed file declares nothing. Other crate roots
+/// (`src/bin/**`) and `#[path]`-loaded files are resolved as ordinary
+/// non-mod-rs files; the published `src` trees this serves have none.
 pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleFiles {
     let mut declared = DeclaredModuleFiles::default();
     let parse = SourceFile::parse(source, Edition::CURRENT);
@@ -239,7 +241,7 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
             text.value().ok().map(|value| value.to_string())
         });
         let candidates: Vec<(String, Option<String>)> = match explicit_path {
-            Some(path) => vec![(join(dir, &path), None)],
+            Some(path) => vec![(normalize_relative(&join(dir, &path)), None)],
             None => {
                 let children = join(&base, &name);
                 vec![
@@ -260,6 +262,24 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
         }
     }
     declared
+}
+
+/// Resolves `.`, `..` and `\\` separators of a repository-relative path so a
+/// `#[path = "../x.rs"]` target compares equal to the tracked spelling. A
+/// path that climbs above the repository root keeps its `..` and so matches
+/// no tracked file.
+fn normalize_relative(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|last| *last != "..") => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("/")
 }
 
 /// Out-of-line test files and directories among `sources` (#15193): the file
@@ -285,32 +305,44 @@ pub(crate) fn out_of_line_test_exemptions(
         );
     }
     let mut exempt_files = std::collections::BTreeSet::new();
-    let mut exempt_dirs = Vec::new();
+    // Each exempt child directory with the candidate file that owns it.
+    let mut owned_dirs: Vec<(String, String)> = Vec::new();
     for (target, children) in gated {
         if !tracked.contains(target.as_str()) {
             continue;
         }
-        exempt_files.insert(target);
         if let Some(children) = children {
-            exempt_dirs.push(format!("{children}/"));
+            owned_dirs.push((target.clone(), format!("{children}/")));
+        }
+        exempt_files.insert(target);
+    }
+    // Iterate to a fixpoint: once a file is vetoed, its own declarations are
+    // production declarations and its child directory loses its exemption.
+    loop {
+        let reached: Vec<&String> = ordinary
+            .iter()
+            .filter(|(declarer, _)| {
+                !exempt_files.contains(*declarer)
+                    && !owned_dirs
+                        .iter()
+                        .any(|(_, dir)| declarer.starts_with(dir.as_str()))
+            })
+            .map(|(_, target)| target)
+            .collect();
+        let before = (exempt_files.len(), owned_dirs.len());
+        exempt_files.retain(|file| !reached.contains(&file));
+        owned_dirs.retain(|(owner, dir)| {
+            exempt_files.contains(owner)
+                && !reached
+                    .iter()
+                    .any(|target| target.starts_with(dir.as_str()))
+        });
+        if (exempt_files.len(), owned_dirs.len()) == before {
+            break;
         }
     }
-    let reached: Vec<String> = ordinary
-        .into_iter()
-        .filter(|(declarer, _)| {
-            !exempt_files.contains(*declarer)
-                && !exempt_dirs
-                    .iter()
-                    .any(|dir| declarer.starts_with(dir.as_str()))
-        })
-        .map(|(_, target)| target)
-        .collect();
-    exempt_files.retain(|file| !reached.contains(file));
-    exempt_dirs.retain(|dir| {
-        !reached
-            .iter()
-            .any(|target| target.starts_with(dir.as_str()))
-    });
+    let mut exempt_dirs: Vec<String> = owned_dirs.into_iter().map(|(_, dir)| dir).collect();
+    exempt_dirs.dedup();
     (exempt_files, exempt_dirs)
 }
 
@@ -734,6 +766,8 @@ mod cfg_test_spelling_tests {
                 "src/c.rs",
                 "src/c/tests.rs",
                 "src/c/tests/shared.rs",
+                "src/d.rs",
+                "src/d/tests.rs",
             ]
             .iter()
             .map(|file| file.to_string())
@@ -768,6 +802,36 @@ mod cfg_test_spelling_tests {
                 ],
             );
             assert!(!files.contains("src/a/tests.rs"), "{files:?}");
+
+            // The veto cascades: the vetoed file's own child declarations are
+            // production ones, so its child directory is scanned too.
+            let (files, dirs) = super::super::out_of_line_test_exemptions(
+                &tracked,
+                &[
+                    source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                    source(
+                        "src/a/tests.rs",
+                        "mod helper;\n#[path = \"../d/tests.rs\"]\nmod reused;\n",
+                    ),
+                    source("src/b.rs", "#[path = \"a/tests.rs\"]\nmod shared;\n"),
+                    source("src/d.rs", "#[cfg(test)]\nmod tests;\n"),
+                ],
+            );
+            assert!(!files.contains("src/a/tests.rs"), "{files:?}");
+            // ...and a test file it reaches is production-reachable as well.
+            assert!(!files.contains("src/d/tests.rs"), "{files:?}");
+            assert!(dirs.is_empty(), "{dirs:?}");
+
+            // A `..` path is normalized before the veto compares it.
+            let (files, dirs) = super::super::out_of_line_test_exemptions(
+                &tracked,
+                &[
+                    source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                    source("src/c.rs", "#[path = \"./x/../a/tests.rs\"]\nmod shared;\n"),
+                ],
+            );
+            assert!(!files.contains("src/a/tests.rs"), "{files:?}");
+            assert!(dirs.is_empty(), "{dirs:?}");
         }
 
         #[test]
