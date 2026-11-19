@@ -61,18 +61,22 @@ pub(crate) use model::{
 };
 use overrides::discover_workspace_crates;
 
-pub(crate) use preview_excluded::{
-    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
-};
+#[cfg(feature = "lang-python")]
+pub(crate) use preview_excluded::is_probable_fixture_or_data_path;
+pub(crate) use preview_excluded::path_matches_preview_excluded_patterns;
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
-    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
-    detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, detect_python_project,
+    is_declared_handwritten_python_path, is_detectable_excluded_python_path,
     is_detectable_generated_python_path, is_detectable_python_source_name,
-    is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name, root_contains_detectable_python,
+    is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
+    root_contains_detectable_python,
     source_dir_contains_detectable_python,
+};
+#[cfg(feature = "lang-python")]
+pub(crate) use python::{
+    declared_python_handwritten_under, is_python_dir_pruned_from_repo_discovery,
 };
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
@@ -287,24 +291,77 @@ pub(crate) fn config_present_at_root(root: &Path) -> bool {
 }
 
 fn discover_config_path(root: &Path) -> Option<PathBuf> {
-    let direct = root.join(CONFIG_FILE_NAME);
-    if config_entry_present(&direct) {
+    let (entry, direct) = discover_config_entry(root)?;
+    if direct {
         // A link that cannot be resolved keeps its own path so the read below
         // names it instead of the search moving on to an ancestor.
-        return Some(std::fs::canonicalize(&direct).unwrap_or(direct));
+        return Some(std::fs::canonicalize(&entry).unwrap_or(entry));
+    }
+    Some(entry)
+}
+
+/// The `ripr.toml` directory entry discovery selects, before any link is
+/// followed, and whether it sits directly in `root`.
+fn discover_config_entry(root: &Path) -> Option<(PathBuf, bool)> {
+    let direct = root.join(CONFIG_FILE_NAME);
+    if config_entry_present(&direct) {
+        return Some((direct, true));
     }
 
     let search_root = std::fs::canonicalize(root).ok()?;
     for ancestor in search_root.ancestors() {
         let path = ancestor.join(CONFIG_FILE_NAME);
         if config_entry_present(&path) {
-            return Some(path);
+            return Some((path, false));
         }
         if is_repository_boundary(ancestor) {
             break;
         }
     }
     None
+}
+
+/// The one refusal for a `ripr.toml` link that leaves its repository
+/// (#14310). It names neither the target path nor any of its content.
+pub(crate) const CONFIG_LINK_LEAVES_REPOSITORY: &str = "it is a symbolic link that leads outside the repository, and ripr does not read configuration through such a link. Replace the link with a regular file, or point it at a file inside the repository";
+
+/// Whether a `ripr.toml` entry is a symbolic link whose final target lies
+/// outside the tree the entry was found in (#14310). `false` for a regular
+/// file, a link that stays inside, and a link that cannot be resolved (the
+/// read reports that one without any target content).
+///
+/// Git stores symbolic links, so a clone can deliver `ripr.toml` as a link to
+/// any path on the machine that runs ripr. A TOML parse error quotes the
+/// offending line, so reading such a target prints a line of a file the
+/// repository never contained. The tree is the nearest enclosing directory
+/// with a `.git` entry, or the link's own directory when there is none.
+/// `canonicalize` resolves the whole chain, so a link to a link, or a link
+/// through a linked directory, is judged by where it ends.
+fn config_link_leaves_repository(entry: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(entry) else {
+        return false;
+    };
+    if !metadata.file_type().is_symlink() {
+        return false;
+    }
+    let Ok(target) = std::fs::canonicalize(entry) else {
+        return false;
+    };
+    // A bare `ripr.toml` has an empty parent: the current directory.
+    let parent = entry
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let Ok(directory) = std::fs::canonicalize(parent) else {
+        // The entry's own directory cannot be established, so nothing shows
+        // the target is inside it.
+        return true;
+    };
+    let tree = directory
+        .ancestors()
+        .find(|ancestor| std::fs::symlink_metadata(ancestor.join(".git")).is_ok())
+        .unwrap_or(&directory);
+    !target.starts_with(tree)
 }
 
 /// Structural package workspace marker shared by CLI roots and TypeScript
@@ -346,6 +403,16 @@ pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoa
     let Some(path) = discover_config_path(root) else {
         return default_config_for_root(root).map_err(ConfigLoadFailure::Read);
     };
+    // #14310: decided before the selected file is opened.
+    if let Some((entry, _)) = discover_config_entry(root)
+        && config_link_leaves_repository(&entry)
+    {
+        return Err(ConfigLoadFailure::Read(config_load_read_error_for_host(
+            &entry,
+            &CONFIG_LINK_LEAVES_REPOSITORY,
+            cfg!(windows),
+        )));
+    }
     let text = crate::bounded_input::read_metadata_toml(&path).map_err(|err| {
         ConfigLoadFailure::Read(config_load_read_error_for_host(&path, &err, cfg!(windows)))
     })?;
@@ -555,17 +622,65 @@ pub(crate) fn generated_init_config() -> &'static str {
 
 /// Preview languages that `ripr init` enables next to Rust for `root`: the
 /// ones marker-based no-config detection would have enabled, so writing the
-/// file does not switch off analysis the user already had. Python is listed
-/// only in builds that can run it.
+/// file does not switch off analysis the user already had, plus TypeScript
+/// source directly in a child directory that `ripr doctor` detects (see
+/// [`init_child_dir_holds_typescript_source`]). Python is listed only in
+/// builds that can run it.
 pub(crate) fn init_detected_preview_languages(root: &Path) -> Vec<LanguageId> {
     let mut detected = Vec::new();
     if detect_python_project(root) && LanguageId::Python.is_available() {
         detected.push(LanguageId::Python);
     }
-    if detect_typescript_project(root) {
+    if detect_typescript_project(root) || init_child_dir_holds_typescript_source(root) {
         detected.push(LanguageId::TypeScript);
     }
     detected
+}
+
+/// TypeScript source sitting directly in an immediate child directory of
+/// `root`, such as `web/pricing.ts` (#13788). Marker-based no-config detection
+/// does not read that layout, but `ripr doctor` does, so without this `init`
+/// wrote a config that doctor then told the user to edit. It applies only to
+/// the explicit, reviewable file `init` writes, never to no-config detection.
+/// Source is required, so `package.json` or `tsconfig.json` alone never counts.
+/// For this child-directory rule, hidden, excluded (`node_modules`, `dist`,
+/// ...) and `docs` directories never count, and beside a `Cargo.toml` neither
+/// do `test`/`tests` (host case rule), which hold Rust integration tests and
+/// fixtures (#11418). Marker detection above still reads `tests/` on its own.
+fn init_child_dir_holds_typescript_source(root: &Path) -> bool {
+    if !LanguageId::TypeScript.is_available() {
+        return false;
+    }
+    let beside_cargo = root.join("Cargo.toml").is_file();
+    let Ok(children) = std::fs::read_dir(root) else {
+        return false;
+    };
+    children
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                // Host case rule, so `Test/` beside a Cargo.toml on a
+                // case-insensitive host is excluded too.
+                let rust_test_dir = beside_cargo
+                    && javascript_led_source_dir_marker_name(name).is_some_and(|dir| dir != "src");
+                !(name.starts_with('.')
+                    || name == "docs"
+                    || is_typescript_excluded_dir_everywhere(name)
+                    || rust_test_dir)
+            })
+        })
+        .any(|entry| {
+            std::fs::read_dir(entry.path()).is_ok_and(|files| {
+                files.flatten().any(|file| {
+                    file.file_type().is_ok_and(|kind| kind.is_file())
+                        && file
+                            .file_name()
+                            .to_str()
+                            .is_some_and(is_detectable_typescript_source_name)
+                })
+            })
+        })
 }
 
 /// [`generated_init_config`] with `[languages] enabled` extended by

@@ -2480,6 +2480,14 @@ fn test_runner_arguments<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
         ["pytest", arguments @ ..] | ["python", "-m", "unittest" | "pytest", arguments @ ..] => {
             Some(arguments)
         }
+        // The project venv interpreter the Python producer selected
+        // statically at the root (#13801); root-relative by construction.
+        [
+            ".venv/bin/python" | "venv/bin/python",
+            "-m",
+            "pytest",
+            arguments @ ..,
+        ] => Some(arguments),
         // TypeScript verify commands (RIPR-SPEC-0085). Package scripts first,
         // so `yarn test` is not read as a `yarn <bin>` launch.
         ["bun" | "yarn", "test", arguments @ ..]
@@ -2504,7 +2512,7 @@ fn looks_like_command_payload(value: &str) -> bool {
         || trimmed.starts_with("ripr ")
         || trimmed.starts_with("pytest ")
         || trimmed.starts_with("python -m unittest ")
-        || trimmed.starts_with("python -m pytest ")
+        || crate::domain::is_pytest_verify_command(trimmed)
 }
 
 fn is_inside_workspace(root: &Path, path: &Path) -> bool {
@@ -2599,6 +2607,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
+        StaticLimitKind::ActivationBoundaryInputUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -4510,6 +4519,19 @@ mod tests {
         ));
         assert!(looks_like_command_payload(
             "python -m pytest tests/test_pricing.py::test_discount_boundary"
+        ));
+        for venv in [".venv/bin/python", "venv/bin/python"] {
+            let command = format!("{venv} -m pytest tests/test_pricing.py::test_discount_boundary");
+            assert!(command_payload_is_safe(&workspace, &command), "{command}");
+            assert!(looks_like_command_payload(&command), "{command}");
+        }
+        assert!(!command_payload_is_safe(
+            &workspace,
+            ".venv/bin/python -m pip install anything"
+        ));
+        assert!(!command_payload_is_safe(
+            &workspace,
+            "/opt/venv/bin/python -m pytest tests/test_pricing.py"
         ));
         assert!(!command_payload_is_safe(
             &workspace,

@@ -199,3 +199,302 @@ mod observed_call_matches_missing_check_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod preview_row_selection_tests {
+    use super::{observed_call_matches_missing_check, typescript_script_preview_related_test};
+    use crate::domain::{
+        ActivationEvidence, AnalysisScope, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestRole, RevealEvidence, RiprEvidence,
+        SourceCurrentness, SourceLocation, StageEvidence, StageState,
+    };
+    use std::path::PathBuf;
+
+    const TEST_FILE: &str = "tests/discount.test.ts";
+    const REF_LINE_20: &str = "typescript_oracle_evidence_ref: tests/discount.test.ts:20";
+    const OBSERVED_AT_BOUNDARY: &str = "typescript_oracle_observed: applyDiscount(100, 100)";
+    const OBSERVED_FAR_AWAY: &str = "typescript_oracle_observed: applyDiscount(10000, 100)";
+
+    fn row(name: &str, line: usize, kind: OracleKind, strength: OracleStrength) -> RelatedTest {
+        row_in(TEST_FILE, name, line, kind, strength)
+    }
+
+    fn row_in(
+        file: &str,
+        name: &str,
+        line: usize,
+        kind: OracleKind,
+        strength: OracleStrength,
+    ) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            line,
+            oracle: None,
+            oracle_kind: kind,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            role: RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    fn exact(name: &str, line: usize, strength: OracleStrength) -> RelatedTest {
+        row(name, line, OracleKind::ExactValue, strength)
+    }
+
+    fn stage(state: StageState, summary: &str) -> StageEvidence {
+        StageEvidence::new(state, Confidence::Medium, summary)
+    }
+
+    /// A TypeScript predicate finding that misses the `amount == threshold`
+    /// boundary, with the given related-test rows and evidence lines.
+    fn finding(related_tests: Vec<RelatedTest>, evidence: &[&str]) -> Finding {
+        Finding {
+            analysis_scope: AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "finding:discount".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:discount".to_string()),
+                location: SourceLocation::new("src/discount.ts", 4, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "amount >= threshold".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes, "a related test calls applyDiscount"),
+                infect: stage(StageState::Weak, "no boundary input"),
+                propagate: stage(StageState::Yes, "value is returned"),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes, "assertion observes the result"),
+                    discriminate: stage(StageState::Weak, "no boundary check"),
+                },
+            },
+            confidence: 0.5,
+            evidence: evidence.iter().map(|line| (*line).to_string()).collect(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence {
+                observed_values: Vec::new(),
+                missing_discriminators: vec![MissingDiscriminatorFact {
+                    value: "amount == threshold".to_string(),
+                    reason: "boundary".to_string(),
+                    flow_sink: None,
+                    drafted_boundary: None,
+                    shape: DiscriminatorShape::Boundary,
+                }],
+            },
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests,
+            recommended_next_step: None,
+            language: Some(LanguageId::TypeScript),
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn selected(finding: &Finding) -> Option<&str> {
+        typescript_script_preview_related_test(finding).map(|test| test.name.as_str())
+    }
+
+    #[test]
+    fn only_typescript_and_javascript_findings_with_related_tests_select_a_row() {
+        let rows = || vec![exact("checks_total", 5, OracleStrength::Strong)];
+        let mut subject = finding(rows(), &[]);
+        assert_eq!(selected(&subject), Some("checks_total"));
+        subject.language = Some(LanguageId::JavaScript);
+        assert_eq!(selected(&subject), Some("checks_total"));
+        subject.language = Some(LanguageId::Rust);
+        assert_eq!(selected(&subject), None);
+        subject.language = None;
+        assert_eq!(selected(&subject), None);
+
+        assert_eq!(selected(&finding(Vec::new(), &[])), None);
+    }
+
+    #[test]
+    fn the_strongest_family_relevant_row_wins_and_ties_keep_the_first_listed() {
+        let subject = finding(
+            vec![
+                row("throws", 3, OracleKind::BroadError, OracleStrength::Strong),
+                exact("weak", 5, OracleStrength::Weak),
+                exact("first_medium", 7, OracleStrength::Medium),
+                exact("second_medium", 9, OracleStrength::Medium),
+            ],
+            &[],
+        );
+        assert_eq!(selected(&subject), Some("first_medium"));
+    }
+
+    #[test]
+    fn rows_without_a_usable_oracle_are_not_family_relevant() {
+        // No oracle at all, and an oracle ripr knows nothing about, are skipped;
+        // an unknown kind with a graded strength still counts.
+        let subject = finding(
+            vec![
+                exact("no_oracle", 3, OracleStrength::None),
+                row("unknown", 5, OracleKind::Unknown, OracleStrength::Unknown),
+                row("graded", 7, OracleKind::Unknown, OracleStrength::Weak),
+            ],
+            &[],
+        );
+        assert_eq!(selected(&subject), Some("graded"));
+
+        // A known kind of unknown strength counts; an unknown kind of unknown
+        // strength does not, so the first listed row is the fallback.
+        let throws = || row("throws", 3, OracleKind::BroadError, OracleStrength::Strong);
+        let known_kind = finding(
+            vec![throws(), exact("ungraded", 5, OracleStrength::Unknown)],
+            &[],
+        );
+        assert_eq!(selected(&known_kind), Some("ungraded"));
+        let nothing_relevant = finding(
+            vec![
+                throws(),
+                row("unknown", 5, OracleKind::Unknown, OracleStrength::Unknown),
+            ],
+            &[],
+        );
+        assert_eq!(selected(&nothing_relevant), Some("throws"));
+    }
+
+    #[test]
+    fn a_named_weaker_row_that_observes_the_missing_check_wins() {
+        let rows = || {
+            vec![
+                exact("strong", 5, OracleStrength::Strong),
+                exact("at_boundary", 15, OracleStrength::Weak),
+            ]
+        };
+        assert_eq!(
+            selected(&finding(rows(), &[REF_LINE_20, OBSERVED_AT_BOUNDARY])),
+            Some("at_boundary")
+        );
+        // The reference may spell the path with backslashes.
+        assert_eq!(
+            selected(&finding(
+                rows(),
+                &[
+                    "typescript_oracle_evidence_ref: tests\\discount.test.ts:20",
+                    OBSERVED_AT_BOUNDARY
+                ]
+            )),
+            Some("at_boundary")
+        );
+
+        // Without an observation of the missing check the strongest row stays.
+        for evidence in [
+            &[REF_LINE_20][..],
+            &[REF_LINE_20, OBSERVED_FAR_AWAY],
+            &[REF_LINE_20, "typescript_oracle_observed: "],
+            &[OBSERVED_AT_BOUNDARY],
+            &["typescript_oracle_evidence_ref: ", OBSERVED_AT_BOUNDARY],
+            &[
+                "typescript_oracle_evidence_ref: tests/discount.test.ts:soon",
+                OBSERVED_AT_BOUNDARY,
+            ],
+        ] {
+            assert_eq!(
+                selected(&finding(rows(), evidence)),
+                Some("strong"),
+                "{evidence:?}"
+            );
+        }
+
+        // Nor when the finding names no missing check to observe.
+        let mut no_missing_check = finding(rows(), &[REF_LINE_20, OBSERVED_AT_BOUNDARY]);
+        no_missing_check.activation.missing_discriminators[0]
+            .value
+            .clear();
+        assert_eq!(selected(&no_missing_check), Some("strong"));
+    }
+
+    #[test]
+    fn a_named_row_never_displaces_an_equal_or_family_relevant_stronger_match() {
+        // Equal strength: the first listed match stays, even when the later
+        // row observes the missing check.
+        let equal = finding(
+            vec![
+                exact("first", 5, OracleStrength::Strong),
+                exact("later", 15, OracleStrength::Strong),
+            ],
+            &[REF_LINE_20, OBSERVED_AT_BOUNDARY],
+        );
+        assert_eq!(selected(&equal), Some("first"));
+
+        // A named row whose oracle cannot observe the family is ignored.
+        let wrong_family = finding(
+            vec![
+                exact("strong", 5, OracleStrength::Strong),
+                row("throws", 15, OracleKind::BroadError, OracleStrength::Weak),
+            ],
+            &[REF_LINE_20, OBSERVED_AT_BOUNDARY],
+        );
+        assert_eq!(selected(&wrong_family), Some("strong"));
+    }
+
+    #[test]
+    fn the_reference_names_the_last_row_at_or_before_its_line_in_its_file() {
+        let weak = OracleStrength::Weak;
+        let subject = finding(
+            vec![
+                row_in(
+                    "tests/other.test.ts",
+                    "other_file",
+                    18,
+                    OracleKind::ExactValue,
+                    weak.clone(),
+                ),
+                exact("early", 5, OracleStrength::Strong),
+                exact("on_the_line", 20, weak.clone()),
+                exact("same_line_twin", 20, weak.clone()),
+                exact("after", 25, weak),
+            ],
+            &[REF_LINE_20, OBSERVED_AT_BOUNDARY],
+        );
+        assert_eq!(selected(&subject), Some("on_the_line"));
+    }
+
+    #[test]
+    fn an_observed_argument_named_in_the_missing_check_matches_it() {
+        assert!(observed_call_matches_missing_check(
+            "applyDiscount(amount)",
+            "amount > 3"
+        ));
+        assert!(!observed_call_matches_missing_check(
+            "applyDiscount(total)",
+            "amount > 3"
+        ));
+        // Without a complete call, only the missing check's own text matches.
+        assert!(observed_call_matches_missing_check(
+            "amount > 3 holds",
+            "amount > 3"
+        ));
+        assert!(observed_call_matches_missing_check(
+            "check(amount > 3",
+            "amount > 3"
+        ));
+        assert!(!observed_call_matches_missing_check(
+            "check(amount",
+            "amount > 3"
+        ));
+        assert!(observed_call_matches_missing_check("same(1, 2)", "x == x"));
+    }
+}

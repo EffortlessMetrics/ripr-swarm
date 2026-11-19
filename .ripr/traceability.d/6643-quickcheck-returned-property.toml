@@ -1,0 +1,9 @@
+# A `#[quickcheck]` property returning `bool`/`TestResult` is not read as a
+# test with no assertion (#6643); no credit is granted.
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/tests/quickcheck_returned_property.rs::a_returned_property_is_not_read_as_missing_an_assertion",
+  "crates/ripr/tests/quickcheck_returned_property.rs::other_shapes_keep_the_absence_claim",
+  "crates/ripr/tests/quickcheck_returned_property.rs::another_attribute_ending_in_quickcheck_is_not_a_property",
+]

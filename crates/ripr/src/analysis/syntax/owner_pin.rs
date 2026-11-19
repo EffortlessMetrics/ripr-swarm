@@ -1743,18 +1743,31 @@ fn macro_binding_sites_in_tree(
     loop {
         let before = bound.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, known) {
+            let tokens = || -> Vec<_> {
+                tree.syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .collect()
+            };
+            // A wrapper exempted because its body calls only trusted names
+            // loses the exemption once one of those names is bound: its body
+            // call receives the arguments through fragments (`vec!($n)`), so
+            // the scan of that call never sees the name it may define.
+            let body_bound = call.as_ref().is_some_and(|call| {
+                wrapper_body_calls_bound(binding_free, call, &bound)
+                    && binding_free_local_wrapper(binding_free, call, &tokens(), known)
+            });
+            if !body_bound
+                && (!bound.contains(path.trim_start_matches("r#"))
+                    || !is_trusted_macro(path, known))
+            {
                 continue;
             }
-            let tokens: Vec<_> = tree
-                .syntax()
-                .descendants_with_tokens()
-                .filter_map(|element| element.into_token())
-                .filter(|token| !token.kind().is_trivia())
-                .collect();
+            let tokens = tokens();
             // As for an untrusted wrapper: an attribute in the arguments may
             // be applied by the expansion to an item.
-            if let Some(attribute) = tokens.iter().find_map(|token| {
+            if let Some(attribute) = tokens.iter().filter(|_| !body_bound).find_map(|token| {
                 let word = token.text().trim_start_matches("r#");
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
@@ -1771,9 +1784,10 @@ fn macro_binding_sites_in_tree(
             // shows an expansion that cannot bind a name stays transparent.
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
-            if call
-                .as_ref()
-                .is_some_and(|call| binding_free_local_wrapper(binding_free, call, &tokens, known))
+            if !body_bound
+                && call.as_ref().is_some_and(|call| {
+                    binding_free_local_wrapper(binding_free, call, &tokens, known)
+                })
             {
                 continue;
             }
@@ -2194,7 +2208,7 @@ struct BindingFreeFileIndex {
 
 /// What [`binding_free_local_wrapper`] needs from a `macro_rules!`
 /// definition, independent of the call and the trusted names.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WrapperDefinition {
     /// The byte range the definition reaches by textual scope: the rest of
     /// the file for a file-level definition, the bounding inline module
@@ -2204,6 +2218,10 @@ struct WrapperDefinition {
     /// The body exists, holds only inert tokens and captures no `tt`
     /// fragment.
     inert_body: bool,
+    /// The plain names the body invokes with `!` (`assert_eq!`, a recursive
+    /// `case!`). A call admits the wrapper only when each is this wrapper's
+    /// own name or a trusted name, which it checks against its own names.
+    body_bangs: Vec<String>,
 }
 
 #[cfg(test)]
@@ -2234,22 +2252,51 @@ impl WrapperDefinition {
             }
             _ => None,
         };
+        let mut body_bangs = Vec::new();
         let inert_body = definition.token_tree().is_some_and(|body| {
+            use ra_ap_syntax::SyntaxKind::{BANG, COLON, DOLLAR, IDENT};
             let body_tokens = non_trivia_tokens(body.syntax());
-            // A definition body admits no `!` at all, so the trusted names
-            // never decide this answer.
-            //
+            // A `!` in the body passes only right after a plain literal name
+            // (`assert_eq!`, a recursive `case!`): never after a fragment
+            // (`$m!` could be anything); `inert_tokens` refuses a path.
+            // Which names are allowed depends on the call, so they are
+            // kept, not judged, here.
+            let plain_bangs = body_tokens.iter().enumerate().all(|(index, token)| {
+                if token.kind() != BANG {
+                    return true;
+                }
+                let previous = index
+                    .checked_sub(1)
+                    .and_then(|before| body_tokens.get(before))
+                    .filter(|previous| previous.kind() == IDENT);
+                let fragment = index
+                    .checked_sub(2)
+                    .and_then(|before| body_tokens.get(before))
+                    .is_some_and(|before| before.kind() == DOLLAR);
+                match previous {
+                    Some(previous) if !fragment => {
+                        body_bangs.push(previous.text().trim_start_matches("r#").to_string());
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            let names: Vec<&str> = body_bangs.iter().map(String::as_str).collect();
             // Only a `tt` fragment can capture a lone `!` (or `#`) from the
             // arguments and splice it after another name: `$m $bang ($n)`
             // turns `case!(define assert_eq!(x))` into `define!(assert_eq)`.
             // Every other fragment keeps a macro call or attribute whole.
-            inert_tokens(&body_tokens, &[], true)
+            plain_bangs
+                && inert_tokens(&body_tokens, &names)
                 && !body_tokens.windows(2).any(|pair| {
-                    pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
-                        && pair[1].text().trim_start_matches("r#") == "tt"
+                    pair[0].kind() == COLON && pair[1].text().trim_start_matches("r#") == "tt"
                 })
         });
-        Self { reach, inert_body }
+        Self {
+            reach,
+            inert_body,
+            body_bangs,
+        }
     }
 }
 
@@ -2340,10 +2387,11 @@ impl BindingFreeFileIndex {
 /// textual scope before the call, whose expansion cannot bind a macro name
 /// (#6648). The definition and the call arguments hold no binding word
 /// ([`BINDING_WORDS`]) and no attribute outside [`INERT_ATTRIBUTES`]; the
-/// definition invokes no bang macro and captures no `tt` fragment, and the
-/// arguments invoke only trusted names by their bare name. Nothing between
-/// the definition and this call may shadow it: no module item, and no macro
-/// call other than another inert call of the same wrapper. A wrapper
+/// definition captures no `tt` fragment and, like the arguments, invokes
+/// only trusted names by their bare name (the definition may also invoke
+/// itself). Nothing between the definition and this call may shadow it: no
+/// module item, and no macro call outside a block other than another inert
+/// call of the same wrapper. A wrapper
 /// reached by path (`a::wrap!`), named by a `use` in this file, defined
 /// twice, under an attribute other than a doc comment, inside a function or
 /// block, or used before or outside its definition's scope fails closed: it
@@ -2358,7 +2406,7 @@ fn binding_free_local_wrapper(
     let Some(name) = bare_macro_name(call) else {
         return false;
     };
-    if !inert_tokens(argument_tokens, trusted, false) {
+    if !inert_tokens(argument_tokens, trusted) {
         return false;
     }
     let named = |candidate: Option<ast::Name>| {
@@ -2379,16 +2427,28 @@ fn binding_free_local_wrapper(
     if definition_end > call_start {
         return false;
     }
-    let facts_of_definition = *facts
+    let facts_of_definition = facts
         .wrapper_definitions
         .borrow_mut()
         .entry(definition.syntax().text_range().start())
-        .or_insert_with(|| WrapperDefinition::of(definition));
+        .or_insert_with(|| WrapperDefinition::of(definition))
+        .clone();
     // The file-level reach is the whole file, which holds every call.
     if !facts_of_definition
         .reach
         .is_some_and(|reach| reach.contains(call_start))
         || !facts_of_definition.inert_body
+    {
+        return false;
+    }
+    // A body call of a trusted name resolves exactly as the same call
+    // passed in the arguments would, and a recursive call re-enters this
+    // same inert definition: neither can bind a name. Any other name may
+    // be a macro that emits a binding.
+    if !facts_of_definition
+        .body_bangs
+        .iter()
+        .all(|bang| *bang == name || trusted.contains(&bang.as_str()))
     {
         return false;
     }
@@ -2406,17 +2466,56 @@ fn binding_free_local_wrapper(
     // second `macro_rules!` of the same name, which this file never shows
     // but which shadows the first at the call. Even a trusted name may be
     // a local or imported macro there (`macro_rules! vec`), so only inert
-    // calls of this same wrapper may sit between them.
+    // calls of this same wrapper may sit between them. A call inside a
+    // block (a function body) that does not also hold this call is the
+    // exception: what it defines is scoped to that block, and a
+    // `#[macro_export]` copy only reaches path scope, which the textual
+    // definition takes precedence over.
+    let in_block = |other: &ast::MacroCall| {
+        other.syntax().ancestors().skip(1).any(|node| {
+            ast::BlockExpr::can_cast(node.kind()) && !node.text_range().contains(call_start)
+        })
+    };
     facts
         .calls
         .iter()
-        .filter(|other| between(other.syntax()))
+        .filter(|other| between(other.syntax()) && !in_block(other))
         .all(|other| {
             bare_macro_name(other).is_some_and(|other_name| other_name == name)
-                && other.token_tree().is_some_and(|tree| {
-                    inert_tokens(&non_trivia_tokens(tree.syntax()), trusted, false)
-                })
+                && other
+                    .token_tree()
+                    .is_some_and(|tree| inert_tokens(&non_trivia_tokens(tree.syntax()), trusted))
         })
+}
+
+/// Whether the one local definition `call` names invokes, in its body, a
+/// name other than its own that `bound` now holds. Reads the cached
+/// definition facts; a call with no single definition answers `false`, as
+/// [`binding_free_local_wrapper`] never exempts it.
+fn wrapper_body_calls_bound(
+    facts: &BindingFreeFileIndex,
+    call: &ast::MacroCall,
+    bound: &BTreeSet<String>,
+) -> bool {
+    let Some(name) = bare_macro_name(call) else {
+        return false;
+    };
+    let mut definitions = facts.rules.iter().filter(|rules| {
+        rules
+            .name()
+            .is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
+    });
+    let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+        return false;
+    };
+    facts
+        .wrapper_definitions
+        .borrow_mut()
+        .entry(definition.syntax().text_range().start())
+        .or_insert_with(|| WrapperDefinition::of(definition))
+        .body_bangs
+        .iter()
+        .any(|bang| *bang != name && bound.contains(bang))
 }
 
 /// The name of a macro call reached by a bare, unqualified path.
@@ -2439,10 +2538,9 @@ fn non_trivia_tokens(node: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
 
 /// Whether macro tokens can bind nothing once expanded: no binding word, no
 /// attribute outside [`INERT_ATTRIBUTES`], and no `!` other than a bare
-/// trusted `name!` (none at all in a definition body, whose `$name!` could
-/// be anything). A unary `!` fails closed too: a `$b:tt` or a repetition
-/// can splice it after a name.
-fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definition: bool) -> bool {
+/// trusted `name!`. A unary `!` fails closed too: a `$b:tt` or a
+/// repetition can splice it after a name.
+fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str]) -> bool {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, IDENT, L_BRACK, POUND};
     let word =
         |token: &ra_ap_syntax::SyntaxToken| token.text().trim_start_matches("r#").to_string();
@@ -2463,7 +2561,7 @@ fn inert_tokens(tokens: &[ra_ap_syntax::SyntaxToken], trusted: &[&str], definiti
                     .checked_sub(2)
                     .and_then(|before| tokens.get(before))
                     .is_some_and(|before| matches!(before.kind(), COLON | COLON2));
-                !definition && !qualified && trusted.contains(&word(previous).as_str())
+                !qualified && trusted.contains(&word(previous).as_str())
             }
             POUND => {
                 tokens
@@ -3092,6 +3190,9 @@ pub(crate) fn empty_local_macro_invocation_ranges(
 /// the same spelling [`owner_pin_assertions`] keys its context by. Empty when
 /// the file does not parse cleanly. The caller keeps the per-file result and
 /// filters it to a test's lines.
+/// Every `debug_assert_eq!` call in `source`, bare or under a `std`/`core`
+/// root (#8637). A rooted call is only nominated here: the owner pin's
+/// root proof (#7857) decides whether that root is the standard library.
 pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
@@ -3109,7 +3210,10 @@ pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
                     .to_string()
                     .split_whitespace()
                     .collect::<String>()
-                    == "debug_assert_eq"
+                    .strip_suffix("debug_assert_eq")
+                    .is_some_and(|root| {
+                        matches!(root, "" | "std::" | "core::" | "::std::" | "::core::")
+                    })
             })
         })
         .map(|call| {
@@ -3196,6 +3300,7 @@ fn owner_pin_assertions_with_matches(
         return result;
     };
     result.parsed = true;
+    let _extern_crate_scan = ExternCrateScan::enter();
     result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
@@ -4308,6 +4413,26 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
     name: &str,
     line: usize,
 ) -> Option<BTreeSet<String>> {
+    // Classification asks this of the test's and the owner's file for every
+    // gated refusal, each time re-parsing the whole file (#13754). The answer
+    // is a pure function of the text, the name and the line, so a run scope
+    // computes each query once.
+    super::run_memo::memoize_with(
+        super::run_memo::Product::CfgGatesOfFn,
+        line,
+        name,
+        source,
+        || unestablished_cfg_gates_of_fn_uncached(source, name, line),
+    )
+}
+
+fn unestablished_cfg_gates_of_fn_uncached(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> Option<BTreeSet<String>> {
+    #[cfg(test)]
+    CFG_GATES_OF_FN_PARSES.with(|count| count.set(count.get() + 1));
     let parse = parse_clean_source_file(source)?;
     let lines = LineIndex::new(source);
     let mut found = parse
@@ -4341,6 +4466,60 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
         }
     }
     Some(gates)
+}
+
+#[cfg(test)]
+thread_local! {
+    static CFG_GATES_OF_FN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod cfg_gates_memo_tests {
+    use super::*;
+
+    fn take_parses() -> usize {
+        CFG_GATES_OF_FN_PARSES.with(|count| count.replace(0))
+    }
+
+    /// #13754: a run scope answers a repeated query from the memo, keyed by
+    /// the text, the name and the line, with the uncached answer.
+    #[test]
+    fn a_run_scope_answers_repeated_cfg_gate_queries_once() {
+        let source = "#[cfg(feature = \"x\")]\nmod gated {\n    #[cfg(feature = \"y\")]\n    fn inner() {}\n}\nfn plain() {}\n";
+        let queries = [("inner", 4), ("plain", 6), ("inner", 6)];
+        let expected: Vec<_> = queries
+            .iter()
+            .map(|(name, line)| unestablished_cfg_gates_of_fn_uncached(source, name, *line))
+            .collect();
+        // Premises: a gated fn, an ungated fn and a miss each answer differently.
+        assert_eq!(
+            expected[0],
+            Some(BTreeSet::from([
+                "#[cfg(feature=\"x\")]".to_string(),
+                "#[cfg(feature=\"y\")]".to_string(),
+            ]))
+        );
+        assert_eq!(expected[1], Some(BTreeSet::new()));
+        assert_eq!(expected[2], None);
+        let _ = take_parses();
+        for _ in 0..3 {
+            for ((name, line), want) in queries.iter().zip(&expected) {
+                assert_eq!(&unestablished_cfg_gates_of_fn(source, name, *line), want);
+            }
+        }
+        assert_eq!(take_parses(), 9, "without a scope every query parses");
+        let _scope = super::super::run_memo::enter();
+        for _ in 0..3 {
+            for ((name, line), want) in queries.iter().zip(&expected) {
+                assert_eq!(&unestablished_cfg_gates_of_fn(source, name, *line), want);
+            }
+        }
+        assert_eq!(
+            take_parses(),
+            3,
+            "inside a scope each distinct query parses once"
+        );
+    }
 }
 
 /// How the out-of-line `mod name;` declared on `line` of `source` is gated
@@ -4939,8 +5118,10 @@ fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
 /// immutable binding, and every row holds exactly one scalar literal per
 /// parameter. The `=> literal` form (RIPR-SPEC-0231 rule 9, a generated
 /// comparison the fact producer reads as `assert_eq!`) is admitted when the
-/// body is one returned expression; `matches`/`with` forms, other `=>`
-/// shapes, string or computed values (which could call the owner) all refuse.
+/// body is one returned expression. A trailing `; "name"` only names the
+/// generated test and is admitted unless the name could mark it ignored;
+/// `matches`/`with` forms, other `=>` shapes, string or computed values
+/// (which could call the owner) all refuse.
 fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
@@ -5150,6 +5331,25 @@ fn case_row_literals(attr: &ast::Attr, arrow: bool) -> Option<usize> {
         Some(_) => return None,
         None => inner,
     };
+    // A `; "name"` suffix only names the generated test. A name holding
+    // `ignore` or `inconclusive` could mark it ignored, so it refuses, as
+    // does any other suffix shape.
+    let inner = match inner.iter().position(|token| token.text() == ";") {
+        Some(at) => {
+            let [name] = &inner[at + 1..] else {
+                return None;
+            };
+            let text = name.text();
+            if name.kind() != ra_ap_syntax::SyntaxKind::STRING
+                || text.contains("ignore")
+                || text.contains("inconclusive")
+            {
+                return None;
+            }
+            &inner[..at]
+        }
+        None => inner,
+    };
     let mut count = 0;
     for value in inner.split(|token| token.text() == ",") {
         // A string literal reaches the parameter through `FromStr`, which
@@ -5236,6 +5436,84 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
 /// attribute appears there must hold under the same rule. Neither can then
 /// be shadowed, and neither real crate's attribute emits an item.
 fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
+    if let Some(known) = ExternCrateScan::known(module, krate) {
+        return known;
+    }
+    let holds = extern_crate_path_holds_uncached(module, krate);
+    ExternCrateScan::record(module, krate, holds);
+    holds
+}
+
+/// One file scan's [`extern_crate_path_holds`] answers. The answer reads
+/// only the module's own subtree and its enclosing modules, so within one
+/// tree it is a function of (module node, crate name). Every `async` test
+/// and every attribute of every test in a module asked it again, and each
+/// ask walks all of the module's items, attributes and imports: 7.7% of a
+/// `check` run's allocations on this repository (#13703).
+///
+/// The memo lives only while the outermost [`ExternCrateScan`] guard on this
+/// thread does, so no tree outlives its scan. Each entry holds its module
+/// node, which keeps that tree's allocation alive: a node of a later tree
+/// can never compare equal to a stale entry through a reused address.
+struct ExternCrateScan {
+    outermost: bool,
+}
+
+type ExternCrateAnswers = Vec<(SyntaxNode, String, bool)>;
+
+thread_local! {
+    static EXTERN_CRATE_ANSWERS: std::cell::RefCell<Option<ExternCrateAnswers>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static EXTERN_CRATE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl ExternCrateScan {
+    fn enter() -> Self {
+        EXTERN_CRATE_ANSWERS.with(|answers| {
+            let mut answers = answers.borrow_mut();
+            let outermost = answers.is_none();
+            if outermost {
+                *answers = Some(Vec::new());
+            }
+            Self { outermost }
+        })
+    }
+
+    fn known(module: &SyntaxNode, krate: &str) -> Option<bool> {
+        EXTERN_CRATE_ANSWERS.with(|answers| {
+            answers.borrow().as_ref().and_then(|answers| {
+                answers
+                    .iter()
+                    .find(|(node, name, _)| node == module && name == krate)
+                    .map(|(_, _, holds)| *holds)
+            })
+        })
+    }
+
+    fn record(module: &SyntaxNode, krate: &str, holds: bool) {
+        EXTERN_CRATE_ANSWERS.with(|answers| {
+            if let Some(answers) = answers.borrow_mut().as_mut() {
+                answers.push((module.clone(), krate.to_string(), holds));
+            }
+        });
+    }
+}
+
+impl Drop for ExternCrateScan {
+    fn drop(&mut self) {
+        if self.outermost {
+            EXTERN_CRATE_ANSWERS.with(|answers| answers.borrow_mut().take());
+        }
+    }
+}
+
+fn extern_crate_path_holds_uncached(module: &SyntaxNode, krate: &str) -> bool {
+    #[cfg(test)]
+    EXTERN_CRATE_WALKS.with(|walks| walks.set(walks.get() + 1));
     let mut crates = vec![krate];
     for other in TRUSTED_ATTRIBUTE_CRATES {
         if *other != krate && crate_attribute_appears(module, other) {
@@ -8016,5 +8294,134 @@ mod literal_macro_export_tests {
                 "{source}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod extern_crate_scan_tests {
+    use super::*;
+
+    fn walks() -> usize {
+        EXTERN_CRATE_WALKS.with(std::cell::Cell::get)
+    }
+
+    fn memo_is_live() -> bool {
+        EXTERN_CRATE_ANSWERS.with(|answers| answers.borrow().is_some())
+    }
+
+    /// Every module scope of `source`: the file and each inline module's
+    /// item list, the nodes the attribute checks pass as `module`.
+    fn module_scopes(source: &str) -> Result<Vec<SyntaxNode>, String> {
+        let parse = parse_clean_source_file(source).ok_or("fixture must parse cleanly")?;
+        let root = parse.tree().syntax().clone();
+        Ok(std::iter::once(root.clone())
+            .chain(
+                root.descendants()
+                    .filter_map(ast::Module::cast)
+                    .filter_map(|module| module.item_list())
+                    .map(|list| list.syntax().clone()),
+            )
+            .collect())
+    }
+
+    /// #13703: one scan walks a module once per crate asked, however many
+    /// async tests it holds, and the scan's results match a scan that walks
+    /// the module for every ask.
+    #[test]
+    fn one_scan_walks_a_module_once_per_crate_not_once_per_test() {
+        let mut source = String::new();
+        for n in 0..40 {
+            source.push_str(&format!(
+                "#[tokio::test]\nasync fn t{n}() {{ assert_eq!(1, 1); }}\n"
+            ));
+        }
+        let before = walks();
+        let scanned = owner_pin_assertions(&source, &["assert_eq"]);
+        let scan_walks = walks() - before;
+        assert!(scanned.parsed);
+        assert!(
+            (1..=4).contains(&scan_walks),
+            "{scan_walks} module walks for 40 async tests in one module"
+        );
+        assert!(!memo_is_live(), "the memo ends with its scan");
+        assert_eq!(scanned.functions.len(), 40);
+        assert!(
+            scanned
+                .functions
+                .values()
+                .all(|function| function.refusal.is_none()),
+            "premise: tokio is the crate here, so every async test is read"
+        );
+
+        // The same tests under a module named `tokio`: the answer flips, so
+        // the memo is not what admits them.
+        let shadowed = format!("mod tokio {{}}\n{source}");
+        let refused = owner_pin_assertions(&shadowed, &["assert_eq"]);
+        assert!(refused.parsed);
+        assert!(
+            refused
+                .functions
+                .values()
+                .all(|function| function.refusal.is_some()),
+            "a local `tokio` module refuses every async test"
+        );
+    }
+
+    /// Inside a scan the memoized answer equals a fresh walk for every
+    /// module scope and trusted crate, including a nested module whose
+    /// `use super::*;` defers to its parent, and repeated asks do not walk.
+    #[test]
+    fn memoized_answers_equal_fresh_walks() -> Result<(), String> {
+        let sources = [
+            "#[tokio::test]\nasync fn a() {}\nmod inner {\n    use super::*;\n    #[tokio::test]\n    async fn b() {}\n}\n",
+            "mod tokio {}\nmod inner {\n    use super::*;\n    #[tokio::test]\n    async fn b() {}\n}\n",
+            "use other as serial_test;\nmod inner {\n    use other::*;\n    #[test]\n    fn c() {}\n}\n",
+            "extern crate real as rstest;\nmod same {\n    #[test]\n    fn d() {}\n}\nmod twin {\n    #[test]\n    fn d() {}\n}\n",
+        ];
+        let mut answers = BTreeSet::new();
+        for source in sources {
+            let scopes = module_scopes(source)?;
+            assert!(scopes.len() >= 2, "premise: nested scopes in {source}");
+            let fresh: Vec<bool> = scopes
+                .iter()
+                .flat_map(|scope| {
+                    TRUSTED_ATTRIBUTE_CRATES
+                        .iter()
+                        .map(|krate| extern_crate_path_holds_uncached(scope, krate))
+                })
+                .collect();
+            assert!(!memo_is_live(), "no memo outside a scan");
+            let scan = ExternCrateScan::enter();
+            let nested = ExternCrateScan::enter();
+            for _ in 0..2 {
+                let memoized: Vec<bool> = scopes
+                    .iter()
+                    .flat_map(|scope| {
+                        TRUSTED_ATTRIBUTE_CRATES
+                            .iter()
+                            .map(|krate| extern_crate_path_holds(scope, krate))
+                    })
+                    .collect();
+                assert_eq!(memoized, fresh, "{source}");
+            }
+            let before = walks();
+            for scope in &scopes {
+                for krate in TRUSTED_ATTRIBUTE_CRATES {
+                    extern_crate_path_holds(scope, krate);
+                }
+            }
+            assert_eq!(walks(), before, "a known answer is not walked again");
+            drop(nested);
+            assert!(memo_is_live(), "an inner guard leaves the outer memo");
+            drop(scan);
+            assert!(!memo_is_live());
+            answers.extend(fresh);
+        }
+        assert_eq!(
+            answers,
+            BTreeSet::from([false, true]),
+            "premise: the fixtures hold and refuse"
+        );
+        Ok(())
     }
 }

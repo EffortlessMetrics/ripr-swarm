@@ -700,6 +700,9 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
     pub(in crate::analysis) slice_counter_boundary:
         Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
+    /// #14815: the owner's whole tail gained or lost a prefix `-`/`!`, with
+    /// the base-side owner text the diff establishes.
+    pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -724,6 +727,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         owner,
         literal_length_boundary,
         slice_counter_boundary,
+        unary_tail,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -921,7 +925,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 // above also declines.
                 .filter(|()| !owner_has_other_callers && !assertion_macros_rebound)
                 .and(owner)
-                .and_then(|owner| added_string_arm_input(probe, activation, owner))
+                .and_then(|owner| added_equality_arm_input(probe, activation, owner))
             {
                 // #14388: the edit appends `|| param == "lit"` to a chain of
                 // string equalities on the same parameter, and a related
@@ -933,7 +937,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Yes,
                     Confidence::Medium,
                     format!(
-                        "A related test passes {literal}, which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change"
+                        "A related test passes {}, which makes the added `||` arm true while every original {}-equality arm is false, so the input reaches the change",
+                        literal.0,
+                        literal.1.label()
                     ),
                 )
             } else if probe_literals.is_empty() {
@@ -1102,6 +1108,17 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
+            } else if let Some((owner, change)) = owner
+                .zip(unary_tail)
+                .filter(|_| matches!(probe.family, ProbeFamily::ReturnValue))
+            {
+                unary_tail_infection(
+                    owner,
+                    change,
+                    related_tests,
+                    owner_has_other_callers,
+                    assertion_macros_rebound,
+                )
             } else if let Some((before, after, kind)) = probe.before.as_deref().and_then(|before| {
                 // A match-arm probe carries only the arm head (`_ =>`) even
                 // when the edit sits in the arm body; read the whole arm line.
@@ -1124,6 +1141,91 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 )
             }
         }
+    }
+}
+
+/// #14815: infection for a prefix `-`/`!` added to or removed from the
+/// owner's whole tail. `!` on `bool` or an integer changes the result at
+/// every input, so any reaching input infects. `-` leaves the result
+/// unchanged at `0`, so credit needs an asserted literal call at which the
+/// owner folds to different values on the base-side owner and the current
+/// one; a computed, bound, looped or constant argument stays unknown, and a
+/// rebound assertion macro reads nothing.
+fn unary_tail_infection(
+    owner: &FunctionSummary,
+    change: &super::UnaryTailChange,
+    related_tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
+) -> StageEvidence {
+    use crate::analysis::test_grip_evidence::{
+        RangeChangeVisibility, every_owner_call_separates, owner_change_visibility,
+    };
+    let operand = &change.operand;
+    if change.operator == super::UnaryOperator::Not {
+        return StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "The returned `{operand}` and `!{operand}` differ at every input, so any reaching call infects the result"
+            ),
+        );
+    }
+    if assertion_macros_rebound {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The workspace rebinds an assertion macro, so ripr does not read which asserted inputs tell the versions apart",
+        );
+    }
+    match owner_change_visibility(
+        owner,
+        &change.baseline,
+        related_tests,
+        owner_has_other_callers,
+    ) {
+        RangeChangeVisibility::ExactInputSeparates(call) => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "A related test asserts an exact value for `{call}`, an input at which the returned `{operand}` and `-{operand}` differ, so the input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::InexactInputSeparates(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "A related test calls `{call}`, where the returned `{operand}` and `-{operand}` differ, but only a relational or inequality assertion checks it; no exact assertion pins an input that tells them apart"
+            ),
+        ),
+        RangeChangeVisibility::EveryAssertedInputAgrees(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Every related test asserts the owner only at inputs where `{operand}` and `-{operand}` are equal (for example `{call}`), so no test input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::NotEstablished => match every_owner_call_separates(
+            owner,
+            &change.baseline,
+            related_tests,
+            owner_has_other_callers,
+        ) {
+            Some(call) => StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                format!(
+                    "Every call the related tests make, for example `{call}`, passes a literal input at which the returned `{operand}` and `-{operand}` differ, so the inputs reach the change"
+                ),
+            ),
+            None => StageEvidence::new(
+                StageState::Unknown,
+                Confidence::Low,
+                format!(
+                    "The returned `{operand}` and `-{operand}` agree at `{operand} = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"
+                ),
+            ),
+        },
     }
 }
 
@@ -1216,10 +1318,24 @@ fn range_bound_infection(
 fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     use crate::analysis::language::mask_rust_comments_and_strings;
     let (before, after) = aligned_range_texts(before, after);
-    let before = mask_rust_comments_and_strings(&before);
-    let after = mask_rust_comments_and_strings(&after);
+    let (raw_before, raw_after) = (before, after);
+    let before = mask_rust_comments_and_strings(&raw_before);
+    let after = mask_rust_comments_and_strings(&raw_after);
     if before == after {
-        return None;
+        // A char endpoint (`'a'..='z'`) is masked like a string literal. An
+        // edit confined to strings or comments is left alone, since their
+        // `..` may be text; a changed char literal is read as an endpoint
+        // whatever else the line holds.
+        if char_literal_contents(&raw_before) == char_literal_contents(&raw_after) {
+            return None;
+        }
+        return range_endpoints_moved(&raw_before, &raw_after).then(|| {
+            if raw_after.contains("=>") {
+                RangeConsumer::Pattern
+            } else {
+                RangeConsumer::Absorbing
+            }
+        });
     }
     let prefix = before
         .bytes()
@@ -1245,19 +1361,193 @@ fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
         (Some(RangeConsumer::Preserving), _) | (_, Some(RangeConsumer::Preserving)) => None,
         (Some(_), Some(_)) => Some(RangeConsumer::Absorbing),
         _ => {
+            if let Some(kind) = several_range_change(&before, &after) {
+                return kind;
+            }
             let (short, long) = if before.len() < after.len() {
                 (&before, &after)
             } else {
                 (&after, &before)
             };
-            (long.len() == short.len() + 1
+            let one_equals = long.len() == short.len() + 1
                 && long.get(span(long)) == Some("=")
                 && long
                     .get(..prefix)
-                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("...")))
-            .then_some(RangeConsumer::Absorbing)
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."));
+            // #14538: an edit inside a macro's input (`matches!(n, 1..=5)`
+            // to `0..=6`) or on a line that does not parse: no range node is
+            // read, so the line is gated when a range's written endpoints
+            // or operator differ between the versions.
+            (one_equals || range_endpoints_moved(&before, &after))
+                .then_some(RangeConsumer::Absorbing)
         }
     }
+}
+
+/// #14538: each `..` / `..=` operator of `text` (not `...`) with its
+/// written start and end operand texts, read lexically up to the nearest
+/// delimiter. A macro input or a line that does not parse has no range node,
+/// so its ranges are compared this way.
+fn range_signatures(text: &str) -> Vec<(String, bool, String)> {
+    let mut signatures = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text.get(from..).and_then(|rest| rest.find("..")) {
+        let at = from + found;
+        let rest = &text[at + 2..];
+        if rest.starts_with('.') {
+            from = at + 2 + rest.len() - rest.trim_start_matches('.').len();
+            continue;
+        }
+        let inclusive = rest.starts_with('=');
+        let after = at + 2 + usize::from(inclusive);
+        let head = &text[..at];
+        let tail = &text[after..];
+        let start = &head[operand_start(head)..];
+        let end = &tail[..operand_end(tail)];
+        signatures.push((start.trim().to_string(), inclusive, end.trim().to_string()));
+        from = after;
+    }
+    signatures
+}
+
+/// The byte offset in `head` where a range's start operand begins: after
+/// the nearest unbalanced opener or a top-level `,`, `|`, `;` or `=`, so a
+/// call or index inside the operand (`f(a, b)..`) stays whole.
+fn operand_start(head: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in head.char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth == 0 => return at + 1,
+            '(' | '[' | '{' => depth -= 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// The byte offset in `tail` where a range's end operand stops: at the
+/// nearest unbalanced closer, a block `{`, or a top-level `,`, `|`, `;` or
+/// `=`, so `..=v.len() - 1` and `..=f(a, b)` stay whole.
+fn operand_end(tail: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, ch) in tail.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return at,
+            ')' | ']' | '}' => depth -= 1,
+            '{' if depth == 0 => return at,
+            '{' => depth += 1,
+            ',' | '|' | ';' | '=' if depth == 0 => return at,
+            _ => {}
+        }
+    }
+    tail.len()
+}
+
+/// The text of each char literal in code in `text`, in order, as the
+/// comment-and-string masker reads them: a space char (`' '`) counts like
+/// any other, and a quote inside a string or comment is not a char.
+fn char_literal_contents(text: &str) -> Vec<&str> {
+    let (_, spans) = crate::analysis::extract::mask::mask_with_char_literals(text);
+    spans
+        .into_iter()
+        .map(|(start, end)| text.get(start..=end).unwrap_or_default())
+        .collect()
+}
+
+/// Whether `before` and `after` hold the same number of ranges and at least
+/// one range's endpoints or operator differ: a moved bound (`0..=5` to
+/// `0..=6`, `'a'..='z'` to `'b'..='y'`), not an edit beside the ranges
+/// (`[1, len, ..] => len + 2` to `2 + len`) or a range added or removed.
+fn range_endpoints_moved(before: &str, after: &str) -> bool {
+    let (old, new) = (range_signatures(before), range_signatures(after));
+    !old.is_empty() && old.len() == new.len() && old != new
+}
+
+/// #14538: a line where several range expressions changed at once
+/// (`(0..=a).sum() + (0..=b).sum()` to `(0..a).sum() + (0..b).sum()`). The
+/// two versions must have the same outermost ranges in the same places with
+/// the text between them unchanged. `Some(None)` when every changed range
+/// keeps a length-preserving reading, `Some(Some(Absorbing))` when any
+/// changed range feeds an absorbing consumer or pattern, `None` when the
+/// line is not that shape.
+fn several_range_change(before: &str, after: &str) -> Option<Option<RangeConsumer>> {
+    let ranges = |text: &str| -> Option<Vec<std::ops::Range<usize>>> {
+        const PREFIX: &str = "fn __ripr_range_probe() {\n";
+        let closing = if text.trim_end().ends_with('{') {
+            "}"
+        } else {
+            ""
+        };
+        let source = format!("{PREFIX}{text}{closing}\n}}\n");
+        let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+        let spans: Vec<_> = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::RangeExpr::can_cast(node.kind()))
+            .filter(|node| {
+                !node
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| ast::RangeExpr::can_cast(ancestor.kind()))
+            })
+            .map(|node| {
+                let range = node.text_range();
+                usize::from(range.start()) - PREFIX.len()..usize::from(range.end()) - PREFIX.len()
+            })
+            .collect();
+        spans
+            .iter()
+            .all(|span| span.end <= text.len())
+            .then_some(spans)
+    };
+    let (old, new) = (ranges(before)?, ranges(after)?);
+    if old.len() < 2 || old.len() != new.len() {
+        return None;
+    }
+    let skeleton = |text: &str, spans: &[std::ops::Range<usize>]| -> Option<String> {
+        let mut out = String::new();
+        let mut at = 0;
+        for span in spans {
+            out.push_str(text.get(at..span.start)?);
+            out.push('\u{0}');
+            at = span.end;
+        }
+        out.push_str(text.get(at..)?);
+        Some(out)
+    };
+    if skeleton(before, &old)? != skeleton(after, &new)? {
+        return None;
+    }
+    let mut changed = false;
+    for (old_span, new_span) in old.iter().zip(&new) {
+        if before.get(old_span.clone()) == after.get(new_span.clone()) {
+            continue;
+        }
+        changed = true;
+        // A range nested in a changed range (`(0..(0..=a).sum())`) is not
+        // read on its own here.
+        if before
+            .get(old_span.clone())
+            .is_none_or(|text| text.matches("..").count() > 1)
+            || after
+                .get(new_span.clone())
+                .is_none_or(|text| text.matches("..").count() > 1)
+        {
+            return Some(Some(RangeConsumer::Absorbing));
+        }
+        match (
+            range_consumer(before, old_span.clone()),
+            range_consumer(after, new_span.clone()),
+        ) {
+            (Some(RangeConsumer::Preserving), Some(RangeConsumer::Preserving)) => {}
+            _ => return Some(Some(RangeConsumer::Absorbing)),
+        }
+    }
+    changed.then_some(None)
 }
 
 /// `before` and `after` trimmed, and cut to their arm heads when one is a
@@ -1483,11 +1773,38 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
 /// exactly `"b"`. Distinct literals make every original arm false on that
 /// input and the new arm true, so the old and new predicates differ. Anything
 /// else returns `None` and the ordinary reading stays.
-fn added_string_arm_input(
+///
+/// #15027: integer and char arms read the same way (`n == 1 || n == 2`,
+/// `c == ',' || c == ';'`). Every arm must use one literal kind, and the
+/// parameter must be declared as a primitive integer for integer literals or
+/// `char` for char literals, whose `==` compares the value. Integer literals
+/// are plain decimal (no sign, suffix, underscore, radix prefix or leading
+/// zero), so distinct spellings are distinct values; char literals are one
+/// unescaped character that cannot read as an operator.
+fn added_equality_arm_input(
     probe: &Probe,
     activation: &ActivationEvidence,
     owner: &FunctionSummary,
-) -> Option<String> {
+) -> Option<(String, ArmLiteralKind)> {
+    let (parameter, literal, kind) = appended_equality_arm(probe, owner)?;
+    activation
+        .observed_values
+        .iter()
+        .filter(|fact| fact.context == ValueContext::FunctionArgument)
+        .filter_map(|fact| fact.value.split_once(" = "))
+        .any(|(name, value)| name.trim() == parameter && value.trim() == literal)
+        .then_some((literal, kind))
+}
+
+/// #15027: the structural half of [`added_equality_arm_input`]: `probe`
+/// appends one `|| p == lit` arm to a chain of equalities on the owner
+/// parameter `p`, under every guard listed there except the test input. Any
+/// input equal to `lit` makes the whole predicate flip, which is also what
+/// lets the owner-tail return sink carry such a chain (flow.rs).
+pub(in crate::analysis) fn appended_equality_arm(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<(String, String, ArmLiteralKind)> {
     let before = probe.before.as_deref()?;
     let only_or = |text: &str| {
         let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
@@ -1496,10 +1813,10 @@ fn added_string_arm_input(
     if !only_or(&probe.expression) || !only_or(before) {
         return None;
     }
-    let arms = |text: &str| -> Option<Vec<(String, String)>> {
+    let arms = |text: &str| -> Option<Vec<(String, String, ArmLiteralKind)>> {
         boolean_conditions(text)
             .into_iter()
-            .map(string_equality_arm)
+            .map(equality_arm)
             .collect()
     };
     let after_arms = arms(&probe.expression)?;
@@ -1509,32 +1826,100 @@ fn added_string_arm_input(
         return None;
     }
     let parameter = &added.0;
+    let kind = added.2;
     let mut literals = after_arms
         .iter()
-        .map(|(_, literal)| literal)
+        .map(|(_, literal, _)| literal)
         .collect::<Vec<_>>();
     literals.sort();
     literals.dedup();
-    if after_arms.iter().any(|(name, _)| name != parameter) || literals.len() != after_arms.len() {
+    if after_arms
+        .iter()
+        .any(|(name, _, arm_kind)| name != parameter || *arm_kind != kind)
+        || literals.len() != after_arms.len()
+    {
         return None;
     }
     // A parameter type with its own `PartialEq<&str>` could make an original
-    // arm true on the new literal, so only plain string types qualify.
+    // arm true on the new literal, so only plain string types qualify, and
+    // likewise only primitive integers and `char` for those literals.
     if !super::activation::call_parameter_names(owner).contains(parameter)
         || !super::activation::parameter_type(owner, parameter)
-            .is_some_and(|ty| is_plain_string_type(&ty))
+            .is_some_and(|ty| kind.admits_parameter_type(&ty))
         || parameter_is_rebound(&owner.body, parameter)
         || !chain_is_first_decision(&owner.body, &probe.expression)
     {
         return None;
     }
-    activation
-        .observed_values
-        .iter()
-        .filter(|fact| fact.context == ValueContext::FunctionArgument)
-        .filter_map(|fact| fact.value.split_once(" = "))
-        .any(|(name, value)| name.trim() == parameter && value.trim() == added.1)
-        .then(|| added.1.clone())
+    Some((parameter.clone(), added.1.clone(), kind))
+}
+
+/// The literal kind of one appended-arm equality (#14388, #15027).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum ArmLiteralKind {
+    Str,
+    Int,
+    Char,
+}
+
+impl ArmLiteralKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Str => "string",
+            Self::Int => "integer",
+            Self::Char => "char",
+        }
+    }
+
+    /// Whether `==` between a parameter of type `ty` and a literal of this
+    /// kind compares the value itself.
+    fn admits_parameter_type(self, ty: &str) -> bool {
+        match self {
+            Self::Str => is_plain_string_type(ty),
+            Self::Int => matches!(
+                ty.trim(),
+                "u8" | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+            ),
+            Self::Char => ty.trim() == "char",
+        }
+    }
+
+    /// The kind of `text` when it is one literal this reading accepts.
+    fn of(text: &str) -> Option<Self> {
+        if text.len() >= 2
+            && text.starts_with('"')
+            && text.ends_with('"')
+            && !text[1..text.len() - 1].contains(['"', '\\'])
+        {
+            return (!text[1..text.len() - 1].contains("==")).then_some(Self::Str);
+        }
+        // Plain decimal only: `5` and `05` or `5_u8` would otherwise be two
+        // spellings of one value.
+        if !text.is_empty()
+            && text.len() <= 18
+            && text.bytes().all(|byte| byte.is_ascii_digit())
+            && (text == "0" || !text.starts_with('0'))
+        {
+            return Some(Self::Int);
+        }
+        let mut inner = text.strip_prefix('\'')?.strip_suffix('\'')?.chars();
+        let (Some(only), None) = (inner.next(), inner.next()) else {
+            return None;
+        };
+        // An escape could spell another char's value, and an operator
+        // character could be read as part of the chain.
+        (only.is_ascii_alphanumeric() || ",;:.-_+*/#@$%^~?<> ".contains(only)).then_some(Self::Char)
+    }
 }
 
 /// Whether nothing in the owner before `chain` can take a call away from it
@@ -1590,7 +1975,7 @@ fn chain_is_first_decision(function: &str, chain: &str) -> bool {
 
 /// Whether `ty` is `&str`, `&'a str`, `String` or `&String`: types whose
 /// `==` against a string literal compares the text itself.
-fn is_plain_string_type(ty: &str) -> bool {
+pub(in crate::analysis::classify) fn is_plain_string_type(ty: &str) -> bool {
     let compact = ty.split_whitespace().collect::<Vec<_>>().join(" ");
     let Some(borrowed) = compact.strip_prefix('&') else {
         return compact == "String";
@@ -1606,27 +1991,20 @@ fn is_plain_string_type(ty: &str) -> bool {
     matches!(inner, "str" | "String")
 }
 
-/// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
-/// plain identifier and a string literal with no escapes; anything else is
-/// `None`.
-fn string_equality_arm(arm: &str) -> Option<(String, String)> {
+/// `name == literal` or `literal == name` as `(name, literal, kind)`, for a
+/// plain identifier and a literal [`ArmLiteralKind::of`] accepts; anything
+/// else is `None`.
+fn equality_arm(arm: &str) -> Option<(String, String, ArmLiteralKind)> {
     let (left, right) = arm.split_once("==")?;
     let (left, right) = (left.trim(), right.trim());
-    let is_literal = |text: &str| {
-        text.len() >= 2
-            && text.starts_with('"')
-            && text.ends_with('"')
-            && !text[1..text.len() - 1].contains(['"', '\\'])
-    };
-    let (name, literal) = if is_literal(right) {
-        (left, right)
-    } else if is_literal(left) {
-        (right, left)
+    let (name, literal, kind) = if let Some(kind) = ArmLiteralKind::of(right) {
+        (left, right, kind)
+    } else if let Some(kind) = ArmLiteralKind::of(left) {
+        (right, left, kind)
     } else {
         return None;
     };
-    (is_plain_identifier(name) && !literal[1..literal.len() - 1].contains("=="))
-        .then(|| (name.to_string(), literal.to_string()))
+    is_plain_identifier(name).then(|| (name.to_string(), literal.to_string(), kind))
 }
 
 /// Whether `body` might give `name` a value other than the caller's
@@ -1967,6 +2345,131 @@ fn is_wildcard_discard(expression: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{RangeConsumer, range_bound_change, range_endpoints_moved, several_range_change};
+
+    #[test]
+    fn an_edit_on_a_range_line_inside_a_macro_input_is_gated() {
+        // #14538: `matches!` input is not parsed, so any edit on a line
+        // holding a range operator is gated.
+        let absorbing = |before: &str, after: &str| {
+            range_bound_change(before, after).is_some_and(|kind| kind == RangeConsumer::Absorbing)
+        };
+        assert!(absorbing("matches!(n, 1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 0..=6)"));
+        assert!(absorbing("matches!(n, 0 ..= 5)", "matches!(n, 0 ..= 6)"));
+        assert!(absorbing(
+            "matches!(n, 0..=MAX - 1)",
+            "matches!(n, 0..=MAX - 2)"
+        ));
+        assert!(absorbing("matches!(n, -1..=5)", "matches!(n, 0..=5)"));
+        assert!(absorbing("matches!(n, 0..=5)", "matches!(n, 1..5)"));
+        assert!(absorbing(
+            "matches!(a, 1..=5) || matches!(b, 1..=5)",
+            "matches!(a, 0..=5) || matches!(b, 0..=5)"
+        ));
+        // Char endpoints are masked like strings.
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='z')"
+        ));
+        assert!(absorbing(
+            "matches!(c, 'a'..='z')",
+            "matches!(c, 'b'..='y')"
+        ));
+        assert!(absorbing(
+            "matches!(c, '\u{e9}'..='z')",
+            "matches!(c, '\u{e8}'..='z')"
+        ));
+        assert!(absorbing(
+            "matches!(c, 'é'..='z')",
+            "matches!(c, 'è'..='z')"
+        ));
+        // An edit beside the ranges, a range added or removed, or a line
+        // with no range operator is not gated here.
+        assert!(range_bound_change("matches!(n, Some(5))", "matches!(n, Some(6))").is_none());
+        assert!(!range_endpoints_moved(
+            "[1, len, ..] => Status::Complete(*len as usize + 2),",
+            "[1, len, ..] => Status::Complete(2 + *len as usize),"
+        ));
+        assert!(!range_endpoints_moved(
+            "crc: crc(body),",
+            "crc: crc(&body[..]),"
+        ));
+        assert!(!range_endpoints_moved(
+            "b'0'..=b'9' | b'a'..=b'z' | b'_' => true,",
+            "b'0'..=b'9' | b'a'..=b'z' => true,"
+        ));
+        assert!(!range_endpoints_moved("f(a...b)", "f(a...c)"));
+        // A call or index inside an operand stays whole.
+        assert!(absorbing(
+            "println!(\"{}\", (0..=v.len() - 1).sum::<usize>())",
+            "println!(\"{}\", (0..=v.len() - 2).sum::<usize>())"
+        ));
+        assert!(range_endpoints_moved(
+            "m!((f(a, b)..=n))",
+            "m!((f(c, b)..=n))"
+        ));
+        assert!(range_endpoints_moved("m!(0..=f(a, b))", "m!(0..=f(a, c))"));
+        // A string or comment holding `..` is not a char endpoint.
+        assert!(range_bound_change("say(\"Done..\")", "say(\"Finished..\")").is_none());
+        assert!(range_bound_change("x // 0..5", "x // 0..6").is_none());
+        // A string or comment elsewhere on the line does not hide a moved
+        // char endpoint.
+        assert!(
+            range_bound_change("'a'..='z' => 1, // letters", "'b'..='z' => 1, // letters")
+                .is_some_and(|kind| kind == RangeConsumer::Pattern)
+        );
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') && s == \"x\"",
+            "matches!(c, 'b'..='z') && s == \"x\""
+        ));
+        assert!(range_bound_change("' '..='a' => 1,", "'a'..=' ' => 1,").is_some());
+        // A char-like quote inside a string is string text.
+        assert!(range_bound_change("say(\"'a'..='z'\")", "say(\"'b'..='z'\")").is_none());
+        assert!(absorbing(
+            "matches!(c, 'a'..='z') // 0..5",
+            "matches!(c, 'b'..='z') // 0..5"
+        ));
+    }
+
+    #[test]
+    fn several_changed_ranges_are_gated_unless_every_one_preserves_length() {
+        // #14538: two absorbing sums changed on one line.
+        assert!(matches!(
+            several_range_change(
+                "(0..=a).sum::<u32>() + (0..=b).sum::<u32>()",
+                "(0..a).sum::<u32>() + (0..b).sum::<u32>()",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
+        // Two collected ranges keep the ordinary reading.
+        assert!(matches!(
+            several_range_change(
+                "((0..=a).collect(), (0..=b).collect())",
+                "((0..a).collect(), (0..b).collect())",
+            ),
+            Some(None)
+        ));
+        // A change outside the ranges is not this shape.
+        assert!(
+            several_range_change(
+                "(0..=a).sum() + (0..=b).sum()",
+                "(0..=a).sum() * (0..=b).sum()"
+            )
+            .is_none()
+        );
+        // A changed range nested inside a length-preserving one.
+        assert!(matches!(
+            several_range_change(
+                "((0..(0..=a).sum()).collect(), (0..b).collect())",
+                "((0..(0..a).sum()).collect(), (0..=b).collect())",
+            ),
+            Some(Some(RangeConsumer::Absorbing))
+        ));
+        // One range is the single-range path's job.
+        assert!(several_range_change("(0..=a).sum()", "(0..a).sum()").is_none());
+    }
+
     #[test]
     fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
         let local = unresolved_boundary_summary(
@@ -2370,6 +2873,7 @@ mod tests {
                 owner: Some(&owner),
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
+                unary_tail: None,
             },
             true,
             false,
@@ -2416,10 +2920,130 @@ mod tests {
                 owner: Some(&owner),
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
+                unary_tail: None,
             },
             other_callers,
             assertion_macros_rebound,
         )
+    }
+
+    /// #15027: integer and char arms read like string arms; every near miss,
+    /// including spellings that may share a value, stays unknown.
+    #[test]
+    fn an_input_equal_to_an_appended_integer_or_char_arm_reaches_the_change() {
+        let int_body = "pub fn small(n: u32) -> bool {\n    n == 1 || n == 2\n}\n";
+        let reached =
+            added_string_arm_evidence(int_body, "n == 1", "n == 1 || n == 2", &["n = 2"], false);
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("integer-equality"),
+            "{}",
+            reached.summary
+        );
+        let char_body = "pub fn sep(c: char) -> bool {\n    c == ',' || c == ';'\n}\n";
+        let reached = added_string_arm_evidence(
+            char_body,
+            "c == ','",
+            "c == ',' || c == ';'",
+            &["c = ';'"],
+            false,
+        );
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        assert!(
+            reached.summary.contains("char-equality"),
+            "{}",
+            reached.summary
+        );
+        // The string message is unchanged.
+        let str_body =
+            "pub fn pick(flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let reached = added_string_arm_evidence(
+            str_body,
+            "flag == \"-v\"",
+            "flag == \"-v\" || flag == \"--verbose\"",
+            &["flag = \"--verbose\""],
+            false,
+        );
+        assert!(
+            reached
+                .summary
+                .contains("every original string-equality arm is false"),
+            "{}",
+            reached.summary
+        );
+
+        // Inputs that do not hit the added arm, or another caller.
+        for (input, others) in [("n = 1", false), ("n = 3", false), ("n = 2", true)] {
+            let evidence =
+                added_string_arm_evidence(int_body, "n == 1", "n == 1 || n == 2", &[input], others);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{input}: {}",
+                evidence.summary
+            );
+        }
+        // Integer types only: a newtype or float may compare otherwise.
+        for body in [
+            "pub fn small(n: Level) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: f64) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: &u32) -> bool {\n    n == 1 || n == 2\n}\n",
+            "pub fn small(n: char) -> bool {\n    n == 1 || n == 2\n}\n",
+        ] {
+            let evidence =
+                added_string_arm_evidence(body, "n == 1", "n == 1 || n == 2", &["n = 2"], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{body}: {}",
+                evidence.summary
+            );
+        }
+        // `char` only for char literals.
+        let wide = "pub fn sep(c: u8) -> bool {\n    c == ',' || c == ';'\n}\n";
+        let evidence = added_string_arm_evidence(
+            wide,
+            "c == ','",
+            "c == ',' || c == ';'",
+            &["c = ';'"],
+            false,
+        );
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        // Spellings that may share one value, mixed kinds and operator or
+        // escaped chars decline.
+        for (before, after, input) in [
+            ("n == 5", "n == 5 || n == 05", "n = 05"),
+            ("n == 5", "n == 5 || n == 5_u32", "n = 5_u32"),
+            ("n == 5", "n == 5 || n == 0x5", "n = 0x5"),
+            ("n == 10", "n == 10 || n == 1_0", "n = 1_0"),
+            ("n == 1", "n == 1 || n == -2", "n = -2"),
+            ("n == 1", "n == 1 || n == 1", "n = 1"),
+            ("n == 1", "n == 1 || n == 'a'", "n = 'a'"),
+        ] {
+            let body = format!("pub fn small(n: u32) -> bool {{\n    {after}\n}}\n");
+            let evidence = added_string_arm_evidence(&body, before, after, &[input], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
+        for (before, after, input) in [
+            ("c == 'A'", "c == 'A' || c == '\\x41'", "c = '\\x41'"),
+            ("c == ','", "c == ',' || c == '|'", "c = '|'"),
+            ("c == ','", "c == ',' || c == '!'", "c = '!'"),
+            ("c == ','", "c == ',' || c == '\\''", "c = '\\''"),
+        ] {
+            let body = format!("pub fn sep(c: char) -> bool {{\n    {after}\n}}\n");
+            let evidence = added_string_arm_evidence(&body, before, after, &[input], false);
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{after}: {}",
+                evidence.summary
+            );
+        }
     }
 
     /// #14388 review: only types whose `==` against a literal compares the

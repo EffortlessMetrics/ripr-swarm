@@ -484,6 +484,7 @@ mod tests {
             warnings: vec!["configured-off seam omitted".to_string()],
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
             omitted_static_limited: 0,
         };
 

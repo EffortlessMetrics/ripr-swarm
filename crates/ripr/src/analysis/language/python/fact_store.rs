@@ -75,7 +75,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// module skip root is withheld; `23` entries lack both.
 /// `25`: a function records a single direct class return for validated
 /// factory discovery; `24` entries lack that return-identity evidence.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "25";
+/// `26`: try-body assertions respect ordered, binding-checked exception
+/// handlers; older entries may omit a re-raised assertion or credit an unknown handler.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "26";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -389,6 +391,8 @@ pub(crate) struct PythonFileFactStore {
     dir: PathBuf,
     unusable_base_reason: OnceLock<Option<String>>,
     remaining_store_bytes: AtomicUsize,
+    /// Set once this instance has recorded a hit for the retention prune.
+    use_noted: std::sync::Once,
 }
 
 impl PythonFileFactStore {
@@ -413,6 +417,7 @@ impl PythonFileFactStore {
             dir,
             unusable_base_reason: OnceLock::new(),
             remaining_store_bytes: AtomicUsize::new(MAX_STORE_BYTES_PER_RUN),
+            use_noted: std::sync::Once::new(),
         }
     }
 
@@ -420,6 +425,29 @@ impl PythonFileFactStore {
     /// subdirectories. Entry files are written directly in `dir`.
     pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
         (self.dir.clone(), false)
+    }
+
+    /// The shared build-retention policy (#7047) over this store's layout
+    /// `{base}/python-file-facts/{schema}`, which `at_base` always builds.
+    fn with_retention(&self, act: impl FnOnce(&seam_cache::BuildRetention<'_>)) {
+        let Some(layer_dir) = self.dir.parent() else {
+            return;
+        };
+        let read_build = seam_cache::analyzer_version_from_entry_prefix;
+        act(&seam_cache::BuildRetention::new(
+            &self.base,
+            layer_dir.to_path_buf(),
+            PYTHON_FILE_FACT_SCHEMA_VERSION,
+            seam_cache::integer_schema_rank,
+            &read_build,
+        ));
+    }
+
+    /// Entries and bytes in this layer that this build never reads.
+    pub(crate) fn reclaimable(&self) -> seam_cache::Reclaimable {
+        let mut total = seam_cache::Reclaimable::default();
+        self.with_retention(|retention| total = retention.reclaimable());
+        total
     }
 
     #[cfg(test)]
@@ -471,7 +499,13 @@ impl PythonFileFactStore {
                     return CacheLoad::Miss;
                 }
                 match envelope.stored.into_facts() {
-                    Some(facts) => CacheLoad::Hit(facts),
+                    Some(facts) => {
+                        // A warm run never writes, so the hit itself marks
+                        // this build as in use for the retention prune (#7047).
+                        self.use_noted
+                            .call_once(|| self.with_retention(|retention| retention.note_use()));
+                        CacheLoad::Hit(facts)
+                    }
                     None => corrupt_entry(&path, "interned table does not cover its items"),
                 }
             }
@@ -508,6 +542,7 @@ impl PythonFileFactStore {
             &bytes,
             "python file fact cache",
         )?;
+        self.with_retention(|retention| retention.prune_once());
         Ok(true)
     }
 }

@@ -54,9 +54,9 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    ProjectNameIndex, PythonRelatedCandidate, TestLocalShadowIndex, apply_class_facts,
-    apply_project_module_names_with, find_related_tests, owner_module_paths,
-    related_test_candidates, related_tests_for_candidates,
+    ProjectNameIndex, PythonRelatedCandidate, RivalDefinitionIndex, SrcModuleIndex,
+    TestLocalShadowIndex, apply_class_facts, apply_project_module_names_with, find_related_tests,
+    owner_module_paths, related_test_candidates, related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -468,6 +468,13 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         .cloned()
         .collect();
     let shadow_index = TestLocalShadowIndex::build(all_selected_files.iter());
+    // The two cross-file module-identity passes diff mode runs over the whole
+    // workspace, built once here so a per-file read records the same facts:
+    // src short names another source file also produces (#13745), and
+    // same-named free functions in the modules tests import from (#8759).
+    let src_module_index =
+        SrcModuleIndex::build(input.production_files.iter().chain(&input.ambiguous_files));
+    let rival_index = rival_definition_index(root, &input.production_files, &all_tests);
 
     for relative in &input.production_files {
         match load_facts_with_source(root, relative).and_then(|(facts, source)| {
@@ -501,6 +508,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             .map(|(_, init_source)| init_source.as_str())
                     },
                 );
+                src_module_index.apply(&mut facts.owners);
                 // Project-relative names follow the re-export pass, as in diff
                 // mode, so a nested project's package gets its own name too.
                 if let Some(index) = project_names.as_mut() {
@@ -509,6 +517,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                     });
                 }
                 shadow_index.apply(&mut facts.owners);
+                rival_index.apply(&mut facts.owners);
                 // Class facts are file-local, so the single shared owner of
                 // them runs here, before the owner inventory and finding
                 // projection read them, exactly as diff mode orders it
@@ -659,6 +668,58 @@ pub(in crate::analysis::language::python) fn partial_disclosure(
             ),
         }),
     }
+}
+
+/// The free-function definitions of every production file a test imports a
+/// name from (`from M import name`), for [`RivalDefinitionIndex::apply`].
+/// Only such an import can bind a name to a rival module, so other files are
+/// not needed. A file whose text never spells an imported name defines none
+/// of them and is not parsed. An unreadable or unparsable file contributes no
+/// rival, which can only withhold less credit, never add any.
+fn rival_definition_index(
+    root: &Path,
+    production_files: &[PathBuf],
+    tests: &[PythonTest],
+) -> RivalDefinitionIndex {
+    let mut names_by_module: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let imports = tests.iter().flat_map(|test| {
+        test.imports
+            .iter()
+            .chain(test.fixture_defs.iter().flat_map(|def| def.imports.iter()))
+    });
+    for import in imports {
+        if !import.source_module.is_empty() && import.imported != "*" {
+            names_by_module
+                .entry(import.source_module.as_str())
+                .or_default()
+                .insert(import.imported.as_str());
+        }
+    }
+    let mut index = RivalDefinitionIndex::default();
+    for relative in production_files {
+        let names: BTreeSet<&str> = owner_module_paths(relative)
+            .iter()
+            .filter_map(|path| names_by_module.get(path.as_str()))
+            .flatten()
+            .copied()
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(root.join(relative)) else {
+            continue;
+        };
+        // A file that never spells an imported name cannot define it; any
+        // spacing between `def` and the name is legal, so match the name alone.
+        if !names.iter().any(|name| source.contains(name)) {
+            continue;
+        }
+        let facts = extract_source_facts(relative, &source);
+        if source_facts_parse_error(&facts).is_none() {
+            index.extend(facts.owners.iter());
+        }
+    }
+    index
 }
 
 /// Read a selected file once and parse it once via the shared facts
@@ -838,19 +899,26 @@ fn build_behavior_item(
     // The same credited test the finding classifier sees, so a live reader
     // beside a rebinding test is not limited here while its finding is
     // exposed (#10354).
-    let static_limit =
-        static_limit_for_focused_change(text, None, None, &focus, owner, "", candidates)
-            .or_else(|| {
-                module_object_rebind_limit(
-                    text,
-                    None,
-                    owner,
-                    candidates,
-                    alignment.credited.as_ref().filter(|_| alignment.observes()),
-                )
-            })
-            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
-            .map(|limit| limit.kind);
+    let static_limit = static_limit_for_focused_change(
+        text,
+        None,
+        None,
+        &focus,
+        owner,
+        super::super::approx_band::PythonBandSource::default(),
+        candidates,
+    )
+    .or_else(|| {
+        module_object_rebind_limit(
+            text,
+            None,
+            owner,
+            candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+    })
+    .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
+    .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));

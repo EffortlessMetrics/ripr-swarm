@@ -399,10 +399,36 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   and are tracked separately: `exact_oracle_gap_next_step` on
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
-  and its next step. Two ranking reads (#14454) order rows, never admit or
-  drop them: the agent `tK=` row (`strongest_test`) and the fix site
-  (`DiagnosticWitness::best_related_test`) demote a row whose miss is
-  `assertion_not_observing`. The fix site keeps reach as its leading key
+  and its next step. One ranking read orders rows, never admits or drops
+  them: `RelatedTest::observation_tier` (#14454, #14483) reads only the
+  recorded miss and ranks a `no_call_path` row lowest, then
+  `assertion_not_observing`, then every other row, including `no_assertion`
+  (its minimum evidence is an established path, so the row is where the
+  missing assertion goes; the Rust reveal pass also sets it on oracle-free
+  proximity rows whose path is not established, tracked as #14808) and the
+  unknown-edge
+  misses such as `observation_unconfirmed`, which record an unestablished
+  observation, not an absent one. It does not read the relation: a
+  proximity-only row can still reach the owner through a helper, and the
+  producer's `no_call_path` miss is the one owner of that fact. Every
+  picker that names one row of a finding uses it, keeping its own keys
+  within a tier: the agent
+  `tK=` row (`strongest_test`), the fix site
+  (`DiagnosticWitness::best_related_test`, which the code lens and hover
+  read), the human `Related test` headline (the first row of the best tier,
+  then the Python changed-file rule within that tier), the JSON
+  `oracle_kind`/`oracle_strength` summary (the tier, then strength, so a
+  strong oracle held only by a `no_call_path` row no longer speaks for the
+  finding, last of equal rows as before), the agent `open=` row
+  (`triage::weak_assertion_row`, the first bound weak row of the best tier)
+  and the agent `done=` noticer (`noticing_test`, the tier, then strength).
+  The headline and the JSON summary always come from the same tier, though
+  the headline can name a weaker row of that tier than the summary
+  describes; `tK=` and the fix site lead with relation confidence and reach,
+  so they can name a row of another tier. The
+  TypeScript/JavaScript preview row and the per-test lead row of `ripr
+  explain` keep their own rules, and editor seam actions read seam grips,
+  which carry no miss. The fix site keeps reach as its leading key
   (#5335), so among rows of equal reach it places the row after every row
   that can observe the change, and places a `no_call_path` row after it,
   because a test with no call to the changed code reaches it least of all; a
@@ -465,10 +491,21 @@ written and must not copy these gaps.
   those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
-- Oracle rows are ranked and packed into the eight-row window exactly as
-  before; `assertion_not_observing` rows take only the slots left free, so no
-  window, fix site, exact-oracle alignment or repair readiness changes.
+- Oracle rows are ranked and packed into the eight-row window by the rules
+  below; `assertion_not_observing` rows take only the slots left free, so
+  adding them changes no window, fix site, exact-oracle alignment or repair
+  readiness.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
+- Within one relation-confidence tier, after diff-touched tests (#8387), a row
+  whose test calls the owner or a function the bounded caller walk says
+  reaches it ranks ahead of name order (#15026). In a single-file crate every
+  inline test is `same_test_file`, so without this the window filled with
+  name-order neighbours while tests calling the owner's wrapper were cut.
+  Matching is by called name, not type, so a common name can mark an
+  unrelated row near; that only moves it within its tier. The rule never
+  lifts a row a tier, but when a tier holds more rows than the window it
+  decides which of them fill it, so the window and what reads it (fix site,
+  exact-oracle alignment, next step) can change.
 - On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
   probe whose paired base line and head line each hold exactly one `Err`
   construction, with differing literal variants, and are otherwise identical
@@ -488,7 +525,7 @@ written and must not copy these gaps.
   not a swap, because an `Ok` pin can fail on the new code there. The row
   keeps its role and oracle, so no class or gate changes, and the
   exact-oracle next step never runs for a literal `Err` variant probe. The
-  `tK=` row and the fix site prefer a row that can observe the change (see
+  pickers that name one row prefer a row that can observe the change (see
   Current Rust conformance gaps). A changed struct field, an `assert_ne!`
   and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
   line comes from line pairing in the replacement block, so a guard rewritten
@@ -758,6 +795,10 @@ actionability or rendered output.
   selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
+- `crates/ripr/src/analysis/classify/reveal.rs::tests::near_owner_rows_name_tests_that_call_the_owner_or_its_caller`,
+  `crates/ripr/src/analysis/classify/reveal.rs::tests::finalized_related_tests_lead_with_rows_near_the_owner_within_a_tier`
+  and `crates/ripr/tests/related_window_near_owner.rs::wrapper_tests_fill_the_window_before_file_only_neighbours`
+  — rows near the owner lead their tier and fill the window (#15026).
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose and the
   row-owned support controls (#5564): per-row boundaries, no cross-row or
   finding-wide borrowing, typed-family wording, absent support, row-order

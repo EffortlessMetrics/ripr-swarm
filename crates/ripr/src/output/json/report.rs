@@ -262,10 +262,15 @@ pub(crate) fn render_with_config(
         })
         .collect();
     // #13819: findings withheld because their changed owner opted out.
-    let withheld_reasons: BTreeMap<&str, &str> = output
+    let withheld_reasons: BTreeMap<&str, (&str, &str)> = output
         .owner_opt_outs
         .iter()
-        .map(|opt_out| (opt_out.finding_id.as_str(), opt_out.reason.as_str()))
+        .map(|opt_out| {
+            (
+                opt_out.finding_id.as_str(),
+                (opt_out.reason.as_str(), opt_out.scope.as_str()),
+            )
+        })
         .collect();
     // Streaming byte cutoff (#5203): findings render in the pipeline's
     // deterministic `sort_findings` order; once the emitted array bytes
@@ -886,12 +891,12 @@ pub(super) fn finding_json(out: &mut String, finding: &Finding, indent: usize) {
 }
 
 /// Additive per-finding markers: the `--suppression-policy` selector that
-/// suppressed it (#1441) and the owner opt-out reason that withheld it
-/// (#13819). Both are `None` for an ordinary finding.
+/// suppressed it (#1441) and the owner opt-out reason and scope that withheld
+/// it (#13819, #13910). Both are `None` for an ordinary finding.
 #[derive(Clone, Copy, Default)]
 struct FindingMarks<'a> {
     suppressed_by: Option<&'a str>,
-    withheld_by: Option<&'a str>,
+    withheld_by: Option<(&'a str, &'a str)>,
 }
 
 fn finding_json_with_config_and_counts(
@@ -919,8 +924,11 @@ fn finding_json_with_config_and_counts(
     // Additive (#13819): present only on findings withheld because their
     // changed owner opted out (`owner_mutants_skip`). The finding stays fully
     // rendered with its unchanged class, so the withholding is visible.
-    if let Some(reason) = marks.withheld_by {
+    // `withheld_scope` (#13910) names the scope that carried the attribute:
+    // `fn`, `impl`, `trait`, `module` or `file`.
+    if let Some((reason, scope)) = marks.withheld_by {
         field(out, indent + 1, "withheld_by", reason, true);
+        field(out, indent + 1, "withheld_scope", scope, true);
     }
     if let Some(gap) = &finding.canonical_gap {
         field(out, indent + 1, "canonical_gap_id", &gap.id, true);
@@ -1387,10 +1395,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
     ) {
         return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
+    // #14483: the shared observation tier leads, so the summary never
+    // describes a row whose assertion cannot observe the change while a row
+    // that can is listed; strength then picks within the tier.
     finding
         .related_tests
         .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+        .max_by_key(|test| (test.observation_tier(), test.oracle_strength.rank()))
 }
 
 /// The observed values the check JSON renders for a finding: every value up

@@ -93,7 +93,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast probe:src_counter.ts:typescript_preview:1aa358b1
   ripr context --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast --at probe:src_counter.ts:typescript_preview:1aa358b1
 
-
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
   establish a static test path. Scope analyzed: 1 changed expression(s) and 0 statically linked
   related test(s). This is not a coverage assessment. A test may already exercise these changes

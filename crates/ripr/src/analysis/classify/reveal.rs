@@ -69,6 +69,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact wrapper assertion observing the boundary of a private boolean
     /// whole-return tail (#9849). Separate from direct owner-pin credit.
     pub(in crate::analysis) wrapper_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #13037: an exact pin of a bare owner call that statically runs into
+    /// the branch whose tail returns the changed expression, so the pinned
+    /// value is that expression's value (`base * 2` under `if express`).
+    pub(in crate::analysis) reached_tail_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
     /// no such dispatch; `Some(false)` withholds kind-only credit even on a
@@ -206,6 +210,7 @@ fn reveal_evidence(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -258,6 +263,7 @@ fn reveal_evidence_with_exit(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -328,6 +334,7 @@ fn reveal_evidence_proximity_reach_pinning(
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -382,6 +389,7 @@ fn reveal_evidence_with_expression(
         return_admission,
         arm_selector,
         None,
+        &|_| false,
     );
     (
         outcome.observe,
@@ -438,6 +446,7 @@ pub(in crate::analysis) fn reveal_outcome(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
     diff_touched: Option<&super::DiffTouchedTests>,
+    calls_owner_caller: &dyn Fn(&TestSummary) -> bool,
 ) -> RevealOutcome {
     if related_tests.is_empty() {
         return RevealOutcome {
@@ -473,14 +482,19 @@ pub(in crate::analysis) fn reveal_outcome(
     );
     let complete_proximity_oracles_only = only_proximity_oracles(&analysis.related);
     let owner_calls = owner_call_demoted_rows(probe, related_tests);
-    let (related, related_tests_total, direct_rows) =
-        finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
+    let near_owner = near_owner_rows(probe, related_tests, calls_owner_caller);
+    let (related, related_tests_total, direct_rows) = finalize_related_tests_with_direct_rows(
+        analysis.related,
+        diff_touched,
+        &owner_calls,
+        &near_owner,
+    );
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
             StageState::No,
             Confidence::Medium,
-            "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)",
+            ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
         )
     } else if needs_token_confirmation(&probe.family)
         && analysis.matched_any
@@ -2112,7 +2126,9 @@ fn plain_let_binding_name(prefix: &str) -> Option<&str> {
 /// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
 /// no block, closure or nested macro other than `vec!`/`format!`.
 fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     let mentions: Vec<usize> = statement
         .match_indices(binding)
         .map(|(at, _)| at)
@@ -2134,8 +2150,10 @@ fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
         inner.match_indices('!').all(|(bang, _)| {
             let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
             let name_start = inner[..bang]
-                .rfind(|ch: char| !ident(ch))
-                .map_or(0, |index| index + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !ident(ch))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
             !invoked
                 || (matches!(&inner[name_start..bang], "vec" | "format")
                     && !inner[..name_start].ends_with(':'))
@@ -2171,7 +2189,9 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
     method: &str,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // #14089: Unicode `XID_Continue`, so a mark such as the virama U+094D
+    // does not split `क्order` into `order`.
+    let ident = |ch: char| ch == '_' || unicode_ident::is_xid_continue(ch);
     masked.match_indices(method).any(|(at, name)| {
         let before = &masked[..at];
         if before.chars().next_back().is_some_and(ident)
@@ -2191,8 +2211,10 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
         };
         let receiver_end = masked[..receiver_end].trim_end().len();
         let receiver_start = masked[..receiver_end]
-            .rfind(|ch: char| !ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !ident(ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         masked[..receiver_start].trim_end().ends_with('.')
             || masked[receiver_start..receiver_end] != *binding
     })
@@ -2686,13 +2708,30 @@ fn analyze_related_assertions(
         } else {
             Vec::new()
         };
+        // #14968: an unconditional literal-only assertion (`assert!(true)`
+        // as a top-level statement) reads nothing, so it is never credited.
+        // It still counts toward the single-assertion fallback (below), except
+        // for an assertion or observer that reads the owner's result, so it
+        // neither hands that fallback to an unrelated sibling nor lowers a
+        // reading of the owner the test has without it.
+        let literal_only = test
+            .assertions
+            .iter()
+            .filter(|assertion| {
+                super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
+            .count();
         let assertions: Vec<_> = test
             .assertions
             .iter()
+            .filter(|assertion| {
+                !super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
             .chain(claims_candidates.iter())
             .collect();
-        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
+        let refused_here = assertions.len()
+            != test.assertions.len().saturating_sub(literal_only) + claims_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -2704,8 +2743,15 @@ fn analyze_related_assertions(
                 oracle_strength: OracleStrength::None,
                 relation_reason,
                 relation_confidence,
+                // A dropped literal in a test whose relation cannot credit an
+                // oracle (a proximity-only test beside one that reaches the
+                // owner) keeps the `no_call_path` row its assertion had.
                 miss: Some(if refused_here {
                     RelatedTestMiss::AssertionNotCredited
+                } else if literal_only > 0 && !credits_oracle {
+                    RelatedTestMiss::NoCallPath
+                } else if literal_only > 0 {
+                    RelatedTestMiss::AssertionNotObserving
                 } else {
                     RelatedTestMiss::NoAssertion
                 }),
@@ -2759,10 +2805,25 @@ fn analyze_related_assertions(
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
-        // for an otherwise unrelated surviving oracle.
-        let assertion_count = test.assertions.len();
+        // for an otherwise unrelated surviving oracle. A dropped unconditional
+        // literal-only assertion (#14968) still counts, so it never hands the
+        // fallback to an unrelated sibling assertion; only an assertion or
+        // observer that reads the owner's result (`assert!(g(2).is_err())`,
+        // `g(2).unwrap_err()`, or a read of `let r = g(2)`) gets the count the
+        // test has without the literal.
+        let full_assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            let assertion_count = if literal_only > 0
+                && super::literal_assertion::reads_owner_result(
+                    &test.body,
+                    assertion,
+                    match_context.owner_callee,
+                ) {
+                full_assertion_count.saturating_sub(literal_only)
+            } else {
+                full_assertion_count
+            };
             // #11552: per assertion, because the same proximity test may hold
             // one assertion on the owner's enum and another on a different
             // function's result of the same enum.
@@ -3221,6 +3282,12 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || wrapper_pinned
+                                        || (!match_context.owner_shadowed
+                                            && !import_defeats_owner
+                                            && !cross_package_defeats_owner
+                                            && (return_admission.reached_tail_pin)(
+                                                test, assertion,
+                                            ))
                                         || (is_effect_family(&probe.family)
                                             && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
@@ -5751,6 +5818,31 @@ fn owner_call_demoted_rows(
         .collect()
 }
 
+/// #15026: rows whose test calls the owner, or a function that calls it
+/// within the caller walk's depth. Within one confidence tier they lead the
+/// window ahead of name order, so a same-file test that calls the owner's
+/// wrapper is listed before an unrelated test that only shares the file.
+/// Ranking only: no row is added, dropped or lifted a tier.
+fn near_owner_rows(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+    calls_owner_caller: &dyn Fn(&TestSummary) -> bool,
+) -> std::collections::BTreeSet<OwnerCallKey> {
+    let owner = probe
+        .owner
+        .as_ref()
+        .and_then(|symbol| symbol.0.rsplit("::").next())
+        .filter(|name| !name.is_empty());
+    related_tests
+        .iter()
+        .filter(|(test, _)| {
+            owner.is_some_and(|owner| test.calls.iter().any(|call| call.name == owner))
+                || calls_owner_caller(test)
+        })
+        .map(|(test, _)| (test.file.clone(), test.start_line, test.name.clone()))
+        .collect()
+}
+
 /// A medium row linked only by file or module proximity: no call to the
 /// owner was found for it.
 fn is_location_only_row(test: &RelatedTest) -> bool {
@@ -5886,8 +5978,12 @@ fn finalize_related_tests_with_owner_calls(
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
-    let (rows, total, _) =
-        finalize_related_tests_with_direct_rows(related, diff_touched, owner_calls);
+    let (rows, total, _) = finalize_related_tests_with_direct_rows(
+        related,
+        diff_touched,
+        owner_calls,
+        &std::collections::BTreeSet::new(),
+    );
     (rows, total)
 }
 
@@ -5895,6 +5991,7 @@ fn finalize_related_tests_with_direct_rows(
     mut related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
+    near_owner: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize, Vec<RelatedTest>) {
     related.sort_by(|a, b| {
         a.name
@@ -5919,7 +6016,20 @@ fn finalize_related_tests_with_direct_rows(
     let touched = |test: &RelatedTest| {
         diff_touched.is_some_and(|touched| touched.touches(&test.file, test.line))
     };
-    related.sort_by_key(|test| (std::cmp::Reverse(related_test_rank(test)), !touched(test)));
+    // #15026: then a test that calls the owner or one of its callers leads
+    // a test linked only by file or name, ahead of name order.
+    let near = |test: &RelatedTest| {
+        near_owner.contains(&(test.file.clone(), test.line, test.name.clone()))
+    };
+    // The near key clones a row identity, so it is computed once per row;
+    // `sort_by_cached_key` is stable like `sort_by_key`.
+    related.sort_by_cached_key(|test| {
+        (
+            std::cmp::Reverse(related_test_rank(test)),
+            !touched(test),
+            !near(test),
+        )
+    });
     // #5344: tests listed only as examined misses are packed separately and
     // only into slots the oracle rows leave free, so the oracle rows, their
     // order and their packing are exactly what they were before misses were
@@ -6097,6 +6207,17 @@ fn is_name_only_relation(reason: RelationReason) -> bool {
 pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
     crate::domain::ASSERTION_CONTEXT_UNESTABLISHED;
 
+/// The discriminate summary paired with [`ASSERTION_CONTEXT_UNESTABLISHED`].
+pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY: &str = "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+
+/// The observe summary when related tests exist but none has an assertion
+/// that observes the change.
+pub(in crate::analysis) const NO_OBSERVING_ASSERTION_SUMMARY: &str = "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect";
+
+/// The discriminate summary when no related test has any oracle.
+pub(in crate::analysis) const NO_ASSERTION_DISCRIMINATE_SUMMARY: &str =
+    "No assertion found on related tests";
+
 fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvidence {
     if matched_any {
         StageEvidence::new(
@@ -6111,7 +6232,7 @@ fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvid
             if refused_context {
                 ASSERTION_CONTEXT_UNESTABLISHED
             } else {
-                "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"
+                NO_OBSERVING_ASSERTION_SUMMARY
             },
         )
     }
@@ -6224,7 +6345,7 @@ fn build_discriminate_evidence(
         OracleStrength::None => StageEvidence::new(
             StageState::No,
             Confidence::Medium,
-            "No assertion found on related tests",
+            NO_ASSERTION_DISCRIMINATE_SUMMARY,
         ),
         OracleStrength::Unknown => StageEvidence::new(
             StageState::Unknown,
@@ -6908,6 +7029,7 @@ mod tests {
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
+            reached_tail_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -8216,6 +8338,96 @@ mod tests {
         assert!(owner_call_demoted_rows(&probe, &related_tests).is_empty());
     }
 
+    /// #15026: a row is near the owner when its test calls the owner or a
+    /// name the caller walk says reaches it; a test calling neither is not.
+    #[test]
+    fn near_owner_rows_name_tests_that_call_the_owner_or_its_caller() {
+        let call = |name: &str| crate::analysis::rust_index::CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: format!("{name}(\"\", \"\")").into(),
+        };
+        let test = |name: &str, line: usize, calls: Vec<_>| TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: line,
+            end_line: line + 3,
+            body: Default::default(),
+            calls: calls.into(),
+            assertions: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
+        };
+        let wrapper = test("jaro_both_empty", 10, vec![call("jaro")]);
+        let direct = test("generic_jaro_diff", 20, vec![call("generic_jaro")]);
+        let unrelated = test("bigrams_iterator", 30, vec![call("bigrams")]);
+        let mut probe = probe(ProbeFamily::Predicate, "min_bound < j");
+        probe.owner = Some(SymbolId("src/lib.rs::generic_jaro".to_string()));
+        let related_tests = [
+            (&wrapper, RelationReason::SameTestFile),
+            (&direct, RelationReason::DirectOwnerCall),
+            (&unrelated, RelationReason::SameTestFile),
+        ];
+        let calls_jaro = |test: &TestSummary| test.calls.iter().any(|call| call.name == "jaro");
+        let key = |name: &str, line: usize| (PathBuf::from("src/lib.rs"), line, name.to_string());
+        assert_eq!(
+            near_owner_rows(&probe, &related_tests, &calls_jaro),
+            std::collections::BTreeSet::from([
+                key("jaro_both_empty", 10),
+                key("generic_jaro_diff", 20)
+            ])
+        );
+        assert_eq!(
+            near_owner_rows(&probe, &related_tests, &|_| false),
+            std::collections::BTreeSet::from([key("generic_jaro_diff", 20)]),
+            "without a reaching caller only the direct call is near"
+        );
+    }
+
+    /// #15026: within one tier, a row near the owner fills the window ahead
+    /// of name order, while a higher tier still leads and the total stays.
+    #[test]
+    fn finalized_related_tests_lead_with_rows_near_the_owner_within_a_tier() {
+        let mut input: Vec<_> = (0..10)
+            .map(|index| RelatedTest {
+                miss: Some(RelatedTestMiss::NoCallPath),
+                miss_support: None,
+                ..related(
+                    &format!("case_{index:02}"),
+                    10 + index,
+                    Some(RelationReason::SameTestFile),
+                )
+            })
+            .collect();
+        input.push(related(
+            "strong_direct_call",
+            1,
+            Some(RelationReason::DirectOwnerCall),
+        ));
+        let near_key = (input[9].file.clone(), input[9].line, input[9].name.clone());
+
+        let (plain, _) = finalize_related_tests(input.clone(), None);
+        assert!(
+            plain.iter().all(|test| test.name != "case_09"),
+            "setup: in name order the cap drops case_09: {plain:?}"
+        );
+
+        let (ranked, total, _) = finalize_related_tests_with_direct_rows(
+            input,
+            None,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeSet::from([near_key]),
+        );
+        let names: Vec<&str> = ranked.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(total, 11);
+        assert_eq!(names[0], "strong_direct_call", "a higher tier still leads");
+        assert_eq!(names[1], "case_09", "the near row leads its tier");
+        assert_eq!(names[2], "case_00", "name order holds after it");
+    }
+
     #[test]
     fn related_test_total_retains_six_eight_nine_matches_without_changing_packed_prefix() {
         for count in [6, 8, 9] {
@@ -8487,6 +8699,7 @@ mod tests {
                 owner_return_pin: &pin,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -8589,6 +8802,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -8777,6 +8991,7 @@ mod tests {
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -8893,6 +9108,7 @@ mod tests {
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -8919,6 +9135,7 @@ mod tests {
                 },
                 None,
                 None,
+                &|_| false,
             )
             .owner_pin_credited
         };
@@ -9199,8 +9416,10 @@ mod tests {
         );
         let other = test_with_assertions(
             "while_some_is_untested",
+            // A value read: a literal-only assertion would match nothing
+            // (#14968) and leave no oracle row to pack.
             vec![oracle(
-                "assert_eq!(1, 1);",
+                "assert_eq!(it.next(), None);",
                 OracleKind::Unknown,
                 OracleStrength::Unknown,
             )],
@@ -9322,6 +9541,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9420,6 +9640,7 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10843,6 +11064,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11353,6 +11575,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11430,6 +11653,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11478,6 +11702,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11545,6 +11770,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11614,6 +11840,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11863,6 +12090,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11914,6 +12142,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -12396,6 +12625,7 @@ return Err(\"typed pin\".into());
                         owner_return_pin: &|_, _| false,
                         fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
+                        reached_tail_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
@@ -12481,6 +12711,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
                         (test.name == "implicit_observer").then_some(true)
@@ -12573,6 +12804,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -12915,6 +13147,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13027,6 +13260,7 @@ return Err(\"typed pin\".into());
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
+                    reached_tail_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -13082,6 +13316,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -13588,6 +13823,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -14142,6 +14378,7 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
+                reached_tail_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -14668,6 +14905,40 @@ return Err(\"typed pin\".into());
             body,
             "other",
             "Inventory"
+        ));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_macro_or_receiver_named_with_a_multibyte_mark_fails_closed() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        // A nested macro that is not `vec!`/`format!` may write the binding.
+        assert!(!plain_assertion_or_unrelated(
+            "assert!(क्!(order.items))",
+            "order"
+        ));
+        assert!(plain_assertion_or_unrelated(
+            "assert_eq!(order.items, vec![1])",
+            "order"
+        ));
+        // A call on another receiver counts, whatever its spelling.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्.add(1); }",
+            "order",
+            "add"
+        ));
+        // A mark inside the receiver keeps it whole: `क्order` is not `order`.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्order.add(1); }",
+            "order",
+            "add"
+        ));
+        assert!(!owner_called_on_other_receiver(
+            "fn t() { order.add(1); }",
+            "order",
+            "add"
         ));
     }
 }

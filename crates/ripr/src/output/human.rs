@@ -275,6 +275,26 @@ pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     match outcome.kind {
         NoScope => true,
         NoChangedLines | NoBehavioralCandidates => {
+            // #13894: a configured pattern (`generated_file_patterns`,
+            // `excluded_file_patterns`) leaves out files that are still
+            // counted in `changed_file_count`, so when those notes cover every
+            // changed file the requested scope was examined in full. Notes
+            // from CLI `--path`/`--exclude` (DiffLoad stage) are removed
+            // before `changed_files` is built, are NOT part of that count, and
+            // must never suppress the warning for a file still in scope.
+            let configured_left_out: u64 = outcome
+                .limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.kind.is_requested_scope_note()
+                        && limitation.producer_stage
+                            == crate::analysis_outcome::AnalysisStage::LanguageAdapter
+                })
+                .map(|limitation| limitation.affected_items.unwrap_or(0))
+                .sum();
+            if configured_left_out > 0 && configured_left_out >= outcome.counts.changed_file_count {
+                return false;
+            }
             outcome.counts.changed_file_count > 0
                 && output.summary.changed_rust_files == 0
                 && output
@@ -386,39 +406,62 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str(no_findings_line(output));
         out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
+            // The headline (and its base hint, when one prints) is its own
+            // paragraph: `Start here:` opens after a blank line here, as it
+            // does after the analysis-outcome block on a run with findings.
+            out.push('\n');
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
+        let mut tail = String::new();
         if let Some(note) = empty_scope_note(output) {
             // #9922: the triage block above already states the empty range
             // and names the compared base in its `Safe next action`, so the
             // note keeps only the caveat it adds instead of saying it twice.
             if output.no_scope_provided && output.base.is_some() {
-                out.push_str(EMPTY_RANGE_CAVEAT_NOTE);
+                tail.push_str(EMPTY_RANGE_CAVEAT_NOTE);
             } else {
-                out.push_str(&note);
+                tail.push_str(&note);
             }
         }
-        render_working_tree_disclosure(&mut out, output);
-        render_preview_language_advisories(&mut out, output);
-        render_language_runs(&mut out, output);
+        render_working_tree_disclosure(&mut tail, output);
+        render_preview_language_advisories(&mut tail, output);
+        render_language_runs(&mut tail, output);
+        push_after_paragraph(&mut out, &tail);
         return out;
     }
 
     let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
-    render_all_no_path_disclosure(&mut out, output);
-    render_working_tree_disclosure(&mut out, output);
-    render_preview_language_advisories(&mut out, output);
-    render_language_runs(&mut out, output);
+    let mut tail = String::new();
+    render_all_no_path_disclosure(&mut tail, output);
+    render_working_tree_disclosure(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output);
+    render_language_runs(&mut tail, output);
+    push_after_paragraph(&mut out, &tail);
     out
+}
+
+/// #14318: the `More:` block (and the `Hidden:` list above it) ends with a
+/// blank line, and each trailing note opens with one, so appending a note
+/// as-is printed two blank lines before `Note:`. One blank line separates
+/// paragraphs: when `out` already ends a paragraph, the tail's own leading
+/// newline is dropped. A report with no trailing note keeps its final blank
+/// line.
+fn push_after_paragraph(out: &mut String, tail: &str) {
+    if out.ends_with("\n\n") {
+        out.push_str(tail.strip_prefix('\n').unwrap_or(tail));
+    } else {
+        out.push_str(tail);
+    }
 }
 
 /// Full human form without the per-finding `Drill in:` block: the drill-in
 /// commands need the CLI's root and scope, which only
 /// [`render_full_with_config_and_navigation`] receives. Library callers of
-/// `ripr::render_check` keep this legacy all-findings form byte-for-byte
-/// (`human_full_preserves_legacy_all_findings_output`).
+/// `ripr::render_check` keep this legacy all-findings form's per-finding
+/// blocks byte-for-byte (`human_full_preserves_legacy_all_findings_output`);
+/// a trailing note opens after one blank line, as on the CLI (#14318).
 pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     render_full_with_config_and_navigation(output, config, None)
 }
@@ -522,13 +565,17 @@ pub(crate) fn render_full_with_config_and_navigation(
             navigation.list_command()
         ));
     }
-    render_all_no_path_disclosure(&mut out, output);
+    // #14318: each finding block ends with a blank line, so the trailing
+    // notes join through the same paragraph rule as the bounded report.
+    let mut tail = String::new();
+    render_all_no_path_disclosure(&mut tail, output);
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
-    render_working_tree_disclosure(&mut out, output);
-    render_preview_language_advisories(&mut out, output);
-    render_language_runs(&mut out, output);
+    render_working_tree_disclosure(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output);
+    render_language_runs(&mut tail, output);
+    push_after_paragraph(&mut out, &tail);
     out
 }
 
@@ -841,6 +888,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             }
             continue;
         }
+        if limitation.kind.is_requested_scope_note() {
+            // #13894: the operator's own scope request, not a limitation.
+            out.push_str(&format!(
+                "  Scope note: {}.\n",
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or_else(|| limitation.kind.plain_label())
+                    .trim_end_matches('.')
+            ));
+            continue;
+        }
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
@@ -952,7 +1011,7 @@ fn owner_opt_out_summary_note(output: &CheckOutput, plain: bool) -> String {
     };
     if plain {
         return format!(
-            ", {} skipped because the changed function carries #[mutants::skip]",
+            ", {} skipped because the changed function or an enclosing scope carries #[mutants::skip]",
             output.owner_opt_outs.len()
         );
     }
@@ -974,7 +1033,7 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Withheld by owner opt-out ({}): {} finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
+        "Withheld by owner opt-out ({}): {} finding(s); the changed owner or a scope enclosing it carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
         first.reason.as_str(),
         output.owner_opt_outs.len()
     ));
@@ -985,16 +1044,58 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
             .find(|finding| finding.id == opt_out.finding_id)
         {
             out.push_str(&format!(
-                "  - {}:{} {} (owner: {}, reason: {})\n",
+                "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
+                owner_opt_out_scope_phrase(opt_out),
                 opt_out.reason.as_str()
             ));
         }
     }
     out.push('\n');
+}
+
+/// The `ripr explain` statement for a finding the check run withheld by an
+/// owner opt-out (#13910), followed by a blank line. The caller passes the
+/// run's own [`CheckOutput::owner_opt_outs`] entry, so explain states the
+/// same decision `check` made rather than deriving its own.
+pub(crate) fn render_owner_opt_out_explain_line(
+    opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+) -> String {
+    terminal_safe(format!("{}\n\n", owner_opt_out_explain_text(opt_out)))
+}
+
+/// `fn`, `fn outer`, `impl Cart`, `module a`, `file`: an opt-out's scope as
+/// one phrase.
+fn owner_opt_out_scope_phrase(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    if opt_out.scope_label.is_empty() {
+        opt_out.scope.as_str().to_string()
+    } else {
+        format!("{} {}", opt_out.scope.as_str(), opt_out.scope_label)
+    }
+}
+
+/// The one-line statement `ripr explain` prints for a withheld finding.
+fn owner_opt_out_explain_text(opt_out: &crate::analysis::owner_opt_out::OwnerOptOut) -> String {
+    use crate::analysis::owner_opt_out::OwnerOptOutScope;
+    let marked = "marked #[mutants::skip]";
+    let reason = opt_out.reason.as_str();
+    let owner = &opt_out.owner;
+    match opt_out.scope {
+        OwnerOptOutScope::Fn if opt_out.scope_label.is_empty() => {
+            format!("Withheld: owner `{owner}` is {marked} ({reason})")
+        }
+        OwnerOptOutScope::File => {
+            format!("Withheld: owner `{owner}` is in a file {marked} ({reason})")
+        }
+        scope => format!(
+            "Withheld: owner `{owner}` is inside {} `{}` {marked} ({reason})",
+            scope.as_str(),
+            opt_out.scope_label
+        ),
+    }
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -1750,7 +1851,7 @@ pub(crate) use triage::{multi_comparison_predicate, unresolved_boundary_operand}
 
 #[cfg(test)]
 mod tests {
-    use super::render_full_with_config;
+    use super::{push_after_paragraph, render_full_with_config};
     use super::{render, render_finding, render_header_summary, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
@@ -3371,6 +3472,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3432,6 +3534,7 @@ mod tests {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -3461,6 +3564,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: Some("src/lib.rs".to_string()),
+                    uncommitted_files: Vec::new(),
                 }),
             ),
         );
@@ -5154,6 +5258,127 @@ mod tests {
         assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("Nothing to check:"));
         assert!(!rendered.contains("No findings:"));
+        // `Start here:` is its own paragraph, not glued to the headline: the
+        // line before it is blank, and exactly one blank line separates them.
+        let lines: Vec<&str> = rendered.lines().collect();
+        let start = lines.iter().position(|line| *line == "Start here:");
+        let before = start.and_then(|index| index.checked_sub(1));
+        assert_eq!(
+            before.and_then(|index| lines.get(index).copied()),
+            Some(""),
+            "{rendered}"
+        );
+        let headline = before
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| lines.get(index).copied());
+        assert!(
+            headline.is_some_and(|line| line.starts_with("Nothing to check:")),
+            "{rendered}"
+        );
+    }
+
+    /// #14318: a trailing `Note:` after the `More:` block opens after
+    /// exactly one blank line, with or without a compared base.
+    #[test]
+    fn bounded_human_output_puts_one_blank_line_before_a_trailing_note() {
+        for base in [None, Some("main".to_string())] {
+            let output = CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base,
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: true,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                file_fact_cache: None,
+
+                analyzed_revisions: None,
+            };
+
+            let rendered = render(&output);
+
+            assert!(
+                rendered.contains("  Machine data: rerun with --format json\n\nNote: "),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("\n\n\n"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn human_full_puts_one_blank_line_between_the_last_finding_and_a_trailing_note() {
+        let output = CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                no_static_path: 1,
+                ..Summary::default()
+            },
+            findings: vec![unknown_finding()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            file_fact_cache: None,
+
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let drill_in =
+            crate::app::FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+
+        for rendered in [
+            render_full_with_config(&output, &config),
+            super::render_full_with_config_and_navigation(&output, &config, Some(&drill_in)),
+        ] {
+            assert!(
+                rendered.contains("\n\nNote: ripr found no static"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("\n\n\n"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn push_after_paragraph_keeps_one_blank_line_between_paragraphs() {
+        let mut out = String::from("More:\n  last\n\n");
+        push_after_paragraph(&mut out, "\nNote: a\n");
+        assert_eq!(out, "More:\n  last\n\nNote: a\n");
+
+        let mut out = String::from("headline\n");
+        push_after_paragraph(&mut out, "\nNote: a\n");
+        assert_eq!(out, "headline\n\nNote: a\n");
+
+        let mut out = String::from("More:\n  last\n\n");
+        push_after_paragraph(&mut out, "");
+        assert_eq!(out, "More:\n  last\n\n");
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -7429,6 +7654,37 @@ mod tests {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn over_limit_stop_names_only_enabled_language_files_as_selected() -> Result<(), String> {
+        // #13641 review: a fitting file whose adapter is disabled is never
+        // selected, so the over-limit stop must not claim every fitting file
+        // was selected — only every fitting file in an enabled language.
+        use crate::analysis::PartialDiffStopReason;
+        let mut output =
+            partial_scope_output(PartialDiffStopReason::FileExceedsAnalysisLimit, 2, 2510);
+        let scope = output
+            .partial_scope
+            .as_mut()
+            .ok_or("fixture carries a partial scope")?;
+        scope.over_limit_files = vec![crate::analysis::OverLimitFile {
+            path: "src/b.rs".to_string(),
+            changed_lines: 2500,
+            limit: 2000,
+            limit_env: "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+        }];
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+        let needle = "every enabled-language file that fits was selected and 1 file(s) \
+                      that each exceed their language's limit on their own were left out";
+        if !rendered.contains(needle) {
+            return Err(format!("missing `{needle}` in:\n{rendered}"));
+        }
+        if rendered.contains("every file that fits was selected") {
+            return Err(format!("unqualified selection claim in:\n{rendered}"));
         }
         Ok(())
     }
