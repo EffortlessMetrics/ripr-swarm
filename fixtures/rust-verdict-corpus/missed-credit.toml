@@ -21,6 +21,10 @@ case = "assoc-unevaluable-condition"
 reason = "Discriminated at runtime, abstained on purpose: the default method's `if` condition calls `is_big`, which the evaluator cannot run (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry if helper calls become evaluable."
 
 [[entry]]
+case = "authored-8637-std-debug-assert-one"
+reason = "Discriminated at runtime under the default debug test profile, abstained on purpose: `std::debug_assert_eq!` reads as its bare twin, a named debug-profile limit (static_unknown) because a release-profile test run skips it (RIPR-SPEC-0240, #8637). The row guards against the pre-#15180 false gap (reachable_unrevealed). Delete this entry if debug-profile assertions start crediting."
+
+[[entry]]
 case = "bytesize-format-unit-first-run"
 reason = "Tests discriminate the change but ripr abstains because the related test passes a call result or computed argument ripr does not evaluate (#12775; parent #12766). Delete this entry when the row credits."
 
