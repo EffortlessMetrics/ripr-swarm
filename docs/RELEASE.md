@@ -423,8 +423,9 @@ without a naming decision, and do not try to overwrite an immutable version.
 Both `cargo publish -p ripr-contract` and `cargo publish -p ripr` require the
 exact qualified ship packet (`cargo xtask release-readiness --version <version>`
 and `cargo xtask publish-dry-run` receipt recording both `.crate` filenames,
-versions, SHA-256 checksums, and source commit) plus explicit per-channel
-authorization.
+versions, SHA-256 checksums, source commit, and the `verification` it passed)
+plus explicit per-channel authorization. A receipt exists only for a pair that
+passed the packaged check; a failed rehearsal leaves none.
 
 1. Publish `ripr-contract` first:
 
@@ -435,7 +436,8 @@ cargo publish -p ripr-contract --locked
 
 2. Read back the exact public `ripr-contract` version, checksum, and metadata
 from crates.io under a bounded polling/timeout policy and verify the published
-checksum matches `target/package/publish-receipt.json` before attempting `ripr`:
+checksum matches `target/package/publish-receipt.json` and that the receipt's
+`verification` is `packaged-check-passed` before attempting `ripr`:
 
 ```bash
 curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"

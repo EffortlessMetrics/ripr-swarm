@@ -24,6 +24,15 @@ use std::process::Command;
 use sha2::Digest as _;
 
 pub(crate) fn run() -> Result<(), String> {
+    // A receipt is evidence of a completed rehearsal. Clear any earlier one
+    // before the first publish step, so a run that fails anywhere cannot
+    // leave a stale receipt that satisfies the documented pre-publish gate.
+    clear_publish_receipt()?;
+
+    let version = pkgid_version("ripr")?;
+    // Refuse a drifted pin before the contract dry-run, not after it.
+    verify_workspace_lockstep_edge(&version)?;
+
     let status = Command::new("cargo")
         .args(["publish", "-p", "ripr-contract", "--dry-run"])
         .status()
@@ -32,7 +41,6 @@ pub(crate) fn run() -> Result<(), String> {
         return Err("ripr-contract publish dry-run failed".to_string());
     }
 
-    let version = pkgid_version("ripr")?;
     let scratch =
         std::env::temp_dir().join(format!("ripr-publish-rehearsal-{}", std::process::id()));
     if scratch.exists() {
@@ -111,7 +119,7 @@ pub(crate) fn vendored_ripr_crate(
 }
 
 fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
-    verify_workspace_lockstep_edge(version)?;
+    // The caller verified the lockstep pin before the contract dry-run.
     let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
     let ripr_sha = sha256_hex(&ripr_crate)?;
@@ -127,18 +135,6 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
         fs::copy(krate, package_out.join(name))
             .map_err(|e| format!("cannot copy {}: {e}", krate.display()))?;
     }
-    let receipt = PublishReceipt::capture(
-        version,
-        &contract_crate,
-        &contract_sha,
-        &ripr_crate,
-        &ripr_sha,
-    )?;
-    let receipt_path = package_out.join("publish-receipt.json");
-    let receipt_json = serde_json::to_string_pretty(&receipt)
-        .map_err(|e| format!("cannot serialize publish receipt: {e}"))?;
-    fs::write(&receipt_path, format!("{receipt_json}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", receipt_path.display()))?;
 
     let extract = scratch.join("extract");
     let contract_dir = format!("ripr-contract-{version}");
@@ -156,27 +152,87 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
     if lock.exists() {
         fs::remove_file(&lock).map_err(|e| format!("cannot remove lockfile: {e}"))?;
     }
-    for args in [
-        vec!["generate-lockfile"],
-        vec!["check", "--target-dir", "check-target"],
-    ] {
-        let status = Command::new("cargo")
-            .args(&args)
-            .current_dir(&ripr_dir)
-            .status()
-            .map_err(|e| format!("cargo {} failed to start: {e}", args[0]))?;
-        if !status.success() {
-            return Err(format!(
-                "packaged ripr failed `cargo {}` against packaged ripr-contract",
-                args.join(" ")
-            ));
-        }
-    }
+    let verified = verify_packaged_pair(&ripr_dir)?;
+    // Only a pair that passed the packaged check gets a receipt. Writing it
+    // earlier would leave evidence for a pair that was never verified, and
+    // `docs/RELEASE.md` trusts this file as the pre-publish gate.
+    let receipt = PublishReceipt::capture(
+        version,
+        &contract_crate,
+        &contract_sha,
+        &ripr_crate,
+        &ripr_sha,
+        verified,
+    )?;
+    let receipt_path = Path::new(PUBLISH_RECEIPT);
+    write_publish_receipt(receipt_path, &receipt)?;
+
     println!(
         "publish rehearsal ok: ripr-contract {version} ({contract_sha}) dry-run passed; packaged ripr {version} ({ripr_sha}) packaged against vendored ripr-contract and checks against the packaged crate; receipt={}",
         receipt_path.display()
     );
     Ok(())
+}
+
+/// Proof that the packaged `ripr` generated a lockfile and compiled against
+/// the packaged `ripr-contract`. Only `verify_packaged_pair` returns one, so
+/// a receipt cannot be written for a pair that was never checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VerifiedPair(());
+
+fn verify_packaged_pair(ripr_dir: &Path) -> Result<VerifiedPair, String> {
+    verify_packaged_pair_with(ripr_dir, |dir, args| {
+        let status = Command::new("cargo")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .map_err(|e| format!("cargo {} failed to start: {e}", args[0]))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "packaged ripr failed `cargo {}` against packaged ripr-contract",
+                args.join(" ")
+            ))
+        }
+    })
+}
+
+fn verify_packaged_pair_with(
+    ripr_dir: &Path,
+    run: impl Fn(&Path, &[&str]) -> Result<(), String>,
+) -> Result<VerifiedPair, String> {
+    for args in [
+        vec!["generate-lockfile"],
+        vec!["check", "--target-dir", "check-target"],
+    ] {
+        run(ripr_dir, &args)?;
+    }
+    Ok(VerifiedPair(()))
+}
+
+fn write_publish_receipt(path: &Path, receipt: &PublishReceipt) -> Result<(), String> {
+    let receipt_json = serde_json::to_string_pretty(receipt)
+        .map_err(|e| format!("cannot serialize publish receipt: {e}"))?;
+    fs::write(path, format!("{receipt_json}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Where the rehearsal leaves its evidence. `docs/RELEASE.md` reads this path.
+const PUBLISH_RECEIPT: &str = "target/package/publish-receipt.json";
+
+/// Remove any receipt from an earlier run. A receipt must never outlive the
+/// rehearsal that wrote it, or a failed run would still satisfy the gate.
+fn clear_publish_receipt() -> Result<(), String> {
+    clear_publish_receipt_at(Path::new(PUBLISH_RECEIPT))
+}
+
+fn clear_publish_receipt_at(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("cannot clear stale {}: {e}", path.display())),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -188,6 +244,20 @@ pub(crate) struct PublishReceipt {
     pub(crate) contract_sha256: String,
     pub(crate) ripr_filename: String,
     pub(crate) ripr_sha256: String,
+    /// What the rehearsal proved before this receipt was written. A receipt
+    /// exists only for a pair that passed it, so a reader can tell a
+    /// completed rehearsal from a copied pair.
+    pub(crate) verification: RehearsalVerification,
+}
+
+/// The verification a receipt attests. Serialized as a stable token so a
+/// release script can require it rather than infer success from the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RehearsalVerification {
+    /// The packaged `ripr` generated a lockfile and compiled against the
+    /// packaged `ripr-contract`.
+    PackagedCheckPassed,
 }
 
 impl PublishReceipt {
@@ -197,6 +267,7 @@ impl PublishReceipt {
         contract_sha256: &str,
         ripr_crate: &Path,
         ripr_sha256: &str,
+        _verified: VerifiedPair,
     ) -> Result<Self, String> {
         let head = Command::new("git")
             .args(["rev-parse", "HEAD"])
@@ -225,6 +296,7 @@ impl PublishReceipt {
             contract_sha256: contract_sha256.to_string(),
             ripr_filename: file_name(ripr_crate)?,
             ripr_sha256: ripr_sha256.to_string(),
+            verification: RehearsalVerification::PackagedCheckPassed,
         })
     }
 }
@@ -276,6 +348,10 @@ pub(crate) fn verify_lockstep_contract_edge(
         workspace_version,
         "crates/ripr-contract/Cargo.toml",
     )?;
+    // Both manifests use `version.workspace = true`, so this equality is
+    // vacuous for the current tree. The load-bearing check is the exact
+    // `=x.y.z` requirement on the dependency below: a drifted pin is what
+    // actually breaks the lockstep publish.
     if ripr_ver != workspace_version || contract_ver != workspace_version {
         return Err(format!(
             "lockstep version mismatch: workspace={workspace_version}, ripr={ripr_ver}, ripr-contract={contract_ver}"
@@ -542,6 +618,96 @@ mod tests {
         );
     }
 
+    fn sample_receipt() -> PublishReceipt {
+        PublishReceipt {
+            version: "0.11.0".to_string(),
+            source_commit: "abc".to_string(),
+            source_dirty: false,
+            contract_filename: "ripr-contract-0.11.0.crate".to_string(),
+            contract_sha256: "c".to_string(),
+            ripr_filename: "ripr-0.11.0.crate".to_string(),
+            ripr_sha256: "r".to_string(),
+            verification: RehearsalVerification::PackagedCheckPassed,
+        }
+    }
+
+    #[test]
+    fn receipt_names_the_verification_it_completed() -> Result<(), String> {
+        let json = serde_json::to_string(&sample_receipt()).map_err(|e| e.to_string())?;
+        assert!(
+            json.contains("\"verification\":\"packaged-check-passed\""),
+            "a receipt must name the verification it attests: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_stale_receipt_does_not_survive_into_a_new_rehearsal() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-receipt-clear-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("publish-receipt.json");
+        fs::write(&path, b"{\"version\":\"0.10.0\"}").map_err(|e| e.to_string())?;
+        clear_publish_receipt_at(&path)?;
+        assert!(
+            !path.exists(),
+            "a receipt from an earlier run must not satisfy the gate for a new one"
+        );
+        // Clearing an absent receipt is not an error.
+        clear_publish_receipt_at(&path)?;
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_verification_leaves_no_receipt() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-receipt-fail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("publish-receipt.json");
+        clear_publish_receipt_at(&path)?;
+
+        // The packaged check fails, so the write is never reached. This is the
+        // same `?`-then-write ordering `rehearse` uses.
+        let outcome = verify_packaged_pair_with(&dir, |_, args| {
+            Err(format!("packaged ripr failed `cargo {}`", args.join(" ")))
+        })
+        .and_then(|verified| write_publish_receipt(&path, &sample_receipt()).map(|()| verified));
+        assert!(
+            outcome.is_err(),
+            "a failing check must not produce a verified pair"
+        );
+        assert!(
+            !path.exists(),
+            "a failed verification must leave no receipt for the gate to trust"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_passed_verification_writes_the_receipt() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-receipt-ok-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("publish-receipt.json");
+        clear_publish_receipt_at(&path)?;
+
+        let _verified = verify_packaged_pair_with(&dir, |_, _| Ok(()))?;
+        write_publish_receipt(&path, &sample_receipt())?;
+        assert!(
+            path.exists(),
+            "a passed verification must leave the receipt"
+        );
+        let written = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        assert!(
+            written.contains("\"verification\": \"packaged-check-passed\""),
+            "the written receipt must name its verification: {written}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
     #[test]
     fn extracts_crate_stripping_top_dir() -> Result<(), String> {
         let io = |e: std::io::Error| e.to_string();
@@ -716,14 +882,23 @@ mod tests {
                     "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
                 );
             }
+            // Commands must appear as instruction lines, not merely as a
+            // substring of prose: a required command inside a "do not run"
+            // sentence would otherwise satisfy the check.
             for required in [
                 "cargo xtask publish-dry-run",
                 "cargo search ripr-contract",
-                "crates/ripr-contract",
                 "cargo publish -p ripr-contract --locked",
                 "cargo publish -p ripr --locked",
-                "Partial-publication recovery",
             ] {
+                assert!(
+                    release_doc
+                        .lines()
+                        .any(|line| line.trim_start().starts_with(required)),
+                    "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
+                );
+            }
+            for required in ["crates/ripr-contract", "Partial-publication recovery"] {
                 assert!(
                     release_doc.contains(required),
                     "docs/RELEASE.md missing lockstep publication requirement `{required}`"
