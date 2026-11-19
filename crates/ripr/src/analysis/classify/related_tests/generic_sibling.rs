@@ -10,14 +10,19 @@
 //! name in the test passes an argument whose type is written in the test
 //! (a suffixed literal, a string literal, an annotated or literal-initialised
 //! `let`, a struct, tuple-struct or variant literal) and that type is a
-//! sibling's trait argument, not the owner's. An argument whose type would
-//! need inference keeps the relation the caller already had, so an unreadable
-//! call never turns into a new gap.
+//! sibling's trait argument, not the owner's. A literal whose type is left to
+//! inference still has a kind: an unsuffixed integer is some integer type and
+//! `2.0` some float, never `&str` or a struct, so it refuses an owner whose
+//! argument is outside that kind when a sibling's argument is inside it. The
+//! same holds for a `let` binding initialised by such a literal (#14074).
+//! Anything else whose type would need inference keeps the relation the caller
+//! already had, so an unreadable call never turns into a new gap.
 
 use super::{
     FunctionContainer, FunctionSummary, RustIndex, TestSummary, compact_impl_type_name,
     first_argument_has_type, first_argument_span, ident_boundary, is_ident_byte,
-    mask_comments_and_strings, skip_ws_if_paren,
+    live_let_statement_before, mask_comments_and_strings, receiver_binding_shadowed_at,
+    skip_ws_if_paren, suffixed_numeric_literal_type,
 };
 use crate::analysis::classify::transitive_reach::IMPLICIT_DISPATCH_METHODS;
 use crate::analysis::syntax::fn_signature::{OwnerContainer, owner_signature_at_line};
@@ -61,6 +66,7 @@ pub(super) fn every_call_selects_generic_sibling(
             test,
             owner,
             &masked,
+            &owner_head,
             &sibling_heads,
             owner_argument.starts_with('&'),
         )
@@ -191,6 +197,7 @@ fn every_site_passes_sibling_type(
     test: &TestSummary,
     owner: &FunctionSummary,
     masked: &str,
+    owner_head: &str,
     sibling_heads: &[String],
     owner_takes_reference: bool,
 ) -> bool {
@@ -225,13 +232,171 @@ fn every_site_passes_sibling_type(
         let passes_sibling = sibling_heads.iter().any(|head| {
             first_argument_has_type(masked, after, head, lets_before, masked, &test.body, at)
         }) || (sibling_heads.iter().any(|head| head == "str")
-            && first_argument_is_string_literal(masked, &test.body, after));
+            && first_argument_is_string_literal(masked, &test.body, after))
+            || literal_kind_rules_out_owner(
+                test,
+                masked,
+                after,
+                at,
+                lets_before,
+                owner_head,
+                sibling_heads,
+            );
         if !passes_sibling {
             return false;
         }
         sites += 1;
     }
     sites > 0
+}
+
+/// The kind of value a literal expression has before inference picks its
+/// exact type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiteralKind<'a> {
+    /// A suffixed numeric literal names its type (`2u32`, `1.5f32`).
+    Exact(&'a str),
+    /// An unsuffixed integer literal is one of the integer primitives.
+    Integer,
+    /// An unsuffixed float literal (`2.0`, `1e3`) is `f32` or `f64`.
+    Float,
+    /// A plain string literal is `&'static str`.
+    Str,
+}
+
+const INTEGER_TYPES: [&str; 12] = [
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
+const FLOAT_TYPES: [&str; 2] = ["f32", "f64"];
+
+impl LiteralKind<'_> {
+    fn admits(self, head: &str) -> bool {
+        match self {
+            LiteralKind::Exact(ty) => ty == head,
+            LiteralKind::Integer => INTEGER_TYPES.contains(&head),
+            LiteralKind::Float => FLOAT_TYPES.contains(&head),
+            LiteralKind::Str => head == "str",
+        }
+    }
+}
+
+/// The kind of an expression when it is one numeric or plain string literal,
+/// optionally negated. `masked` and `raw` are the same span of the masked and
+/// the original test body. `None` for anything else, including a literal
+/// that is only the start of a larger expression.
+fn literal_kind<'a>(masked: &'a str, raw: &str) -> Option<LiteralKind<'a>> {
+    // Masking keeps byte offsets, so one trim of the original text places
+    // the same span in both.
+    let trimmed = raw.trim_start();
+    let lead = raw.len() - trimmed.len();
+    let trimmed = trimmed.trim_end();
+    let trimmed = trimmed.strip_suffix(';').map_or(trimmed, str::trim_end);
+    let expr = masked.get(lead..lead + trimmed.len())?;
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        // Masking blanks a literal's contents, so anything left inside the
+        // span other than whitespace means the text is a larger expression.
+        return expr
+            .get(1..expr.len() - 1)?
+            .chars()
+            .all(char::is_whitespace)
+            .then_some(LiteralKind::Str);
+    }
+    let number = expr.strip_prefix('-').map_or(expr, str::trim_start);
+    if let Some(ty) = suffixed_numeric_literal_type(number) {
+        return Some(LiteralKind::Exact(ty));
+    }
+    let bytes = number.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    if let Some(digits) = number
+        .strip_prefix("0x")
+        .or_else(|| number.strip_prefix("0o"))
+        .or_else(|| number.strip_prefix("0b"))
+    {
+        // Radix digits are checked loosely: `0x1f` and `0b10` are integers,
+        // and anything that is not a digit or `_` is not a literal.
+        return (!digits.is_empty() && digits.bytes().all(|b| b == b'_' || b.is_ascii_hexdigit()))
+            .then_some(LiteralKind::Integer);
+    }
+    if bytes.iter().all(|&b| b == b'_' || b.is_ascii_digit()) {
+        return Some(LiteralKind::Integer);
+    }
+    // `2.0`, `2.`, `1e3`, `1.5e-3`: digits, at most one `.`, an optional
+    // exponent, and nothing that would make it a method call (`2.max(1)`).
+    let (mantissa, exponent) = match number.find(['e', 'E']) {
+        Some(e) => (&number[..e], Some(&number[e + 1..])),
+        None => (number, None),
+    };
+    let mantissa_ok = mantissa.bytes().filter(|&b| b == b'.').count() <= 1
+        && mantissa
+            .bytes()
+            .all(|b| b == b'.' || b == b'_' || b.is_ascii_digit());
+    let exponent_ok = exponent.is_none_or(|exp| {
+        let exp = exp.strip_prefix(['+', '-']).unwrap_or(exp);
+        !exp.is_empty() && exp.bytes().all(|b| b == b'_' || b.is_ascii_digit())
+    });
+    let is_float = mantissa.contains('.') || exponent.is_some();
+    (mantissa_ok && exponent_ok && is_float).then_some(LiteralKind::Float)
+}
+
+/// Whether the first argument of the call whose name ends at `after` is a
+/// literal, or a `let` binding initialised by one with no annotation, whose
+/// kind cannot be the owner's trait argument but can be a sibling's. An
+/// annotated binding is read by `first_argument_has_type`; a shadowed or
+/// unreadable binding is not read at all.
+fn literal_kind_rules_out_owner(
+    test: &TestSummary,
+    masked: &str,
+    after: usize,
+    call_at: usize,
+    lets_before: &str,
+    owner_head: &str,
+    sibling_heads: &[String],
+) -> bool {
+    let Some((start, end)) = first_argument_span(masked, after) else {
+        return false;
+    };
+    let (Some(argument), Some(raw_argument)) = (masked.get(start..end), test.body.get(start..end))
+    else {
+        return false;
+    };
+    let argument = argument.trim();
+    // A digit is an identifier byte, so a bare number must not be read as a
+    // binding name.
+    let is_binding = argument.bytes().next().is_some_and(|b| !b.is_ascii_digit())
+        && argument.bytes().all(is_ident_byte);
+    let kind = if is_binding {
+        if receiver_binding_shadowed_at(&test.body, argument, call_at.saturating_sub(1)) {
+            return false;
+        }
+        let Some(statement) =
+            live_let_statement_before(lets_before, masked, &test.body, argument, call_at)
+        else {
+            return false;
+        };
+        let Some(eq) = statement.find('=') else {
+            return false;
+        };
+        if statement[..eq].contains(':') {
+            return false;
+        }
+        // The statement is a slice of `masked`; the same bytes of the
+        // original body still hold the literal's quotes.
+        let offset = (statement.as_ptr() as usize).wrapping_sub(masked.as_ptr() as usize);
+        let initializer = offset + eq + 1..offset + statement.len();
+        let (Some(masked_init), Some(raw_init)) =
+            (masked.get(initializer.clone()), test.body.get(initializer))
+        else {
+            return false;
+        };
+        literal_kind(masked_init, raw_init)
+    } else {
+        literal_kind(argument, raw_argument)
+    };
+    kind.is_some_and(|kind| {
+        !kind.admits(owner_head) && sibling_heads.iter().any(|head| kind.admits(head))
+    })
 }
 
 /// Whether the first argument of the call whose name ends at `after_name` is
@@ -368,6 +533,107 @@ mod tests {
         Ok(())
     }
 
+    /// #14074 residual: a literal whose exact type is left to inference
+    /// still has a kind, and an unannotated `let` initialised by a literal
+    /// has the literal's kind. An integer is never `&str`, a float is never
+    /// `u8`, and a string literal is never `u32`.
+    #[test]
+    fn a_literal_kind_outside_the_owner_argument_is_not_a_direct_call() -> Result<(), String> {
+        for (owner, body) in [
+            (
+                "impl From<&str> for Cents::from",
+                "assert_eq!(Cents::from(2), Cents(200));",
+            ),
+            (
+                "impl From<&str> for Cents::from",
+                "let n = 2; assert_eq!(Cents::from(n), Cents(200));",
+            ),
+            (
+                "impl From<&str> for Cents::from",
+                "let n = 2u32; assert_eq!(Cents::from(n), Cents(200));",
+            ),
+            (
+                "impl From<&str> for Cents::from",
+                "let mut n = 0x2; n += 1; assert_eq!(Cents::from(n), Cents(300));",
+            ),
+            (
+                "impl From<u32> for Cents::from",
+                r#"let s = "abc"; assert_eq!(Cents::from(s), Cents(6));"#,
+            ),
+        ] {
+            assert!(!direct(CENTS, owner, body)?, "{owner} <- {body}");
+        }
+        for body in [
+            "let b = Bar(2); assert_eq!(b.scale(2.0), 6);",
+            "let b = Bar(2); assert_eq!(b.scale(1e3), 2002);",
+            "let b = Bar(2); let by = 2.0; assert_eq!(b.scale(by), 6);",
+        ] {
+            assert!(
+                !direct(SCALE, "impl Scale<u8> for Bar::scale", body)?,
+                "{body}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The literal-kind reading keeps the direct call whenever the kind fits
+    /// the owner's argument, the binding is rebound or shadowed, or the
+    /// literal is only part of the argument.
+    #[test]
+    fn a_literal_kind_that_fits_the_owner_or_is_unread_keeps_the_direct_call() -> Result<(), String>
+    {
+        let owner = "impl From<&str> for Cents::from";
+        for body in [
+            r#"let s = "abc"; assert_eq!(Cents::from(s), Cents(6));"#,
+            r#"let n = 2; let n = "ab"; assert_eq!(Cents::from(n), Cents(5));"#,
+            r#"let n = 2; let f = |n: &str| Cents::from(n); assert_eq!(f("ab"), Cents(5)); assert_eq!(n, 2);"#,
+            r#"let x = 1u32; assert_eq!(Cents::from(2 + x), Cents(300)); assert_eq!(Cents::from("ab"), Cents(5));"#,
+        ] {
+            assert!(!refused(CENTS, owner, body)?, "{body}");
+        }
+        for body in [
+            "let b = Bar(2); assert_eq!(b.scale(2), 5);",
+            "let b = Bar(2); let by = 2; assert_eq!(b.scale(by), 5);",
+        ] {
+            assert!(
+                !refused(SCALE, "impl Scale<u8> for Bar::scale", body)?,
+                "{body}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn literal_kind_reads_one_whole_literal() {
+        for (expr, expected) in [
+            ("2", Some(LiteralKind::Integer)),
+            ("1_000", Some(LiteralKind::Integer)),
+            ("-3", Some(LiteralKind::Integer)),
+            ("0xff", Some(LiteralKind::Integer)),
+            ("0x1f32", Some(LiteralKind::Integer)),
+            ("2u32", Some(LiteralKind::Exact("u32"))),
+            ("2.5f32", Some(LiteralKind::Exact("f32"))),
+            ("2.0", Some(LiteralKind::Float)),
+            ("2.", Some(LiteralKind::Float)),
+            ("1e3", Some(LiteralKind::Float)),
+            ("1.5e-3", Some(LiteralKind::Float)),
+            (" 2 ;", Some(LiteralKind::Integer)),
+            ("\"abc\"", Some(LiteralKind::Str)),
+            ("\"a\";", Some(LiteralKind::Str)),
+            ("\"a\".len()", None),
+            ("\"a\" .to_owned() + \"b\"", None),
+            ("2.max(1)", None),
+            ("2.0.max(1.0)", None),
+            ("2 + x", None),
+            ("1..3", None),
+            ("x", None),
+            ("", None),
+        ] {
+            let masked = mask_comments_and_strings(expr);
+            assert_eq!(literal_kind(&masked, expr), expected, "{expr:?}");
+        }
+    }
+
     /// The same fixtures keep the direct call when a call passes the owner's
     /// own argument type, alone or beside a sibling call.
     #[test]
@@ -427,9 +693,12 @@ mod tests {
     #[test]
     fn an_unreadable_call_keeps_the_direct_call() -> Result<(), String> {
         for body in [
-            // Inferred: an unsuffixed literal and an untyped binding.
+            // Inferred: an unsuffixed integer literal, bare or bound, may be
+            // the owner's own `u32`.
             "assert_eq!(Cents::from(2), Cents(200));",
             "let n = 2; assert_eq!(Cents::from(n), Cents(200));",
+            // A binding initialised by a call names no type.
+            "let n = u32::default(); assert_eq!(Cents::from(n), Cents(0));",
             // A larger expression that only starts or ends with a literal.
             r#"assert_eq!(Cents::from("abc".len() as u32), Cents(300));"#,
             r#"assert_eq!(Cents::from(if true { "a" } else { "b" }), Cents(4));"#,
@@ -442,11 +711,11 @@ mod tests {
                 "{body}"
             );
         }
-        // `Trait::name(value, arg)` puts the receiver first, and an untyped
-        // binding needs inference.
+        // `Trait::name(value, arg)` puts the receiver first, and a binding
+        // of a computed value needs inference.
         for body in [
             "let b = Bar(2); assert_eq!(Scale::scale(&b, 2.0f32), 6);",
-            "let b = Bar(2); let by = 2.0; assert_eq!(b.scale(by), 6);",
+            "let b = Bar(2); let by = 1.0 + 1.0; assert_eq!(b.scale(by), 6);",
         ] {
             assert!(
                 !refused(SCALE, "impl Scale<u8> for Bar::scale", body)?,
