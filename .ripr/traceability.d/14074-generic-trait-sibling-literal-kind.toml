@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::a_literal_kind_outside_the_owner_argument_is_not_a_direct_call",
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::a_literal_kind_that_fits_the_owner_or_is_unread_keeps_the_direct_call",
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::literal_kind_reads_one_whole_literal",
+]
+fixtures = ["fixtures/rust_generic_trait_sibling_impl_inferred_literal"]
+outputs = [
+  "fixtures/rust_generic_trait_sibling_impl_inferred_literal/expected/check.json",
+  "fixtures/rust_generic_trait_sibling_impl_inferred_literal/expected/human.txt",
+  "fixtures/rust_generic_trait_sibling_impl_inferred_literal/expected/human-full.txt",
+]

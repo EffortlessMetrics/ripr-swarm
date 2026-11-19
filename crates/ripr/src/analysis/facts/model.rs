@@ -932,6 +932,17 @@ pub struct FileFacts {
     /// from the lexical fallback and from hand-built facts; the scans then
     /// parse `source` as before.
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// Whether this file pulls documentation in from outside its own text
+    /// (`#![doc = include_str!(..)]`), answered from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the unseen-reach scan then parses `source` itself.
+    pub(crate) external_docs: Option<bool>,
+    /// Where this file declares `const`/`static` items (and macro calls that
+    /// may), as byte ranges of `source`, read from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the owner-pin constant table then parses `source` itself.
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FileFacts {
@@ -1002,7 +1013,8 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
-    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// A manifest- and namespace-verified hand-written `Arbitrary` input
+    /// generator (QuickCheck, proptest, or the `arbitrary` crate). It is
     /// stimulus support, not an executable test or production seam. Diff
     /// analysis retains its changes as explicit uncertainty rather than
     /// silently skipping them with ordinary test helpers (#11545).
@@ -1810,19 +1822,23 @@ impl ProbeShapeKind {
     }
 }
 
+/// One parser-owned probe site. Lines and byte offsets are stored as `u32`
+/// (rust-analyzer's `TextSize` bounds every offset, and a 1-based line number
+/// never exceeds its byte offset plus one), which keeps the run-wide shape vectors about a
+/// third smaller (#13703). Read them through the `usize` accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeShapeFact {
-    pub start_line: usize,
-    pub end_line: usize,
+    pub start_line: u32,
+    pub end_line: u32,
     /// Byte offset of the shape's start within the source file. Populated
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
-    pub start_byte: usize,
+    pub start_byte: u32,
     /// Byte offset one past the shape's parser-owned end within the source
     /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
     /// the verbatim syntax range end, so span consumers must derive geometry
     /// from these bytes, never from `text.len()`.
-    pub end_byte: usize,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
     /// A `call_deletion` shape whose value feeds a consumer (a condition, a
@@ -1833,7 +1849,47 @@ pub struct ProbeShapeFact {
     pub value_consumed: bool,
     /// Inclusive parser-owned match-head lines, independent of the token
     /// anchor and normalized display text. Other shapes retain their bounds.
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
+}
+
+impl ProbeShapeFact {
+    /// First source line, 1-based.
+    pub fn start_line(&self) -> usize {
+        widen(self.start_line)
+    }
+
+    /// Last source line, 1-based and inclusive.
+    pub fn end_line(&self) -> usize {
+        widen(self.end_line)
+    }
+
+    /// Byte offset of the shape's start; see the field.
+    pub fn start_byte(&self) -> usize {
+        widen(self.start_byte)
+    }
+
+    /// Byte offset one past the shape's parser-owned end; see the field.
+    pub fn end_byte(&self) -> usize {
+        widen(self.end_byte)
+    }
+
+    /// Inclusive parser-owned match-head lines; see the field.
+    pub fn source_lines(&self) -> Option<(usize, usize)> {
+        self.source_lines
+            .map(|(start, end)| (widen(start), widen(end)))
+    }
+}
+
+/// `u32` to `usize`, lossless on every target ripr builds for.
+fn widen(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// A line or byte position as stored in a [`ProbeShapeFact`]. Positions come
+/// from rust-analyzer's `u32` text sizes, so saturation is unreachable for a
+/// parsed file.
+pub(crate) fn probe_shape_position(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1885,17 +1941,17 @@ pub(crate) struct TestFactWire {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ProbeShapeFactWire {
-    pub start_line: usize,
-    pub end_line: usize,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_byte: u32,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: WireText,
     /// Omitted when false, so payloads without it read as unconsumed (#6677).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub value_consumed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1916,6 +1972,11 @@ pub(crate) struct FileFactsWire {
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     #[serde(default)]
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    #[serde(default)]
+    pub(crate) external_docs: Option<bool>,
+    #[serde(default)]
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FunctionFactWire {
@@ -2075,6 +2136,8 @@ impl From<&FileFacts> for FileFactsWire {
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
+            external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.clone(),
         }
     }
 }
@@ -2169,6 +2232,8 @@ impl FileFactsWire {
             source,
             item_scopes: self.item_scopes,
             macro_candidates: self.macro_candidates,
+            external_docs: self.external_docs,
+            constant_syntax: self.constant_syntax,
         })
     }
 }
@@ -2330,16 +2395,16 @@ struct TestFactWireRef<'a> {
 
 #[derive(serde::Serialize)]
 struct ProbeShapeFactWireRef<'a> {
-    start_line: usize,
-    end_line: usize,
-    start_byte: usize,
-    end_byte: usize,
+    start_line: u32,
+    end_line: u32,
+    start_byte: u32,
+    end_byte: u32,
     kind: ProbeShapeKind,
     text: WireTextRef<'a>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     value_consumed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_lines: Option<(usize, usize)>,
+    source_lines: Option<(u32, u32)>,
 }
 
 #[derive(serde::Serialize)]
@@ -2358,6 +2423,8 @@ struct FileFactsWireRef<'a> {
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
+    external_docs: Option<bool>,
+    constant_syntax: Option<&'a [crate::analysis::syntax::constant_items::ConstantSyntax]>,
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2427,6 +2494,8 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
+            external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.as_deref(),
         }
     }
 }
@@ -2662,6 +2731,8 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2808,6 +2879,8 @@ mod tests {
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -3018,6 +3091,8 @@ fn checks_helper() {
             source: Arc::clone(&home),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;

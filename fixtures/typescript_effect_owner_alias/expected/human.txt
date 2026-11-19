@@ -20,9 +20,8 @@ Start here:
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: console.log("audit", amount * 9);
-  Missing check (1 of 2): propagation_unknown: changed value sinks to a non-escaping call effect
-    (`"audit"`); all strong assertions observe the owner return value, not this call effect;
-    propagation unknown
+  Missing check (1 of 2): changed value sinks to a non-escaping call effect (`"audit"`); all strong
+    assertions observe the owner return value, not this call effect; propagation unknown
   Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (asserts, but not on the changed value)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
     check `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and
@@ -51,6 +50,5 @@ Next: drill into the top finding:
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

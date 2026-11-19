@@ -42,7 +42,7 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::analysis_outcome::AnalysisOutcome;
+use crate::analysis_outcome::{AnalysisLimitation, AnalysisOutcome};
 pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
@@ -69,6 +69,10 @@ use crate::repair_guidance::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
+
+#[path = "agent_seam_packets/unreadable.rs"]
+mod unreadable;
+pub(crate) use unreadable::render_agent_seam_packets_json_for_root_with_limitations;
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
@@ -209,6 +213,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
         PacketCommandContext::Portable,
         &[],
         None,
+        &[],
     )
 }
 
@@ -216,6 +221,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
 /// commands bind that root instead of `.`; a portable `--root .` whose
 /// redirect anchors at the renderer's working directory sends every
 /// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
+#[cfg(test)]
 pub(crate) fn render_agent_seam_packets_json_for_root(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -233,6 +239,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
         PacketCommandContext::Standalone { root },
         declined,
         bound,
+        &[],
     )
 }
 
@@ -290,6 +297,7 @@ fn render_agent_seam_packets_json_with_root(
     context: PacketCommandContext<'_>,
     declined: &[crate::analysis::DeclinedRustFile],
     bound: Option<PacketBound>,
+    evidence_limitations: &[AnalysisLimitation],
 ) -> String {
     let canonical_gaps = canonical_gap_identities(classified);
     let mut out = String::new();
@@ -312,6 +320,7 @@ fn render_agent_seam_packets_json_with_root(
     let actionable: Vec<&ClassifiedSeam> = classified
         .iter()
         .filter(|entry| repair_packet_queue_visible(entry))
+        .filter(|entry| unreadable::packet_visible_under_limitations(entry, evidence_limitations))
         .collect();
     // The bound keeps the packets an agent can act on ahead of the static
     // limitations, each group in its existing order, and cuts the tail.
@@ -328,13 +337,17 @@ fn render_agent_seam_packets_json_with_root(
     };
 
     match (limit_info, declined.is_empty(), &bound) {
+        _ if !evidence_limitations.is_empty() => out.push_str(&format!(
+            "  \"run_status\": \"{}\",\n",
+            unreadable::LIMITED_EVIDENCE_RUN_STATUS
+        )),
         (None, true, None) => out.push_str("  \"run_status\": \"complete\",\n"),
         (None, false, _) => out.push_str("  \"run_status\": \"limited_declined_files\",\n"),
         (None, true, Some(_)) => out.push_str("  \"run_status\": \"packet_bound_applied\",\n"),
         (Some(_), _, _) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
-    let mut limitations = Vec::new();
+    let mut limitations = unreadable::limitation_entries(evidence_limitations);
     for limit in limit_info
         .into_iter()
         .flat_map(RepoExposureLimit::parts)
@@ -618,6 +631,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
         context,
         &[],
         None,
+        &[],
     )
 }
 
@@ -639,6 +653,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) packet_path: String,
     pub(crate) baseline_ambiguous: bool,
     pub(crate) typescript_test_cache_guidance: bool,
+    /// The native command that runs the suggested Rust test after the edit
+    /// (#14320), from `app::test_stub::focused_test_run_command`. Human
+    /// summary only; the `--json` continuation is unchanged. `None` when no
+    /// exact command can be established.
+    pub(crate) focused_test_command: Option<String>,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -690,6 +709,40 @@ pub(crate) fn render_before_phase_attempt_stdout(
     object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("render before-phase attempt stdout failed: {error}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+/// Augment the `ripr repair --json` start stdout (the packet envelope, or the
+/// resumed attempt's status document) with the additive top-level
+/// `repair_start_scope` block (#13701), present only when the bare start was
+/// not narrowed to the change: `narrowed_to_change` (always `false`),
+/// `note` (the same plain note the human start prints) and `base_command`
+/// (the `--base` rerun template; its `<ref>` is the reader's to name). Like the `repair_attempt` block, it is
+/// inserted into the rendered document without re-rendering packet content.
+pub(crate) fn render_repair_start_scope_stdout(
+    start_stdout: &str,
+    note: &str,
+    base_command: &str,
+) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(start_stdout)
+        .map_err(|error| format!("decode repair start stdout failed: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "repair start stdout is not a JSON object".to_string())?;
+    if object.contains_key("repair_start_scope") {
+        return Err("repair start stdout already carries a repair_start_scope block".to_string());
+    }
+    object.insert(
+        "repair_start_scope".to_string(),
+        json!({
+            "narrowed_to_change": false,
+            "note": note,
+            "base_command": base_command,
+        }),
+    );
+    let mut rendered = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("render repair start stdout failed: {error}"))?;
     rendered.push('\n');
     Ok(rendered)
 }
@@ -7653,6 +7706,47 @@ mod tests {
         let text = render_agent_seam_packets_json_for_root(subjects, None, None, ".", &[], bound);
         let doc = serde_json::from_str(&text).map_err(|error| error.to_string())?;
         Ok((text, doc))
+    }
+
+    /// #13624 review: with an unreadable skipped path the envelope withholds
+    /// every `write_targeted_test` packet and loop command, discloses the path
+    /// and never reads `complete`; the pathless control still offers the repair.
+    #[test]
+    fn pilot_packets_withhold_repairs_beside_an_unreadable_skipped_path() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let mut subjects = static_limitation_tail(2);
+        subjects.push(weakly_gripped_classified());
+        let (_, control) = render_pilot_packets(&subjects, None)?;
+        assert_eq!(control["run_status"], "complete", "{control}");
+        assert!(control["next"].is_object(), "control must offer commands");
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked")?;
+        let text = render_agent_seam_packets_json_for_root_with_limitations(
+            &subjects,
+            None,
+            None,
+            ".",
+            &[],
+            None,
+            &[limitation],
+        );
+        let doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        assert_eq!(doc["run_status"], "limited_seam_evidence", "{text}");
+        assert_eq!(doc["limitations"][0]["path"], "src/locked", "{text}");
+        assert_eq!(doc["limitations"][0]["scope"], "path", "{text}");
+        assert!(doc.get("next").is_none(), "{text}");
+        let packets = doc["packets"].as_array().ok_or("packets")?;
+        assert_eq!(packets.len(), 2, "only inspection packets remain: {text}");
+        for packet in packets {
+            assert_ne!(packet["task"], TASK_WRITE_TARGETED_TEST, "{text}");
+        }
+        Ok(())
     }
 
     #[test]

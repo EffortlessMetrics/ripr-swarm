@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -173,6 +174,23 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
+}
+
+/// Entries and bytes under `base` that this build never reads (#7047):
+/// per-file fact entries written by other ripr builds or under older schema
+/// versions, across the Rust, TypeScript and Python fact stores this build
+/// knows. `ripr cache status` reports it; the next store prunes most of it.
+pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
+    let mut total = RepoFileFactCache::at_base(base).reclaimable();
+    #[cfg(feature = "lang-typescript")]
+    total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
+    #[cfg(feature = "lang-python")]
+    total.add(PythonFileFactStore::at_base(base).reclaimable());
+    total
 }
 
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
@@ -734,10 +752,29 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
 /// (#5346, #12641) — cached boundary verdicts from before the widening are not
 /// reused.
-/// `1.181`: a test reaching a trait-impl owner only through a one-hop blanket
+/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
+/// is no longer read as an opaque closure, so its direct propagation witness
+/// can complete (#14326).
+/// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
+/// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
+/// `None`) seam it cannot reach (#12757).
+/// `1.182`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay
+/// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
+/// `1.183`: the unresolved boundary-input activation summary leads with the
+/// typed `activation_boundary_input_unresolved` token and the evidence record
+/// no longer derives that category from the sentence (#14951), so a cached
+/// summary without the token would lose its category.
+/// `1.184`: a test reaching a trait-impl owner only through a one-hop blanket
 /// impl (`impl<T: Render> ToText for T`) withholds the gap as unresolved reach
 /// instead of reporting it (#6732).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -957,8 +994,12 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-/// `0.183`: same blanket-impl reach withholding as full `1.181` (#6732).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same blanket-impl reach withholding as full `1.184` (#6732).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1180,8 +1221,12 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-/// `0.183`: same blanket-impl reach withholding as full `1.181` (#6732).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same blanket-impl reach withholding as full `1.184` (#6732).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1394,7 +1439,16 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// warm entries deserialize with an empty guard vector.
 /// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+/// `1.59`: file-fact keys carry the normalized path spelling (#13887); `1.58`
+/// entries may name the same file under another spelling.
+/// `1.60`: each branch value of an owner's tail `if`/`else` is probed as
+/// `return_value` (#14385); `1.59` facts lack those probe shapes.
+/// `1.61`: entries are framed as `<digest>\n<compact body>` and verified over
+/// the stored body bytes (#9216); `1.60` entries embed the digest in the body
+/// and need a re-serialization of every entry to verify, so they are not read.
+/// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
+/// `fn`) are not stored (#13703); `1.61` entries still carry them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1420,6 +1474,12 @@ const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
+mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use build_retention::{
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
+};
 mod export;
 pub(crate) mod path_dependencies;
 mod scoped_inventory;
@@ -1713,6 +1773,55 @@ pub(crate) struct RepoSeamCacheKey {
 
 const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
 
+/// Canonical spelling of a file-fact cache identity (#13887). Callers reach
+/// the same file through native separators (discovery), forward slashes
+/// (git/LSP), `./` prefixes, and on Windows through case variants and the
+/// `\\?\` verbatim prefix; each spelling used to mint its own cache entry.
+/// Mirrors the TypeScript fact store's `normalized_path`: forward slashes,
+/// no leading `./`, no verbatim prefix, and case folding only where the
+/// filesystem is case-insensitive.
+fn normalize_file_fact_path(path: &Path) -> String {
+    // Only Windows treats `\` as a separator (and folds case); on Unix a
+    // backslash is an ordinary filename character, so rewriting it would
+    // merge distinct files into one identity.
+    #[cfg(windows)]
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let mut normalized = path.to_string_lossy().into_owned();
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+            normalized = format!("//{stripped}");
+        } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+            normalized = stripped.to_string();
+        }
+        normalized = normalized.to_lowercase();
+    }
+    normalized
+}
+
+/// Identity of `path` as stored in a file-fact key. Non-UTF-8 paths keep
+/// their verbatim spelling: the lossy form could merge two distinct files.
+fn file_fact_identity_path(path: &Path) -> PathBuf {
+    if path.to_str().is_some() {
+        PathBuf::from(normalize_file_fact_path(path))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Whether two spellings name the same file-fact identity.
+fn file_fact_paths_equal(left: &Path, right: &Path) -> bool {
+    if left.to_str().is_some() && right.to_str().is_some() {
+        normalize_file_fact_path(left) == normalize_file_fact_path(right)
+    } else {
+        left == right
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
     schema_version: String,
@@ -1726,7 +1835,7 @@ impl RepoFileFactCacheKey {
         Self {
             schema_version: FILE_FACT_CACHE_SCHEMA_VERSION.to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
-            file_path: file_path.to_path_buf(),
+            file_path: file_fact_identity_path(file_path),
             content_hash: hash_bytes(content),
         }
     }
@@ -1752,11 +1861,11 @@ impl RepoFileFactCacheKey {
     }
 
     fn filename(&self) -> String {
-        let file_path = self.file_path.to_string_lossy();
+        let file_path = normalize_file_fact_path(&self.file_path);
         let parts = [
             self.schema_version.as_str(),
             self.analyzer_version.as_str(),
-            file_path.as_ref(),
+            file_path.as_str(),
             self.content_hash.as_str(),
         ];
         let mut buf = String::new();
@@ -2005,6 +2114,18 @@ impl WorkspaceKeyContext<'_> {
             "{workspace_manifests_hash}:rust-snapshot-files:{}",
             super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
         ));
+        // #15040 (also before the Cargo identity): a workspace member outside
+        // the root is read by classification (its crate name and the trait
+        // names it declares) but is never walked by discovery, so the corpus
+        // content hash does not see it. Fold what is read into the key. A
+        // workspace with every member below the root keeps its key.
+        let workspace_manifests_hash =
+            match super::classify::out_of_root_member_identity(self.workspace_root) {
+                Some(identity) => hash_str(&format!(
+                    "{workspace_manifests_hash}:out-of-root-members:{identity}"
+                )),
+                None => workspace_manifests_hash,
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2493,7 +2614,7 @@ impl RepoModuleTreeScanCache {
             analyzer_version: crate::build_identity::cache_identity().to_string(),
             scans: scans.clone(),
         };
-        let bytes = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        let bytes = encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
         crate::atomic_file::write_cache(&self.entry_path(), &bytes, "module tree scan cache")
     }
 }
@@ -3172,51 +3293,6 @@ impl FileFactCacheStats {
     }
 }
 
-/// Layer directories whose stale schema siblings were already pruned this
-/// process (#7047). Mirrors the once-per-directory latch in
-/// `atomic_file::sweep_stale_temp_files_once`.
-/// Other analyzer identities whose current-schema file-fact entries survive
-/// the per-run prune (#7047): enough for an editor-managed server and a local
-/// CLI build to alternate on one cache without evicting each other.
-const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
-
-/// An other build whose use marker (a cache hit) is younger than this is
-/// never pruned, whatever its rank: a frequently rebuilt local CLI must not
-/// evict an editor server that is still in use. Builds that only wrote get no
-/// grace, so dirty rebuilds cannot accumulate.
-const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration = std::time::Duration::from_hours(7 * 24);
-
-/// Directory, beside the schema directories, holding one "last used" marker
-/// per build. Its name never parses as a schema version, so the
-/// schema-sibling prune keeps it.
-const FILE_FACT_BUILD_USE_DIR: &str = ".build-use";
-
-/// A long-running process (the editor server) refreshes its marker this often.
-const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_hours(1);
-
-static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
-    Mutex::new(BTreeMap::new());
-
-/// Whether `path` is a directory that is not a symlink.
-fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
-}
-
-/// [`is_real_dir`], or nothing exists at `path` yet.
-fn is_real_dir_or_absent(path: &Path) -> bool {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
-        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-    }
-}
-
-fn build_use_marker_name(identity: &str) -> String {
-    format!("{:016x}", fnv1a_64(identity.as_bytes()))
-}
-
-static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
-
 pub(crate) struct RepoFileFactCache {
     /// Entry directory: `{cache_base}/repo-file-facts/{schema_version}`.
     dir: PathBuf,
@@ -3418,6 +3494,26 @@ fn indexed_paths_all_under_cache_layers(toplevel: &Path, base_relative: &Path) -
     indexed
 }
 
+/// Rebind every serialized fact that names its containing file to the
+/// requested path spelling. Owner resolution also reads the file prefix in a
+/// function's `SymbolId`, so preserve only the symbol-local suffix. Source
+/// declaration targets are not containing-file identities and stay untouched.
+fn rebind_file_fact_identity(mut facts: FileFacts, path: &Path) -> FileFacts {
+    let old_id_prefix = format!("{}::", crate::analysis::stable_path_text(&facts.path));
+    let new_id_prefix = format!("{}::", crate::analysis::stable_path_text(path));
+    for function in &mut facts.functions {
+        if let Some(suffix) = function.id.0.strip_prefix(&old_id_prefix) {
+            function.id = crate::domain::SymbolId(format!("{new_id_prefix}{suffix}"));
+        }
+        function.file = path.to_path_buf();
+    }
+    for test in &mut facts.tests {
+        test.file = path.to_path_buf();
+    }
+    facts.path = path.to_path_buf();
+    facts
+}
+
 impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         let dir = cache_layer_dir(workspace_root, CacheLayer::FileFacts)
@@ -3486,6 +3582,17 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
+        self.load_file_facts_for_path(key, key.file_path())
+    }
+
+    /// Load a key hit with the same path spelling a cold parse for
+    /// `requested_path` would produce. The normalized key remains the cache
+    /// identity; the requested spelling must resolve to that key or miss.
+    pub(crate) fn load_file_facts_for_path(
+        &self,
+        key: &RepoFileFactCacheKey,
+        requested_path: &Path,
+    ) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3495,6 +3602,9 @@ impl RepoFileFactCache {
             return CacheLoad::CorruptIgnored {
                 reason: reason.to_owned(),
             };
+        }
+        if !file_fact_paths_equal(requested_path, key.file_path()) {
+            return CacheLoad::Miss;
         }
         let path = self.entry_path(key);
         let bytes = match std::fs::read(&path) {
@@ -3514,12 +3624,18 @@ impl RepoFileFactCache {
             }
         };
         match codec::decode_file_facts(&bytes) {
-            Ok(envelope) => {
+            Ok(DecodedFileFacts {
+                envelope,
+                digest_matches,
+            }) => {
                 if envelope.matches_key(key) {
-                    if let Err(reason) = envelope.validate_integrity() {
-                        return corrupt_entry(&path, reason);
+                    if !digest_matches {
+                        return corrupt_entry(&path, FILE_FACT_DIGEST_MISMATCH);
                     }
-                    CacheLoad::Hit(envelope.file_facts)
+                    CacheLoad::Hit(rebind_file_fact_identity(
+                        envelope.file_facts,
+                        requested_path,
+                    ))
                 } else {
                     CacheLoad::Miss
                 }
@@ -3559,7 +3675,10 @@ impl RepoFileFactCache {
             if header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                 && header.analyzer_version == identity
             {
-                candidates.entry(header.file_path).or_default().push(path);
+                candidates
+                    .entry(file_fact_identity_path(&header.file_path))
+                    .or_default()
+                    .push(path);
             }
         }
         KnownFilePaths { candidates }
@@ -3591,7 +3710,10 @@ impl RepoFileFactCache {
                 }
             };
             match codec::decode_file_facts(&bytes) {
-                Ok(envelope) => {
+                Ok(DecodedFileFacts {
+                    envelope,
+                    digest_matches,
+                }) => {
                     if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
                         problems.push(format!(
                             "{}: schema {} (expected {})",
@@ -3601,9 +3723,9 @@ impl RepoFileFactCache {
                         ));
                     } else if envelope.analyzer_version != identity {
                         problems.push(format!("{}: analyzer identity mismatch", path.display()));
-                    } else if let Err(reason) = envelope.validate_integrity() {
+                    } else if !digest_matches {
                         problems.push(format!(
-                            "{}: integrity check failed: {reason}",
+                            "{}: integrity check failed: {FILE_FACT_DIGEST_MISMATCH}",
                             path.display()
                         ));
                     }
@@ -3657,276 +3779,68 @@ impl RepoFileFactCache {
         self.dir.join(key.filename())
     }
 
-    /// Once per run and cache layer directory, after a successful store,
-    /// best-effort remove sibling schema directories this build can never
-    /// serve (#7047). A process-wide latch avoids a new struct field.
-    fn prune_stale_schema_siblings_once(&self) {
-        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
+    /// The shared build-retention policy (#7047) over this cache's
+    /// production layout `{base}/repo-file-facts/{current-version}`. Skips
+    /// `act` for test `at_dir` roots, which write entries directly in `dir`
+    /// and must never prune.
+    fn with_retention(&self, act: impl FnOnce(&build_retention::BuildRetention<'_>)) {
+        let layer_dir = self.base.join(CacheLayer::FileFacts.name());
+        if self.dir != layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION) {
             return;
         }
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
-        if !cache_path_contained_in_base(&self.base, &layer_dir) {
-            return;
-        }
-        let first_visit = {
-            let mut pruned = match FILE_FACT_STALE_SCHEMA_PRUNED.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            pruned.insert(layer_dir.clone())
-        };
-        if first_visit {
-            self.prune_stale_schema_siblings(&layer_dir);
-            self.prune_stale_build_entries();
-        }
+        let read_build = rust_file_fact_entry_build;
+        act(&build_retention::BuildRetention::new(
+            &self.base,
+            layer_dir,
+            FILE_FACT_CACHE_SCHEMA_VERSION,
+            file_fact_schema_rank,
+            &read_build,
+        ));
     }
 
-    /// Records that this build served a hit, at most once per
-    /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
-    /// entry, so entry mtimes alone would make an editor server that only
-    /// hits look abandoned to the prune; this marker is its "last used" time.
-    /// Called by the fact build when it serves a hit, not by
-    /// `load_file_facts` itself, so read-only consumers (cache export
-    /// validation) never write. Production layout, usable base and a real
-    /// (non-symlink) marker directory only; the write is atomic and failures
-    /// are ignored.
+    /// Once per run and cache layer directory, after a successful store,
+    /// best-effort remove sibling schema directories and other builds'
+    /// entries this build can never serve (#7047).
+    fn prune_stale_schema_siblings_once(&self) {
+        self.with_retention(|retention| retention.prune_once());
+    }
+
+    /// Records that this build served a hit, so the prune sees an editor
+    /// server that only hits as in use. Called by the fact build when it
+    /// serves a hit, not by `load_file_facts` itself, so read-only consumers
+    /// (cache export validation) never write.
     pub(crate) fn note_build_use(&self) {
-        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
-            return;
-        }
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
         if self.unusable_base_reason().is_some() {
             return;
         }
-        let due = {
-            let mut noted = match FILE_FACT_BUILD_USE_NOTED.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let now = std::time::Instant::now();
-            let due = noted
-                .get(&layer_dir)
-                .is_none_or(|last| now.duration_since(*last) >= FILE_FACT_BUILD_USE_REFRESH);
-            if due {
-                noted.insert(layer_dir.clone(), now);
-            }
-            due
-        };
-        if !due {
-            return;
-        }
-        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
-        if !cache_path_contained_in_base(&self.base, &marker_dir)
-            || !is_real_dir_or_absent(&layer_dir)
-            || !is_real_dir_or_absent(&marker_dir)
-        {
-            return;
-        }
-        let identity = crate::build_identity::cache_identity();
-        let marker = marker_dir.join(build_use_marker_name(identity));
-        // A planted symlink at the marker path is replaced by the atomic
-        // rename, never written through.
-        let _ = std::fs::create_dir_all(&marker_dir)
-            .map_err(|err| err.to_string())
-            .and_then(|()| {
-                crate::atomic_file::write_cache(&marker, identity.as_bytes(), "build use marker")
-            });
+        self.with_retention(|retention| retention.note_use());
     }
 
-    /// Last-hit time per other build, from the use markers. A marker counts
-    /// only when it is a small regular file whose name is the hash of its
-    /// content.
-    fn other_build_use_markers(
-        &self,
-        identity: &str,
-    ) -> HashMap<String, (std::time::SystemTime, PathBuf)> {
-        let mut markers = HashMap::new();
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return markers;
-        };
-        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
-        if !is_real_dir(&layer_dir) || !is_real_dir(&marker_dir) {
-            return markers;
-        }
-        let Ok(entries) = std::fs::read_dir(&marker_dir) else {
-            return markers;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !metadata.is_file() || metadata.len() > 4096 {
-                continue;
-            }
-            let Ok(build) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if build == identity
-                || entry.file_name().to_str() != Some(build_use_marker_name(&build).as_str())
-            {
-                continue;
-            }
-            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
-            markers.insert(build, (modified, path));
-        }
-        markers
-    }
-
-    /// Best-effort removal of current-schema entries written by older builds
-    /// (#7047). A key embeds the analyzer identity, so such an entry is never
-    /// served again, yet every ripr upgrade (and every dirty local rebuild)
-    /// used to leave a full generation behind.
-    ///
-    /// Kept: the current build; the [`FILE_FACT_RETAINED_OTHER_BUILDS`] most
-    /// recently used other builds, where "used" is the later of a build's
-    /// newest entry and its use marker; and any build whose use marker (proof
-    /// of a hit, see `note_build_use`) is younger than
-    /// [`FILE_FACT_RECENT_BUILD_GRACE`], so an editor server that only hits
-    /// survives a run of local rebuilds while write-only rebuilds do not pile
-    /// up. Entries whose header cannot be read, temp files and non-JSON files
-    /// are left alone; nothing is removed through a symlinked directory.
-    fn prune_stale_build_entries(&self) {
-        let identity = crate::build_identity::cache_identity();
-        // Both the layer and the schema directory must be real directories:
-        // containment is lexical, so a symlinked `repo-file-facts` would
-        // otherwise let the prune delete JSON outside the cache.
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
-        if !is_real_dir(&layer_dir) || !is_real_dir(&self.dir) {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return;
-        };
-        let mut by_build: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-            let Some(header) = read_file_fact_header(&path) else {
-                continue;
-            };
-            if header.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION
-                || header.analyzer_version == identity
-            {
-                continue;
-            }
-            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
-            let slot = by_build
-                .entry(header.analyzer_version)
-                .or_insert_with(|| (std::time::UNIX_EPOCH, Vec::new()));
-            slot.0 = slot.0.max(modified);
-            slot.1.push(path);
-        }
-        let mut markers = self.other_build_use_markers(identity);
-        for (build, (hit, _)) in &markers {
-            if let Some(slot) = by_build.get_mut(build) {
-                slot.0 = slot.0.max(*hit);
-            }
-        }
-        let now = std::time::SystemTime::now();
-        let hit_recently = |hit: std::time::SystemTime| {
-            now.duration_since(hit)
-                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE)
-        };
-        let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
-            by_build.into_iter().collect();
-        // Newest first; the identity breaks ties so the choice is deterministic.
-        builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
-            right.cmp(left).then_with(|| left_id.cmp(right_id))
-        });
-        for (rank, (build, (_, paths))) in builds.into_iter().enumerate() {
-            let marker = markers.remove(&build);
-            if rank < FILE_FACT_RETAINED_OTHER_BUILDS
-                || marker.as_ref().is_some_and(|(hit, _)| hit_recently(*hit))
-            {
-                continue;
-            }
-            for path in paths {
-                if cache_path_contained_in_base(&self.base, &path) {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-            if let Some((_, marker_path)) = marker {
-                let _ = std::fs::remove_file(marker_path);
-            }
-        }
-        // Markers of builds that no longer have entries, once past the grace.
-        for (hit, marker_path) in markers.into_values() {
-            if !hit_recently(hit) && cache_path_contained_in_base(&self.base, &marker_path) {
-                let _ = std::fs::remove_file(marker_path);
-            }
-        }
-    }
-
-    fn prune_stale_schema_siblings(&self, layer_dir: &Path) {
-        let Ok(layer_meta) = std::fs::symlink_metadata(layer_dir) else {
-            return;
-        };
-        if layer_meta.file_type().is_symlink() || !layer_meta.is_dir() {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(layer_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if name == FILE_FACT_CACHE_SCHEMA_VERSION || !parses_as_file_fact_schema_version(name) {
-                continue;
-            }
-            let path = layer_dir.join(name);
-            if !cache_path_contained_in_base(&self.base, &path) {
-                continue;
-            }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                continue;
-            }
-            let _ = std::fs::remove_dir_all(&path);
-        }
-    }
-
-    /// Production layout `{base}/repo-file-facts/{current-version}` only.
-    /// Test `at_dir` roots write entries directly in `dir` and must not prune.
-    fn file_fact_schema_layer_dir(&self) -> Option<PathBuf> {
-        let layer_dir = self.base.join(CacheLayer::FileFacts.name());
-        let expected = layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        (self.dir == expected).then_some(layer_dir)
+    /// Entries and bytes in this layer that this build never reads.
+    pub(crate) fn reclaimable(&self) -> build_retention::Reclaimable {
+        let mut total = build_retention::Reclaimable::default();
+        self.with_retention(|retention| total = retention.reclaimable());
+        total
     }
 }
 
-/// File-fact schema directories are `{major}.{minor}` decimal generations.
-fn parses_as_file_fact_schema_version(name: &str) -> bool {
-    let mut parts = name.split('.');
-    let Some(major) = parts.next() else {
-        return false;
+/// The analyzer identity of a current-schema Rust file-fact entry.
+fn rust_file_fact_entry_build(path: &Path) -> Option<String> {
+    read_file_fact_header(path)
+        .filter(|header| header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION)
+        .map(|header| header.analyzer_version)
+}
+
+/// Order of a file-fact schema directory, a `{major}.{minor}` decimal
+/// generation; `None` for any other name.
+fn file_fact_schema_rank(name: &str) -> Option<(u64, u64)> {
+    let (major, minor) = name.split_once('.')?;
+    let decimal = |part: &str| {
+        (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
     };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    parts.next().is_none()
-        && !major.is_empty()
-        && !minor.is_empty()
-        && major.bytes().all(|byte| byte.is_ascii_digit())
-        && minor.bytes().all(|byte| byte.is_ascii_digit())
+    Some((decimal(major)?, decimal(minor)?))
 }
 
 /// Lexical containment under the cache base: no `.` / `..`, and a nonempty
@@ -4096,6 +4010,7 @@ impl<'a> FileFactCacheEnvelopeRef<'a> {
         }
     }
 
+    #[cfg(test)]
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
@@ -4126,10 +4041,21 @@ fn read_file_fact_header(path: &Path) -> Option<FileFactCacheHeader> {
         .take(FILE_FACT_HEADER_PREFIX_BYTES)
         .read_to_end(&mut prefix)
         .ok()?;
-    if let Some(header) = header_from_prefix(&prefix) {
+    if let Some(header) = header_from_prefix(split_framed_header(&prefix)) {
         return Some(header);
     }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    serde_json::from_slice(split_framed_header(&std::fs::read(path).ok()?)).ok()
+}
+
+/// The body after a framed entry's digest line, without verifying it: the
+/// inventory reads identity only, and every admission verifies the digest.
+fn split_framed_header(bytes: &[u8]) -> &[u8] {
+    if bytes.starts_with(b"sha256:")
+        && let Some(sep) = bytes.iter().position(|byte| *byte == b'\n')
+    {
+        return &bytes[sep + 1..];
+    }
+    bytes
 }
 
 /// Parses keys from the start of the envelope object until the three header
@@ -4188,14 +4114,16 @@ impl KnownFilePaths {
     /// full-decode inventory applied to every entry.
     pub(crate) fn contains(&self, file: &Path) -> bool {
         let identity = crate::build_identity::cache_identity();
-        self.candidates.get(file).is_some_and(|entries| {
+        let identity_path = file_fact_identity_path(file);
+        self.candidates.get(&identity_path).is_some_and(|entries| {
             entries.iter().any(|entry| {
                 std::fs::read(entry).ok().is_some_and(|bytes| {
-                    codec::decode_file_facts(&bytes).is_ok_and(|envelope| {
+                    codec::decode_file_facts(&bytes).is_ok_and(|decoded| {
+                        let envelope = &decoded.envelope;
                         envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                             && envelope.analyzer_version == identity
-                            && envelope.file_path == file
-                            && envelope.validate_integrity().is_ok()
+                            && file_fact_paths_equal(&envelope.file_path, file)
+                            && decoded.digest_matches
                     })
                 })
             })
@@ -4229,7 +4157,7 @@ impl FileFactCacheEnvelope {
     fn matches_key(&self, key: &RepoFileFactCacheKey) -> bool {
         self.file_fact_cache_schema_version == key.schema_version
             && self.analyzer_version == key.analyzer_version
-            && self.file_path == key.file_path
+            && file_fact_paths_equal(&self.file_path, &key.file_path)
             && self.content_hash == key.content_hash
     }
 }
@@ -4619,6 +4547,7 @@ pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
+#[cfg(test)]
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4629,7 +4558,7 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
-/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// Compact integrity-body encoder without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
 /// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
 /// are unchanged.
@@ -4665,17 +4594,52 @@ impl CacheEnvelope {
 impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
+    /// A framed entry is verified over its stored bytes instead; only an
+    /// entry without the digest header pays this re-serialization.
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
-    fn validate_integrity(&self) -> Result<(), String> {
-        let expected = self.expected_digest()?;
-        if self.payload_digest.as_deref() == Some(expected.as_str()) {
-            Ok(())
-        } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
-        }
-    }
+}
+
+/// A decoded Rust file-fact entry and whether its framed digest matched.
+struct DecodedFileFacts {
+    envelope: FileFactCacheEnvelope,
+    digest_matches: bool,
+}
+
+/// Why a decoded entry whose identity matched is not served.
+const FILE_FACT_DIGEST_MISMATCH: &str = "missing or mismatching semantic payload digest";
+
+/// Framed on-disk entry: `<digest>\n<compact body>`, where the digest is the
+/// semantic digest of exactly the body bytes that follow (byte-identical to
+/// [`semantic_body_digest`] of the envelope, because the body is its compact
+/// serialization). Compact JSON holds no raw newline, so the first `\n`
+/// always ends the header.
+fn framed_file_fact_entry(body: &[u8]) -> Vec<u8> {
+    let digest = semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body);
+    let mut bytes = Vec::with_capacity(digest.len() + 1 + body.len());
+    bytes.extend_from_slice(digest.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+/// Splits a framed entry into (digest matches, body); `None` for bytes
+/// without a digest header.
+fn split_framed_file_fact_entry(bytes: &[u8]) -> Option<(bool, &[u8])> {
+    let (header, body) = bytes
+        .strip_prefix(b"sha256:".as_slice())
+        .and_then(|_| bytes.iter().position(|byte| *byte == b'\n'))
+        .map(|sep| (&bytes[..sep], &bytes[sep + 1..]))?;
+    #[cfg(test)]
+    INTEGRITY_WORK.with(|work| {
+        let (hashes, bodies, envelopes) = work.get();
+        work.set((hashes.saturating_add(1), bodies, envelopes));
+    });
+    Some((
+        header == semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body).as_bytes(),
+        body,
+    ))
 }
 
 impl ShardedCacheManifest {
@@ -4772,7 +4736,7 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_counts(envelope: &CountCacheEnvelope) -> Result<Vec<u8>, String> {
-        serde_json::to_vec_pretty(envelope).map_err(|err| format!("encode counts failed: {err}"))
+        serde_json::to_vec(envelope).map_err(|err| format!("encode counts failed: {err}"))
     }
 
     #[cfg(test)]
@@ -4782,23 +4746,54 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        Ok(super::framed_file_fact_entry(&body))
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
+        super::note_integrity_envelope();
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        let bytes = super::framed_file_fact_entry(&body);
+        super::record_integrity_vec_len(bytes.len());
+        Ok(bytes)
     }
 
-    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
-        serde_json::from_slice(bytes).map_err(|err| format!("decode file facts failed: {err}"))
+    /// Decodes an entry and reports whether its framed digest matches the
+    /// stored body bytes. The digest is checked over the bytes already read,
+    /// never by re-serializing the decoded envelope (#9216). Callers judge the
+    /// decoded identity first and the digest second, so an entry of another
+    /// generation stays a miss whatever its digest.
+    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<super::DecodedFileFacts, String> {
+        let decode = |body: &[u8]| -> Result<FileFactCacheEnvelope, String> {
+            serde_json::from_slice(body).map_err(|err| format!("decode file facts failed: {err}"))
+        };
+        if let Some((digest_matches, body)) = super::split_framed_file_fact_entry(bytes) {
+            return Ok(super::DecodedFileFacts {
+                envelope: decode(body)?,
+                digest_matches,
+            });
+        }
+        // An entry without the digest header (hand-written, or the embedded
+        // digest form) keeps the re-serializing check, which only such an
+        // entry ever pays.
+        let envelope = decode(bytes)?;
+        let digest_matches = envelope
+            .expected_digest()
+            .is_ok_and(|expected| envelope.payload_digest.as_deref() == Some(expected.as_str()));
+        Ok(super::DecodedFileFacts {
+            envelope,
+            digest_matches,
+        })
     }
 
     pub(super) fn encode_corpus_fingerprint(
         envelope: &CorpusFingerprintEnvelope,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_corpus_fingerprint(
@@ -5192,6 +5187,140 @@ mod tests {
     }
 
     #[test]
+    fn file_fact_key_unifies_path_spellings_of_one_file() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #13887: one file must keep one cache identity across the path
+        // spellings different callers produce (native separator, forward
+        // slash, `./` prefix; on Windows also case and verbatim prefix).
+        let scratch = integrity_scratch("key-path-spelling")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let source = "#[path = \"other.rs\"]\nmod other;\npub fn f(x: u32) -> u32 { x + 1 }\n#[test]\nfn changes_f() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("./src/lib.rs"), source)?;
+        let assert_requested_identity = |loaded: &FileFacts, path: &Path| {
+            assert_eq!(loaded.path, path);
+            assert_eq!(loaded.tests.len(), 1);
+            for function in &loaded.functions {
+                assert_eq!(function.file, path);
+                assert_eq!(
+                    function.id.0,
+                    format!(
+                        "{}::{}",
+                        crate::analysis::stable_path_text(path),
+                        function.name
+                    )
+                );
+            }
+            for test in &loaded.tests {
+                assert_eq!(test.file, path);
+            }
+            assert_eq!(loaded.module_declarations, facts.module_declarations);
+        };
+        let stored = RepoFileFactCacheKey::new(Path::new("./src/lib.rs"), source.as_bytes());
+        cache.store_file_facts(&stored, &facts)?;
+        for spelling in ["src/lib.rs", "./src/lib.rs"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            match cache.load_file_facts_for_path(&key, Path::new(spelling)) {
+                // A hit serves all file-local identities under the caller's
+                // requested spelling, not the stored producer's spelling.
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new(spelling));
+                }
+                other => {
+                    return Err(format!("spelling {spelling} must hit: {other:?}"));
+                }
+            }
+            assert!(
+                cache.known_file_paths().contains(Path::new(spelling)),
+                "known paths must recognize spelling {spelling}"
+            );
+        }
+        // On Windows the native separator spelling is the same file; on Unix
+        // a backslash is an ordinary filename character and stays distinct.
+        #[cfg(windows)]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows separator spelling must hit the stored entry"
+            );
+            // Facts summarized under the backslash spelling are served under
+            // the canonical identity path.
+            let backslash_facts =
+                RaRustSyntaxAdapter.summarize_file(Path::new(r"src\other.rs"), source)?;
+            let backslash_key =
+                RepoFileFactCacheKey::new(Path::new(r"src\other.rs"), source.as_bytes());
+            cache.store_file_facts(&backslash_key, &backslash_facts)?;
+            let canonical = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+            match cache.load_file_facts_for_path(&canonical, Path::new("src/other.rs")) {
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new("src/other.rs"));
+                }
+                other => return Err(format!("canonical spelling must hit: {other:?}")),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Miss),
+                "unix backslash spelling is a distinct file and must miss"
+            );
+        }
+        // Windows filesystems are case-insensitive and canonicalized forms
+        // carry a verbatim prefix; both spellings name the same file.
+        #[cfg(windows)]
+        for spelling in [r"Src\Lib.rs", "SRC/LIB.RS"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows spelling {spelling} must hit the stored entry"
+            );
+        }
+        #[cfg(windows)]
+        {
+            // Built from components so the test carries no absolute machine
+            // path literal (check-local-context).
+            let abs_path = PathBuf::from(format!("{}:/", 'C'))
+                .join("repo")
+                .join("src")
+                .join("lib.rs");
+            let abs = RepoFileFactCacheKey::new(&abs_path, source.as_bytes());
+            cache.store_file_facts(&abs, &facts)?;
+            let verbatim_path = PathBuf::from(format!(r"\\?\{}", abs_path.display()));
+            let verbatim = RepoFileFactCacheKey::new(&verbatim_path, source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&verbatim), CacheLoad::Hit(_)),
+                "verbatim spelling must hit the plain absolute entry"
+            );
+        }
+        // Distinct files and distinct content keep distinct identities.
+        #[cfg(not(windows))]
+        {
+            let case_variant =
+                RepoFileFactCacheKey::new(Path::new("Src/Lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&case_variant), CacheLoad::Miss),
+                "case-sensitive filesystems keep case-distinct files apart"
+            );
+        }
+        let other_path = RepoFileFactCacheKey::new(Path::new("src/another.rs"), source.as_bytes());
+        assert!(matches!(
+            cache.load_file_facts(&other_path),
+            CacheLoad::Miss
+        ));
+        assert!(matches!(
+            cache.load_file_facts_for_path(&stored, Path::new("src/another.rs")),
+            CacheLoad::Miss
+        ));
+        let other_content = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn f() {}\n");
+        assert!(matches!(
+            cache.load_file_facts(&other_content),
+            CacheLoad::Miss
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {
         let root = Path::new("/workspace");
         let base = cache_base_dir(root);
@@ -5397,7 +5526,10 @@ mod tests {
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
+        // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
+        // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5604,8 +5736,12 @@ mod tests {
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
         // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        // 1.178 -> 1.181: one-hop blanket-impl reach withholds the gap (#6732).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.181");
+        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
+        // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
+        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
+        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
+        // 1.183 -> 1.184: one-hop blanket-impl reach withholds the gap (#6732).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5765,9 +5901,13 @@ mod tests {
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
         // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        // 0.180 -> 0.183: same blanket-impl reach withholding as full 1.181 (#6732).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
+        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
+        // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
+        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
+        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
+        // 0.185 -> 0.186: same blanket-impl reach withholding as full 1.184 (#6732).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -5838,14 +5978,33 @@ mod tests {
             }
             let key = RepoFileFactCacheKey::new(file, source.as_bytes());
             let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            let legacy = serde_json::to_vec_pretty(&ChecksummedBody {
+                body: &envelope,
+                payload_digest: envelope.expected_digest()?,
+            })
+            .map_err(|err| err.to_string())?;
             cache.store_file_facts(&key, &facts)?;
             let entry = cache.entry_path(&key);
             let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
-            let stored_value: serde_json::Value =
-                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            // The stored entry frames its digest ahead of the body (#9216);
+            // folded back in, it equals the legacy embedded-digest entry.
+            let (digest_line, stored_body) = stored
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|sep| (&stored[..sep], &stored[sep + 1..]))
+                .ok_or("stored entry must carry a digest line")?;
+            assert_eq!(digest_line, envelope.expected_digest()?.as_bytes());
+            let mut stored_value: serde_json::Value =
+                serde_json::from_slice(stored_body).map_err(|err| err.to_string())?;
             let legacy_value: serde_json::Value =
                 serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            stored_value
+                .as_object_mut()
+                .ok_or("envelope must be object")?
+                .insert(
+                    "payload_digest".to_owned(),
+                    serde_json::json!(envelope.expected_digest()?),
+                );
             assert_eq!(
                 stored_value, legacy_value,
                 "all fields and digest stay equal"
@@ -5888,7 +6047,11 @@ mod tests {
                     let bytes = if compact {
                         encode_integrity_body_compact(&envelope, digest)?
                     } else {
-                        encode_integrity_body(&envelope, digest)?
+                        serde_json::to_vec_pretty(&ChecksummedBody {
+                            body: &envelope,
+                            payload_digest: digest,
+                        })
+                        .map_err(|err| err.to_string())?
                     };
                     std::hint::black_box(bytes);
                 }
@@ -5928,6 +6091,34 @@ mod tests {
         Ok(())
     }
 
+    /// Rewrites a stored entry's JSON body. `reframe` stamps a fresh digest
+    /// over the new body (a writer that produced this shape); otherwise the
+    /// original digest line stays in front of the edited body (tampering).
+    fn rewrite_file_fact_body(
+        path: &Path,
+        reframe: bool,
+        edit: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+        let sep = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .filter(|_| bytes.starts_with(b"sha256:"))
+            .ok_or("stored entry must be framed behind a digest line")?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes[sep + 1..]).map_err(|err| err.to_string())?;
+        edit(&mut envelope);
+        let body = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        let out = if reframe {
+            framed_file_fact_entry(&body)
+        } else {
+            let mut out = bytes[..=sep].to_vec();
+            out.extend_from_slice(&body);
+            out
+        };
+        std::fs::write(path, out).map_err(|err| err.to_string())
+    }
+
     #[test]
     fn file_fact_entry_with_unknown_probe_shape_kind_loads_corrupt_ignored() -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -5949,13 +6140,10 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["probe_shapes"][0]["kind"] =
-            serde_json::Value::String("future_shape".to_string());
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["probe_shapes"][0]["kind"] =
+                serde_json::Value::String("future_shape".to_string());
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -5991,14 +6179,11 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
-            "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
-        );
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
+                "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
+            );
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -6040,16 +6225,13 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["calls"] = serde_json::json!([{
-            "line": 999,
-            "name": "phantom",
-            "text": "phantom()",
-        }]);
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["calls"] = serde_json::json!([{
+                "line": 999,
+                "name": "phantom",
+                "text": "phantom()",
+            }]);
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::Hit(loaded) if loaded.file_calls() == expected => {}
             other => {
@@ -6424,15 +6606,9 @@ mod tests {
         let key = RepoFileFactCacheKey::new(file, b"pub fn a() {}\n");
         cache.store_file_facts(&key, &FileFacts::default())?;
         let path = cache.entry_path(&key);
-        let mut entry: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
-                .map_err(|err| err.to_string())?;
-        entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
-        std::fs::write(
-            &path,
-            serde_json::to_vec_pretty(&entry).map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&path, false, |entry| {
+            entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
+        })?;
         let known = cache.known_file_paths();
         // The snapshot keeps the tampered entry as a candidate: it judged
         // only the header. An inventory that decoded and validated every body
@@ -6457,9 +6633,19 @@ mod tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let key = RepoFileFactCacheKey::new(Path::new("src/x.rs"), b"x");
         cache.store_file_facts(&key, &FileFacts::default())?;
-        let bytes = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        let framed = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        // The entry is framed behind its digest line; the header sits at the
+        // start of the body that follows.
+        let bytes = split_framed_header(&framed).to_vec();
+        assert!(
+            bytes.len() < framed.len(),
+            "a stored entry carries a digest header"
+        );
         let full: FileFactCacheHeader =
             serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        let from_disk =
+            read_file_fact_header(&cache.entry_path(&key)).ok_or("framed header must read")?;
+        assert_eq!(from_disk.file_path, full.file_path);
         // Any cut after the header fields still yields the same header.
         let cut = bytes.len().min(400);
         let prefixed = header_from_prefix(bytes.get(..cut).ok_or("short entry")?)
@@ -7062,7 +7248,8 @@ mod tests {
         let original = std::fs::read(&entry).map_err(|err| err.to_string())?;
         for digest in [None, Some(serde_json::json!("sha256:invalid"))] {
             let mut value: serde_json::Value =
-                serde_json::from_slice(&original).map_err(|err| err.to_string())?;
+                serde_json::from_slice(split_framed_header(&original))
+                    .map_err(|err| err.to_string())?;
             let object = value.as_object_mut().ok_or("envelope must be object")?;
             object.remove("payload_digest");
             if let Some(digest) = digest {
@@ -7108,7 +7295,8 @@ mod tests {
             return Err("valid entry must remain inventory".to_owned());
         }
         let mut signed: FileFactCacheEnvelope =
-            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?;
+            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?
+                .envelope;
         signed.file_facts.source = "changed semantic source".into();
         std::fs::write(&entry, codec::encode_file_facts(&signed)?)
             .map_err(|err| err.to_string())?;
@@ -8435,6 +8623,75 @@ mod tests {
         Ok(())
     }
 
+    /// #15040: a workspace member outside the root is read by classification
+    /// but is not in the corpus, so the production key must move when that
+    /// member's trait names or manifest move. An edit there that declares no
+    /// trait is the control: it keeps the key, so the entry is still reused.
+    #[test]
+    fn out_of_root_member_changes_change_cache_identity() -> Result<(), String> {
+        let base = isolated_dir("out-of-root-member");
+        ignore_remove_dir_all(&base);
+        let root = base.join("ws");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        std::fs::create_dir_all(shared.join("src"))
+            .map_err(|err| format!("create member: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../shared\"]\n",
+        )
+        .map_err(|err| format!("write manifest: {err}"))?;
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"shared\"\n")
+            .map_err(|err| format!("write member manifest: {err}"))?;
+        std::fs::write(shared.join("src/lib.rs"), "pub use std::fmt::Display;\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let files: [(PathBuf, Vec<u8>); 0] = [];
+        let key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &files,
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = key();
+        assert_eq!(baseline.filename(), key().filename());
+
+        std::fs::write(shared.join("src/helper.rs"), "pub fn helper() {}\n")
+            .map_err(|err| format!("write non-trait edit: {err}"))?;
+        assert_eq!(
+            baseline.filename(),
+            key().filename(),
+            "an edit that declares no trait keeps the key"
+        );
+
+        std::fs::write(
+            shared.join("src/declares.rs"),
+            "pub trait Display {\n    fn fmt(&self);\n}\n",
+        )
+        .map_err(|err| format!("write trait: {err}"))?;
+        let declared = key();
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            declared.workspace_manifests_hash
+        );
+        assert_ne!(baseline.filename(), declared.filename());
+
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"renamed\"\n")
+            .map_err(|err| format!("change member manifest: {err}"))?;
+        let renamed = key();
+        assert_ne!(
+            declared.workspace_manifests_hash,
+            renamed.workspace_manifests_hash
+        );
+        assert_ne!(declared.filename(), renamed.filename());
+        ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
     /// (#2823) The portable identity fails closed: collected paths are
     /// root-relative by construction (the collector strips the checkout
     /// root), so a path that is still absolute means the strip missed, and
@@ -9071,7 +9328,7 @@ mod tests {
         let path = cache.entry_path();
         let original = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
 
-        let edited = original.replace("\"name\": \"a\"", "\"name\": \"forged\"");
+        let edited = original.replace("\"name\":\"a\"", "\"name\":\"forged\"");
         assert_ne!(edited, original, "control: the edit applied");
         std::fs::write(&path, &edited).map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "edited body fails its digest");
@@ -10641,6 +10898,7 @@ mod file_fact_stale_schema_prune_tests {
 /// the most recently written other builds.
 #[cfg(test)]
 mod file_fact_stale_build_prune_tests {
+    use super::build_retention::{BUILD_USE_DIR as FILE_FACT_BUILD_USE_DIR, build_use_marker_name};
     use super::*;
 
     fn scratch(label: &str) -> Result<PathBuf, String> {

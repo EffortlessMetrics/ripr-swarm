@@ -280,4 +280,78 @@ mod tests {
         assert_eq!(from_request, from_success);
         Ok(())
     }
+
+    #[test]
+    fn completed_snapshot_needs_a_snapshot_prefix_and_a_second_colon() {
+        for accepted in [
+            "snapshot:sha256:deadbeef",
+            "snapshot:input:abc",
+            "snapshot:other:x",
+        ] {
+            assert_eq!(
+                CompletedAnalysisSnapshotId::parse(accepted).map(|id| id.as_str().to_string()),
+                Ok(accepted.to_string()),
+                "{accepted:?}"
+            );
+        }
+        for refused in ["snapshot:abc", "page:2:filter", "sha256:dead:beef"] {
+            assert_eq!(
+                CompletedAnalysisSnapshotId::parse(refused),
+                Err(AnalysisExecutionIdentityParseError::WrongClass {
+                    value: refused.to_string(),
+                    expected: "CompletedAnalysisSnapshotId (completed snapshot handle)",
+                }),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostic_result_needs_a_known_prefix_and_sixteen_hex_digits() {
+        let workspace = "ripr-workspace-diagnostics-v2:0123456789abcdef";
+        assert_eq!(
+            DiagnosticResultId::from_producer_id(workspace).map(|id| id.as_str().to_string()),
+            Ok(workspace.to_string())
+        );
+        for refused in [
+            "ripr-document-diagnostics-v2:0123456789abcde",
+            "ripr-document-diagnostics-v2:0123456789abcdeg",
+            "ripr-other-diagnostics-v2:0123456789abcdef",
+        ] {
+            assert_eq!(
+                DiagnosticResultId::from_producer_id(refused),
+                Err(AnalysisExecutionIdentityParseError::WrongClass {
+                    value: refused.to_string(),
+                    expected: "DiagnosticResultId",
+                }),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn continuation_refuses_every_foreign_identity_prefix() {
+        for prefix in [
+            "snapshot:",
+            "gap:",
+            "action:",
+            "instruction-",
+            "ripr-document-diagnostics-v2:",
+            "ripr-workspace-diagnostics-v2:",
+        ] {
+            let value = format!("{prefix}x");
+            assert_eq!(
+                ContinuationId::parse_request(&value),
+                Err(AnalysisExecutionIdentityParseError::WrongClass {
+                    value: value.clone(),
+                    expected: "continuation_id",
+                }),
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            ContinuationId::parse_success_alias("   "),
+            Err(AnalysisExecutionIdentityParseError::Empty)
+        );
+    }
 }

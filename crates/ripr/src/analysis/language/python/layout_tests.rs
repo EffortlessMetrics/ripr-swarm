@@ -454,7 +454,20 @@ fn a_root_package_rival_withholds_a_project_package_reexport_import() -> Result<
         ("pkg/__init__.py", CORE_PY),
         ("tests/test_core.py", PKG_TEST),
     ];
-    assert_not_exposed_both_modes("root-package-rival", &files, "svc/a/pkg/core.py")
+    assert_not_exposed_both_modes("root-package-rival", &files, "svc/a/pkg/core.py")?;
+    // "Not Exposed" alone is what the project-root gate gives any test
+    // outside the project, so it does not show the rival was recognised
+    // (#14083 T1). Binding the rival's `limit` leaves the test unrelated to
+    // this owner in diff mode; treating the package name as possibly the
+    // owner's own keeps a name-based relation instead.
+    let diff = analyze_one_line("root-package-rival-related", &files, "svc/a/pkg/core.py", 2)?;
+    if !diff.related_tests.is_empty() {
+        return Err(format!(
+            "a test bound to the root rival is still related: {:?}",
+            diff.related_tests
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -542,6 +555,48 @@ fn a_project_root_init_reexport_does_not_relate_a_repo_root_test() -> Result<(),
         ("tests/test_core.py", STRONG_TEST),
     ];
     assert_not_exposed_both_modes("project-root-init", &files, "svc/a/core.py")
+}
+
+/// #14083 T1: the test above stays not-Exposed whether or not the empty name
+/// is skipped, so the recorded names are read directly. A project-root
+/// `__init__.py` has the empty project-relative name; recording it would let
+/// an empty import source stand for the owner.
+#[test]
+fn a_project_root_init_records_no_empty_module_name() -> Result<(), String> {
+    use super::related_tests::{apply_project_module_names, owner_import_modules_for};
+    use super::source_facts::extract_source_facts;
+    let files: Vec<PathBuf> = ["svc/a/__init__.py", "svc/a/core.py"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let marker = Path::new("svc/a/pyproject.toml");
+    // The names a test inside the project may import each owner under.
+    let names_of = |path: &str| -> Result<Vec<String>, String> {
+        let mut owners = extract_source_facts(Path::new(path), CORE_PY).owners;
+        apply_project_module_names(&mut owners, files.iter(), |candidate| candidate == marker);
+        let owner = owners
+            .first()
+            .ok_or_else(|| format!("fixture: no owner extracted from {path}"))?;
+        Ok(owner_import_modules_for(
+            owner,
+            Path::new("svc/a/tests/test_core.py"),
+        ))
+    };
+    // Control: the same pass records the sibling module's project-relative
+    // name, so a missing empty name for the initializer is not an idle pass.
+    let core = names_of("svc/a/core.py")?;
+    if !core.contains(&"core".to_string()) {
+        return Err(format!(
+            "fixture: `svc/a/core.py` is importable as {core:?}"
+        ));
+    }
+    let init = names_of("svc/a/__init__.py")?;
+    if init.iter().any(String::is_empty) {
+        return Err(format!(
+            "a project-root initializer is importable as {init:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]

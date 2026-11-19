@@ -68,6 +68,13 @@ tool, service or security denials; route genuine doubt to the user.
 
 ## Selected-candidate pre-merge flow
 
+Development checks and review belong in the owning session. Ordinary PR
+publication, Draft/Ready transitions, updates and review comments must not start
+Actions, including cheap or skipped-job wrappers. #4842 retires auxiliary
+subscribers; the explicit legacy label route and its main cache writer remain
+bootstrap debt under #4838, not an exception in the final design. Do not restore
+an automated advisory reviewer to compensate for the retirement.
+
 Keep development cheap: focused warm proof, substantive review and joined repairs
 before expensive qualification. Useful alternative Drafts may be compared, but
 select the candidate intended to land for that objective before requesting full
@@ -76,15 +83,15 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). The live order is **label PR qualification ->
+final published-head review -> native enqueue -> required queue run -> queue-driven
+protected squash**. Apply `merge-ready` to request qualification on the PR; it does
+not enqueue or authorize merge. After inspecting the results and making the current
+product/integration judgment, enqueue the exact reviewed head for qualification of
+the actual merge composition. GitHub performs the protected squash when the queue's
+conditions pass. Direct expected-head squash is a refused historical route
+(#14247); do not arm generic auto-merge instead. Preserve actual required checks
+and approvals; this guidance does not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future

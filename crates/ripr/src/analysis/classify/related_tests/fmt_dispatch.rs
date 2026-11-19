@@ -1420,6 +1420,7 @@ mod tests {
                         arguments: vec!["l".to_string()],
                         receiver: None,
                         through_macro,
+                        multi_site: false,
                         module_qualified: false,
                         crate_qualifier: None,
                         transparent_macros_rebound: false,
