@@ -4607,24 +4607,7 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
-    let source_line = owner
-        .body
-        .lines()
-        .nth(line.checked_sub(owner.start_line)?)?
-        .trim()
-        .to_string();
-    let probe = Probe {
-        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
-        location: SourceLocation::new(file, line, 1),
-        owner: Some(owner.id.clone()),
-        family: ProbeFamily::MatchArm,
-        delta: DeltaKind::Control,
-        before: None,
-        after: Some(source_line.clone()),
-        expression: source_line,
-        expected_sinks: Vec::new(),
-        required_oracles: Vec::new(),
-    };
+    let probe = repo_seam_arm_probe(file, line, owner)?;
     // The selector read is cheap and refuses most arms (a computed or
     // guarded arm, a non-parameter scrutinee) before the workspace lookups.
     super::arm_selection::ArmSelector::establish(&probe, owner)?;
@@ -4643,6 +4626,63 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
         })
     });
     (!imports_foreign).then_some(fact)
+}
+
+/// The probe a repo `match_arm` seam reads as: the owner's own source line
+/// at the seam, as an arm whose pattern did not change.
+fn repo_seam_arm_probe(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+) -> Option<Probe> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    Some(Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    })
+}
+
+/// #15359: whether some related test's direct owner call passes an input
+/// the shared arm reading ([`super::arm_selection::ArmSelector`]) reads as
+/// selecting the `match_arm` seam on `line` of `owner`. A call to the owner
+/// runs the `match`, not every arm of it, so only this reading shows that a
+/// test runs the arm. A guarded arm, a scrutinee computed inside the owner
+/// (`match (a.parse::<u64>(), b.parse::<u64>())`), or an input the reading
+/// cannot resolve reads `false`: the arm may run or not, and nothing shows
+/// which.
+pub(in crate::analysis) fn repo_seam_arm_selected(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(probe) = repo_seam_arm_probe(file, line, owner) else {
+        return false;
+    };
+    let Some(selector) = super::arm_selection::ArmSelector::establish(&probe, owner) else {
+        return false;
+    };
+    let selector =
+        selector.in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    related_tests.iter().any(|test| {
+        selector.observed_inputs(test).is_some_and(|observed| {
+            observed.selection == super::arm_selection::ArmSelection::Selects
+        })
+    })
 }
 
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing

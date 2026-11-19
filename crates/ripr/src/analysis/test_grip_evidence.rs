@@ -3490,8 +3490,15 @@ fn activate_evidence(
 /// inputs that select other arms is not activated by them, whatever their
 /// oracle: activation reads weak and the arm's pattern is the missing
 /// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
-/// an established activation is weakened; every refusal of the shared
-/// reading keeps the stage as it was.
+/// an established activation is weakened.
+///
+/// #15359: a call to the owner runs the `match`, not every arm of it, so an
+/// established activation of an arm also needs one related test whose input
+/// the shared reading sees selecting it. Without one (a guarded arm, a
+/// scrutinee computed inside the owner, an input the reading cannot
+/// resolve) activation is unknown: the arm may run under the tests or not,
+/// and their oracle cannot make it strongly gripped. No missing value is
+/// named, since nothing shows which input the tests lack.
 fn weaken_unselected_arm(
     seam: &RepoSeam,
     related: &[&TestSummary],
@@ -3506,18 +3513,48 @@ fn weaken_unselected_arm(
     let Some(owner) = owner_fn else {
         return;
     };
-    let Some(fact) = super::classify::repo_seam_unselected_arm(
+    if let Some(fact) = super::classify::repo_seam_unselected_arm(
         seam.file(),
         seam.display_line(),
         owner,
         related,
         index,
-    ) else {
+    ) {
+        *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+        missing.push(fact);
         return;
-    };
-    *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
-    missing.push(fact);
+    }
+    // The `match` header seam (`match (a, b) {`) runs whenever the owner
+    // reaches it; only an arm (`pattern =>`) needs a selecting input.
+    let first_line = seam
+        .expression()
+        .lines()
+        .next()
+        .unwrap_or(seam.expression());
+    if first_line.contains("=>")
+        && !super::classify::repo_seam_arm_selected(
+            seam.file(),
+            seam.display_line(),
+            owner,
+            related,
+            index,
+        )
+    {
+        *activate = StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            format!(
+                "{ARM_SELECTION_UNREAD_REASON_PREFIX} `{}`: a related test calls `{}`, but no call's input is read as selecting this arm",
+                first_line, owner.name
+            ),
+        );
+    }
 }
+
+/// Opens the activation reason of a `match_arm` seam whose related tests
+/// call the owner with no input read as selecting the arm (#15359).
+pub(crate) const ARM_SELECTION_UNREAD_REASON_PREFIX: &str =
+    "No related test input is read as selecting arm";
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {
     seam.kind() == SeamKind::PredicateBoundary && comparison_operands(seam.expression()).is_some()

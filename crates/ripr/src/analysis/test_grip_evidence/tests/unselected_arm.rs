@@ -1,6 +1,8 @@
 //! #12078: a strong oracle from a test whose input selects another arm must
 //! not grip a `match_arm` seam. The repo seam reads `ripr check`'s own arm
 //! selection (RIPR-SPEC-0229), in the full and the compact grip paths alike.
+//! When that reading refuses to name the arm and no test input is read as
+//! selecting it, activation is unknown, never strongly gripped (#15359).
 
 use super::*;
 
@@ -94,23 +96,98 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
 }
 
 #[test]
-fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed() -> Result<(), String> {
-    // A computed input may select the arm, so the shared reading refuses and
-    // the seam keeps the stage it had before #12078.
+fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed_and_its_activation_unknown()
+-> Result<(), String> {
+    // A computed input may select the arm, so the shared reading refuses to
+    // name it. No input is read as selecting it either, so activation is
+    // unknown (#15359), never strongly gripped.
     let (full, compact, class) = arm_evidence(
         "    let size = if std::env::args().count() > 99 { Size::Small } else { Size::Medium };\n    \
          assert_eq!(price_cents(size), 450);\n    \
          assert_eq!(price_cents(Size::Large), 500);",
         "Size::Medium",
     )?;
-    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    assert_eq!(class, [SeamGripClass::ActivationUnknown; 2]);
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert!(
             !missing_values(evidence).contains(&"Size::Medium"),
             "{:?}",
             evidence.missing_discriminators
         );
+    }
+    Ok(())
+}
+
+/// #15359: semver's `Prerelease` ordering shape. The arm's scrutinee is
+/// computed inside the owner from each identifier, so a call to the owner
+/// says nothing about which arm it runs.
+const PRERELEASE: &str = "use std::cmp::Ordering;\n\n\
+pub fn cmp_pre(left: &str, right: &str) -> Ordering {\n    \
+for (a, b) in left.split('.').zip(right.split('.')) {\n        \
+let order = match (a.parse::<u64>(), b.parse::<u64>()) {\n            \
+(Ok(x), Ok(y)) => x.cmp(&y),\n            \
+(Ok(_), Err(_)) => Ordering::Less,\n            \
+(Err(_), Ok(_)) => Ordering::Greater,\n            \
+(Err(_), Err(_)) => a.cmp(b),\n        };\n        \
+if order != Ordering::Equal {\n            return order;\n        }\n    }\n    \
+left.split('.').count().cmp(&right.split('.').count())\n}\n";
+
+#[test]
+fn an_arm_of_a_scrutinee_computed_in_the_owner_is_never_strongly_gripped() -> Result<(), String> {
+    for arm in ["(Ok(x), Ok(y))", "(Err(_), Err(_))"] {
+        let (full, compact, class) = arm_evidence_in(
+            PRERELEASE,
+            "    assert_eq!(cmp_pre(\"alpha\", \"beta\"), std::cmp::Ordering::Less);",
+            arm,
+        )?;
+        assert_eq!(class, [SeamGripClass::ActivationUnknown; 2], "{arm}");
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{arm}");
+            assert!(
+                evidence
+                    .activate
+                    .summary
+                    .starts_with(super::super::ARM_SELECTION_UNREAD_REASON_PREFIX),
+                "{arm}: {}",
+                evidence.activate.summary
+            );
+            assert!(
+                evidence.missing_discriminators.is_empty(),
+                "{arm}: {:?}",
+                evidence.missing_discriminators
+            );
+        }
+    }
+    // The `match` header runs on every call that reaches it, so its
+    // activation stays established.
+    let (full, compact, _class) = arm_evidence_in(
+        PRERELEASE,
+        "    assert_eq!(cmp_pre(\"alpha\", \"beta\"), std::cmp::Ordering::Less);",
+        "match (a.parse",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_guarded_arm_a_test_input_names_reads_activation_unknown() -> Result<(), String> {
+    // The guard decides the arm too, and the reading does not evaluate it, so
+    // even an input naming the arm's pattern does not show the arm runs.
+    let source = "pub enum Size {\n    Small,\n    Medium,\n}\n\n\
+pub fn price_cents(size: Size, rush: bool) -> u32 {\n    match size {\n        \
+Size::Medium if rush => 900,\n        Size::Medium => 450,\n        \
+Size::Small => 300,\n    }\n}\n";
+    let (full, compact, class) = arm_evidence_in(
+        source,
+        "    assert_eq!(price_cents(Size::Medium, false), 450);",
+        "Size::Medium if rush",
+    )?;
+    assert_eq!(class, [SeamGripClass::ActivationUnknown; 2]);
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown);
     }
     Ok(())
 }
@@ -157,7 +234,7 @@ fn an_owner_that_may_call_itself_leaves_the_arm_unnamed() -> Result<(), String> 
             "{label}: {compact:?}"
         );
         for evidence in [&full, &compact] {
-            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{label}");
             assert_eq!(
                 missing_values(evidence),
                 Vec::<&str>::new(),
@@ -193,7 +270,7 @@ fn a_trait_method_owner_leaves_the_arm_unnamed() -> Result<(), String> {
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     // Control: the same arms and calls on an inherent method name the arm.
@@ -237,7 +314,7 @@ fn an_uncalled_wrapper_keeps_the_arm_named_and_a_called_one_does_not() -> Result
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     Ok(())
@@ -363,7 +440,7 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
             "{label}: {compact:?}"
         );
         for evidence in [&full, &compact] {
-            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{label}");
             assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{label}");
         }
     }
@@ -389,7 +466,7 @@ fn an_impl_inside_an_uncalled_function_keeps_the_arm_unnamed() -> Result<(), Str
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     Ok(())
@@ -518,7 +595,7 @@ fn a_scalar_foreign_callee_keeps_the_arm_and_an_owning_crate_import_names_it() -
             let weak = classify_seam(seam, evidence) == SeamGripClass::WeaklyGripped;
             assert_eq!(weak, named, "{import}: {evidence:?}");
             if !named {
-                assert_eq!(evidence.activate.state, StageState::Yes, "{import}");
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{import}");
             }
         }
     }
