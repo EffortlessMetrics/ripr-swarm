@@ -162,8 +162,11 @@ separate supply-chain boundary.
   needed. Defaults to `true`.
 - `ripr.server.version`: pinned server version. Empty means match the extension
   version.
-- `ripr.server.downloadBaseUrl`: override the manifest base URL for internal
-  mirrors.
+- `ripr.server.downloadBaseUrl`: the `https://` address of the folder that
+  holds the ripr release files, for an internal mirror. Give the folder, not
+  the manifest file. Empty uses GitHub Releases. A value that is not a plain
+  `https://` folder address skips the managed download, and the
+  unavailable-server message names the setting and what is wrong with it.
 - `ripr.check.mode`: preferred editor check mode for LSP diagnostics and
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.

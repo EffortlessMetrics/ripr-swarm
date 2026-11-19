@@ -34,6 +34,41 @@ const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 const CONFIGURED_PATH_REMEDY =
   'Fix or clear ripr.server.path so it points at an existing ripr server executable.';
 
+/**
+ * Why a non-empty `ripr.server.downloadBaseUrl` cannot serve a download, or
+ * undefined when it can. The downloader appends the manifest file name to
+ * this value, so it must be the https address of the folder holding the
+ * release files. Checking it here names the setting and the mistake instead
+ * of surfacing "Invalid URL" or a non-HTTPS refusal for a composed manifest
+ * URL, with advice to set the very setting that is wrong (#15163).
+ */
+export function downloadBaseUrlProblem(value: string): string | undefined {
+  const base = value.trim();
+  if (base.length === 0) {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    return 'is not a full URL; it needs to start with https://';
+  }
+  if (parsed.protocol !== 'https:') {
+    return `uses ${parsed.protocol.replace(/:$/, '')}; only https:// downloads are allowed`;
+  }
+  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+    return 'carries a query or fragment; ripr appends the manifest file name, so it needs a plain folder address';
+  }
+  if (/\.json$/i.test(parsed.pathname)) {
+    return 'names a file; it needs the folder that holds the manifest, without the file name';
+  }
+  return undefined;
+}
+
+export const DOWNLOAD_BASE_URL_REMEDY =
+  'Set ripr.server.downloadBaseUrl to the https:// address of the folder that holds the ripr release files, ' +
+  'or clear it to download from GitHub Releases.';
+
 export type ServerSource = 'configured' | 'bundled' | 'managed_cache' | 'managed_download' | 'path';
 
 export interface ResolvedServer {
@@ -146,6 +181,7 @@ export async function resolveServer(
     return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
+  let downloadRemedy: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
 
   if (platform) {
@@ -202,7 +238,13 @@ export async function resolveServer(
       }
     }
 
-    if (config.autoDownload) {
+    const mirrorProblem = config.autoDownload ? downloadBaseUrlProblem(config.downloadBaseUrl) : undefined;
+    if (mirrorProblem) {
+      downloadFailure =
+        `ripr.server.downloadBaseUrl ${JSON.stringify(config.downloadBaseUrl.trim())} ${mirrorProblem}.`;
+      downloadRemedy = DOWNLOAD_BASE_URL_REMEDY;
+      output.appendLine(`Skipping the managed server download: ${downloadFailure}`);
+    } else if (config.autoDownload) {
       try {
         const downloaded = await downloadServer(context, config, platform, version, output);
         const downloadedResult = await runtime.probeCandidate(
@@ -241,19 +283,22 @@ export async function resolveServer(
   // A PATH probe of an installed-but-unusable binary is `other`, not a
   // missing executable. Copy Install Command is only honest for a binary
   // that was not found (#8588 CodeRabbit).
-  const kind = downloadFailure
-    ? classifyDownloadFailureKind(downloadFailure)
-    : pathResult.kind;
+  const kind = downloadRemedy
+    ? 'other'
+    : downloadFailure
+      ? classifyDownloadFailureKind(downloadFailure)
+      : pathResult.kind;
   return {
     message: 'ripr server is not available.',
     detail: [
       downloadFailure,
       pathResult.detail,
-      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload)}`
+      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload, downloadRemedy)}`
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
-    kind
+    kind,
+    ...(downloadRemedy ? { remedy: downloadRemedy } : {})
   };
 }
 

@@ -6345,6 +6345,11 @@ tests = [
   "editors/vscode/test/suite/download_hardening.test.ts::a refused connection names the URL and classifies as a network failure (#13638)",
   "editors/vscode/test/suite/download_hardening.test.ts::a connection dropped mid-body classifies as a network failure (#13638)",
   "editors/vscode/test/suite/download_hardening.test.ts::a request error with an empty message keeps its code and still classifies as network (#13638)",
+  "editors/vscode/test/suite/download_base_url.test.ts::an empty or plain https folder address is accepted (#15163)",
+  "editors/vscode/test/suite/download_base_url.test.ts::each malformed mirror address names what is wrong (#15163)",
+  "editors/vscode/test/suite/download_base_url.test.ts::the mirror remedy asks for the https folder or an empty value (#15163)",
+  "editors/vscode/test/suite/download_base_url.test.ts::a malformed mirror skips the download and names the setting in the failure (#15163)",
+  "editors/vscode/test/suite/download_base_url.test.ts::a malformed mirror still lets a usable PATH server start (#15163)",
   "editors/vscode/test/suite/walkthrough_contract.test.ts::the check-setup step runs a contributed command and names the missing-server fixes (#13638)",
 ]
 fixtures = [
