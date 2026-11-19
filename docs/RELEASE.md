@@ -294,9 +294,10 @@ marker's is identified as that commit, clean, by `build.rs` (so
 identity check; any other dirty record stays dirty
 (`crates/ripr/src/build_commit_record.rs`).
 
-From the stage the crate measured 7,384,261 bytes on main `5b9c56a4`
-(3,101,499 bytes, about 29.6%, under the limit; 728 inline test modules,
-19,360,633 bytes, stripped from 616 files), via `cargo xtask publish-dry-run`.
+From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
+bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471
+bytes, stripped from 616 files), via `cargo xtask publish-dry-run`. The
+stage differed from `HEAD` only by those 616 files and the marker.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
