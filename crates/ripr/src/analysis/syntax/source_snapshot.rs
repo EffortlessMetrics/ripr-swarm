@@ -917,6 +917,79 @@ mod tests {
         Ok(())
     }
 
+    /// #15185 production path: two distinct authored tests of one module ask
+    /// the snapshot for their scopes, and both answers share the module and
+    /// file scopes the snapshot's one index built. The per-call path, used as
+    /// the negative control, builds fresh module and file scopes for each
+    /// caller, so a snapshot that rebuilt its index per caller would fail the
+    /// pointer checks even though every scope compares equal.
+    #[test]
+    fn distinct_tests_of_one_module_share_the_snapshot_index_scopes() -> Result<(), String> {
+        let index = index(
+            "mod helpers { pub fn f() {} }\nuse helpers::f;\nmod t {\n    use super::*;\n    #[test]\n    fn a() { f(); }\n    #[test]\n    fn b() { f(); }\n}\n",
+        );
+        let snapshot = snapshot(&index)?;
+        let test = |name: &str| {
+            index
+                .tests()
+                .iter()
+                .find(|test| test.name == name)
+                .ok_or(format!("test `{name}` indexed"))
+        };
+        let (a, b) = (test("a")?, test("b")?);
+        if a.start_line == b.start_line {
+            return Err("the two tests must be distinct callers".to_string());
+        }
+        let a_scopes = snapshot.name_scopes(a).ok_or("scopes of `a`")?;
+        let b_scopes = snapshot.name_scopes(b).ok_or("scopes of `b`")?;
+        if Arc::ptr_eq(&a_scopes, &b_scopes) {
+            return Err("distinct callers must keep distinct cached answers".to_string());
+        }
+        for scopes in [&a_scopes, &b_scopes] {
+            if scopes.scopes.len() != 3 {
+                return Err(format!(
+                    "expected body, module and file scopes, got {}",
+                    scopes.scopes.len()
+                ));
+            }
+            if scopes.scopes[1].globs != vec![Some(vec!["super".to_string()])] {
+                return Err("the module scope must hold `use super::*`".to_string());
+            }
+            if scopes.scopes[2].imports_of("f").next().is_none() {
+                return Err("the file scope must hold `use helpers::f`".to_string());
+            }
+        }
+        if !Arc::ptr_eq(&a_scopes.scopes[1], &b_scopes.scopes[1])
+            || !Arc::ptr_eq(&a_scopes.scopes[2], &b_scopes.scopes[2])
+        {
+            return Err("both tests must read the module and file scopes of one index".to_string());
+        }
+
+        // Negative control: the per-call path builds equal but fresh scopes.
+        let tree = snapshot.parse.as_ref().ok_or("parsed source")?.tree();
+        let direct = |test: &TestSummary| {
+            name_scopes_for_test_caller(
+                &tree,
+                &snapshot.lines,
+                None,
+                test.start_line,
+                &test.name,
+                test.generated,
+            )
+            .ok_or(format!("direct scopes of `{}`", test.name))
+        };
+        let (a_direct, b_direct) = (direct(a)?, direct(b)?);
+        if a_direct.scopes[1] != a_scopes.scopes[1] || a_direct.scopes[2] != a_scopes.scopes[2] {
+            return Err("the per-call scopes must equal the indexed scopes".to_string());
+        }
+        if Arc::ptr_eq(&a_direct.scopes[1], &b_direct.scopes[1])
+            || Arc::ptr_eq(&a_direct.scopes[2], &b_direct.scopes[2])
+        {
+            return Err("the control must build fresh scopes per caller".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn source_snapshot_preserves_qualifiers_ambiguity_and_complete_query_identity()
     -> Result<(), String> {
