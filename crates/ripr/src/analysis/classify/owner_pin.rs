@@ -1311,6 +1311,35 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// #15183: whether `assertion` is a bare standard assertion invocation
+    /// (`assert_eq!`, `assert!`, ..) whose name is really rebound where the
+    /// test runs it: a `macro_rules!`/`macro` definition or an import
+    /// covering the assertion, found by the same binding-site lookup the
+    /// refusal note reads. Such an invocation may compare nothing, so its
+    /// extracted strength is not evidence. A site that only may rebind the
+    /// name (a foreign glob, an unresolved `#[macro_use]`) is not counted
+    /// here. Withholds only; it never grants credit.
+    pub(in crate::analysis) fn assertion_macro_rebound(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        let Some(path) = outer_macro_path(&assertion.text) else {
+            return false;
+        };
+        let name = path.strip_prefix("r#").unwrap_or(&path);
+        // The memoized whole-index binding question answers the common
+        // workspace that binds none of these names without the per-test site
+        // lookup, which would otherwise pay the workspace macro-site scan
+        // for every assertion of a small stage.
+        ADMITTED_ASSERTION_MACROS.contains(&name)
+            && super::activation::macro_names_rebound(index, &ADMITTED_ASSERTION_MACROS)
+            && self
+                .macro_binding_site(test, assertion.line, name, index)
+                .is_some_and(|(_, site)| rebinds(&site))
+    }
+
     /// The outer assertion's identity, shared by admission and its refusal note.
     pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
         let path = outer_macro_path(text)?;
