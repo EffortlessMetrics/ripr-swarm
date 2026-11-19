@@ -134,7 +134,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
-| `ripr cache export` success stdout | `schema_version` | `0.1` |
+| `ripr cache export` success stdout (published as `schemas/ripr/cache-export.schema.json`) | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
@@ -167,6 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/cache-export.schema.json` | `0.1` | `crates/ripr/src/analysis/seam_cache/export.rs`; cache export success report (`ripr cache export`) |
 | `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
@@ -1016,6 +1017,11 @@ exit zero before consuming the directory. Failures after output creation name th
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
 The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
+The success object is published as
+[`schemas/ripr/cache-export.schema.json`](../schemas/ripr/cache-export.schema.json);
+`crates/ripr/tests/cache_export_json_schema.rs` validates the bytes the real
+command writes and holds `copied_files` and `logical_file_bytes` to the files
+in the directory `cache_dir` names.
 
 ## Matched intervention-study preregistration
 

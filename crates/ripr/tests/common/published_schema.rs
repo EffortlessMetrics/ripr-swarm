@@ -92,6 +92,12 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
     {
         return Err(format!("{location}: {number} is below minimum {minimum}"));
     }
+    if let Some(number) = value.as_i64()
+        && let Some(maximum) = schema.get("maximum").and_then(Value::as_i64)
+        && number > maximum
+    {
+        return Err(format!("{location}: {number} is above maximum {maximum}"));
+    }
     if let Some(object) = value.as_object() {
         check_object(object, schema, root, location)?;
     }
@@ -276,6 +282,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "if",
     "items",
     "maxItems",
+    "maximum",
     "minItems",
     "minLength",
     "minimum",
