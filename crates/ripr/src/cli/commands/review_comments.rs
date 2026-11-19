@@ -36,17 +36,23 @@ use super::review_guidance_index_handoff::{
 };
 use super::write_text_file;
 
-const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
+/// Default cooperative budget: `ripr check`'s 600 s analysis default (#12940).
+/// At 120 s a 87-file diff on ripr-swarm (2,646 indexed files) timed out in
+/// canonical analysis; with 600 s diffs of 3 to 238 files completed in
+/// 43 to 381 s on 4 vCPU.
+const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 600_000;
 
 /// Default ceiling on the union of analyzable workspace files and changed
-/// owner-attribution inputs. Match the repo-scope default and the diff
-/// narrowing threshold (raised in #4972 after this repository grew beyond
-/// 800 files) and stay below the 1,600–1,700-file external failure shapes
-/// in #3768. Guidance indexes the whole workspace, so it does not follow
-/// the 10,000-file diff memory guard.
+/// owner-attribution inputs. It was 1,200 while the guidance second stage
+/// evaluated every caller-file seam, which drove the 1,600–1,700-file
+/// failures in #3768 and a 13.9 GB OOM on this repository (#12940). Since
+/// #13919 bounds that stage, ripr-swarm (2,646 indexed files) peaks at
+/// 0.99–1.87 GB for diffs of 3 to 238 files, so the default admits about
+/// twice that workspace (#12940). Guidance indexes the whole workspace, so
+/// it does not follow the 10,000-file diff memory guard.
 /// This is input admission, not an RSS bound or evidence that admitted
 /// execution will complete on every runner.
-const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 1200;
+const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 5000;
 
 /// Env override for [`REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT`], in the
 /// `RIPR_MAX_DIFF_INDEX_FILES` family. Operators on larger, well-resourced
@@ -3811,31 +3817,41 @@ mod tests {
     }
 
     #[test]
-    fn guidance_payload_default_admits_current_family_but_refuses_failure_scale()
+    fn guidance_payload_default_admits_this_workspace_but_refuses_past_the_ceiling()
     -> Result<(), String> {
+        // #12940: ripr-swarm indexes 2,646 files and completes under the
+        // bounded second stage, so the default admits it with headroom and
+        // still refuses one file past the ceiling.
         let ceiling = GuidancePayloadCeiling::parse(
             Err(std::env::VarError::NotPresent),
             Err(std::env::VarError::NotPresent),
         )?;
-        assert_eq!(ceiling.max_index_files, 1200);
+        assert_eq!(ceiling.max_index_files, 5000);
         ceiling.enforce(
             analysis::CorpusPayloadSize {
-                file_count: 1200,
-                total_bytes: 1200,
+                file_count: 2646,
+                total_bytes: 2646,
             },
-            1200,
+            2646,
+        )?;
+        ceiling.enforce(
+            analysis::CorpusPayloadSize {
+                file_count: 5000,
+                total_bytes: 5000,
+            },
+            5000,
         )?;
         let error = ceiling
             .enforce(
                 analysis::CorpusPayloadSize {
-                    file_count: 1700,
-                    total_bytes: 1700,
+                    file_count: 5001,
+                    total_bytes: 5001,
                 },
-                1700,
+                5001,
             )
             .err()
-            .ok_or("the measured external failure scale must remain refused by default")?;
-        assert!(error.contains("=1200"));
+            .ok_or("a corpus past the default ceiling must remain refused")?;
+        assert!(error.contains("=5000"));
         assert!(error.contains("Narrowing only the diff does not reduce the workspace file count"));
         Ok(())
     }

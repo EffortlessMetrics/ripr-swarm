@@ -37512,7 +37512,7 @@ fn review_comments_help_survives_invalid_admission_environment()
             let stdout = String::from_utf8(output.stdout)?;
             assert!(stdout.contains("Usage: ripr review-comments"));
             assert!(stdout.contains(variable));
-            assert!(stdout.contains("Default: 1200"));
+            assert!(stdout.contains("Default: 5000"));
         }
         let output = run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),
