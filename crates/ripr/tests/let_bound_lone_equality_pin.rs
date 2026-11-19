@@ -456,8 +456,22 @@ fn a_message_mention_lends_nothing_the_compared_operands_do_not() -> Result<(), 
 ",
         ),
     ] {
-        let class = class(SCORE, "", "", body)?;
-        assert_eq!(class, ExposureClass::WeaklyExposed, "{name}");
+        // The same assertion with the message dropped is the oracle: the
+        // mention there must neither add credit nor change the gap's class.
+        let without = body.replace(", \"{}\", v", "");
+        assert_ne!(
+            without, body,
+            "{name}: premise, the row names `v` in its message"
+        );
+        let read = class(SCORE, "", "", body)?;
+        assert_eq!(read, class(SCORE, "", "", &without)?, "{name}");
+        assert!(
+            matches!(
+                read,
+                ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+            ),
+            "{name}: {read:?}"
+        );
     }
     Ok(())
 }
