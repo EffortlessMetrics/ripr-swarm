@@ -8519,7 +8519,7 @@ fn owner_call_relation_reason_gated(
             // overrides it. When every call in the test resolves to such a
             // type, the name match reaches only the overrides.
             if indexed_same_name_count > 1
-                && dispatch_target::every_call_runs_an_override(test, owner, same_name_ids)
+                && dispatch_target::every_call_runs_an_override(test, owner, same_name_ids, index)
             {
                 return RelationReason::WeakTokenSubstring;
             }

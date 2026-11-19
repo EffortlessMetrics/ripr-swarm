@@ -28,6 +28,7 @@ pub(super) fn every_call_runs_an_override(
     test: &TestSummary,
     owner: &FunctionSummary,
     same_name_ids: &[&str],
+    index: &RustIndex,
 ) -> bool {
     let FunctionContainer::Trait { trait_name } = &owner.item.container else {
         return false;
@@ -37,15 +38,29 @@ pub(super) fn every_call_runs_an_override(
         .iter()
         .filter(|id| **id != owner.id.0.as_str())
         .filter(|id| owner_trait_name(id).as_deref() == Some(trait_name))
-        // A generic self type (`impl Counter for Fast<u8>`) does not say
-        // which instantiations override; `Fast<u16>` may keep the default.
+        // A generic trait (`impl Counter<u8> for Fast`) or self type
+        // (`impl Counter for Fast<u8>`) does not say which instantiations
+        // override: `Counter<u16>` or `Fast<u16>` may keep the default. A
+        // reference self type (`impl Counter for &Fast`) is not `Fast`.
         .filter(|id| {
-            !id.rsplit_once(" for ")
-                .is_some_and(|(_, ty)| ty.contains('<'))
+            id.rsplit_once(" for ").is_some_and(|(head, ty)| {
+                !head.contains('<') && !ty.contains('<') && !ty.trim_start().starts_with('&')
+            })
         })
         .filter_map(|id| impl_self_type_name(id))
         .collect();
     if overriding.is_empty() {
+        return false;
+    }
+    // Every same-named candidate must be compiled in and each overriding
+    // type must be the only type of that name, so a cfg-gated override or a
+    // namesake in another module cannot stand for the type the test calls.
+    if same_name_ids
+        .iter()
+        .filter(|id| **id != owner.id.0.as_str())
+        .any(|id| candidate_cfg_gated(id, index))
+        || !overriding.iter().all(|ty| declared_once(ty, index))
+    {
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
@@ -110,7 +125,9 @@ pub(super) fn inherent_twin_takes_every_call(
     else {
         return false;
     };
-    if !owner.item.has_self_param {
+    // A generic self type's inherent impl may carry bounds the receiver
+    // does not meet (`impl<T: Copy> Square<T>`), so it is never read here.
+    if !owner.item.has_self_param || self_ty.contains('<') {
         return false;
     }
     let (Some(base), trait_name) = (
@@ -143,13 +160,14 @@ pub(super) fn inherent_twin_takes_every_call(
         twin_ids.contains(&function.id.0.as_str())
             && function.item.has_self_param
             && receiver_kind(&function.body) == Some(owner_receiver)
+            && !is_cfg_gated(function)
             && matches!(
                 &function.item.container,
                 FunctionContainer::Inherent { self_ty: other }
                     if compact_spelling(other) == compact_spelling(self_ty)
             )
     });
-    if !twin_has_self_receiver {
+    if !twin_has_self_receiver || !declared_once(&base, index) {
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
@@ -167,6 +185,50 @@ pub(super) fn inherent_twin_takes_every_call(
     sites.all(|at| {
         call_site_resolves_to_type(&masked, at, name, &base, None, &masked, &test.body, true)
     })
+}
+
+/// Whether a function or its `impl` block carries a `cfg`-family attribute,
+/// so it may be compiled out of the test build.
+fn is_cfg_gated(function: &FunctionSummary) -> bool {
+    function.attrs.iter().any(|attr| attr.contains("cfg"))
+        || function.impl_attrs.iter().any(|attr| attr.contains("cfg"))
+}
+
+/// [`is_cfg_gated`] for the indexed function with symbol id `id`; an id with
+/// no indexed function counts as gated, since nothing establishes it.
+fn candidate_cfg_gated(id: &str, index: &RustIndex) -> bool {
+    index
+        .functions()
+        .iter()
+        .find(|function| function.id.0 == id)
+        .is_none_or(is_cfg_gated)
+}
+
+/// Whether exactly one `struct`, `enum` or `union` named `name` is declared
+/// across the indexed files (comments and strings masked), so the name
+/// identifies one type.
+fn declared_once(name: &str, index: &RustIndex) -> bool {
+    let mut count = 0usize;
+    for facts in index.files().values() {
+        if !facts.source.contains(name) {
+            continue;
+        }
+        let masked = mask_comments_and_strings(&facts.source);
+        for keyword in ["struct", "enum", "union"] {
+            for (at, _) in masked.match_indices(keyword) {
+                if !ident_boundary(&masked, at, at + keyword.len()) {
+                    continue;
+                }
+                let rest = masked[at + keyword.len()..].trim_start();
+                if rest.strip_prefix(name).is_some_and(|tail| {
+                    !tail.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                }) {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count == 1
 }
 
 /// Whether `ident` appears in `text` as a whole identifier.

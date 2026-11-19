@@ -192,3 +192,61 @@ fn a_twin_with_another_receiver_kind_keeps_the_relation() -> Result<(), String> 
     )?);
     Ok(())
 }
+
+/// An override the test build may not compile, a namesake `Fast` in another
+/// module, or an override of one instantiation of a generic trait does not
+/// establish that `Fast.advance()` skips the default.
+#[test]
+fn an_override_that_may_not_apply_keeps_the_relation() -> Result<(), String> {
+    let gated = COUNTER.replace(
+        "    fn advance(&self) -> u32 { 8 }\n",
+        "    #[cfg(any())]\n    fn advance(&self) -> u32 { 8 }\n",
+    );
+    let namesake = format!("{COUNTER}pub mod other {{\n    pub struct Fast;\n}}\n");
+    for production in [gated, namesake] {
+        assert!(
+            direct(
+                &production,
+                Owner::DefaultAdvance,
+                "assert_eq!(Fast.advance(), 8);"
+            )?,
+            "{production}"
+        );
+    }
+    let generic = "pub trait Counter<T> {\n    fn step(&self) -> u32;\n    fn advance(&self) -> u32 { 4 * self.step() }\n}\n\
+        pub struct Fast;\n\
+        impl Counter<u8> for Fast {\n    fn step(&self) -> u32 { 2 }\n    fn advance(&self) -> u32 { 8 }\n}\n\
+        impl Counter<u16> for Fast {\n    fn step(&self) -> u32 { 2 }\n}\n";
+    assert!(direct(
+        generic,
+        Owner::DefaultAdvance,
+        "assert_eq!(<Fast as Counter<u16>>::advance(&Fast), 8);"
+    )?);
+    Ok(())
+}
+
+/// A cfg-gated twin, a namesake `Square`, or a generic self type whose
+/// inherent impl may carry bounds keeps the relation.
+#[test]
+fn a_twin_that_may_not_apply_keeps_the_relation() -> Result<(), String> {
+    let gated = SHAPE.replace(
+        "    pub fn area(&self) -> u32 { 9 }\n",
+        "    #[cfg(any())]\n    pub fn area(&self) -> u32 { 9 }\n",
+    );
+    let namesake = format!("{SHAPE}pub mod other {{\n    pub struct Square;\n}}\n");
+    for production in [gated, namesake] {
+        assert!(
+            direct(&production, TRAIT_AREA, "assert_eq!(Square(3).area(), 9);")?,
+            "{production}"
+        );
+    }
+    let generic = "pub trait Shape {\n    fn area(&self) -> u32;\n}\npub struct Square<T>(pub T);\n\
+        impl<T> Shape for Square<T> {\n    fn area(&self) -> u32 { 4 }\n}\n\
+        impl<T: Copy> Square<T> {\n    pub fn area(&self) -> u32 { 9 }\n}\n";
+    assert!(direct(
+        generic,
+        Owner::IdSuffix("impl Shape for Square<T>::area"),
+        "assert_eq!(Square(String::new()).area(), 4);"
+    )?);
+    Ok(())
+}
