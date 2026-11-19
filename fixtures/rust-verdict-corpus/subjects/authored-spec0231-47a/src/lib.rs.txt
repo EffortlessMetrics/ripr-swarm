@@ -1,0 +1,19 @@
+pub fn price(q: u32) -> u32 {
+    if q >= 10 { q * 9 } else { q * 10 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case(10 => ignore 90)]
+    fn prices(q: u32) -> u32 {
+        price(q)
+    }
+
+    #[test]
+    fn far_below_the_boundary() {
+        assert_eq!(price(1), 10);
+    }
+}

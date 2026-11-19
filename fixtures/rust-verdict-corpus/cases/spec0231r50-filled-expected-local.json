@@ -1,0 +1,48 @@
+{
+  "case_id": "spec0231r50-filled-expected-local",
+  "subject_id": "authored-spec0231-50",
+  "diff": "cases/spec0231r50-filled-expected-local.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "boundary_predicate",
+  "test_shape": "filled_expected_local",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if amount >= threshold { amount - 10 } else { amount }",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::boundary_is_not_discounted",
+        "equivalence_review": "not equivalent: price(100, 100) is 90 instead of 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`let expected: i32 = 100; assert_eq!(price(100, 100), expected);` holds a filled expected value, so moving the `>` predicate to `>=` makes price(100, 100) return 90 and fail. Spec cells: RIPR-SPEC-0231 example 50 (a filled `let expected` reads exact_value / strong, unlike the todo!() placeholder of example 49).",
+  "labeling_observation": {
+    "ripr_commit": "783bcd6c22",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#50"
+  ]
+}

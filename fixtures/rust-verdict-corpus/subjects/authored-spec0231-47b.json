@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-spec0231-47b",
+  "origin": "authored",
+  "version_label": "authored 2026-11-19 for RIPR-SPEC-0231 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "66630262de550fb2e9d7902a3f8dbdd4e98d019782f56438564f74d567bf028a"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "d0c43b98419363431dd7b2a725e047f0934c671a6ad6287f967ad522b147c76a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "b0c50fcfebb2629e159af553a7b67bc6e4945d51a545240a29a3a461746a3a10"
+    }
+  ]
+}
