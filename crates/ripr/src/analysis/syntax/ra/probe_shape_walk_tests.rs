@@ -532,6 +532,14 @@ fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(),
             "use std::hint::unreachable_unchecked;\nfn f(unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
         ),
         (
+            "raw-spelled parameter shadows an import",
+            "use std::hint::unreachable_unchecked;\nfn f(r#unreachable_unchecked: fn()) { unsafe { r#unreachable_unchecked() }; }\n",
+        ),
+        (
+            "raw-spelled parameter shadows a plain call",
+            "use std::hint::unreachable_unchecked;\nfn f(r#unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
             "absolute path to another crate",
             "fn f() { unsafe { ::other::hint::unreachable_unchecked() }; }\n",
         ),
