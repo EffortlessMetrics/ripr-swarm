@@ -374,9 +374,11 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
 /// can only gate or refuse more owners, never fewer. A `#[path]` declaration
 /// breaks the name mapping, so its presence gates every owner and a change
 /// to one refuses every owner, except an owner in a default crate root
-/// (`src/lib.rs`, `src/main.rs`) whose file name no `#[path]` literal names:
-/// a `mod` declaration cannot move or compile out a crate root, and the only
-/// file a `#[path]` can add as a module is the one it names (#15104). Gates that live outside a `mod` declaration
+/// (`src/lib.rs`, `src/main.rs`) whose file name no `#[path]` literal names,
+/// case-insensitively, while every `#[path]` target reads as a literal on an
+/// out-of-line declaration: a `mod` declaration cannot move or compile out a
+/// crate root, and the only file a `#[path]` can add as a module is the one
+/// it names (#15104). Gates that live outside a `mod` declaration
 /// (a `cfg` on `include!`, on a `pub use` re-export, or a `mod` emitted by
 /// `macro_rules!`) are not read here; see #14952.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -424,6 +426,12 @@ impl ModuleDeclarations {
                 reading.unreadable = true;
                 continue;
             };
+            // An inline module's `#[path]` moves its children's directory;
+            // which files that reaches is not read, so it gates every owner.
+            if inline_retargets(parse.tree().syntax()) {
+                reading.retargeted = true;
+                reading.retarget_opaque = true;
+            }
             for module in out_of_line_modules(parse.tree().syntax()) {
                 let Some(name) = module.name() else {
                     reading.unreadable = true;
@@ -505,6 +513,10 @@ impl ModuleDeclarations {
             if !file_attrs_touched && !touches(start, usize::from(end)) {
                 continue;
             }
+            if module.item_list().is_some() && module_retargets(&module) {
+                self.changed_retarget = true;
+                self.retarget_opaque = true;
+            }
             // An out-of-line declaration itself, or every one an inline
             // module's header encloses.
             for declaration in std::iter::once(module.clone())
@@ -542,7 +554,7 @@ impl ModuleDeclarations {
                 match literal.value().ok().as_deref().and_then(retarget_file_name) {
                     Some(file) => {
                         named = true;
-                        self.retarget_files.insert(file);
+                        self.retarget_files.insert(file.to_ascii_lowercase());
                     }
                     None => self.retarget_opaque = true,
                 }
@@ -560,7 +572,7 @@ impl ModuleDeclarations {
             || owner_file
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_none_or(|name| self.retarget_files.contains(name))
+                .is_none_or(|name| self.retarget_files.contains(&name.to_ascii_lowercase()))
     }
 
     /// Whether the diff may have changed which module `chain` names, or how
@@ -610,7 +622,19 @@ fn default_crate_root(file: &Path) -> bool {
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str());
-    matches!(name, Some("lib.rs" | "main.rs")) && parent == Some("src")
+    // A nested `src` (`src/a/src/lib.rs`) may be a module file.
+    let src_components = file
+        .components()
+        .filter(|component| component.as_os_str() == "src")
+        .count();
+    matches!(name, Some("lib.rs" | "main.rs")) && parent == Some("src") && src_components == 1
+}
+
+/// Whether an inline `mod name { .. }` under `node` carries `#[path]`.
+fn inline_retargets(node: &SyntaxNode) -> bool {
+    node.descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.item_list().is_some() && module_retargets(&module))
 }
 
 /// An attribute's name: the last segment of its path with any `r#` removed,
@@ -891,6 +915,34 @@ mod tests {
                     touched
                 )?,
                 "an unreadable target (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"..\\\\src\\\\LIB.rs\"]\nmod again;\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "a backslash, differently cased literal (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"main.rs\"]\nmod again;\n",
+                    "src/main.rs",
+                    touched
+                )?,
+                "a literal naming the binary root (touched {touched})"
+            );
+            assert!(
+                swapped(test_support, "src/a/src/lib.rs", touched)?,
+                "a nested src/ may hold a module file (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"other\"]\nmod a {\n    mod inner;\n}\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "an inline module's #[path] (touched {touched})"
             );
         }
         Ok(())
