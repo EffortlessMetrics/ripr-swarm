@@ -347,6 +347,11 @@ fn inline_block_comment_edits_report_nothing_and_code_edits_beside_them_still_do
         ("block comment removed", commented, plain),
         ("block comment reworded", commented, reworded),
         (
+            "block comment beside punctuation removed",
+            "    if total > 100 /* threshold */{",
+            "    if total > 100{",
+        ),
+        (
             "line comment turned block comment",
             "    if total > 100 { // threshold",
             "    if total > 100 /* threshold */ {",

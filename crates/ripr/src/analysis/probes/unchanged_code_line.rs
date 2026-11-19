@@ -119,8 +119,53 @@ fn inline_code(line: &str) -> Option<(String, Vec<&str>, bool)> {
     if doc_comment {
         return None;
     }
-    let code = masked_line.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some((code, literals, !block_opens.is_empty()))
+    // Each literal becomes one `"` so its position stays visible; its text
+    // is compared through `literals`.
+    let mut code = String::with_capacity(masked_line.len());
+    let mut at = 0;
+    while let Some(character) = masked_line.get(at..).and_then(|rest| rest.chars().next()) {
+        if let Some(&(_, close)) = ranges.iter().find(|&&(open, _)| open == at) {
+            code.push('"');
+            at = close + 1;
+        } else {
+            code.push(character);
+            at += character.len_utf8();
+        }
+    }
+    Some((token_spacing(&code), literals, !block_opens.is_empty()))
+}
+
+/// `code` with each whitespace run dropped unless it separates two tokens
+/// that would otherwise join: two word characters (`a b` against `ab`), or
+/// two punctuation characters that form a longer Rust token (`& &` against
+/// `&&`). So `x = y ;` and `x = y;` read alike, as Rust reads them.
+fn token_spacing(code: &str) -> String {
+    const JOINING: [&str; 26] = [
+        "&&", "||", "<<", ">>", "==", "!=", "<=", ">=", "->", "=>", "::", "..", "+=", "-=", "*=",
+        "/=", "%=", "^=", "&=", "|=", "<-", "//", "/*", "*/", ".=", "#!",
+    ];
+    let is_word = |character: char| {
+        character.is_alphanumeric()
+            || matches!(character, '_' | '"' | '\'')
+            || !character.is_ascii()
+    };
+    let mut spaced = String::with_capacity(code.len());
+    let mut pending_space = false;
+    for character in code.trim().chars() {
+        if character.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && let Some(previous) = spaced.chars().last() {
+            let pair: String = [previous, character].into_iter().collect();
+            if (is_word(previous) && is_word(character)) || JOINING.contains(&pair.as_str()) {
+                spaced.push(' ');
+            }
+        }
+        pending_space = false;
+        spaced.push(character);
+    }
+    spaced
 }
 
 /// Whether `after` and `before` hold the same code and differ only in block
@@ -252,6 +297,11 @@ mod tests {
                 "    let s = \"/* x */\";",
             ),
             ("    if x /* \u{e9}t\u{e9} */ > 1 {", "    if x > 1 {"),
+            // A comment beside punctuation, with no space on that side.
+            ("    x = y;", "    x = y /* why */;"),
+            ("    f(a);", "    f(a /* c */);"),
+            ("    f(a, b);", "    f(a /* c */, b);"),
+            ("    if total > 100{", "    if total > 100 /* c */{"),
         ] {
             assert!(
                 is_inline_block_comment_only_change(after, before),
@@ -266,6 +316,10 @@ mod tests {
             ),
             // The comment separated two tokens.
             ("    let v = ab;", "    let v = a/* x */b;"),
+            ("    let v = a && b;", "    let v = a & /* x */ &b;"),
+            ("    let v = a == b;", "    let v = a = /* x */= b;"),
+            // A literal moved past a word inside a macro.
+            ("    m!(x \"a\" /* c */);", "    m!(\"a\" x);"),
             // A changed string literal, comment or not.
             ("    let s = \"a  b\"; /* c */", "    let s = \"a b\";"),
             // Documentation block comments are attributes.
@@ -296,6 +350,7 @@ mod tests {
         let file = "fn f() {\n    /*\n    g(); /* c */\n    */\n    h(); /* c */\n    let s = \"\n    k(); /* c */\n    \";\n}\n";
         let lines = LexicalLines::of(file);
         assert!(reads_alone_as_in_file(&lines, 5, "    h(); /* c */"));
+        assert!(!reads_alone_as_in_file(&lines, 3, "    g(); /* c */"));
         assert!(!reads_alone_as_in_file(&lines, 7, "    k(); /* c */"));
         assert!(!reads_alone_as_in_file(&lines, 99, "    h();"));
     }
