@@ -2180,6 +2180,25 @@ and only per pinned call:
    `weakly_exposed` even when the pin held. Whether a pinned run evaluates
    every operand stays item 2's run check, not this edge's.
 
+5. Dropped or added guard operands (#8361). When the changed line's old
+   and new text are the same chain but for whole top-level operands that
+   only one of them holds (`n != 0 && n & (n - 1) == 0` to
+   `n & (n - 1) == 0`, or the reverse), `g && x` and `x` return the same
+   value wherever `g` is `true`, and `g || x` and `x` wherever `g` is
+   `false`. A pinned call on which, for every run, every argument reads
+   (item 2's readings) and every such operand takes that value runs both
+   versions to the same result, so the pin does not credit. The owner must
+   declare `-> bool`, have item 1's plain parameters, and hold the changed
+   tail as its whole body; the chain must use one operator, with none of
+   it inside a parenthesis, bracket or brace; each operand only one version
+   holds must be an item 1 operand; the operands both versions keep are
+   compared as text and never read, so they may be any expression. Retained
+   operands are compared as text with layout whitespace outside literals
+   ignored, and literal contents compared exactly. Fail open to today's
+   reading: a rewritten operand, an unreadable argument, a
+   call with no run, or any shape outside this one keeps its current
+   result. This is a withholding rule only and admits no new pin.
+
 The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
@@ -3606,6 +3625,25 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `an_or_tail_run_to_its_end_by_a_table_is_exposed` and
   `an_or_tail_whose_changed_operand_never_runs_stays_below_exposed`.
+- Dropped or added guard operands (#8361): `owner_pin/short_circuit.rs`
+  unit tests `a_guard_operand_change_is_whole_top_level_operands_only`,
+  `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`,
+  `layout_whitespace_cannot_invert_the_chain_direction`,
+  `layout_whitespace_does_not_hide_a_retained_operand`,
+  `a_char_literal_operator_is_not_an_arithmetic_split` and
+  `a_quote_char_literal_does_not_flip_the_literal_scan`;
+  `crates/ripr/tests/short_circuit_or_tail.rs`
+  `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
+  `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
+  `an_added_guard_follows_the_same_agreement_rule`,
+  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin` and
+  `a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter`.
+  The corpus case is
+  `benchmarks/stub_quality/cases/D_unsafe_const`. In the evidence-promotion
+  honesty corpus (RIPR-SPEC-0108), `rust_guard_operand_dropped_agreement`
+  (`fixtures/guard_operand_dropped_agreement`) stays `weakly_exposed` and
+  its positive control `rust_guard_operand_added_deciding_row`
+  (`fixtures/guard_operand_added_deciding_row`) stays `exposed`.
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,

@@ -48,7 +48,7 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses strong relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: A related test passes ';', which makes the added `||` arm true while every original char-equality arm is false, so the input reaches the change", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
       "flow_sinks": [
         {"kind":"return_value","text":"c ==     || c ==","line":2}
       ],
@@ -106,7 +106,7 @@
           "name": "dot_does_not_separate",
           "file": "src/lib.rs",
           "line": 11,
-          "oracle_strength": "strong",
+          "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(!is_separator('.'));",
           "relation_reason": "direct_owner_call",
@@ -170,7 +170,7 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses strong relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: dot_does_not_separate, semicolon_separates", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "related test src/lib.rs:9 semicolon_separates uses strong relational check oracle: assert!(is_separator(';'));", "source function argument value c = ';' at line 9", "source function argument value c == ';' at line 9", "source function argument value c = '.' at line 11"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
       ],
@@ -228,7 +228,7 @@
           "name": "dot_does_not_separate",
           "file": "src/lib.rs",
           "line": 11,
-          "oracle_strength": "strong",
+          "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(!is_separator('.'));",
           "relation_reason": "direct_owner_call",
