@@ -209,6 +209,30 @@ const TWO_IMPLS: [&str; 28] = [
     "}",
 ];
 
+const MACRO_FIRST: [&str; 21] = [
+    "macro_rules! discounted {",
+    "    ($total:expr) => {",
+    "        if $total > 100 { $total - 10 } else { $total }",
+    "    };",
+    "}",
+    "",
+    "pub fn discount(total: u32) -> u32 {",
+    "    discounted!(total)",
+    "}",
+    "",
+    "pub fn tax(total: u32) -> u32 {",
+    "    total / 10",
+    "}",
+    "",
+    "#[cfg(test)]",
+    "mod tests {",
+    "    use super::*;",
+    "    #[test]",
+    "    fn small() {",
+    "        assert_eq!(discount(5), 5);",
+    "    }",
+];
+
 #[test]
 fn a_function_moved_within_its_file_reports_nothing() -> Result<(), String> {
     // `discount` and its blank line move below `tax`.
@@ -242,6 +266,19 @@ fn a_move_that_changes_the_program_keeps_its_finding() -> Result<(), String> {
     if !other_owner.2.iter().any(|(line, _)| *line == 15) {
         failures.push(format!(
             "a method moved into another impl lost its finding: {other_owner:?}"
+        ));
+    }
+
+    // A `macro_rules!` definition moves below the function that invokes
+    // it. Textual macro scope makes the order part of the program, so the
+    // move is not neutral: the run must keep reporting changed behavior.
+    let mut macro_first = MACRO_FIRST.to_vec();
+    macro_first.push("}");
+    let (source, diff) = moved(&macro_first, 1, 6, 11, str::to_owned);
+    let macro_after_use = check(&source, &diff)?;
+    if macro_after_use.0 != "complete_with_findings" || macro_after_use.2.is_empty() {
+        failures.push(format!(
+            "a macro definition moved past its use was reported as no change: {macro_after_use:?}"
         ));
     }
 
