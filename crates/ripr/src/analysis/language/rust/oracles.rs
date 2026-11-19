@@ -766,6 +766,22 @@ fn unresolved_assertion_macro_invocations(
     unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
+/// #15237: the first assertion-like macro (by source line, then name) that
+/// `body` invokes and ripr does not classify, read with the same
+/// [`is_unresolved_assertion_like_macro`] predicate and comment/string
+/// masking as the #7089 witness. Naming it grants nothing; it only lets a
+/// caller withdraw a false "has no assertion" claim.
+pub(in crate::analysis) fn first_unresolved_assertion_like_macro(body: &str) -> Option<String> {
+    unresolved_assertion_macro_invocations_among(body, 0, None, &[], &[])
+        .into_iter()
+        .min_by(|(left_name, left_line), (right_name, right_line)| {
+            left_line
+                .cmp(right_line)
+                .then_with(|| left_name.cmp(right_name))
+        })
+        .map(|(name, _)| name)
+}
+
 fn unresolved_assertion_macro_invocations_among(
     body: &str,
     start_line: usize,

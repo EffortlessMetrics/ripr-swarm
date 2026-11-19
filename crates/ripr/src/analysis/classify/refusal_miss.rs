@@ -226,6 +226,15 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
 /// ([`is_returned_quickcheck_property`], #6643) is the same false absence:
 /// its returned value is the harness check. It is rewritten the same way.
 ///
+/// #15237: a `no_assertion` row whose test body invokes an assertion-like
+/// macro ripr does not classify (`assert_delta!`, read with the #7089
+/// witness's [`first_unresolved_assertion_like_macro`] predicate) has a
+/// check ripr cannot read, not a missing one. It is rewritten the same way
+/// and named in one evidence line, but it never counts toward
+/// `only_limits`, so the finding-level summaries do not move.
+///
+/// [`first_unresolved_assertion_like_macro`]: crate::analysis::language::first_unresolved_assertion_like_macro
+///
 /// [`ForwardedCallbackLimits::only_limits`] is true when at least one row was
 /// rewritten, no `no_assertion` row is left, no row carries an oracle, and
 /// every oracle-crediting related test, including any the display window
@@ -250,6 +259,13 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
         if row.miss != Some(RelatedTestMiss::NoAssertion) {
             continue;
         }
+        let row_test = context
+            .related_tests
+            .iter()
+            .map(|(test, _)| *test)
+            .find(|test| {
+                test.file == row.file && test.start_line == row.line && test.name == row.name
+            });
         let line = if let Some(limit) = context
             .index
             .forwarded_callback_limit(&row.file, row.line, &row.name)
@@ -258,14 +274,20 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
                 "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
                 row.name, limit.helper, limit.callee
             )
-        } else if context.related_tests.iter().any(|(test, _)| {
-            test.file == row.file
-                && test.start_line == row.line
-                && test.name == row.name
-                && is_returned_quickcheck_property(test)
-        }) {
+        } else if row_test.is_some_and(is_returned_quickcheck_property) {
             format!(
                 "{QUICKCHECK_PROPERTY_PREFIX}`{}` reports failure through the value it returns; ripr does not read that returned check",
+                row.name
+            )
+        } else if let Some(macro_name) = row_test.and_then(|test| {
+            crate::analysis::language::first_unresolved_assertion_like_macro(&test.body)
+        }) {
+            // #15237: the row is rewritten, but the test's check is not a
+            // forwarded or returned one, so the stage summaries keep their
+            // no-assertion wording (`only_limits` is not widened).
+            rows_clear = false;
+            format!(
+                "{UNRESOLVED_ASSERTION_MACRO_PREFIX}test `{}` invokes `{macro_name}!`, an assertion-like macro ripr does not classify; whether it checks the changed behavior is not established statically",
                 row.name
             )
         } else {
@@ -387,6 +409,10 @@ pub(in crate::analysis) const FORWARDED_CALLBACK_PREFIX: &str = "closure forward
 pub(in crate::analysis) const QUICKCHECK_PROPERTY_PREFIX: &str =
     "QuickCheck property returns its check: ";
 
+/// Evidence prefix of an unclassified assertion-like macro line (#15237).
+pub(in crate::analysis) const UNRESOLVED_ASSERTION_MACRO_PREFIX: &str =
+    "assertion-like macro not classified: ";
+
 #[cfg(test)]
 mod combine_tests {
     use super::combine_refusal_misses;
@@ -448,5 +474,167 @@ mod returned_type_tests {
         ] {
             assert!(!property(body), "{body}");
         }
+    }
+}
+
+/// #15237: a `no_assertion` row whose test invokes an assertion-like macro
+/// ripr does not classify reads `assertion_admission_unproven`, named in one
+/// evidence line, with no oracle or `only_limits` change.
+#[cfg(test)]
+mod unresolved_assertion_macro_tests {
+    use super::{UNRESOLVED_ASSERTION_MACRO_PREFIX, name_forwarded_callback_limits};
+    use crate::analysis::classify::ProbeContext;
+    use crate::analysis::facts::RustIndex;
+    use crate::domain::{
+        DeltaKind, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
+        RelatedTestMiss, RelationConfidence, RelationReason, SourceLocation,
+    };
+    use std::path::PathBuf;
+
+    /// The strsim shape: a test-module `macro_rules!` whose body is a
+    /// hand-rolled `if .. { panic!(..) }` check.
+    const ASSERT_DELTA: &str = "    macro_rules! assert_delta {\n        ($x:expr, $y:expr, $d:expr) => {\n            if ($x - $y).abs() > $d {\n                panic!(\"not within delta\");\n            }\n        };\n    }\n";
+
+    fn source(test_body: &str) -> String {
+        format!(
+            "pub fn bump(x: f64) -> f64 {{\n    x + 2.0\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{ASSERT_DELTA}\n    #[test]\n    fn holds() {{\n{test_body}\n    }}\n}}\n"
+        )
+    }
+
+    /// The `holds` row after the rewrite, with the evidence and `only_limits`.
+    fn rewrite(test_body: &str) -> Result<(RelatedTest, Vec<String>, bool), String> {
+        let source = source(test_body);
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "bump")
+            .ok_or("premise: owner `bump` parses")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "holds")
+            .ok_or("premise: test `holds` parses")?;
+        // Fixture construction: the parsed test body is the intended subject.
+        if !test.body.contains(test_body.trim()) {
+            return Err(format!(
+                "premise: the parsed body holds the stimulus\n{}",
+                &*test.body
+            ));
+        }
+        let probe = Probe {
+            id: ProbeId("probe:assert-delta".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("x + 1.0".to_string()),
+            after: Some("x + 2.0".to_string()),
+            expression: "x + 2.0".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(
+            &probe,
+            Some(owner),
+            vec![(test, RelationReason::DirectOwnerCall)],
+            false,
+            &index,
+            true,
+        );
+        let mut rows = vec![RelatedTest {
+            name: test.name.clone(),
+            file: test.file.clone(),
+            line: test.start_line,
+            oracle: None,
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::None,
+            relation_reason: Some(RelationReason::DirectOwnerCall),
+            relation_confidence: Some(RelationConfidence::High),
+            miss: Some(RelatedTestMiss::NoAssertion),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }];
+        let before = rows[0].clone();
+        let named = name_forwarded_callback_limits(&context, &mut rows);
+        let [row] = <[RelatedTest; 1]>::try_from(rows).map_err(|_| "one row".to_string())?;
+        // Nothing but the miss may move: no oracle, kind, strength or relation.
+        let mut unchanged = row.clone();
+        unchanged.miss = before.miss;
+        if unchanged != before {
+            return Err(format!("only the miss may change: {before:?} -> {row:?}"));
+        }
+        Ok((row, named.evidence, named.only_limits))
+    }
+
+    #[test]
+    fn an_unclassified_assertion_macro_withdraws_the_absence_claim() -> Result<(), String> {
+        for (body, macro_name) in [
+            (
+                "        assert_delta!(3.0, bump(1.0), 0.001);",
+                "assert_delta",
+            ),
+            (
+                "        let _ = 1;\n        crate::assert_close!(bump(1.0), 3.0);",
+                "crate::assert_close",
+            ),
+            // The first unclassified macro by line names the limit.
+            (
+                "        assert_within!(bump(0.0), 2.0);\n        assert_delta!(3.0, bump(1.0), 0.001);",
+                "assert_within",
+            ),
+        ] {
+            let (row, evidence, only_limits) = rewrite(body)?;
+            assert_eq!(
+                row.miss,
+                Some(RelatedTestMiss::AssertionAdmissionUnproven),
+                "{body}"
+            );
+            assert_eq!(
+                evidence,
+                [format!(
+                    "{UNRESOLVED_ASSERTION_MACRO_PREFIX}test `holds` invokes `{macro_name}!`, an assertion-like macro ripr does not classify; whether it checks the changed behavior is not established statically"
+                )],
+                "{body}"
+            );
+            assert!(!only_limits, "only_limits is not widened: {body}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn other_bodies_keep_no_assertion() -> Result<(), String> {
+        for body in [
+            // No macro at all.
+            "        let _ = bump(1.0);",
+            // Non-assertion macros.
+            "        println!(\"{}\", bump(1.0));",
+            "        let _values = vec![bump(1.0)];",
+            // The macro only in a comment or a string.
+            "        // assert_delta!(3.0, bump(1.0), 0.001);\n        let _ = bump(1.0);",
+            "        /* assert_delta!(3.0, bump(1.0), 0.001); */\n        let _ = bump(1.0);",
+            "        let _text = \"assert_delta!(3.0, bump(1.0), 0.001)\";\n        let _ = bump(1.0);",
+            // std assertion macros are classified (as oracles on the real
+            // path), so they never name this limit.
+            "        assert_eq!(bump(1.0), 3.0);",
+            "        assert!(bump(1.0) > 2.0);",
+            // Not `assert` or `assert_*`.
+            "        debug_assert_eq!(bump(1.0), 3.0);",
+            "        assertion!(bump(1.0));",
+        ] {
+            let (row, evidence, only_limits) = rewrite(body)?;
+            assert_eq!(row.miss, Some(RelatedTestMiss::NoAssertion), "{body}");
+            assert!(evidence.is_empty(), "{body}: {evidence:?}");
+            assert!(!only_limits, "{body}");
+        }
+        Ok(())
     }
 }

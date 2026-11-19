@@ -1,0 +1,11 @@
+# A related test whose only check is an unclassified assertion-like macro is
+# not read as a test with no assertion (#15237); no credit is granted.
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/src/analysis/classify/refusal_miss.rs::unresolved_assertion_macro_tests::an_unclassified_assertion_macro_withdraws_the_absence_claim",
+  "crates/ripr/src/analysis/classify/refusal_miss.rs::unresolved_assertion_macro_tests::other_bodies_keep_no_assertion",
+  "crates/ripr/tests/unresolved_assertion_macro_row.rs::an_unclassified_assertion_macro_is_not_read_as_missing_an_assertion",
+  "crates/ripr/tests/unresolved_assertion_macro_row.rs::other_bodies_keep_the_absence_claim",
+  "crates/ripr/tests/unresolved_assertion_macro_row.rs::a_std_assertion_is_an_oracle_and_never_names_the_limit",
+]

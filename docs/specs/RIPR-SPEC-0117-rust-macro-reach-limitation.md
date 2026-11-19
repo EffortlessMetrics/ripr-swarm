@@ -669,6 +669,27 @@ value, a plain `#[test]`, and an attribute that merely ends in `quickcheck`
 claim, never add credit. Reading the returned relation as evidence remains the
 open model/relational acceptance of #6643.
 
+### Unclassified assertion-like macro is not an absent assertion (#15237)
+
+A related test whose only check is a local assertion-like macro ripr does not
+classify (strsim's test-module `assert_delta!`, whose `macro_rules!` body is a
+hand-rolled `if .. { panic!(..) }`) gets no oracle (#9122 credits no such
+body), and its row used to read `has no assertion`. When a `no_assertion`
+Rust row's test body invokes a macro named `assert` or `assert_*` that is not
+a recognized std or snapshot macro (the same predicate the #7089 witness
+uses, read from comment- and string-masked text), the row reads
+`assertion_admission_unproven`. The finding gains one evidence line per such
+test that starts with "assertion-like macro not classified:" and names the
+test and the first such macro.
+
+This grants no oracle, strength or class. Unlike the #9981 and #6643 rows,
+these rows never let the observe and discriminate summaries switch to the
+refused-context wording (`only_limits` is not widened), so the finding-level
+next step is unchanged. A test with no macro, a non-assertion macro
+(`println!`, `vec!`), a macro named only in a comment or string, and a test
+whose only check is a std macro such as `assert_eq!` (an oracle, so its row
+never reads `no_assertion`) keep their previous reading.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
