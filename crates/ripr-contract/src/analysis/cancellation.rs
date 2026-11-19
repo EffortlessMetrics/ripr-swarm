@@ -964,18 +964,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn exit_130_counts_as_a_sigint_death_and_other_exits_do_not() -> Result<(), String> {
-        let exit = |code: &str| {
-            std::process::Command::new("sh")
-                .args(["-c", &format!("exit {code}")])
-                .status()
-                .map_err(|error| error.to_string())
-        };
-        assert!(exited_by_sigint(&exit("130")?));
-        assert!(!exited_by_sigint(&exit("0")?));
-        assert!(!exited_by_sigint(&exit("1")?));
-        assert!(!exited_by_sigint(&exit("2")?));
-        Ok(())
+    fn exit_130_counts_as_a_sigint_death_and_other_exits_do_not() {
+        use std::os::unix::process::ExitStatusExt;
+        // A normal exit's wait status carries the code in the high byte.
+        let exit = |code: i32| std::process::ExitStatus::from_raw(code << 8);
+        assert_eq!(exit(130).code(), Some(130), "fixture is a normal exit");
+        assert!(exited_by_sigint(&exit(130)));
+        assert!(!exited_by_sigint(&exit(0)));
+        assert!(!exited_by_sigint(&exit(1)));
+        assert!(!exited_by_sigint(&exit(2)));
     }
 
     #[cfg(unix)]
