@@ -1450,8 +1450,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
-    let parsed_diff =
+    let mut parsed_diff =
         diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+    // #15121: a file the diff creates by copy is new code the patch does not
+    // carry; read it as an added file before any guard or adapter counts it.
+    // A hunkless copy that was read as an added file is a text change, even
+    // when its section also carries a file-mode change.
+    let copied_lines_read = diff::expand_copy_destinations(
+        &mut parsed_diff.changed_files,
+        &parsed_diff.copy_destination_paths,
+        &options.root,
+    )?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,
@@ -2244,9 +2253,9 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     // Rename metadata can register a binary file without any text hunks.
     // That path must retain the same non-text refusal as an unrenamed blob.
+    let non_text_only = !copied_lines_read && has_only_non_text_changes(diff_text);
     if !diff_text.trim().is_empty()
-        && ((changed_files.is_empty() && renamed_file_count == 0)
-            || has_only_non_text_changes(diff_text))
+        && ((changed_files.is_empty() && renamed_file_count == 0) || non_text_only)
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
@@ -2256,7 +2265,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         // schema change); a well-formed diff with only binary or mode changes
         // gets its own wording so the recovery does not tell the reader to
         // fix a valid diff.
-        let (recovery, detail) = if has_only_non_text_changes(diff_text) {
+        let (recovery, detail) = if non_text_only {
             (
                 "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
                 NON_TEXT_ONLY_DETAIL,
