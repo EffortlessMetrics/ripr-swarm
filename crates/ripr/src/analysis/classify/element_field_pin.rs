@@ -685,11 +685,8 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
     for node in tree.syntax().descendants() {
         if let Some(rename) = ast::Rename::cast(node.clone())
             && let Some(name) = rename.name()
-            && let Some(path) = rename
-                .syntax()
-                .parent()
-                .and_then(ast::UseTree::cast)
-                .and_then(|use_tree| use_tree.path())
+            && let Some(use_tree) = rename.syntax().parent().and_then(ast::UseTree::cast)
+            && let Some(path) = renamed_use_path(&use_tree)
             && let Some(original) = last_segment(&path)
         {
             pairs.push((original, ident(name.text())));
@@ -710,6 +707,26 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
         }
     }
     pairs
+}
+
+/// The path a renaming use tree binds: its own path, or for `self`
+/// (`use guard::Cfg::{self as Config};`) the enclosing tree's path.
+fn renamed_use_path(use_tree: &ast::UseTree) -> Option<ast::Path> {
+    let path = use_tree.path()?;
+    let is_self = path.qualifier().is_none()
+        && path
+            .segment()
+            .is_some_and(|segment| segment.self_token().is_some());
+    if !is_self {
+        return Some(path);
+    }
+    use_tree
+        .syntax()
+        .parent()
+        .and_then(ast::UseTreeList::cast)
+        .and_then(|list| list.syntax().parent())
+        .and_then(ast::UseTree::cast)
+        .and_then(|outer| outer.path())
 }
 
 /// `ty` with any grouping parentheses removed (`(Cfg)` reads `Cfg`); a
@@ -2287,6 +2304,12 @@ mod tests {
             ("mod guard;\npub type\nConfig = ((Cfg));\n", "Config", false),
             (
                 "mod guard;\npub use guard::Cfg\nas\nConfig;\n",
+                "Config",
+                false,
+            ),
+            // `self` in a group binds the group's prefix.
+            (
+                "mod guard;\npub use guard::Cfg::{self as Config};\n",
                 "Config",
                 false,
             ),
