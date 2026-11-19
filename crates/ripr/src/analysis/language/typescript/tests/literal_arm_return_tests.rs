@@ -308,6 +308,10 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
             "arm-derived-local",
             "    expect(dir(2)).toBe('two');\n    const got = dir(1);\n    expect(got.length).toBe(3);\n",
         ),
+        (
+            "arm-derived-destructured",
+            "    expect(dir(2)).toBe('two');\n    const { length } = dir(1);\n    expect(length).toBe(3);\n",
+        ),
     ] {
         let finding = finding_at(
             label,
