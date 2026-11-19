@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.185 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.185. Move the
+portable unchanged-attempt snapshots to 1.185, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
 A macro-generated test that sits beside a rebound std macro name takes no
