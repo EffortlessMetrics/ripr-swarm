@@ -944,6 +944,7 @@ pub(crate) fn probes_for_file_with_relations(
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
+    let represented_value_lines = represented_value_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         if crate::analysis::cancellation::checkpoint().is_err() {
             break;
@@ -1090,7 +1091,7 @@ pub(crate) fn probes_for_file_with_relations(
             // Any other replacement family (an operator swap read as
             // `call_deletion`) is a weaker model, so the twin stays.
             if family == ProbeFamily::StaticUnknown
-                && replaced_value_is_paired(removed, text, changed, &probes)
+                && represented_value_lines.contains(&removed.line)
             {
                 continue;
             }
@@ -1150,27 +1151,33 @@ fn replaced_literal_is_paired(
     })
 }
 
-/// Whether the added line that `replaced_line_counterpart` pairs with
-/// `removed` carries a `return_value` or `error_path` probe whose `before` is
-/// the whole removed text (#7807).
-fn replaced_value_is_paired(
-    removed: &ChangedLine,
-    text: &str,
+/// Old-side lines of removed lines whose positional replacement (one map of
+/// [`ChangedFile::replacement_counterparts`], built once per file) carries a
+/// `return_value` or `error_path` probe whose `before` is the whole removed
+/// text (#7807). A removed line holding more than one statement
+/// (`*state = 1; x * 5`, a `;` before its end) is never included: the value
+/// probe models only the returned expression, not the other statement.
+fn represented_value_replacements(
     changed: &ChangedFile,
     probes: &[SeededProbe],
-) -> bool {
-    changed.added_lines.iter().any(|added| {
-        changed
-            .replaced_line_counterpart(added.new_side_line)
-            .is_some_and(|counterpart| counterpart.line == removed.line)
-            && probes.iter().any(|seeded| {
-                matches!(
-                    seeded.probe.family,
-                    ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
-                ) && seeded.probe.location.line == added.new_side_line
-                    && seeded.probe.before.as_deref() == Some(text)
-            })
-    })
+) -> std::collections::BTreeSet<usize> {
+    let counterparts = changed.replacement_counterparts();
+    probes
+        .iter()
+        .filter(|seeded| {
+            matches!(
+                seeded.probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
+            )
+        })
+        .filter_map(|seeded| {
+            let removed = counterparts.get(&seeded.probe.location.line)?;
+            let text = removed.text.trim();
+            let single_statement = !text.strip_suffix(';').unwrap_or(text).contains(';');
+            (single_statement && seeded.probe.before.as_deref() == Some(text))
+                .then_some(removed.line)
+        })
+        .collect()
 }
 
 /// True when a trimmed changed line is one literal and nothing else: a
@@ -7615,6 +7622,23 @@ mod tests {
         assert!(
             !base_side.is_empty() && base_side.iter().all(|probe| probe.location.line == 9),
             "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
+
+        // Control: an old line that also held a write models more than the
+        // returned value, so its removed-side probe stays.
+        let write = single_shape_probes(
+            "    x * 10",
+            "    *state = 1; x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            "pub fn scaled(state: &mut i32, x: i32) -> i32 {\n    x * 10\n}\n",
+        );
+        assert!(
+            write
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::StaticUnknown
+                    && probe.expression == "*state = 1; x * 5"),
+            "a removed line with a second statement keeps its probe: {write:?}"
         );
     }
 
