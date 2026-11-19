@@ -3304,7 +3304,8 @@ mod tests {
     fn argument_description_bytes_keep_session_context_lean() -> Result<(), String> {
         // Reconciled on main 332729ac after #14475 shortened five argument
         // descriptions (ripr_list_gaps 721, ripr_refresh 484, the rest 410).
-        // Slim and Full share the same input schemas; both are served.
+        // Slim only drops outputSchema, so both modes serve the same input
+        // schemas; pin both so a mode-specific change cannot slip past.
         for mode in [ToolsListMode::Slim, ToolsListMode::Full] {
             let total = argument_description_bytes(&tools_list_result_for(mode))?;
             assert_eq!(
@@ -3326,8 +3327,12 @@ mod tests {
         let grown = format!("{} More words.", limit.as_str().ok_or("limit description")?);
         *limit = json!(grown);
         let total = argument_description_bytes(&tools)?;
-        if total == 1615 {
-            return Err("a lengthened argument description left the total unchanged".to_string());
+        // " More words." is 11 bytes: the total moves by exactly that, so a
+        // walker that skipped or double-counted the argument would fail here.
+        if total != 1615 + 11 {
+            return Err(format!(
+                "a lengthened argument description moved the total to {total}, not 1626"
+            ));
         }
         // Growth past the ceiling is refused with the named total.
         let padded = format!("{grown}{}", "a".repeat(200));
