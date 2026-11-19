@@ -4293,13 +4293,12 @@ mod tests {
     fn legacy_entries_and_malformed_disclosures_fail_closed() -> Result<(), String> {
         // A legacy entry (no changed_owner) in a file holding a withheld
         // owner is not evaluated; one in another file still resolves.
-        let mut baseline: Value =
-            serde_json::from_str(&owner_baseline(&[
-                ("legacy", None),
-                ("elsewhere", None),
-                ("spelled", None),
-            ]))
-            .map_err(|err| err.to_string())?;
+        let mut baseline: Value = serde_json::from_str(&owner_baseline(&[
+            ("legacy", None),
+            ("elsewhere", None),
+            ("spelled", None),
+        ]))
+        .map_err(|err| err.to_string())?;
         baseline["entries"][1]["path"] = serde_json::json!("src/h.rs");
         // The same file spelled with `./` and a backslash still matches.
         baseline["entries"][2]["path"] = serde_json::json!(".\\src\\g.rs");
