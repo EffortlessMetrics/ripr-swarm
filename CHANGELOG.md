@@ -7830,6 +7830,110 @@ entries below are the complete record.
   `trust.verdict_corpus_spec_example_coverage` from a real
   `cargo xtask dx-scoreboard --boards trust` producer run (330/330,
   value 1.0), so the gate compares it instead of reporting it absent. (#13318)
+- Verdict corpus cases: added honesty and verdict controls for dead-binding
+  flags, repo-exposure unselected match arms, guarded-boundary refusals, tier
+  values, Python sign/residue/text-length assertions, Python package-init
+  receiver shadows, operator-credit withholding, Perl edited-producer replay and
+  Python/Perl spec-example pins. Adapter-substrate qualification gained
+  duplicate-key corpus coverage and refuses safety receipts with an unset
+  containment flag (#10875, #12078, #12126, #12237, #12317, #12523, #10581,
+  #13037, #12365, #10569, #1311, #1312, #1455, #13591, #13034).
+- Verdict corpus reporting: abstentions a spec requires are now reported apart
+  from avoidable ones, with the total abstention target at 0.24 and the
+  avoidable bar at 0.2, and abstentions are split by missed side and observed
+  classification. The seam evidence-path honesty check judges stage, state,
+  confidence and summary rows against regeneration, and analyzer children use
+  one-worker Rayon pools (#12766, #13657, #14555, #14586).
+- Typed corpus and contract plumbing: corpus summary envelope and evidence
+  assertions, external launch metadata, dialect/schema/migration/pgTAP
+  evidence contracts, the optional verification-allocation adapter and shared
+  path helpers moved into `ripr-contract`. A real stdio journey pins the
+  gap-list not-analyzed contract (#1348, #1349, #1350, #1368, #12662, #5736,
+  #12402, #4707, #12726, #13280).
+- Internal refactors with no behavior change: borrowing instead of owning in
+  owner extraction and module-graph keys, allocation-free setter naming, review
+  comment output split into placement, publish plan and render, repo grip
+  evidence projected into a test evidence summary, hop receiver binding with
+  local-receiver helper fixtures, seam failures carried into scoped results,
+  and a single parse per file in the embed-macro shadow check (#10096, #10137,
+  #12047, #12355, #2954, #12410, #13411, #13340, #13570, #13847).
+- Mutation spot check: `cargo xtask mutation-spot-check` scores Python and
+  TypeScript verdicts against real cosmic-ray, Stryker and mutmut outcomes
+  through a synthetic-diff join. A hosted read-only workflow runs a pinned
+  12-crate corpus with one matrix job per crate, so one lost runner no longer
+  loses the scoreboard, and package-scoped dispatches no longer cancel each
+  other (#12901, #13650, #13654, #13777, #13842).
+- Agent evals: `cargo xtask agent-eval` runs answer-keyed scenarios through each
+  agent route, records estimated tokens to the actionable answer, adds trial
+  setup/score and harder scenarios, and keeps a committed baseline checked by
+  `--compare`, with the eval sweep anchored to the workspace binary. `cli_smoke`
+  pins a byte budget for the whole check, explain, context and verify loop
+  (#14298, #13673, #12349).
+- DX scoreboard and first-run: bounded terminal diagnostics are preserved,
+  heavy bevy, deno and polars rows gain ratchet ceilings, the Muse plugin
+  evaluation record is ingested and `cargo xtask muse-plugin-setup` produces
+  setup trials. `cargo xtask first-run` prints the verdict reason before the
+  table and warns on a PATH version mismatch (#12947, #13120, #13184, #13498,
+  #13557).
+- Formal verification: the maintained architecture, claim and result design
+  contracts landed with domain proofs moved to `ripr-contract`, a versioned
+  Kani observation journal, positive cover evidence required before a harness
+  counts as verified, five new selector-refusal harnesses, a source-derived
+  scoreboard and bounded setup retries. No verifier became a required check
+  (#12109, #10745, #12904, #14471, #14472, #14460, #13707).
+- Hosted test cost: shards build without debug info and write partition lists
+  before the run, Test Analytics runs as four partitions, Coverage and Test
+  Analytics run daily on main, and slow-test baselines were refreshed. Slow
+  `cli_smoke` and support-tier tests use small fixtures, workflow-contract
+  suites are grouped into fewer executables, and diagnostic artifacts keep a
+  14-day window (#11566, #11602, #12915, #12916, #13652, #14250, #12914).
+- Merge queue and admission: unresolved review threads are refused at
+  merge-ready time, review-state parsing reads state lines only, generation-pin
+  checks use synthetic merge refs, and the main-health sentinel judges main
+  push runs. Admission treats the canonical DX scoreboard baseline as
+  generated, and the shard verifier binds to an exact same-run artifact
+  (#11497, #11736, #13793, #13639, #13783, #14557, #13940, #14580).
+- Actions retirement and workflow lint: the automatic dogfood reviewer and
+  recurring install subscriptions were retired in favor of explicit manual
+  proof, with workflow lifecycle and consumer reconciliation. Workflow lint
+  runs offline with a checksum-verified jactionlint that retries downloads, the
+  npm launcher is checked against a native MCP server and the npm workflow
+  tokenizer fails closed (#12973, #14064, #13489, #13637, #12967, #11850,
+  #9601).
+- Release prep: the draft 0.11.0 notes lead with problems fixed, and the
+  published crate drops test-only sources, going from 14.3 MB to 10.3 MB, with a
+  `package-upload-size` release-readiness check. PR-evidence timeouts keep the
+  inner analysis deadline ahead of the wrapper and the rebless workflow pins
+  its toolchain (#12862, #14804, #14071, #14564, #14563).
+- Fuzzing, differential and conformance tests: differential proptests compare
+  real Git patches with generated edits, and the first run found a `+S,0` hunk
+  line-number error fixed separately. In-process hostile diff, config and source
+  fuzzing joined the scheduled lane, fuzz seeds exercise error returns, and
+  cross-surface conformance checks add SARIF and annotation goldens (#12918,
+  #13098, #13508, #12924, #13651, #12925).
+- Golden blessing and trace tests: `cargo xtask goldens bless` no longer
+  appends a Pending block when output matches, refuses changed Windows output,
+  and gains an opt-in Windows-to-Linux qualification path. Trace comparison uses
+  private cache locations and the human fixture normalizer keeps source-text
+  backslashes (#14498, #14509, #14510, #14546, #11178, #11317, #12605).
+- Test reliability: process-control tests use FIFO witnesses, bounded `/proc`
+  polling and quiescence waits, concurrent schema sweeps get exclusive temp
+  roots, and procfs disappearance and Windows separator cases are tolerated.
+  The contract language test works with default features off (#10593, #13113,
+  #13443, #13424, #13474, #12672, #10613, #13897, #14522, #13285).
+- xtask policy checks: `check-lint-policy` covers table-form lint levels and
+  workspace inheritance, `check-local-context` and `check-file-policy` were
+  simplified, the LSP no-stderr guard scans all production regions, and
+  `ci-budget` ignores echoed command previews. Spec, review-procedure and
+  Linux provisioning guidance were aligned, and Clippy covers all-feature
+  targets (#13156, #13222, #13705, #14480, #13468, #13068, #13352, #10542,
+  #13437, #13152).
+- Repo ops and flake tracking: a weekly issue-staleness watchdog and a PR
+  watchdog that rechecks request eligibility before writing, a flake ledger
+  with guards for the LSP disk-equality and Python deadline failures, UTF-8
+  decoding for review and guarded-merge GitHub output, and startup CPU and
+  memory ceilings in the `ripr` suite (#12634, #13472, #13839, #13912, #14503,
+  #13467, #13470, #12906).
 
 ### Removed
 
