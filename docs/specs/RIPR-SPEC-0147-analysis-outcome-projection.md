@@ -113,6 +113,18 @@ well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
 is still an excess body line, also behind such padding, and a hunk that still
 owes lines reads an empty line as context and `-- ` as a removal.
 
+A path whose hunks arrive from more than one file section (a `git format-patch`
+series or `git log -p` output that edits the file in two commits, or a later
+section that renames, copies or deletes an edited path) has no single
+coordinate space: each section describes a different version of the file. None
+of that path's lines are read, and a located `language_scope_unsupported`
+limitation at stage `diff_parse` names it with recovery `use_two_way_diff`
+(analyze one diff of the whole change). It is kept only for a path in an
+enabled analyzed language and outside ripr's own artifact roots; paths changed
+in a single section of the same input keep their lines, and an operator scope
+that admits only refused paths reports the limitation rather than
+`scope_filter_matched_nothing` (#15268).
+
 A `diff --git` section whose header names one path under two different
 mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
 `diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.

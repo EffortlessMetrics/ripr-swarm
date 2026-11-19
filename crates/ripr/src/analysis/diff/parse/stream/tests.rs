@@ -112,7 +112,7 @@ fn normalized_duplicates_and_edited_rename_share_one_file_slot() -> Result<(), S
     assert_eq!(parsed.limitations.len(), 1, "{parsed:?}");
     assert_eq!(
         parsed.limitations[0].kind,
-        AnalysisLimitationKind::MalformedDiff
+        AnalysisLimitationKind::LanguageScopeUnsupported
     );
     assert_eq!(parsed.limitations[0].path.as_deref(), Some("src/a.rs"));
     assert_eq!(parsed.renamed_file_count, 1);

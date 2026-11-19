@@ -651,8 +651,11 @@ mod parser_state {
                 .map(Some)
                 .collect();
             let repeated = repeated_paths.iter().map(|path| {
+                // A per-file scope limitation, not `MalformedDiff`: the
+                // pipeline keeps it only for an analyzed language, so a
+                // README edited in two commits of a series stays harmless.
                 (
-                    AnalysisLimitationKind::MalformedDiff,
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisRecoveryKind::UseTwoWayDiff,
                     "This patch changes the file in more than one section (a `git format-patch` series or `git log -p` output), so its line numbers describe different versions of the file and none of its lines are read. Analyze one diff of the whole change instead: `git diff <base>...HEAD`, or `ripr check --base <base>`.",
                     path,

@@ -27,7 +27,7 @@ fn repeated_limitation_paths(parsed: &ParsedDiff) -> Vec<Option<String>> {
         .limitations
         .iter()
         .filter(|limitation| {
-            limitation.kind == AnalysisLimitationKind::MalformedDiff
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
                 && limitation.producer_stage == AnalysisStage::DiffParse
                 && limitation.recovery.kind == AnalysisRecoveryKind::UseTwoWayDiff
                 && limitation.recovery.detail.contains("more than one section")
@@ -70,6 +70,7 @@ fn one_section_per_path_is_read_as_before() -> Result<(), String> {
     for diff in [ONCE_B.to_string(), format!("{ONCE_B}{rename}")] {
         let parsed = parse_unbounded(&diff);
         if !parsed.limitations.is_empty()
+            || parsed.changed_files.is_empty()
             || parsed
                 .changed_files
                 .iter()
