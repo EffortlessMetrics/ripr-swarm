@@ -667,7 +667,10 @@ fn module_retargets(module: &ast::Module) -> bool {
 /// with a backslash read as a separator. `None` when it names no file.
 fn retarget_target(declaring_file: &Path, target: &str) -> Option<PathBuf> {
     let target = target.replace('\\', "/");
-    if target.is_empty() || target.ends_with('/') {
+    // A rooted or drive-qualified literal is compared against no relative
+    // owner path on every platform, so it reads as opaque.
+    if target.is_empty() || target.ends_with('/') || target.starts_with('/') || target.contains(':')
+    {
         return None;
     }
     let dir = declaring_file.parent().unwrap_or_else(|| Path::new(""));
@@ -1070,6 +1073,16 @@ mod tests {
                 !swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "other/f.rs", touched)?,
                 "a file outside the target's directory (touched {touched})"
             );
+            for rooted in ["/abs/x.rs", "C:/abs/x.rs"] {
+                assert!(
+                    swapped(
+                        &format!("#[path = \"{rooted}\"]\nmod x;\n"),
+                        "src/shared.rs",
+                        touched
+                    )?,
+                    "a rooted literal {rooted} (touched {touched})"
+                );
+            }
         }
         Ok(())
     }
