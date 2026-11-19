@@ -137,6 +137,33 @@ fn is_unwrapped_parse(body: &str, parameter: &str, return_type: &str) -> bool {
     .contains(&squeezed)
 }
 
+/// How many items of masked source declare `name` under any of `keywords`
+/// (`fn level`, `const level`, `static mut level`, `type u32`), reading the
+/// declaration as tokens so spacing and a `mut` between them do not hide it.
+fn declaration_count(masked: &str, keywords: &[&str], name: &str) -> usize {
+    let words: Vec<&str> = masked
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut count = 0;
+    for (index, word) in words.iter().enumerate() {
+        if *word != name || index == 0 {
+            continue;
+        }
+        let keyword = match words[index - 1] {
+            "mut" if index >= 2 && words[index - 2] == "static" => "static",
+            other => other,
+        };
+        if keywords.contains(&keyword) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Items other than a free function that bring a name into the file scope.
+const NON_FN_ITEMS: [&str; 7] = ["const", "static", "type", "struct", "enum", "union", "mod"];
+
 impl FoldScope<'_> {
     /// The decimal value the file's parse helper `name` returns for the
     /// string literal `digits`, when every condition in the module docs holds.
@@ -149,6 +176,13 @@ impl FoldScope<'_> {
         let [at] = declaration_offsets(&masked, "fn", name)[..] else {
             return None;
         };
+        // Whitespace-tolerant: a second `fn  level`, or a `const`/`static`
+        // (function-pointer) item or type of the same name, may shadow it.
+        if declaration_count(&masked, &["fn"], name) != 1
+            || declaration_count(&masked, &NON_FN_ITEMS, name) != 0
+        {
+            return None;
+        }
         if declared_in_associated_block(&masked, at)
             || !self.sees_declaration(&masked, at)
             || !only_visibility_before(&masked, at)
@@ -158,6 +192,13 @@ impl FoldScope<'_> {
         let (parameters, return_type, body) = read_function(&masked[at..], name)?;
         let parameter = str_parameter(parameters)?;
         if !is_integer_type(return_type) || !is_unwrapped_parse(body, parameter, return_type) {
+            return None;
+        }
+        // A local alias, type or import named like the integer type changes
+        // what the parse returns and rejects.
+        if declaration_count(&masked, &NON_FN_ITEMS, return_type) != 0
+            || file_imports(source, return_type)
+        {
             return None;
         }
         let value: u128 = digits.parse().ok()?;
@@ -253,6 +294,32 @@ mod tests {
         ] {
             assert_eq!(fold(helper, BODY, "level(\"10\")"), None, "{helper}");
         }
+    }
+
+    #[test]
+    fn an_item_or_type_that_shadows_the_helper_or_its_return_type_does_not_fold() {
+        let helper = "fn level(text: &str) -> u32 { text.parse().unwrap() }\n";
+        for extra in [
+            // A function-pointer const or static of the helper's name.
+            "const level: fn(&str) -> u32 = other;\n",
+            "static level: fn(&str) -> u32 = other;\n",
+            "static mut level: fn(&str) -> u32 = other;\n",
+            "mod level {}\n",
+            // A second declaration the exact spelling `fn level` does not see.
+            "fn  level(text: &str) -> u32 { 99 }\n",
+            "fn\tlevel(text: &str) -> u32 { 99 }\n",
+            "fn\nlevel(text: &str) -> u32 { 99 }\n",
+            // A local type that stands in for the integer type.
+            "type u32 = u8;\n",
+            "struct u32;\n",
+            "use other::Small as u32;\n",
+        ] {
+            let file = format!("{helper}{extra}");
+            assert_eq!(fold(&file, BODY, "level(\"10\")"), None, "{extra}");
+        }
+        let alias = "type u32 = u8;\nfn level(text: &str) -> u32 { text.parse().unwrap() }\n";
+        assert_eq!(fold(alias, BODY, "level(\"256\")"), None);
+        assert_eq!(fold(FILE, BODY, "level(\"10\")").as_deref(), Some("10"));
     }
 
     #[test]
