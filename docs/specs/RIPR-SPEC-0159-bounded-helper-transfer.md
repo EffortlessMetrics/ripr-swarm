@@ -463,7 +463,8 @@ can only hint that a caller "may lead here" without changing anything.
   below. A second glob anywhere in the test file or body (`use std::cmp::*;`
   could bring another binding of the name), a glob out of scope at the test
   (in a sibling module, a nested block or the test's own body), a test inside
-  a module, a glob of a library module
+  a module, a second `fn` of the test's name anywhere in the file (it
+  could be the matched test), a glob of a library module
   (`use <lib>::m::*;`), a glob in a unit test under `src/`, an entry the root
   does not re-export, and every other refusal in this section keep the bare
   call unrelated. Any item the test file declares under the entry's name, at

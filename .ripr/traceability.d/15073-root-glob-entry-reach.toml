@@ -17,4 +17,5 @@ tests = [
   "crates/ripr/tests/root_glob_entry_reach.rs::a_glob_inside_the_test_body_does_not_link",
   "crates/ripr/tests/root_glob_entry_reach.rs::an_explicit_foreign_import_of_the_name_beats_the_glob",
   "crates/ripr/tests/root_glob_entry_reach.rs::a_module_test_sharing_a_top_level_fn_name_does_not_link",
+  "crates/ripr/tests/root_glob_entry_reach.rs::a_module_test_sharing_a_top_level_fn_name_does_not_reach_a_prelude_named_entry",
 ]

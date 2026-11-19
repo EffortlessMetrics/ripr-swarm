@@ -3453,7 +3453,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
 /// Whether the test file's one glob import is a top-level item of the file
 /// and the test `test_name` is a top-level function of the same file, so the
 /// glob is in scope at the test's calls. A glob in a sibling module, a nested
-/// block or the test's own body, or a test inside a module, declines (#15073).
+/// block or the test's own body, a test inside a module, or a second `fn`
+/// of the test's name anywhere in the file, declines (#15073).
 fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
@@ -3478,7 +3479,21 @@ fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
             _ => {}
         }
     }
-    top_level_globs == 1 && top_level_test
+    // The bare name is the only identity the test carries here, so a
+    // same-named function anywhere else in the file (a decoy beside a nested
+    // test) could be the one matched: the name must name exactly one `fn`.
+    let functions_so_named = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == test_name)
+        })
+        .count();
+    top_level_globs == 1 && top_level_test && functions_so_named == 1
 }
 
 /// Whether the test file declares any item named `name` at any depth (a `fn`,

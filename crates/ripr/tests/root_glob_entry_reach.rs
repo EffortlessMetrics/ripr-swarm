@@ -277,3 +277,20 @@ fn a_module_test_sharing_a_top_level_fn_name_does_not_link() -> Result<(), Strin
     assert!(!outcome.related);
     Ok(())
 }
+
+#[test]
+fn a_module_test_sharing_a_top_level_fn_name_does_not_reach_a_prelude_named_entry()
+-> Result<(), String> {
+    // Inside `inner` the root glob is out of scope, so `drop` is the
+    // prelude's. The decoy top-level `rounds_up` must not stand in for the
+    // nested test (exact-head review on #15152).
+    let lib = "fn round_to_nickel(cents: u32) -> u32 {\n    (cents + 2) / 5 * 5\n}\n\npub fn drop(cents: u32) -> u32 {\n    round_to_nickel(cents)\n}\n";
+    let tests = "use money::*;\n\nfn rounds_up() {}\n\nmod inner {\n    #[test]\n    fn rounds_up() {\n        assert_eq!(drop(103), 105);\n    }\n}\n";
+    let outcome = outcome_of(
+        "src/lib.rs",
+        &[("src/lib.rs", lib), ("tests/total.rs", tests)],
+    )?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
