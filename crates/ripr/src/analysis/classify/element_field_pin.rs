@@ -534,11 +534,9 @@ pub(in crate::analysis) struct DropImplIndex {
     /// Self-type names (last path segment, generics dropped) of a `Drop`
     /// impl whose `drop` body is not empty, or that a macro writes
     /// (#15107; [`MACRO_DROP_TARGET`] when the macro names no fixed type).
+    /// Every name a rename or type alias in any source binds to such a type
+    /// is included too (#15107).
     non_plain: BTreeSet<String>,
-    /// Pairs of names one source binds to the same type (`use a::Cfg as
-    /// Config;`, `type Config = Cfg;`), so an impl written against one name
-    /// is read for the other (#15107).
-    same_type_names: Vec<(String, String)>,
     /// The sources hold no macro, `extern crate` or outside-crate item that
     /// could generate a `Drop` impl this scan cannot read.
     sources_closed: bool,
@@ -557,24 +555,40 @@ impl DropImplIndex {
         // Scanned in line, once per index. A nested `par_iter` inside this
         // `OnceLock` init can deadlock against probes that re-enter it
         // (#8756), and the scan is a one-time cost.
-        let scans: Vec<Option<BTreeSet<String>>> = sources
+        let scans: Vec<Option<DropSourceScan>> = sources
             .iter()
-            .map(|source| non_plain_drop_types(source))
-            .collect();
-        let same_type_names = sources
-            .iter()
-            .filter_map(|source| parse_clean_source_file(source))
-            .flat_map(|parse| same_type_name_pairs(&parse.tree()))
+            .map(|source| scan_drop_source(source))
             .collect();
         let mut built = Self {
             sources_closed: closed_field_workspace(index, &[], false),
-            same_type_names,
             ..Self::default()
         };
+        // Names bound to the same type, as an undirected adjacency.
+        let mut same_type: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
         for scan in scans {
             match scan {
-                Some(types) => built.non_plain.extend(types),
+                Some(scan) => {
+                    built.non_plain.extend(scan.non_plain);
+                    for (left, right) in scan.same_type_names {
+                        same_type
+                            .entry(left.clone())
+                            .or_default()
+                            .push(right.clone());
+                        same_type.entry(right).or_default().push(left);
+                    }
+                }
                 None => built.any_unparseable = true,
+            }
+        }
+        // #15107: an impl written against one name reaches every name bound
+        // to the same type, transitively and in either direction.
+        let mut pending: Vec<String> = built.non_plain.iter().cloned().collect();
+        while let Some(name) = pending.pop() {
+            for other in same_type.get(&name).into_iter().flatten() {
+                if built.non_plain.insert(other.clone()) {
+                    pending.push(other.clone());
+                }
             }
         }
         built
@@ -587,27 +601,9 @@ impl DropImplIndex {
     }
 
     fn is_plain(&self, type_name: &str) -> bool {
-        if self.any_unparseable || self.non_plain.contains(MACRO_DROP_TARGET) {
-            return false;
-        }
-        // Every name bound to the same type, across files and transitively.
-        let mut names = BTreeSet::from([type_name.to_string()]);
-        let mut pending = vec![type_name.to_string()];
-        while let Some(name) = pending.pop() {
-            for (left, right) in &self.same_type_names {
-                let other = if *left == name {
-                    right
-                } else if *right == name {
-                    left
-                } else {
-                    continue;
-                };
-                if names.insert(other.clone()) {
-                    pending.push(other.clone());
-                }
-            }
-        }
-        names.iter().all(|name| !self.non_plain.contains(name))
+        !self.any_unparseable
+            && !self.non_plain.contains(MACRO_DROP_TARGET)
+            && !self.non_plain.contains(type_name)
     }
 }
 
@@ -650,11 +646,19 @@ const MACRO_DROP_TARGET: &str = "$";
 /// `use guard::Cfg as Config;` and an alias `type Config = Cfg;` (generics
 /// dropped) each pair `Config` with `Cfg`.
 fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
-    let last_segment = |text: &str| {
+    // A plain path's last segment (`guard::Cfg<T>` reads `Cfg`); anything
+    // else (`(Cfg, u8)`, `&Cfg`, `<Cfg as T>::Out`, `self`) names no type.
+    let last_segment = |text: &str| -> Option<String> {
         let text = squeeze(text);
-        let text = text.split('<').next().unwrap_or(&text).to_string();
-        text.rsplit("::").next().unwrap_or(&text).to_string()
+        let text = text.split('<').next().unwrap_or(&text);
+        let last = text.rsplit("::").next().unwrap_or(text);
+        let last = last.strip_prefix("r#").unwrap_or(last);
+        (!last.is_empty()
+            && last != "self"
+            && last.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
+        .then(|| last.to_string())
     };
+    let ident = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
     let mut pairs = Vec::new();
     for node in tree.syntax().descendants() {
         if let Some(rename) = ast::Rename::cast(node.clone())
@@ -664,19 +668,22 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
                 .parent()
                 .and_then(ast::UseTree::cast)
                 .and_then(|use_tree| use_tree.path())
+            && let Some(original) = last_segment(&path.syntax().text().to_string())
         {
-            pairs.push((
-                last_segment(&path.syntax().text().to_string()),
-                name.text().to_string(),
-            ));
+            pairs.push((original, ident(&name.text())));
         } else if let Some(alias) = ast::TypeAlias::cast(node)
+            // An associated type (`type Output = Guard;`) binds a name per
+            // impl, not one workspace type.
+            && alias
+                .syntax()
+                .parent()
+                .and_then(ast::AssocItemList::cast)
+                .is_none()
             && let Some(name) = alias.name()
             && let Some(ty) = alias.ty()
+            && let Some(original) = last_segment(&ty.syntax().text().to_string())
         {
-            pairs.push((
-                name.text().to_string(),
-                last_segment(&ty.syntax().text().to_string()),
-            ));
+            pairs.push((ident(&name.text()), original));
         }
     }
     pairs
@@ -727,7 +734,16 @@ fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet
                         target = Some(MACRO_DROP_TARGET.to_string());
                         break;
                     }
-                    SyntaxKind::IDENT => target = Some(token.text().to_string()),
+                    SyntaxKind::IDENT => {
+                        let text = token.text();
+                        target = Some(text.strip_prefix("r#").unwrap_or(text).to_string());
+                    }
+                    // A type-position macro (`for my_ty!()`) names no
+                    // readable type.
+                    SyntaxKind::BANG => {
+                        target = Some(MACRO_DROP_TARGET.to_string());
+                        break;
+                    }
                     SyntaxKind::COLON2
                     | SyntaxKind::COLON
                     | SyntaxKind::CRATE_KW
@@ -747,10 +763,29 @@ fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet
 /// cannot hold a `Drop` impl or a `Drop` alias, so it is parsed only to
 /// confirm it is readable and its tree is not walked.
 fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
+    scan_drop_source(source).map(|scan| scan.non_plain)
+}
+
+/// One source's contribution to the [`DropImplIndex`].
+struct DropSourceScan {
+    non_plain: BTreeSet<String>,
+    same_type_names: Vec<(String, String)>,
+}
+
+/// [`non_plain_drop_types`] and [`same_type_name_pairs`] from one parse.
+fn scan_drop_source(source: &str) -> Option<DropSourceScan> {
     let parse = parse_clean_source_file(source)?;
+    let same_type_names = if source.contains(" as ") || source.contains("type ") {
+        same_type_name_pairs(&parse.tree())
+    } else {
+        Vec::new()
+    };
     let mut types = BTreeSet::new();
     if !source.contains("Drop") {
-        return Some(types);
+        return Some(DropSourceScan {
+            non_plain: types,
+            same_type_names,
+        });
     }
     let aliases = drop_alias_names(&parse.tree());
     let drop_names: Vec<String> = std::iter::once("Drop".to_string())
@@ -799,7 +834,10 @@ fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
         let last = text.rsplit("::").next().unwrap_or(&text);
         types.insert(last.split('<').next().unwrap_or(last).to_string());
     }
-    Some(types)
+    Some(DropSourceScan {
+        non_plain: types,
+        same_type_names,
+    })
 }
 
 #[cfg(test)]
@@ -2107,6 +2145,18 @@ mod tests {
                 false,
                 true,
             ),
+            // A raw target names the type; a type-position macro target
+            // names none, so no type is plain.
+            (
+                "wrap! { impl Drop for r#Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
+            (
+                "wrap! { impl Drop for my_ty!() { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                false,
+            ),
             // A macro that names no `Drop` impl leaves every type plain.
             (
                 "macro_rules! describe { ($t:ident) => { impl $t { fn d(&self) {} } }; }\ndescribe!(Row);\n",
@@ -2147,6 +2197,24 @@ mod tests {
                 "mod guard;\npub use guard::Cfg as Config;\npub type Settings = Config;\n",
                 "Settings",
                 false,
+            ),
+            // A nested group, a raw identifier and a generic alias.
+            (
+                "mod guard;\npub use guard::{Cfg as r#Config};\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config<T> = guard::Cfg<T>;\n",
+                "Config",
+                false,
+            ),
+            // An associated type names one type per impl, so it links no
+            // other type to the exiting one.
+            (
+                "mod guard;\npub struct Row;\nimpl Iterator for Row { type Item = guard::Cfg; fn next(&mut self) -> Option<guard::Cfg> { None } }\npub struct Two;\nimpl Iterator for Two { type Item = Row; fn next(&mut self) -> Option<Row> { None } }\n",
+                "Row",
+                true,
             ),
             // An unrelated rename stays plain.
             (
