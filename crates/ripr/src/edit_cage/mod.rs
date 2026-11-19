@@ -1046,7 +1046,7 @@ fn committed_changes(
             "--no-textconv",
             // Ambient `diff.ignoreSubmodules=all` would hide a committed
             // gitlink change from the attempt's changed-path set.
-            "--ignore-submodules=none",
+            crate::git::SUBMODULE_POINTERS_ONLY,
             "--name-status",
             "-z",
             baseline_head,

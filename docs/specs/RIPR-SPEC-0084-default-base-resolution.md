@@ -214,8 +214,8 @@ type change, and resumes normal parsing at the next file boundary (#4577).
 no-merge-base cause and, in a shallow clone, offers `git fetch --unshallow`
 as its next command.
 
-The shared Git diff byte owner pins `--ignore-submodules=none` for committed,
-worktree, range and PR-evidence loads (#8209). Ambient `diff.ignoreSubmodules`
+The shared Git diff byte owner pins `--ignore-submodules=dirty` for committed,
+worktree, range and PR-evidence loads (#8209, #15101). Ambient `diff.ignoreSubmodules`
 and `submodule.<name>.ignore` settings cannot hide a changed gitlink before
 the existing skipped-submodule disclosure sees it. Submodule contents are
 still not analyzed; no source probes are invented for the pointer.
@@ -326,8 +326,17 @@ call and is not cached, runs inside the caller's deadline (a zero deadline
 starts no process), and an inherited `GIT_CONFIG` is removed so the listing
 reads the same configuration the call does. When the filter listing cannot be
 read, is ended by a signal, is truncated, or names a driver that cannot be reset on the command
-line, ripr does not run Git in that repository. A populated submodule's own
-repository configuration is outside this guarantee (Unix proof).
+line, ripr does not run Git in that repository (Unix proof).
+
+A populated submodule's own configuration is never read for a program to run
+(#15101): every diff and status call passes `--ignore-submodules=dirty`, so
+Git compares the submodule's checked-out commit with the recorded gitlink but
+starts no `git status` child inside the submodule. The alternative, extending
+the filter pins to each populated submodule, was rejected: it adds a
+configuration listing per submodule (recursively) to every call and still
+leaves any other helper class the child might read. The cost is that
+uncommitted edits inside a submodule are no longer disclosed as a skipped
+pointer; a moved submodule commit still is (Unix proof).
 
 ### Non-claims
 
@@ -446,6 +455,8 @@ repository configuration is outside this guarantee (Unix proof).
 - `crates/ripr/src/git_helper_pin_tests.rs::inherited_git_config_selector_is_removed_from_every_call`
 - `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_added_to_an_included_file_does_not_run`
 - `crates/ripr/src/git_helper_pin_tests.rs::filter_listing_runs_inside_the_callers_deadline`
+- `crates/ripr/src/git_helper_pin_tests.rs::submodule_examining_calls_get_pointers_only`
+- `crates/ripr/tests/hostile_repos.rs::submodule_repository_helper_does_not_run`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 

@@ -295,7 +295,7 @@ fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>
             "--name-only",
             "-z",
             "--diff-filter=ACMR",
-            "--ignore-submodules=none",
+            crate::git::SUBMODULE_POINTERS_ONLY,
             range.as_str(),
         ],
     )?;
