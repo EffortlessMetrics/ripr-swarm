@@ -14979,3 +14979,72 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
 }
+
+const SHAPE_LIB: &str = "pub trait Shape {\n    fn area(&self) -> u32;\n}\npub struct Square(pub u32);\npub struct Line(pub u32);\n\
+impl Shape for Square {\n    fn area(&self) -> u32 {\n        self.0 + self.0\n    }\n}\n\
+impl Shape for Line {\n    fn area(&self) -> u32 {\n        self.0 - self.0\n    }\n}\n";
+
+const SHAPE_TESTS: &str = "use demo::{Line, Shape, Square};\n\n#[test]\nfn pins() {\n    assert_eq!(Square(3).area(), 9);\n}\n";
+
+/// The pin for `impl Shape for <self_ty>::area` in `lib`, tested by `tests`.
+fn shape_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "area"
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::TraitImpl { self_ty, .. } if self_ty == "Square"
+                )
+        })
+        .and_then(|owner| {
+            OwnerReturnPin::establish(&return_probe(owner, "self.0 + self.0"), owner, &index)
+        });
+    (index, pin)
+}
+
+/// #15276: `impl Shape for Line` is a method of another named type, so it
+/// cannot take a call on a receiver typed `Square`; the pin holds and admits
+/// the constructed `Square(3)` receiver.
+#[test]
+fn a_sibling_impl_on_another_named_type_does_not_defeat_the_pin() -> Result<(), String> {
+    let (index, pin) = shape_pin(SHAPE_LIB, SHAPE_TESTS);
+    let pin = pin.ok_or("a sibling impl on `Line` must not defeat the `Square` pin")?;
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(Square(3).area(), 9);".to_string()]
+    );
+    // A receiver of the sibling type, an untyped binding and a `dyn`
+    // receiver are not admitted.
+    for call in [
+        "assert_eq!(Line(3).area(), 9);",
+        "let s = make(); assert_eq!(s.area(), 9);",
+        "let s: Box<dyn Shape> = Box::new(Square(3)); assert_eq!(s.area(), 9);",
+    ] {
+        let tests = SHAPE_TESTS.replace("assert_eq!(Square(3).area(), 9);", call);
+        let (index, pin) = shape_pin(SHAPE_LIB, &tests);
+        let pin = pin.ok_or_else(|| format!("{call}: the pin is established"))?;
+        assert!(admitted_texts(&index, &pin).is_empty(), "{call}");
+    }
+    Ok(())
+}
+
+/// Rivals that can take a call on a `Square` receiver still refuse: an
+/// inherent `area` on `Square`, another trait's `area` on `Square`, a
+/// blanket impl, and a trait default body.
+#[test]
+fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
+    for rival in [
+        "impl Square {\n    pub fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Other { fn area(&self) -> u32; }\nimpl Other for Square {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Any2 { fn area(&self) -> u32; }\nimpl<T> Any2 for T {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Dflt {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub struct Wrap<T>(pub T);\nimpl<T> Shape for Wrap<T> {\n    fn area(&self) -> u32 { 9 }\n}\n",
+    ] {
+        let lib = format!("{SHAPE_LIB}{rival}");
+        let (_, pin) = shape_pin(&lib, SHAPE_TESTS);
+        assert!(pin.is_none(), "{rival}");
+    }
+}

@@ -13948,6 +13948,19 @@ fn other_definition_competes(
     let associated = kind == CallKind::Associated;
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
+    // #15276: a method call whose receiver is typed as the owner's own named
+    // `impl` type never dispatches to a method of another named type, so a
+    // trait or inherent method of that name on a different declared type
+    // (`impl Shape for Line` beside the owner `impl Shape for Square`) does
+    // not compete. Same-type rivals (an inherent `Square::area`, a second
+    // trait's method on `Square`), trait default bodies, generic, reference,
+    // slice and `dyn` self types, and unindexed definitions still refuse.
+    let owner_receiver = method.then(|| impl_receiver_type(owner, index)).flatten();
+    let on_another_named_type = |function: &FunctionSummary| {
+        owner_receiver.as_deref().is_some_and(|own| {
+            impl_receiver_type(function, index).is_some_and(|other| other != own)
+        })
+    };
     let indexed_competes = index.functions().iter().any(|function| {
         if function.name != name || is_owner(&function.file, function.start_line) {
             return false;
@@ -13966,6 +13979,7 @@ fn other_definition_competes(
                     && function.item.has_self_param
                     && function.item.has_body
                     && !is_self_forward(&function.body, name)
+                    && !on_another_named_type(function)
             }
         }
     });
@@ -14009,6 +14023,29 @@ fn other_definition_competes(
                 }
             })
     })
+}
+
+/// The declared named type of an inherent or trait `impl` method with a
+/// `self` receiver, as [`declared_receiver`] reads it: `None` for a trait
+/// default body, a free or local `fn`, an unknown container, and a generic,
+/// reference, slice, tuple, pointer, `dyn` or undeclared self type.
+fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<String> {
+    if !function.item.has_self_param {
+        return None;
+    }
+    let self_ty = match &function.item.container {
+        FunctionContainer::Inherent { self_ty } | FunctionContainer::TraitImpl { self_ty, .. } => {
+            self_ty
+        }
+        _ => return None,
+    };
+    if self_ty.contains('<') {
+        return None;
+    }
+    match declared_receiver(self_ty, index)? {
+        ReceiverType::Named(name) => Some(name),
+        ReceiverType::ByteSlice => None,
+    }
 }
 
 struct UnindexedDefinition<'a> {
