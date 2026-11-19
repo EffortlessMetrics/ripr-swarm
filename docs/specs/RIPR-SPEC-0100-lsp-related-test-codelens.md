@@ -60,6 +60,11 @@ The codeLens contains a cached informational advisory and an explicit refresh ac
 - When `N == 0`, the title reads `"ripr: no related tests found (CLASS)"`.
   The word "no related tests found" is the correct static phrase; the
   runtime-mutation-testing synonym is never used.
+- A `no_static_path` finding reads `"ripr: no static test path found (no path)"`
+  whatever its related-test count. It names what static analysis did not find;
+  it never claims that no test reaches the change, because a path the analysis
+  cannot follow (for example through a transitive helper) does not establish a
+  missing test.
 
 ### Honesty rules
 
@@ -69,6 +74,7 @@ after that prefix MUST comply with the static-language vocabulary:
 | Condition | Required phrasing |
 |---|---|
 | `snapshot == None` | Return empty `Vec` (no lens at all) |
+| class is `no_static_path` | `"ripr: no static test path found (no path) · static, cached"` |
 | `N == 0` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
 | `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
@@ -223,7 +229,7 @@ Unit tests in `crates/ripr/src/lsp/lens.rs` (pure helpers):
    different files; request for file A must return only file A's lens.
 
 3. `code_lens_response_zero_related_tests_is_honest` — `N == 0`,
-   class `no_static_path`. Title must contain "no related tests found" and the
+   class `no_static_path`. Title must contain "no static test path found" and the
    class label; must NOT contain the runtime-mutation-testing synonym for absence
    of related tests.
 
@@ -298,7 +304,7 @@ title:    "Refresh saved-workspace analysis · ripr: 3 related tests (exposed) �
 
 ```
 finding:  class=no_static_path, related_tests.len()=0, language_status=None
-title:    "Refresh saved-workspace analysis · ripr: no related tests found (no path) · static, cached"
+title:    "Refresh saved-workspace analysis · ripr: no static test path found (no path) · static, cached"
 ```
 
 ### TypeScript Preview, Exposed, 1 related test
@@ -321,6 +327,7 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_no_snapshot_emits_nothing`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_filters_to_requested_file`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_zero_related_tests_is_honest`
+- `crates/ripr/src/lsp/lens.rs::tests::related_test_lens_title_no_static_path_names_the_static_limit`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function`

@@ -9586,6 +9586,7 @@ tests = [
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_no_snapshot_emits_nothing",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_filters_to_requested_file",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_zero_related_tests_is_honest",
+  "crates/ripr/src/lsp/lens.rs::tests::related_test_lens_title_no_static_path_names_the_static_limit",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip",
