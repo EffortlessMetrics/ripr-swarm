@@ -233,9 +233,8 @@ fn snapshot_memo_reads_remain_visible_across_probes() -> Result<(), Box<dyn Erro
     assert_eq!(tests.len(), 1);
     let test = tests.at(0);
     let oracle = test.assertions.first().ok_or("snapshot oracle missing")?;
-    let read = || {
-        crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(&index, &test, oracle)
-    };
+    let read =
+        || crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(&index, test, oracle);
     let (answers, rows) = capture(true, || {
         let mut answers = Vec::new();
         for id in ["cold", "warm", "warm-again"] {
@@ -288,7 +287,7 @@ fn snapshot_memo_reads_remain_visible_across_probes() -> Result<(), Box<dyn Erro
     assert!(
         !crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(
             &current,
-            &current_test,
+            current_test,
             current_oracle,
         )
     );
@@ -315,7 +314,7 @@ fn snapshot_memo_reads_remain_visible_across_probes() -> Result<(), Box<dyn Erro
             assert!(
                 !crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(
                     &shadowed,
-                    &shadowed_test,
+                    shadowed_test,
                     shadowed_oracle,
                 )
             );
