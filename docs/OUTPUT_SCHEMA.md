@@ -15768,7 +15768,7 @@ ripr first-pr \
   --agent-packet target/ripr/agent/gap-packet.md \
   --gate-decision target/ripr/reports/gate-decision.json \
   --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
+  --output-dir target/ripr/reports
 ```
 
 The command writes:

@@ -7236,11 +7236,11 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
         .display()
         .to_string()
         .replace('\\', "/");
-    let plain = format!("--out-dir {expected_out_dir}");
-    let quoted = format!("--out-dir '{expected_out_dir}'");
+    let plain = format!("--output-dir {expected_out_dir}");
+    let quoted = format!("--output-dir '{expected_out_dir}'");
     assert!(stderr.contains(&plain) || stderr.contains(&quoted));
-    assert!(!stderr.contains("--out-dir target/ripr/reports"));
-    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
+    assert!(!stderr.contains("--output-dir target/ripr/reports"));
+    assert!(!stderr.contains("--output-dir 'target/ripr/reports'"));
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
