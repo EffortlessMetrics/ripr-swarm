@@ -1739,8 +1739,8 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
     // rstest binds case values positionally to the `#[case]` parameters
     // only; the others are fixtures. Without any `#[case]` marker every
     // parameter counts, as before #4601. (Rows written inside the legacy
-    // `#[rstest(a, case(..))]` attribute and named `#[case::name(..)]`
-    // rows are not parsed, so they bind nothing.)
+    // `#[rstest(a, case(..))]` attribute are not parsed, so they bind
+    // nothing; named `#[case::name(..)]` rows bind like plain ones.)
     let params = extract_fn_params(&test.body);
     let params = if params.iter().any(|param| param.is_case) {
         params.into_iter().filter(|param| param.is_case).collect()
@@ -1777,7 +1777,7 @@ fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<S
     Some((cases, position))
 }
 
-/// Number of rstest `#[case(..)]` rows on `test`.
+/// Number of rstest `#[case(..)]` / `#[case::name(..)]` rows on `test`.
 pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
     let (cases, _) = extract_rstest_case_params(test);
     cases.len()

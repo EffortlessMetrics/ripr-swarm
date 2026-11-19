@@ -1058,6 +1058,21 @@ fn extract_rstest_cases_reads_named_case_rows() {
         ],
         "named rows bind like plain rows; a multi-segment path or another attribute binds nothing"
     );
+
+    // A bare `#[case::name]` carries no row.
+    let mut bare = test.clone();
+    bare.attrs = vec!["#[rstest]".to_string(), "#[case::name]".to_string()].into();
+    assert!(extract_rstest_cases(&bare).0.is_empty());
+
+    // A named rstest row beside `test_case` rows has no single binding rule,
+    // so the function binds nothing, as with a plain `#[case(..)]` row.
+    let mut mixed = test.clone();
+    mixed.attrs = vec![
+        "#[test_case(100, 0)]".to_string(),
+        "#[case::equal(100, 0)]".to_string(),
+    ]
+    .into();
+    assert_eq!(extract_rstest_cases(&mixed), (Vec::new(), Vec::new()));
 }
 
 #[test]
