@@ -873,7 +873,6 @@ separate: the receipt's `verification.status` remains `verification_not_run`
 found, so a reported failure can sit beside `improved`. The receipt-owned
 `next:` line is unchanged. MCP documents do not project the record yet.
 
-
 ## Amendment (#14146): the aggregate test-run reading names its attempt
 
 Aggregate `ripr status` and `ripr agent status` (and the after-phase `--json`
@@ -886,6 +885,7 @@ caller-reported pass, attempt order within each. The JSON `test_run` object is
 the most telling reading and adds `attempt_id`. A reported failure on any
 finished attempt is therefore never hidden behind another attempt's reading.
 `ripr agent status --attempt <id>` keeps reporting only that attempt.
+
 ## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
 
 ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
