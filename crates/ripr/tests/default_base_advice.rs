@@ -68,9 +68,27 @@ fn repo(
     if with_origin {
         let url = remote.to_string_lossy().into_owned();
         git(&work, &["remote", "add", "origin", &url])?;
+        // `git push` updates the `origin/<branch>` tracking ref but never
+        // `origin/HEAD`. No `git fetch` here: since Git 2.48 a fetch creates
+        // `origin/HEAD` by default (`remote.origin.followRemoteHEAD`).
         git(&work, &["push", "-q", "origin", default_branch])?;
-        // `git push` creates `origin/<branch>` but never `origin/HEAD`.
-        git(&work, &["fetch", "-q", "origin"])?;
+        // Belt and braces for any Git that sets it anyway: drop the symref
+        // itself (`--no-deref`), never the branch it points at.
+        git(
+            &work,
+            &["update-ref", "-d", "--no-deref", "refs/remotes/origin/HEAD"],
+        )?;
+        // Fixture precondition: the tracking ref exists, `origin/HEAD` does not.
+        let tracking = format!("refs/remotes/origin/{default_branch}");
+        git(&work, &["rev-parse", "-q", "--verify", &tracking])?;
+        if git(
+            &work,
+            &["rev-parse", "-q", "--verify", "refs/remotes/origin/HEAD"],
+        )
+        .is_ok()
+        {
+            return Err("fixture: origin/HEAD must be unset".to_string());
+        }
     }
     git(&work, &["checkout", "-q", "-b", "work"])?;
     std::fs::write(
