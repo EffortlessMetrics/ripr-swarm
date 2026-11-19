@@ -111,6 +111,21 @@ fn state(pid: u32) -> Result<State, String> {
     }
 }
 
+/// Descendants are killed by the group signal but exit asynchronously, so a
+/// single probe straight after cleanup can still read the dying process as
+/// Live. Poll until it leaves Live; a genuinely leaked descendant stays Live
+/// through the whole deadline and is still reported.
+fn settled_state(pid: u32) -> Result<State, String> {
+    let start = Instant::now();
+    loop {
+        let actual = state(pid)?;
+        if actual != State::Live || start.elapsed() >= Duration::from_secs(5) {
+            return Ok(actual);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn marker(root: &Path, role: &str) -> Option<u32> {
     std::fs::read_to_string(root.join(format!("{role}.pid")))
         .ok()?
@@ -225,7 +240,12 @@ fn timeout_control(
             ));
         }
         for (index, pid) in pids.iter().enumerate() {
-            let actual = state(*pid)?;
+            let actual = if index == 0 {
+                // The primary is waited by cleanup itself: it must be Absent now.
+                state(*pid)?
+            } else {
+                settled_state(*pid)?
+            };
             if actual == State::Live || (index == 0 && actual != State::Absent) {
                 return Err(format!(
                     "owned PID {pid} persisted after cleanup: {actual:?}"
