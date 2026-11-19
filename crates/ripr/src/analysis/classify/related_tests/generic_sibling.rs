@@ -68,7 +68,7 @@ pub(super) fn every_call_selects_generic_sibling(
             test,
             owner,
             &masked,
-            &owner_head,
+            owner_argument,
             &sibling_heads,
             owner_argument.starts_with('&'),
         )
@@ -199,7 +199,7 @@ fn every_site_passes_sibling_type(
     test: &TestSummary,
     owner: &FunctionSummary,
     masked: &str,
-    owner_head: &str,
+    owner_argument: &str,
     sibling_heads: &[String],
     owner_takes_reference: bool,
 ) -> bool {
@@ -241,7 +241,7 @@ fn every_site_passes_sibling_type(
                 after,
                 at,
                 lets_before,
-                owner_head,
+                owner_argument,
                 sibling_heads,
             );
         if !passes_sibling {
@@ -358,17 +358,21 @@ fn literal_kind_rules_out_owner(
     after: usize,
     call_at: usize,
     lets_before: &str,
-    owner_head: &str,
+    owner_argument: &str,
     sibling_heads: &[String],
 ) -> bool {
+    let Some(owner_head) = selecting_type_head(owner_argument) else {
+        return false;
+    };
     let Some((start, end)) = first_argument_span(masked, after) else {
         return false;
     };
-    let (Some(argument), Some(raw_argument)) = (masked.get(start..end), test.body.get(start..end))
+    let (Some(masked_argument), Some(raw_argument)) =
+        (masked.get(start..end), test.body.get(start..end))
     else {
         return false;
     };
-    let argument = argument.trim();
+    let argument = masked_argument.trim();
     // A digit is an identifier byte, so a bare number must not be read as a
     // binding name.
     let is_binding = argument.bytes().next().is_some_and(|b| !b.is_ascii_digit())
@@ -391,6 +395,14 @@ fn literal_kind_rules_out_owner(
         // The statement is a slice of `masked`; the same bytes of the
         // original body still hold the literal's quotes.
         let offset = (statement.as_ptr() as usize).wrapping_sub(masked.as_ptr() as usize);
+        // The lookup reads plain `let name` declarations only, so a later
+        // destructuring `let` that binds the name hides from it.
+        if masked
+            .get(offset + statement.len()..call_at)
+            .is_none_or(|between| let_pattern_binds(between, argument))
+        {
+            return false;
+        }
         let initializer = offset + eq + 1..offset + statement.len();
         let (Some(masked_init), Some(raw_init)) =
             (masked.get(initializer.clone()), test.body.get(initializer))
@@ -399,18 +411,35 @@ fn literal_kind_rules_out_owner(
         };
         literal_kind(masked_init, raw_init)
     } else {
-        literal_kind(argument, raw_argument)
+        literal_kind(masked_argument, raw_argument)
     };
     kind.is_some_and(|kind| {
         // Only a suffixed literal names one type. Any other kind could be the
         // owner's argument through an alias (`type Count = i32;` makes
         // `From<Count>` take an unsuffixed `2`), so it rules the owner out
         // only when the owner's argument is itself a primitive.
-        let owner_is_named =
-            matches!(kind, LiteralKind::Exact(_)) || PRIMITIVE_TYPES.contains(&owner_head);
+        // A qualified spelling (`aliases::u8`) is a path, not the primitive.
+        let owner_is_named = matches!(kind, LiteralKind::Exact(_))
+            || (PRIMITIVE_TYPES.contains(&owner_head.as_str()) && !owner_argument.contains("::"));
         owner_is_named
-            && !kind.admits(owner_head)
+            && !kind.admits(&owner_head)
             && sibling_heads.iter().any(|head| kind.admits(head))
+    })
+}
+
+/// Whether any `let` in `text` binds `name` in its pattern (`let (n,) = ..`,
+/// `let Pair { n, .. } = ..`, `let n = ..`).
+fn let_pattern_binds(text: &str, name: &str) -> bool {
+    text.match_indices("let").any(|(at, matched)| {
+        let after = at + matched.len();
+        if !ident_boundary(text, at, after) {
+            return false;
+        }
+        let rest = &text[after..];
+        let pattern = &rest[..rest.find(['=', ';']).unwrap_or(rest.len())];
+        pattern
+            .match_indices(name)
+            .any(|(start, found)| ident_boundary(pattern, start, start + found.len()))
     })
 }
 
@@ -572,6 +601,14 @@ mod tests {
                 "let mut n = 0x2; n += 1; assert_eq!(Cents::from(n), Cents(300));",
             ),
             (
+                "impl From<&str> for Cents::from",
+                "assert_eq!(Cents::from( 2), Cents(200));",
+            ),
+            (
+                "impl From<&str> for Cents::from",
+                "assert_eq!(Cents::from(\n    2,\n), Cents(200));",
+            ),
+            (
                 "impl From<u32> for Cents::from",
                 r#"let s = "abc"; assert_eq!(Cents::from(s), Cents(6));"#,
             ),
@@ -603,6 +640,9 @@ mod tests {
             r#"let n = 2; let n = "ab"; assert_eq!(Cents::from(n), Cents(5));"#,
             r#"let n = 2; let f = |n: &str| Cents::from(n); assert_eq!(f("ab"), Cents(5)); assert_eq!(n, 2);"#,
             r#"let x = 1u32; assert_eq!(Cents::from(2 + x), Cents(300)); assert_eq!(Cents::from("ab"), Cents(5));"#,
+            // A destructuring `let` rebinds the name after the plain one.
+            r#"let n = 2; let (n,) = ("ab",); assert_eq!(Cents::from(n), Cents(5));"#,
+            r#"let n = 2; let [n] = ["ab"]; assert_eq!(Cents::from(n), Cents(5));"#,
         ] {
             assert!(!refused(CENTS, owner, body)?, "{body}");
         }
@@ -633,6 +673,15 @@ mod tests {
             ALIASED,
             "impl From<Count> for Cents::from",
             "assert_eq!(Cents::from(2u64), Cents(2));"
+        )?);
+        // A path spelling a primitive's name is not the primitive.
+        const QUALIFIED: &str = "pub mod aliases { pub type u8 = f64; }\npub trait Scale<T> { fn scale(&self, by: T) -> u32; }\npub struct Bar(pub u32);\n\
+            impl Scale<aliases::u8> for Bar {\n    fn scale(&self, by: aliases::u8) -> u32 { (self.0 as f64 * by) as u32 + 1 }\n}\n\
+            impl Scale<f32> for Bar {\n    fn scale(&self, by: f32) -> u32 { (self.0 as f32 * by) as u32 + 2 }\n}\n";
+        assert!(!refused(
+            QUALIFIED,
+            "impl Scale<aliases::u8> for Bar::scale",
+            "let b = Bar(2); let by = 2.0; let _: f64 = by; assert_eq!(b.scale(by), 5);"
         )?);
         Ok(())
     }
