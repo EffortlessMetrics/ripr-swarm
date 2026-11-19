@@ -680,3 +680,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (39)
+
+Reason:
+RIPR-SPEC-0117: #15237 the no_assertion row of a test calling an unclassified assertion-like macro reads assertion_admission_unproven and the finding names the test and macro; no oracle or class change
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

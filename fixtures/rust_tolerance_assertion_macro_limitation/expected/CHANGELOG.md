@@ -45,3 +45,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_tolerance_assertion_macro_limitation (5)
+
+Reason:
+RIPR-SPEC-0117: #15237 the no_assertion row of a test calling an unclassified assertion-like macro reads assertion_admission_unproven and the finding names the test and macro; no oracle or class change
+
+Command:
+`cargo xtask goldens bless rust_tolerance_assertion_macro_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
