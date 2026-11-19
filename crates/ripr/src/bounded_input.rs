@@ -509,7 +509,10 @@ mod tests {
         let path = temp_file("artifact-limit", b"{\"a\":1}")?;
         let text = read_repository_artifact_with_limit(&path, 7).map_err(|err| err.to_string())?;
         assert_eq!(text, "{\"a\":1}");
-        assert!(read_repository_artifact_with_limit(&path, 6).is_err());
+        let oversize = read_repository_artifact_with_limit(&path, 6)
+            .err()
+            .ok_or("an artifact over its cap must be refused")?;
+        assert_eq!(oversize.kind(), std::io::ErrorKind::InvalidData);
         let missing = read_repository_artifact(path.with_file_name("absent"))
             .err()
             .ok_or("a missing artifact must stay an error")?;
