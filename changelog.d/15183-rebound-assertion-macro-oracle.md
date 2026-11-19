@@ -4,4 +4,6 @@
   strong oracle when the test's scope rebinds that name, for example with a
   test-local `macro_rules! assert_eq` that compares nothing. The related test
   is reported with an `unknown` oracle strength, so its seams are not
-  `strongly_gripped`. The standard macro keeps its credit (#15183).
+  `strongly_gripped`. The standard macro keeps its credit, including when a
+  `macro_rules!` of the same name is defined only after the assertion, since
+  that definition does not reach the earlier invocation (#15183).
