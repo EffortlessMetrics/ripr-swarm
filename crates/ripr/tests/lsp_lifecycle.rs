@@ -2318,6 +2318,7 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     let relative = Path::new("src").join("lib.rs");
     let folder = root.join("src");
     let folder_uri = editor_file_uri(&folder)?;
+    let lib_uri = editor_file_uri(&root.join(&relative))?;
     let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
     // The folder still exists: not a deletion, nothing to refresh.
@@ -2332,8 +2333,9 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     )?;
     await_publish_for(
         &mut session,
-        &relative,
+        &lib_uri,
         "the retraction for the file below the deleted folder (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
