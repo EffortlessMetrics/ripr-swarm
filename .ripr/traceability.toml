@@ -15726,6 +15726,9 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::short_circuit_owner_tail_completes_only_an_admitted_chain",
   "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_run_to_its_end_by_a_table_is_exposed",
   "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_whose_changed_operand_never_runs_stays_below_exposed",
+  "crates/ripr/tests/short_circuit_or_tail.rs::a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_space_that_separates_words_is_part_of_the_retained_operand",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::operand_tokens_split_words_and_read_punctuation_by_longest_match",
 
 
 
@@ -21020,6 +21023,8 @@ tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::non_reach_rows_do_not_dictate_the_step",
   "crates/ripr/src/analysis/classify/decision.rs::tests::unconfirmed_observation_on_a_reach_row_keeps_the_step",
   "crates/ripr/src/analysis/classify/decision.rs::tests::missing_exact_assertion_row_keeps_the_family_template",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::bool_owner_exact_result_rows_name_the_deciding_input",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result",
 ]
 code = [
   "crates/ripr/src/analysis/classify/decision.rs",

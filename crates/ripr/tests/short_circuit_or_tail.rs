@@ -445,3 +445,31 @@ fn an_added_guard_follows_the_same_agreement_rule() -> Result<(), String> {
     assert_eq!(class, ExposureClass::Exposed, "{deciding}");
     Ok(())
 }
+
+// #15149: the retained operand is compared as a token sequence. Dropping the
+// guard and merging `a as u8` into the separate parameter `aasu8` is a
+// rewrite, not a dropped guard, so the agreement rule must not read it: on
+// `f(1, 0, 5)` the old code returns `true` and the new `false`.
+const MERGED_SOURCE: &str = "pub fn f(n: u32, a: u32, aasu8: u8) -> bool {\n    aasu8 == 0\n}\n";
+const MERGED_OLD: &str = "    n != 0 && a as u8 == 0";
+const MERGED_TAIL: &str = "aasu8 == 0";
+// The layout-only control: the old retained operand `aasu8==0` has the same
+// tokens as the new `aasu8 == 0`, so the dropped guard is read.
+const MERGED_LAYOUT_OLD: &str = "    n != 0 && aasu8==0";
+
+#[test]
+fn a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard() -> Result<(), String>
+{
+    let test = direct_test(
+        "short_circuit_or_tail",
+        &["assert!(f(1, 0, 0));", "assert!(!f(1, 0, 5));"],
+    );
+    let (class, _) = return_value_class(MERGED_SOURCE, MERGED_OLD, MERGED_TAIL, &test)?;
+    assert_eq!(class, ExposureClass::Exposed, "{test}");
+    // Same tests and new code, and an old line that differs from the new
+    // tail only by layout in the retained operand: every run leaves
+    // `n != 0` true, so the withholding rule applies.
+    let (class, _) = return_value_class(MERGED_SOURCE, MERGED_LAYOUT_OLD, MERGED_TAIL, &test)?;
+    assert_ne!(class, ExposureClass::Exposed, "{test}");
+    Ok(())
+}

@@ -6,7 +6,8 @@ Owner: product-analysis
 
 Created: 2026-10-13
 
-Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393).
+Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393),
+[#15149](https://github.com/EffortlessMetrics/ripr-swarm/issues/15149).
 
 Support-tier impact: None
 
@@ -73,6 +74,23 @@ alone:
 - When the strongest related oracle is not exact (broad error check, smoke
   assertion, unreadable shape), or no related test row exists, the existing
   family template stands unchanged; that advice is honest for those shapes.
+- Boolean owners (#15149). For an owner that declares `-> bool`,
+  `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
+  `assert!(!owner(..))` is `assert_eq!(owner(..), false)`, so each already
+  checks the exact result, even though the oracle extractor grades the
+  bare `assert!` as a weak relational check. For a `return_value` probe of
+  such an owner, when every contributing reach-establishing row asserts the
+  owner call's result directly in one of those forms (plain, `std::` or
+  `core::` rooted, through an optional plain path, with optional message
+  arguments) and every matched row is listed, the "replace broad
+  assertions" template is not emitted: rewriting those assertions with
+  exact equality would check the same values. The step says the related
+  tests already assert the exact boolean result of the owner and asks for a
+  test with an input whose boolean result differs between the old and new
+  code. It names no input value, since the return-value finding carries no
+  deciding-input fact. Any other row on the owner (a compound condition, a
+  method receiver, a turbofish, a bound result, an unreadable oracle)
+  keeps the family template.
 - Shapes with dedicated guidance are untouched: boxed wrapper-error seams
   keep the typed `wrapper_error_binding_unresolved` limitation step, and a
   changed `Err(...)` construction keeps the "reaches the changed error path"
@@ -96,6 +114,16 @@ classifications, stage states and evidence facts unchanged. The later
 reach-based eligibility refinement re-blesses
 `fixtures/owner_parameter_token_coincidence` under the same confinement: its
 `same_test_file` token-coincidence row no longer dictates the step.
+
+The boolean-owner step is covered by
+`bool_owner_exact_result_rows_name_the_deciding_input` and its controls
+`bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+(a compound, wrapped, method-receiver, renamed, `debug_assert!` or
+`assert_ne!` row, a non-`bool` owner, a non-weak class, a predicate probe,
+no owner, no rows, an unreadable oracle, and a proximity-only row). It
+re-blesses `fixtures/rust_predicate_appended_int_arm_old_input` and the other
+goldens it reaches, each confined to the `recommended_next_step` string and
+its human rendering.
 
 ## Non-Goals
 
@@ -137,6 +165,9 @@ fact, and it does not cover probe families outside `error_path` and
   eligible.
 - `analysis::classify::decision::tests::missing_exact_assertion_row_keeps_the_family_template`
   covers the `missing_exact_assertion` exclusion.
+- `analysis::classify::decision::tests::bool_owner_exact_result_rows_name_the_deciding_input`
+  and `analysis::classify::decision::tests::bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+  cover the boolean-owner step and its controls (#15149).
 - `fixtures/human_full_shared_parse_port` and the re-blessed golden set
   cover the rendered output end to end.
 
@@ -149,6 +180,10 @@ fact, and it does not cover probe families outside `error_path` and
   only for `weakly_exposed` findings after the wrapper-seam and `Err(...)`
   construction special cases, passing the annotated related tests, the
   activation missing discriminators, and whether the owner is a function.
+- `crates/ripr/src/analysis/classify/decision.rs::bool_owner_exact_result_next_step`
+  owns the boolean-owner step; `build_finding` invokes it for
+  `weakly_exposed` findings of non-assertion-shaped owners after the exact
+  oracle step, only when every matched related row is listed.
 
 ## Metrics
 

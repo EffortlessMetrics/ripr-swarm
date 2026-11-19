@@ -1,7 +1,8 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
+    bool_owner_exact_result_next_step, ensure_unknown_stop_reason, exact_error_variant,
+    exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
     recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
 };
@@ -284,6 +285,22 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // #7393: the family template presumes an assertion shape the
         // related test does not have; the strongest related oracle is
         // already exact, so name the input that is actually missing.
+        Some(step)
+    } else if class == ExposureClass::WeaklyExposed
+        && !context.owner_assertion_shaped
+        // Every matched row must be listed: a row the window dropped could
+        // carry a genuinely broad assertion.
+        && related_tests.len() >= evidence.related_tests_matched_total
+        && let Some(step) = bool_owner_exact_result_next_step(
+            context.probe,
+            &class,
+            context.owner_fn,
+            &related_tests,
+        )
+    {
+        // #15149: a `-> bool` owner's `assert!(owner(..))` already checks the
+        // exact result, so the broad-assertion template names a rewrite that
+        // checks the same values; the missing piece is a deciding input.
         Some(step)
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
