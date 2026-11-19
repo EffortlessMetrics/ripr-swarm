@@ -3105,10 +3105,10 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
 #[test]
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
     use crate::domain::language_availability::{
         AvailabilityState, availability_report_for_detected,
     };
-    use crate::domain::LanguageId;
     use crate::output::repo_exposure::TsFullRepoGuidance;
 
     let root = Path::new(".");
@@ -3165,7 +3165,10 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
                 Some(&enabled),
                 false,
             );
-            assert_eq!(report.state, AvailabilityState::ConfiguredEnabledButUnavailable);
+            assert_eq!(
+                report.state,
+                AvailabilityState::ConfiguredEnabledButUnavailable
+            );
             assert_unavailable(route, true);
             assert_eq!(route.guidance, Some(report.remediation.join("; ")));
             continue;
@@ -3610,7 +3613,10 @@ fn enabled_perl_keeps_fact_packet_prerequisites_in_all_renderers() -> Result<(),
     let json = render_pilot_summary_json(&[], context);
     let parsed: serde_json::Value = serde_json::from_str(&json)
         .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
-    assert_eq!(parsed["language_routes"]["routes"][0]["guidance"], prerequisite);
+    assert_eq!(
+        parsed["language_routes"]["routes"][0]["guidance"],
+        prerequisite
+    );
     Ok(())
 }
 
@@ -3743,7 +3749,10 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             .find(|route| route.language == LanguageId::TypeScript)
             .and_then(|route| route.guidance.clone());
         if let Some(guidance) = disabled_guidance {
-            assert!(terminal.contains(&format!("    {guidance}\n")), "{terminal}");
+            assert!(
+                terminal.contains(&format!("    {guidance}\n")),
+                "{terminal}"
+            );
         }
         assert!(
             terminal.contains(
@@ -3816,7 +3825,10 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let json = render_pilot_summary_json(&[], context);
     assert!(json.contains("\"state\": \"required\""), "{json}");
     if let Some(notice) = LanguageId::Perl.unavailable_adapter_notice() {
-        assert!(terminal.contains("perl: 1 file (not available in this build)\n"), "{terminal}");
+        assert!(
+            terminal.contains("perl: 1 file (not available in this build)\n"),
+            "{terminal}"
+        );
         assert!(!terminal.contains(&notice), "{terminal}");
         assert!(!md.contains(&notice), "{md}");
     }
