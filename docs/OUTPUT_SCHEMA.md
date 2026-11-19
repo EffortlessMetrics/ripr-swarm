@@ -234,7 +234,7 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   is not suppressed by an explicit `--suppression-policy`, is not severity
   `off` for its file in `ripr.toml`, and its class is not `exposed`. Exposed
   findings print nothing.
-- `<classification>` is the check document's `class` token verbatim
+- `<classification>` is the check document's `classification` token verbatim
   (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
   `infection_unknown`, `propagation_unknown`, `static_unknown`);
   `<probe family>` is the probe's `family` token. These are static
