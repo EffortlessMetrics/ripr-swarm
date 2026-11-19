@@ -848,11 +848,38 @@ impl WorkspaceSession {
         canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
+        root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
         // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
         let item = snapshot.require_item(canonical_id)?;
+        // #15240: never mint (or replay) a ready transaction over source that
+        // changed after the snapshot captured it. The card's own shared
+        // consumed-source custody check decides, with the same typed
+        // `stale_snapshot` refusal; the server does not watch the worktree.
+        if let Some(producers) = &snapshot.card_producers
+            && let Some(binding) = producers
+                .bindings
+                .iter()
+                .find(|binding| binding.item_canonical_id == item.canonical_id)
+        {
+            let Some(root) = root else {
+                return Err(AttemptFailure::new(
+                    super::workspace::CODE_WORKSPACE_UNAVAILABLE,
+                    "the workspace root is unavailable, so the consumed source cannot be re-verified for this repair",
+                    "restart the server with `ripr mcp --stdio --root <repository>` and retry",
+                ));
+            };
+            super::repair_card::verify_consumed_source_custody(
+                root,
+                snapshot,
+                item,
+                producers,
+                &binding.seam,
+                "repair preparation",
+            )?;
+        }
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -1690,7 +1717,7 @@ pub(super) mod tests {
     fn complete_route_creates_one_replay_resistant_attempt() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let first = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if first
             .pointer("/repair_packet_ready")
@@ -1719,7 +1746,7 @@ pub(super) mod tests {
             return Err(format!("allowed edit surface drifted: {surface}"));
         }
         let second = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if second != first {
             return Err("repeated prepare must replay the identical document".to_string());
@@ -1744,7 +1771,7 @@ pub(super) mod tests {
         no_discriminator.canonical_gap = None;
         let mut session = session_with(&[no_discriminator], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/repair_packet_ready")
@@ -1806,7 +1833,7 @@ pub(super) mod tests {
         weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
         let mut session = session_with(&[weak], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if packet.pointer("/repair_packet_ready") != Some(&Value::Bool(true))
             || packet
@@ -1851,7 +1878,7 @@ pub(super) mod tests {
         );
         let mut session = session_with(&[named_missing], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/ineligibility/reason")
@@ -1898,7 +1925,7 @@ pub(super) mod tests {
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
         let mut session = session_with(&[limited], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/repair_packet_ready")
@@ -1935,7 +1962,7 @@ pub(super) mod tests {
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
         let mut session = session_with(&[limited.clone()], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let recovery = document["recovery"].as_str().unwrap_or_default();
         if document["next"]["kind"] != "terminal_static_limit"
@@ -1949,7 +1976,7 @@ pub(super) mod tests {
         limited.probe.family = crate::domain::ProbeFamily::ReturnValue;
         let mut other = session_with(&[limited], "root:sha256:a")?;
         let ordinary = other
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if ordinary["next"]["kind"] == "terminal_static_limit" {
             return Err(format!(
@@ -1968,7 +1995,7 @@ pub(super) mod tests {
             .ok_or_else(|| "missing snapshot".to_string())?
             .snapshot_id
             .clone();
-        match session.prepare_repair("gap:test:1", Some("snapshot:sha256:old"), None) {
+        match session.prepare_repair("gap:test:1", Some("snapshot:sha256:old"), None, None) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
                 Err(format!("unexpected failure code: {}", failure.code))
@@ -1988,7 +2015,7 @@ pub(super) mod tests {
                 Ok(())
             }
         }?;
-        match session.prepare_repair("gap:missing", None, None) {
+        match session.prepare_repair("gap:missing", None, None, None) {
             Ok(value) => Err(format!("unknown item must fail closed: {value}")),
             Err(failure) if failure.code == CODE_ITEM_NOT_FOUND => Ok(()),
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
@@ -2000,10 +2027,10 @@ pub(super) mod tests {
         let mut first = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let mut second = session_with(&[super::super::gaps::test_finding()?], "root:sha256:b")?;
         let one = first
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let two = second
-            .prepare_repair("gap:test:1", None, Some("root:sha256:b"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:b"), None)
             .map_err(|failure| failure.detail)?;
         let one_id = one
             .pointer("/attempt/attempt_id")
@@ -2030,7 +2057,7 @@ pub(super) mod tests {
     fn superseded_attempt_fails_closed_after_refresh() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -2095,7 +2122,7 @@ pub(super) mod tests {
     fn unchanged_evidence_refresh_keeps_the_session_attempt_readable() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -2132,7 +2159,7 @@ pub(super) mod tests {
     fn receipt_status_for_session_attempt_awaits_the_external_edit() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -3224,7 +3251,7 @@ pub(super) mod tests {
     fn repair_reads_fail_closed_while_refresh_is_in_flight() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -3253,7 +3280,7 @@ pub(super) mod tests {
     fn evicted_transactions_keep_the_superseded_typed_code() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let first = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let first_id = first
             .pointer("/attempt/attempt_id")
@@ -3269,7 +3296,7 @@ pub(super) mod tests {
         let refreshed = session_with(&[changed], "root:sha256:a")?;
         session.last_good = refreshed.last_good;
         let second = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let second_id = second
             .pointer("/attempt/attempt_id")

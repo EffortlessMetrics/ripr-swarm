@@ -359,7 +359,11 @@ established producer-custody agreement, withheld with the cause
 otherwise). `ripr_get_repair_card` re-verifies, on every read, the captured
 digests of the files the card's evidence is bound to: an edit or commit after
 `ripr_refresh` (the server does not watch the worktree) refuses with
-`stale_snapshot`, names the path and says to run `ripr_refresh` again. A committed refresh whose findings and checkout Rust files were not
+`stale_snapshot`, names the path and says to run `ripr_refresh` again.
+`ripr_prepare_repair` runs the same shared check before it creates or replays
+a transaction and refuses with the same typed `stale_snapshot` (#15240): it
+never mints a ready transaction over an edited, committed, reset or deleted
+consumed file. A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
 refresh, or any uncommitted or untracked Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)

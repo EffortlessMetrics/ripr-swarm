@@ -259,7 +259,10 @@ read-only and without execution authority (ADR 0022):
 - Unit controls over session transactions: the complete ready route
   creates exactly one replay-resistant attempt; missing producer facts
   produce the honest negative document and no attempt; stale and unknown
-  items fail closed; attempt identity is root-bound; a refresh that changes
+  items fail closed; a consumed source or test file edited or deleted after
+  the snapshot refuses with `stale_snapshot` through the same consumed-source
+  custody check the repair card uses, and never creates or replays a ready
+  transaction (#15240); attempt identity is root-bound; a refresh that changes
   the evidence supersedes the prior transaction; session receipt status
   stays `awaiting_edit`; unknown and canonically invalid durable attempts
   fail closed in a temporary store.
