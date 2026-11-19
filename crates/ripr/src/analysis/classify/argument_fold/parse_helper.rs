@@ -173,6 +173,11 @@ impl FoldScope<'_> {
             return None;
         }
         let masked = mask_comments_and_strings(source);
+        // The token scan splits `r#level` into `r` and `level`, so a raw
+        // identifier could shadow the helper or its return type unseen.
+        if masked.contains("r#") {
+            return None;
+        }
         let [at] = declaration_offsets(&masked, "fn", name)[..] else {
             return None;
         };
@@ -313,6 +318,12 @@ mod tests {
             "type u32 = u8;\n",
             "struct u32;\n",
             "use other::Small as u32;\n",
+            // Raw identifiers name the same item but split the token scan.
+            "fn r#level(text: &str) -> u32 { 99 }\n",
+            "const r#level: fn(&str) -> u32 = other;\n",
+            "type r#u32 = u8;\n",
+            // A comment between the keyword and the name is masked away.
+            "fn /* c */ level(text: &str) -> u32 { 99 }\n",
         ] {
             let file = format!("{helper}{extra}");
             assert_eq!(fold(&file, BODY, "level(\"10\")"), None, "{extra}");
