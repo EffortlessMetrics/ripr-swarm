@@ -6396,6 +6396,42 @@ pub(crate) fn oracle_semantics_for(
     semantics
 }
 
+/// The returned-struct wording of a field seam's upgrade suggestion.
+const FIELD_CONSTRUCTION_UPGRADE: &str =
+    "assert the specific output field that carries the changed behavior";
+
+/// [`oracle_semantics_for`] for one seam (#11726). A field write in a method
+/// (`self.count += 1`) has no returned struct, so its upgrade suggestion names
+/// where the written field is read instead, through the same
+/// `field_write_read` the hover and the agent packet use.
+pub(crate) fn oracle_semantics_for_seam(
+    kind: &OracleKind,
+    strength: &OracleStrength,
+    seam: &RepoSeam,
+) -> OracleSemantics {
+    let mut semantics = oracle_semantics_for(kind, strength, seam.kind());
+    if semantics.upgrade_suggestion.as_deref() == Some(FIELD_CONSTRUCTION_UPGRADE)
+        && let Some(read) = crate::analysis::field_write_read(seam)
+    {
+        semantics.upgrade_suggestion = Some(field_write_upgrade(read).to_string());
+    }
+    semantics
+}
+
+fn field_write_upgrade(read: crate::analysis::FieldWriteRead) -> &'static str {
+    match read {
+        crate::analysis::FieldWriteRead::Receiver => {
+            "assert the changed field on the value the method was called on"
+        }
+        crate::analysis::FieldWriteRead::CallResult => {
+            "assert the changed field on the value the method call returns"
+        }
+        crate::analysis::FieldWriteRead::Unspecified => {
+            "assert the changed field after the call that writes it"
+        }
+    }
+}
+
 fn oracle_semantics_by_kind(
     kind: &OracleKind,
     strength: &OracleStrength,
@@ -6497,9 +6533,7 @@ fn upgrade_suggestion_for_seam(seam_kind: SeamKind) -> &'static str {
         }
         SeamKind::ErrorVariant => "assert the exact error variant with matches! or assert_matches!",
         SeamKind::ReturnValue => "add an exact returned-value assertion for the changed output",
-        SeamKind::FieldConstruction => {
-            "assert the specific output field that carries the changed behavior"
-        }
+        SeamKind::FieldConstruction => FIELD_CONSTRUCTION_UPGRADE,
         SeamKind::SideEffect => {
             "assert the event, state write, persistence effect, or mock expectation payload"
         }
