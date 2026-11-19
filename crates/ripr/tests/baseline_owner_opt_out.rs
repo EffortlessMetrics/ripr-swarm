@@ -396,7 +396,7 @@ fn a_skip_added_after_the_baseline_is_withheld_not_resolved() -> Result<(), Stri
         "update",
         "--baseline",
         &baseline_path,
-        "--from",
+        "--current",
         &after_gate,
         "--remove-resolved",
         "--out",
@@ -440,6 +440,31 @@ fn a_deleted_owner_beside_the_skip_still_reads_resolved() -> Result<(), String> 
         assert_eq!(item["withheld_by"], "owner_mutants_skip", "{item}");
     }
     assert_eq!(delta["delta"]["resolved"], control.len(), "{delta}");
+
+    // `baseline update --remove-resolved` drops the resolved owner's entries
+    // and keeps the withheld ones.
+    let updated = repo.path("updated-baseline.json");
+    repo.ripr(&[
+        "baseline",
+        "update",
+        "--baseline",
+        &baseline_path,
+        "--current",
+        &repo.path("after-gate.json"),
+        "--remove-resolved",
+        "--out",
+        &updated,
+    ])?;
+    let updated = read_json(&updated)?;
+    assert!(
+        entries_of(&updated, "src/lib.rs::control").is_empty(),
+        "{updated}"
+    );
+    assert_eq!(
+        entries_of(&updated, "src/lib.rs::fn_level").len(),
+        skipped.len(),
+        "{updated}"
+    );
     Ok(())
 }
 
