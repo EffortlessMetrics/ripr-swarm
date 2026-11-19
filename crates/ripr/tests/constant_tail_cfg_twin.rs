@@ -32,7 +32,7 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    fn create(lib: &str, patch: &str) -> Result<Self, String> {
+    fn create(lib: &str, patch: &str, extra: &[(&str, &str)]) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-constant-tail-cfg-twin-{}-{}",
@@ -50,6 +50,10 @@ impl TempRepo {
             .map_err(|error| format!("write src/lib.rs failed: {error}"))?;
         std::fs::write(root.join("diff.patch"), patch)
             .map_err(|error| format!("write diff failed: {error}"))?;
+        for (path, text) in extra {
+            std::fs::write(root.join(path), text)
+                .map_err(|error| format!("write {path} failed: {error}"))?;
+        }
         Ok(Self { root })
     }
 
@@ -79,6 +83,11 @@ impl Drop for TempRepo {
 /// `src/lib.rs` as `items` then the shared test module, and a diff that
 /// replaces the tail `1` with `2` on `line` (1-based) of `items`.
 fn tail_finding(items: &str, line: usize) -> Result<Finding, String> {
+    tail_finding_with(items, line, &[])
+}
+
+/// [`tail_finding`] with `extra` workspace files beside `src/lib.rs`.
+fn tail_finding_with(items: &str, line: usize, extra: &[(&str, &str)]) -> Result<Finding, String> {
     let lines: Vec<&str> = items.lines().collect();
     let changed = lines
         .get(line - 1)
@@ -101,7 +110,7 @@ fn tail_finding(items: &str, line: usize) -> Result<Finding, String> {
         }
     }
     let lib = format!("{items}\n{TESTS}");
-    let findings = TempRepo::create(&lib, &patch)?.findings()?;
+    let findings = TempRepo::create(&lib, &patch, extra)?.findings()?;
     let mut matching = findings.iter().filter(|finding| {
         finding.probe.family == ProbeFamily::ReturnValue
             && finding.probe.location.line == line
@@ -210,4 +219,36 @@ fn a_cfg_attr_on_the_owner_is_not_credited() -> Result<(), String> {
         "#[cfg_attr(test, inline(never))]\npub fn ready() -> i32 {\n    2\n}",
         3,
     )
+}
+
+/// A workspace file the parser refuses still reaches the module-declaration
+/// reading when it may declare a module (`mod/* gap */real;`), so the
+/// owner's chain cannot be read and the tail is not credited. The same
+/// declaration in a file that parses leaves the ungated owner its credit.
+#[test]
+fn an_unparseable_declaring_file_withholds_the_credit() -> Result<(), String> {
+    let items = "pub fn ready() -> i32 {\n    2\n}";
+    let readable = [
+        ("src/other.rs", "mod/* gap */real;\n"),
+        ("src/real.rs", "pub fn real() {}\n"),
+    ];
+    let finding = tail_finding_with(items, 2, &readable)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(finding.ripr.propagate.state, StageState::Yes, "{finding:?}");
+    let unreadable = [
+        ("src/other.rs", "mod/* gap */real;\nfn broken( {\n"),
+        ("src/real.rs", "pub fn real() {}\n"),
+    ];
+    let finding = tail_finding_with(items, 2, &unreadable)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(
+        finding.ripr.propagate.state,
+        StageState::Unknown,
+        "{finding:?}"
+    );
+    assert!(
+        finding.ripr.propagate.summary.contains("cfg_gated_owner"),
+        "{finding:?}"
+    );
+    Ok(())
 }

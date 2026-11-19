@@ -377,8 +377,9 @@ fn module_chain_names(file: &Path) -> BTreeSet<String> {
 /// against the declaring file's directory, case-insensitively), any file
 /// under that file's directory except a default crate root (`src/lib.rs`,
 /// `src/main.rs`), and any file whose path spells the declaration's name.
-/// A target that does not read as a literal on an out-of-line declaration
-/// (an inline module's `#[path]`, a non-literal value) reaches every owner
+/// A target that does not read as a literal on a top-level out-of-line
+/// declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+/// an inline module, a non-literal value) reaches every owner
 /// (#15104). Gates that live outside a `mod` declaration
 /// (a `cfg` on `include!`, on a `pub use` re-export, or a `mod` emitted by
 /// `macro_rules!`) are not read here; see #14952.
@@ -551,6 +552,19 @@ impl ModuleDeclarations {
                 self.retarget_names.insert(unraw(name.text()).to_string());
             }
             None => self.retarget_opaque = true,
+        }
+        // Inside an inline `mod outer { .. }` the target resolves under the
+        // inline modules' directories (and a non-mod-rs file's stem), which
+        // is not read here.
+        let nested = module
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .filter_map(ast::Module::cast)
+            .any(|ancestor| ancestor.item_list().is_some());
+        if nested {
+            self.retarget_opaque = true;
+            return;
         }
         let mut named = false;
         for attr in ast::HasAttrs::attrs(module) {
@@ -1043,6 +1057,18 @@ mod tests {
             assert!(
                 swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "src/sub/f.rs", touched)?,
                 "a child the target may declare (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(not(test))]\nmod outer {\n    #[path = \"sub/real.rs\"]\n    mod x;\n}\n",
+                    "src/outer/sub/real.rs",
+                    touched
+                )?,
+                "a #[path] nested in an inline module (touched {touched})"
+            );
+            assert!(
+                !swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "other/f.rs", touched)?,
+                "a file outside the target's directory (touched {touched})"
             );
         }
         Ok(())

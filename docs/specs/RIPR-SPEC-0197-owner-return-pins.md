@@ -1576,8 +1576,9 @@ directory (case-insensitively, with a backslash read as a separator), any file u
 that file's directory, where its own `mod` declarations resolve, except a
 default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
 can move or compile out), and any file whose path spells the declaration's
-name. A target that is not a literal on an out-of-line declaration (an
-inline module's `#[path]`, a non-literal value) gates every owner. Limit:
+name. A target that is not a literal on a top-level out-of-line
+declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+an inline module, a non-literal value) gates every owner. Limit:
 the declarations inside a target file are not followed, so every file under
 its directory is gated.
 
