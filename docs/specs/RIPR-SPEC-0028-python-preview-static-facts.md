@@ -2198,7 +2198,11 @@ integer equality assertion on that local also qualifies when test facts show
 no implicit setup, substitution, opaque module or edited-test uncertainty.
 Qualified calls must resolve to the owner through test imports. The changed
 condition must be the comparison alone: a further `and` or `or` operand can run
-on different iterations after the edit, so the selector is not closed. The
+on different iterations after the edit, so the selector is not closed. The one
+exception is the `None`-seeded selector, `best = None` followed by
+`for x in xs:` and `if best is None or x > best:`, whose guard has no effect and
+only holds before the first element is taken; the guard is accepted only with
+that seed and loop. The
 result-alias form reads the test's own assignment; an earlier test's call
 assigned to a local of the same name does not stand in for it. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their
