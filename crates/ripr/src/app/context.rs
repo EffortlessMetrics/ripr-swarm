@@ -239,9 +239,23 @@ pub(crate) fn collect_context_from_artifact(
                 ),
             ))
         }
-        FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
-            super::explain::no_finding_matched(selector, "ripr check --json", None),
-        )),
+        FindingSelection::NoMatch => {
+            let mut message =
+                super::explain::no_finding_matched(selector, "ripr check --json", None);
+            // #14384: same location hint as `explain --from`.
+            if let Some(hint) = super::selector::location_miss_hint(
+                &findings,
+                &input.root,
+                selector,
+                // #14440: the artifact records findings, not whether
+                // its run was complete.
+                super::selector::ScopeCompleteness::Unrecorded,
+            ) {
+                message.push('.');
+                message.push_str(&hint);
+            }
+            Err(crate::core_error::CoreError::selector_miss(message))
+        }
     }
 }
 

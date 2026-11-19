@@ -208,8 +208,11 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
+fills a boundary input when the changed comparison names one, builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
@@ -476,7 +479,11 @@ Options:
                        close (every started test ends, every announced suite
                        finishes), then records the normalized result with the
                        attempt as a caller-reported claim.
-                       Optional; it does not gate finish yet. Anything else is
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout. A finish that
                        stops after the receipt evaluation began shows as

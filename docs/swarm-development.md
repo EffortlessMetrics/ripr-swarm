@@ -61,11 +61,14 @@ make-work campaign.
 
 Every normal swarm slice should finish the same way:
 
-- open a same-repo PR as Draft with one clear purpose, and mark it Ready once
-  the head is final, then apply `merge-ready` (only that label starts
-  `Ripr Rust Small Result`; a push after the request needs it re-applied, see
-  `docs/CI.md`);
-- wait for `Ripr Rust Small Result` and any touched-surface checks;
+- open a same-repo PR as Draft with one clear purpose, then finish focused proof
+  and substantive review before marking the composed head Ready; Ready requests
+  no Actions run;
+- request PR qualification through `merge-ready`, inspect the results, then use
+  the [native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
+  for the selected candidate and inspect its required exact-subject results.
+  Auxiliary event retirement does not install cheap H admission or make the
+  existing producer unavailable;
 - merge only when clean and current;
 - remove generated residue, isolated targets, and stale local branches or
   worktrees that are no longer needed.

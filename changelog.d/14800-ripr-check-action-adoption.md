@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The `ripr-check` composite Action now works with `actions/checkout`'s default shallow checkout. On `pull_request` it deepens the history until HEAD meets the base branch. It also restores ripr's analysis cache (`cache` input, on by default), writes the report to the job summary, and sets `exit-code` and `report` outputs. A check that could not complete fails with one error annotation that names the exit meaning and ripr's reason. docs/CI.md shows a complete copy-paste workflow and states fork and Dependabot behavior (#14800).

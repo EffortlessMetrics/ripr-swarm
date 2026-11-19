@@ -22,6 +22,16 @@ suppression handling, and conservative defaults.
 The SARIF layer is a renderer over existing analyzer evidence. It must not
 classify findings or seams itself.
 
+The generated GitHub workflow (`ripr init --ci github`) uploads one of the two
+per event, so code scanning shows one alert per changed line (#14300): a pull
+request renders and uploads only the diff-scoped `ripr-findings` category,
+and a manual run renders and uploads only the repo-scoped `ripr-seams`
+category. The job summary names the file that is absent by design on that
+event and reports the expected one as `missing or skipped` when it did not
+render. `ci_packet.rs::repo_seam_sarif_renders_on_manual_runs_only`,
+`manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif` and the empty-root
+summary test pin this split.
+
 ### Cross-surface conformance (#12925)
 
 The same producer finding retains its class, canonical identity and contract
@@ -97,6 +107,16 @@ The SARIF layer should:
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
+  `ripr check --format github` folds by the same key (class, file and line
+  among the annotated findings, the file as the rendered `file=` path) into
+  one annotation. When every finding in the group may fold, it keeps the
+  finding SARIF keeps; it adds `Also covers N more probe(s) of this change
+  on this line.` before its canonical gap id, then `Also canonical gap: <id>`
+  for each different gap id a folded probe carries. A finding with its own
+  repair card or preview actionability never folds, so its guidance stays
+  on its own annotation; each folded probe's next step stays in
+  `ripr check --format json`. A printed denominator notice counts the folded
+  findings (#14302).
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the leading results in both diff-scoped and repo-scoped runs, always

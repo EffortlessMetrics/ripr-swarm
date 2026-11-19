@@ -1,0 +1,7 @@
+# Registers the escape-free string-literal atom of the bool-owner
+# short-circuit tail pin (#15030) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::reads_plain_string_equality_chains_and_refuses_the_rest",
+]

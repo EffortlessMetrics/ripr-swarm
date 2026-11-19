@@ -42,6 +42,14 @@
     "onLanguage:javascriptreact",
     "onLanguage:python",
     "workspaceContains:Cargo.toml",
+    "workspaceContains:ripr.toml",
+    "workspaceContains:pyproject.toml",
+    "workspaceContains:setup.py",
+    "workspaceContains:setup.cfg",
+    "workspaceContains:requirements.txt",
+    "workspaceContains:pytest.ini",
+    "workspaceContains:tox.ini",
+    "workspaceContains:noxfile.py",
     "workspaceContains:tsconfig.json",
     "workspaceContains:jsconfig.json",
     "onCommand:ripr.restartServer",
@@ -87,7 +95,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.19.2",
-    "@types/vscode": "~1.90.0",
+    "@types/vscode": "~1.91.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
     "mocha": "^10.8.2",
@@ -132,7 +140,7 @@
         "ripr.server.path": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a ripr executable. Overrides bundled, downloaded, and PATH server resolution.",
+          "description": "Absolute path to a ripr executable; a leading ~ means your home directory. Overrides bundled, downloaded, and PATH server resolution.",
           "scope": "resource"
         },
         "ripr.server.args": {
@@ -219,13 +227,13 @@
           "type": "integer",
           "minimum": 1000,
           "default": 30000,
-          "description": "Longest time, in milliseconds, ripr waits for each git command while refreshing. A slower git command is stopped and ripr shows a limited result that says git timed out; run ripr: Refresh Diagnostics to try again."
+          "description": "Longest time, in milliseconds, ripr waits for each git command while refreshing. A slower git command is stopped and ripr shows a limited result that says git timed out; run ripr: Refresh Full Analysis to try again."
         },
         "ripr.refreshDeadlineMs": {
           "type": "integer",
           "minimum": 1000,
           "default": 600000,
-          "description": "Longest time, in milliseconds, one analysis refresh may run before ripr stops it. A stopped refresh shows no new results and reports 'analysis deadline exceeded'; save a file or run ripr: Refresh Diagnostics to start a fresh attempt."
+          "description": "Longest time, in milliseconds, one analysis refresh may run before ripr stops it. A stopped refresh shows no new results and reports 'analysis deadline exceeded'; save a file or run ripr: Refresh Full Analysis to start a fresh attempt."
         },
         "ripr.trace.server": {
           "type": "string",
@@ -517,7 +525,7 @@
       {
         "id": "ripr.getStarted",
         "title": "ripr: Get Started",
-        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, diagnose, act.",
+        "description": "First-run guide for ripr's static mutation-exposure diagnostics: trust, open, check setup, read, act.",
         "steps": [
           {
             "id": "ripr.trustWorkspace",
@@ -539,6 +547,17 @@
             },
             "completionEvents": [
               "onContext:resourceLangId == rust"
+            ]
+          },
+          {
+            "id": "ripr.checkSetup",
+            "title": "Check that the server started",
+            "description": "See which ripr server is running, or why none was found.\n[Diagnose Setup](command:ripr.diagnoseSetup)",
+            "media": {
+              "markdown": "walkthrough/setup.md"
+            },
+            "completionEvents": [
+              "onCommand:ripr.diagnoseSetup"
             ]
           },
           {

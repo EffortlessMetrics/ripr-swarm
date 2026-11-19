@@ -20,7 +20,8 @@
 //! the `github` renderer treats as not clean, through the same shared helpers
 //! (`unanalyzed_state_notes`, `complete_outcome_limitation_message`): an
 //! incomplete or refused analysis outcome, advisory limitations on a complete
-//! one, uncommitted/untracked/ignored working-tree sources, no analysis scope,
+//! one (not the requested-scope note for files the operator left out with
+//! `--path`/`--exclude` or a configured pattern, #13894), uncommitted/untracked/ignored working-tree sources, no analysis scope,
 //! and preview-language files not analyzed. Zero bytes therefore means the run
 //! was fully analyzed, scoped, limitation-free and had no listed gap; paths and
 //! expressions are only whitespace-collapsed and control-escaped, so a field
@@ -78,7 +79,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 limitation_suffix(outcome)
             ));
         }
-        Some(outcome) if !outcome.limitations.is_empty() => {
+        Some(outcome) if outcome.has_advisory_limitations() => {
             out.push_str(&comment_line(
                 &crate::output::github::complete_outcome_limitation_message(outcome),
             ));
@@ -149,7 +150,7 @@ fn omitted_findings_comment(
             .map(|opt_out| opt_out.reason.as_str())
             .unwrap_or_default();
         parts.push(format!(
-            "{withheld} withheld by owner opt-out ({reason}: the changed function carries #[mutants::skip])"
+            "{withheld} withheld by owner opt-out ({reason}: the changed function or an enclosing scope carries #[mutants::skip])"
         ));
     }
     if not_current > 0 {
@@ -477,7 +478,7 @@ mod tests {
     /// finding wins.
     #[test]
     fn owner_opt_out_findings_are_not_listed_and_are_disclosed() {
-        use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason};
+        use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
         let gap_lines = |rendered: &str| -> Vec<String> {
             rendered
                 .lines()
@@ -508,6 +509,8 @@ mod tests {
             finding_id: withheld_id.clone(),
             owner: "limit".to_string(),
             reason: OwnerOptOutReason::MutantsSkip,
+            scope: OwnerOptOutScope::Fn,
+            scope_label: String::new(),
         }];
         let rendered = render_with_config(&out, &RiprConfig::default());
         let listed = gap_lines(&rendered);
@@ -518,7 +521,7 @@ mod tests {
         assert_eq!(listed.len() + 1, baseline.len(), "{rendered}");
         assert!(
             rendered.starts_with(
-                "# ripr: 1 finding(s) not listed: 1 withheld by owner opt-out (owner_mutants_skip: the changed function carries #[mutants::skip])."
+                "# ripr: 1 finding(s) not listed: 1 withheld by owner opt-out (owner_mutants_skip: the changed function or an enclosing scope carries #[mutants::skip])."
             ),
             "{rendered}"
         );

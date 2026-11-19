@@ -59,7 +59,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/diff.patch --mode fast probe:src_nr.py:python_preview:852b3ff0
   ripr context --root <cwd>/fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/diff.patch --mode fast --at probe:src_nr.py:python_preview:852b3ff0
 
-
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
   establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
   related test(s). This is not a coverage assessment. A test may already exercise these changes

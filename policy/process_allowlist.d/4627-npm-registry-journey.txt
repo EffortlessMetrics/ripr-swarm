@@ -1,0 +1,1 @@
+crates/ripr/tests/npm_consumer.rs|Command::new|1|release/distribution|#4627: Runs the Node built-in npm journey controls with null stdin against the candidate binary; npm talks only to the controls' own loopback registry and the outer Nextest deadline bounds the test.

@@ -531,11 +531,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
                 .map(|seam| seam.seam_grip_class.as_str())
                 .unwrap_or("unmatched");
             out.push_str(&format!(
-                "| `{}` | {} | {} | `{}` | `{}` | {} |\n",
-                md_cell(mutant),
+                "| {} | {} | {} | {} | `{}` | {} |\n",
+                md_code(mutant),
                 md_cell(&location),
                 md_cell(&record.runtime.runtime_outcome),
-                md_cell(static_class),
+                md_code(static_class),
                 record.confidence_label,
                 md_cell(&record.reason)
             ));
@@ -556,9 +556,9 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
         for record in &report.static_only_findings {
             let location = format!("{}:{}", record.seam.file, record.seam.line);
             out.push_str(&format!(
-                "| `{}` | `{}` | {} | `{}` | {} |\n",
-                md_cell(&record.seam.seam_id),
-                md_cell(&record.seam.seam_grip_class),
+                "| {} | {} | {} | `{}` | {} |\n",
+                md_code(&record.seam.seam_id),
+                md_code(&record.seam.seam_grip_class),
                 md_cell(&location),
                 record.confidence_label,
                 md_cell(&record.reason)
@@ -589,11 +589,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
         out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
         for record in &report.matched {
             out.push_str(&format!(
-                "| `{}` | `{}` | `{}`/`{}` | {} | {} | `{}` | `{}` |\n",
-                md_cell(&record.seam.seam_id),
-                md_cell(&record.seam.seam_grip_class),
-                md_cell(&record.seam.oracle_kind),
-                md_cell(&record.seam.oracle_strength),
+                "| {} | {} | {}/{} | {} | {} | `{}` | `{}` |\n",
+                md_code(&record.seam.seam_id),
+                md_code(&record.seam.seam_grip_class),
+                md_code(&record.seam.oracle_kind),
+                md_code(&record.seam.oracle_strength),
                 md_cell(&record.mutation.mutation_operator),
                 md_cell(&record.mutation.runtime_outcome),
                 record.join_method,
@@ -662,10 +662,10 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
             .take(STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT)
         {
             out.push_str(&format!(
-                "| `{}` | `{}` | `{}` | {}:{} | `no_runtime_data` |\n",
-                md_cell(&seam.seam_id),
-                md_cell(&seam.seam_kind),
-                md_cell(&seam.seam_grip_class),
+                "| {} | {} | {} | {}:{} | `no_runtime_data` |\n",
+                md_code(&seam.seam_id),
+                md_code(&seam.seam_kind),
+                md_code(&seam.seam_grip_class),
                 md_cell(&seam.file),
                 seam.line
             ));
@@ -1408,16 +1408,16 @@ fn push_ambiguous_md(
         let candidates = record
             .candidates
             .iter()
-            .map(|candidate| format!("`{}`", candidate.seam_id))
+            .map(|candidate| md_code(&candidate.seam_id))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
-            "| `{}` | {} | {} | `{}` | {} |\n",
-            md_cell(mutant),
+            "| {} | {} | {} | `{}` | {} |\n",
+            md_code(mutant),
             md_cell(&location),
             md_cell(&record.mutation.runtime_outcome),
             "ambiguous_runtime_join",
-            md_cell(&candidates)
+            candidates
         ));
     }
 }
@@ -1761,8 +1761,21 @@ fn normalize_report_path(path: &str) -> String {
         .to_string()
 }
 
+/// Imported text for a table cell or list item. cargo-mutants names, test
+/// commands and paths are supplied input, so they go through the shared
+/// Markdown owner: `<` cannot open raw HTML (a generic such as
+/// `Option<Vec<String>>` would otherwise lose its type arguments when
+/// rendered), `@name` cannot notify anyone, a line ending cannot end the row
+/// and `|` cannot split the cell.
 fn md_cell(value: &str) -> String {
-    value.replace('|', "\\|").replace(['\r', '\n'], " ")
+    crate::output::markdown::table_cell_text(value)
+}
+
+/// Imported identifier shown as an inline code span in a table cell. The
+/// fence outgrows any backtick run in the value, so an id containing a
+/// backtick cannot close the span early.
+fn md_code(value: &str) -> String {
+    crate::output::markdown::table_code_span(value)
 }
 
 #[cfg(test)]
@@ -3872,5 +3885,112 @@ mod tests {
             duration: None,
             test_command: None,
         }
+    }
+
+    /// Text of every table cell in `markdown` as GitHub would show it, one
+    /// `Vec` per row, read back through a CommonMark parser rather than by
+    /// matching the emitted bytes. Raw HTML found anywhere is an error.
+    fn rendered_table_rows(markdown: &str) -> Result<Vec<Vec<String>>, String> {
+        use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+        let mut rows = Vec::new();
+        let mut row: Option<Vec<String>> = None;
+        let mut cell: Option<String> = None;
+        for event in Parser::new_ext(markdown, Options::ENABLE_TABLES) {
+            match event {
+                Event::Start(Tag::TableHead | Tag::TableRow) => row = Some(Vec::new()),
+                Event::End(TagEnd::TableHead | TagEnd::TableRow) => {
+                    rows.push(row.take().ok_or("row end without start")?);
+                }
+                Event::Start(Tag::TableCell) => cell = Some(String::new()),
+                Event::End(TagEnd::TableCell) => {
+                    let text = cell.take().ok_or("cell end without start")?;
+                    row.as_mut().ok_or("cell outside a row")?.push(text);
+                }
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    return Err(format!("raw HTML reached the report: {html}"));
+                }
+                Event::Text(text) | Event::Code(text) => {
+                    if let Some(cell) = cell.as_mut() {
+                        cell.push_str(&text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(rows)
+    }
+
+    #[test]
+    fn markdown_tables_show_imported_text_literally() -> Result<(), String> {
+        let exposure = r#"{"seams":[
+            {"seam_id":"seam-a","kind":"predicate_boundary","file":"src/lib.rs","line":2,"grip_class":"ungripped"},
+            {"seam_id":"seam-b","kind":"predicate_boundary","file":"src/lib.rs","line":9,"grip_class":"ungripped"},
+            {"seam_id":"seam-c","kind":"predicate_boundary","file":"src/lib.rs","line":9,"grip_class":"ungripped"}
+        ]}"#;
+        let generic = "replace names -> Option<Vec<String>> with None";
+        let hostile = "replace <T as Into<U>>::into with a|b @octocat <script>x</script>";
+        let command = "cargo test -- 'a|b' <filter>";
+        let mutants = serde_json::json!({"mutants":[
+            {"id":"m1","file":"src/lib.rs","line":2,"operator":generic,"outcome":"missed"},
+            {"id":"m|2","file":"src/absent.rs","line":7,"operator":hostile,"outcome":"missed","test_command":command},
+            {"id":"m`3`","file":"src/lib.rs","line":9,"operator":"replace > with <","outcome":"missed"}
+        ]})
+        .to_string();
+        let report = mutation_calibration_report_from_json(exposure, &mutants)?;
+        assert_eq!(report.matched.len(), 1, "fixture: one file/line match");
+        assert_eq!(report.unmatched_mutants.len(), 1, "fixture: one unmatched");
+        assert_eq!(
+            report.ambiguous_file_line.len(),
+            1,
+            "fixture: one ambiguous"
+        );
+
+        let markdown = render_mutation_calibration_md(&report);
+        let rows = rendered_table_rows(&markdown)?;
+        let row_with = |needle: &str| -> Result<&Vec<String>, String> {
+            rows.iter()
+                .find(|row| row.iter().any(|cell| cell == needle))
+                .ok_or_else(|| format!("no rendered cell equals {needle:?}:\n{markdown}"))
+        };
+
+        // Matched table: the operator keeps its type arguments.
+        let matched = row_with(generic)?;
+        assert_eq!(
+            matched.len(),
+            7,
+            "matched row keeps seven cells: {matched:?}"
+        );
+        assert_eq!(matched[0], "seam-a");
+
+        // Unmatched table: pipes stay in their cell, HTML shows as text.
+        let unmatched = row_with(command)?;
+        assert_eq!(
+            unmatched.len(),
+            5,
+            "unmatched row keeps five cells: {unmatched:?}"
+        );
+        assert_eq!(unmatched[0], "src/absent.rs:7");
+        // The mention is shown but broken by a word joiner, so nobody is notified.
+        assert_eq!(
+            unmatched[1],
+            hostile.replace("@octocat", "@\u{2060}octocat")
+        );
+        assert!(!markdown.contains("@octocat"), "live mention:\n{markdown}");
+
+        // Ids with backticks or a pipe stay one whole code-span cell.
+        let runtime_only = row_with("m|2")?;
+        assert_eq!(
+            runtime_only.len(),
+            6,
+            "runtime-signal row: {runtime_only:?}"
+        );
+        let ambiguous = row_with("m`3`")?;
+        assert_eq!(
+            ambiguous.len(),
+            5,
+            "ambiguous row keeps five cells: {ambiguous:?}"
+        );
+        assert_eq!(ambiguous[4], "seam-b, seam-c");
+        Ok(())
     }
 }
