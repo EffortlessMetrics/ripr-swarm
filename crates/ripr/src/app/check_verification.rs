@@ -9,7 +9,7 @@
 
 use super::CheckOutput;
 use crate::analysis_outcome::AnalysisOutcomeKind;
-use crate::domain::{ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTestMiss};
+use crate::domain::{ExposureClass, Finding, LanguageStatus, OracleStrength};
 
 /// Why a check run does not establish completion, in record order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,7 +95,7 @@ impl CheckVerification {
 ///   reach ([`crate::domain::RelationReason::establishes_reach`]) and that
 ///   either is a contributing row of `strong` or `medium` strength here, or
 ///   is an examined-only row (ripr ran its assertions against this change
-///   and matched none, `assertion_not_observing`) of a test that is a
+///   and matched none) of a test that is a
 ///   contributing, reaching `strong` / `medium` row on another finding of
 ///   the same owner function in the run. An examined-only row alone proves
 ///   nothing: its oracle text is just the test's first assertion, which may
@@ -138,8 +138,10 @@ fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> 
                 && if test.is_contributing() {
                     pins_exactly(test)
                 } else {
-                    test.miss == Some(RelatedTestMiss::AssertionNotObserving)
-                        && finding.probe.owner.as_ref().is_some_and(|owner| {
+                    // Row eligibility reads the role, never `miss`
+                    // (the role-test control 7): an examined-only row
+                    // counts only through a same-owner exact voucher.
+                    finding.probe.owner.as_ref().is_some_and(|owner| {
                             exact_tests.contains(&(
                                 owner.0.as_str(),
                                 test.file.as_path(),

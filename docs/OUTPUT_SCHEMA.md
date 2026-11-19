@@ -1155,8 +1155,9 @@ verify=complete|outcome=O|findings=N|exposed=N
   and with positive evidence: some related test whose relation establishes
   reach (direct or helper owner call, re-export chain, or assertion-target
   affinity for a non-function owner) is either contributing with `strong` or
-  `medium` strength, or examined-only with `miss=assertion_not_observing`
-  and is a contributing, reaching `strong`/`medium` row on another finding
+  `medium` strength, or is an examined-only row (selected by row role, never
+  by `miss`) of a test that is a contributing, reaching `strong`/`medium` row
+  on another finding
   of the same owner function in the run (a test that pins one function
   never vouches for an unasserted call to another). The vouching test is
   matched by its full identity (file, name and start line), and the
