@@ -160,6 +160,16 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+Both carriers screen later lines the same way, so a residual written as plain
+narration (`Residual: the hosted lane on this head has not run.`) admits under
+either, while a retraction word used as narration (`the withdrawn attribution`)
+refuses under either. A later refused body from the same login supersedes that
+login's earlier attesting review even at an unchanged head. A refusal therefore
+prints `source review refusal detail:` lines after the generic message, naming
+the review, the refusing line and the phrase it matched (or the short or wrong
+VERDICT SHA), and saying when that review superseded an earlier attesting review
+at the same head. The details only explain the decision; they never change it
+(#14929).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description

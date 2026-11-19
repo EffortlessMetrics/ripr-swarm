@@ -831,6 +831,140 @@ def _latest_decisive(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _latest_by_login(decisive)
 
 
+def _state(review: dict[str, Any]) -> str:
+    return str(review.get("state") or "")
+
+
+def _at_head(review: dict[str, Any], head: str) -> bool:
+    return str(review.get("commit_id") or "") == head
+
+
+def _body(review: dict[str, Any]) -> str:
+    return str(review.get("body") or "")
+
+
+def _neutral_marker_body(body: str) -> bool:
+    """Whether a body is a mis-formatted marker that says nothing else (#14728).
+
+    A mis-formatted marker is inert only when the body says nothing else. Any other
+    prose after it keeps main's reading, so a retraction ("REVIEW_READY <sha>" then
+    "The evidence is weak.") still supersedes and vetoes instead of falling through
+    to the description carrier.
+    """
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    if any(line.strip() for line in fenced):
+        return False
+    substantive = [line.strip() for line in visible if line.strip()]
+    if not substantive or not marker_line_neutral(substantive[0]):
+        return False
+    remainder = substantive[1:]
+    if not remainder:
+        return True
+    return len(remainder) == 1 and (
+        remainder[0].lower() in CHATTER_BODIES
+        or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
+    )
+
+
+def _effective_statements(
+    reviews: list[dict[str, Any]], head: str
+) -> list[dict[str, Any]]:
+    """Trusted current-head COMMENT bodies that speak for their login.
+
+    #14728: a body supersedes the login's earlier statement unless it is inert.
+    Recognised chatter, an empty body and a mis-formatted marker that
+    ``marker_line_neutral`` scores neutral add nothing, so they must not remove a
+    marker either. Any other body still supersedes, fail-closed.
+    """
+    return [
+        r for r in reviews
+        if _at_head(r, head)
+        and _trusted(r)
+        and _state(r) == "COMMENTED"
+        and not comment_body_chatter(_body(r))
+        and not _neutral_marker_body(_body(r))
+    ]
+
+
+def _withdrawn_by_later_native(
+    statement: dict[str, Any], reviews: list[dict[str, Any]]
+) -> bool:
+    """#14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
+    from the same login supersedes its earlier statement; a dismissed approval must
+    not silently restore the statement it replaced."""
+    login = _review_login(statement)
+    return any(
+        _review_login(review) == login
+        and _state(review) in SUPERSEDING_STATES
+        and _order(review) > _order(statement)
+        for review in reviews
+    )
+
+
+def _comment_attests(review: dict[str, Any], head: str) -> bool:
+    """Whether a COMMENT review's body is a positive carrier for ``head``."""
+    body = _body(review)
+    return comment_body_ready(body) or comment_body_verdict_ready(body, head)
+
+
+def _cleared_by_later_positive(
+    negative: dict[str, Any], reviews: list[dict[str, Any]], head: str
+) -> bool:
+    """A login vetoes if it has a negative statement at the head that no later
+    positive statement from that same login clears. A blocker never clears a
+    negative; a blocker alone, with no prior negative, does not veto."""
+    login = _review_login(negative)
+    return any(
+        _review_login(review) == login
+        and _order(review) > _order(negative)
+        and not _withdrawn_by_later_native(review, reviews)
+        and (
+            (
+                # #14728 finding: a clearing COMMENT must satisfy the same head
+                # and trust guard as a clearing APPROVED review. A body posted at
+                # an earlier head, or by an untrusted association, cannot
+                # withdraw a statement made at the admitted head.
+                _state(review) == "COMMENTED"
+                and _at_head(review, head)
+                and _trusted(review)
+                and _comment_attests(review, head)
+            )
+            or (
+                _state(review) == "APPROVED"
+                and _at_head(review, head)
+                and _trusted(review)
+            )
+        )
+        for review in reviews
+    )
+
+
+def _negative_statements(
+    reviews: list[dict[str, Any]], head: str
+) -> list[dict[str, Any]]:
+    """Trusted current-head COMMENT reviews that state a negative."""
+    return [
+        r for r in reviews
+        if _at_head(r, head)
+        and _trusted(r)
+        and _state(r) == "COMMENTED"
+        and (
+            comment_body_verdict_negative(_body(r))
+            or (
+                comment_body_negative(_body(r))
+                # A verdict-carrier body already screens its own later lines for
+                # disposition statements and blockers, so the marker screening
+                # must not veto it for also naming a positive marker later in the
+                # same body.
+                and not comment_body_verdict_ready(_body(r), head)
+            )
+        )
+    ]
+
+
 def reviews_allow_source_attestation(
     reviews: list[dict[str, Any]],
     *,
@@ -840,129 +974,219 @@ def reviews_allow_source_attestation(
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
-    if any(
-        str(r.get("state") or "") != "PENDING" and not r.get("submitted_at")
-        for r in reviews
-    ):
+    if any(_state(r) != "PENDING" and not r.get("submitted_at") for r in reviews):
         return False  # cannot be ordered, so it cannot be proven superseded
     native = _latest_decisive(reviews)
-    if any(str(r.get("state") or "") == "CHANGES_REQUESTED" for r in native):
+    if any(_state(r) == "CHANGES_REQUESTED" for r in native):
         return False
     approvals = [
         r for r in native
-        if str(r.get("commit_id") or "") == head
-        and str(r.get("state") or "") == "APPROVED"
-        and _trusted(r)
+        if _at_head(r, head) and _state(r) == "APPROVED" and _trusted(r)
     ]
-    # #14728: a body supersedes the login's earlier statement unless it is
-    # inert. Recognised chatter, an empty body and a mis-formatted marker that
-    # ``marker_line_neutral`` scores neutral add nothing, so they must not
-    # remove a marker either. Any other body still supersedes, fail-closed.
-    def neutral_marker_body(body: str) -> bool:
-        # A mis-formatted marker is inert only when the body says nothing else.
-        # Any other prose after it keeps main's reading, so a retraction
-        # ("REVIEW_READY <sha>" then "The evidence is weak.") still supersedes
-        # and vetoes instead of falling through to the description carrier.
-        parts = split_body(body)
-        if parts is None:
-            return False
-        visible, fenced = parts
-        if any(line.strip() for line in fenced):
-            return False
-        substantive = [line.strip() for line in visible if line.strip()]
-        if not substantive or not marker_line_neutral(substantive[0]):
-            return False
-        remainder = substantive[1:]
-        if not remainder:
-            return True
-        return len(remainder) == 1 and (
-            remainder[0].lower() in CHATTER_BODIES
-            or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
-        )
-
-    effective = [
-        r for r in reviews
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-        and not comment_body_chatter(str(r.get("body") or ""))
-        and not neutral_marker_body(str(r.get("body") or ""))
-    ]
-    # #14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
-    # from the same login supersedes its earlier statement; a dismissed approval
-    # must not silently restore the statement it replaced.
-    def withdrawn_by_later_native(statement: dict[str, Any]) -> bool:
-        login = _review_login(statement)
-        return any(
-            _review_login(review) == login
-            and str(review.get("state") or "") in SUPERSEDING_STATES
-            and _order(review) > _order(statement)
-            for review in reviews
-        )
-
-    # A login vetoes if it has a negative statement at the head that no later
-    # positive statement from that same login clears. A blocker never clears a
-    # negative; a blocker alone, with no prior negative, does not veto.
-    def cleared_by_later_positive(negative: dict[str, Any]) -> bool:
-        login = _review_login(negative)
-        return any(
-            _review_login(review) == login
-            and _order(review) > _order(negative)
-            and not withdrawn_by_later_native(review)
-            and (
-                (
-                    # #14728 finding: a clearing COMMENT must satisfy the same
-                    # head and trust guard as a clearing APPROVED review. A body
-                    # posted at an earlier head, or by an untrusted association,
-                    # cannot withdraw a statement made at the admitted head.
-                    str(review.get("state") or "") == "COMMENTED"
-                    and str(review.get("commit_id") or "") == head
-                    and _trusted(review)
-                    and (
-                        comment_body_ready(str(review.get("body") or ""))
-                        or comment_body_verdict_ready(
-                            str(review.get("body") or ""), head
-                        )
-                    )
-                )
-                or (
-                    str(review.get("state") or "") == "APPROVED"
-                    and str(review.get("commit_id") or "") == head
-                    and _trusted(review)
-                )
-            )
-            for review in reviews
-        )
-
-    negatives = [
-        r for r in reviews
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-        and (
-            comment_body_verdict_negative(str(r.get("body") or ""))
-            or (
-                comment_body_negative(str(r.get("body") or ""))
-                # A verdict-carrier body already screens its own later lines
-                # for disposition statements and blockers, so the marker
-                # screening must not veto it for also naming a positive
-                # marker later in the same body.
-                and not comment_body_verdict_ready(str(r.get("body") or ""), head)
-            )
-        )
-    ]
-    if any(not cleared_by_later_positive(r) for r in negatives):
+    negatives = _negative_statements(reviews, head)
+    if any(not _cleared_by_later_positive(r, reviews, head) for r in negatives):
         return False
     if approvals:
         return True
     if any(
-        comment_body_ready(str(r.get("body") or ""))
-        or comment_body_verdict_ready(str(r.get("body") or ""), head)
-        for r in _latest_by_login(effective)
-        if not withdrawn_by_later_native(r)
+        _comment_attests(r, head)
+        for r in _latest_by_login(_effective_statements(reviews, head))
+        if not _withdrawn_by_later_native(r, reviews)
     ):
         return True
     return pull_allows_source_attestation(pull, head=head)
+
+
+# #14929: a refusal used to print one generic line, so a carrier that a later
+# line of its own body refused (or a later same-login body that superseded an
+# attesting review at an unchanged head) read exactly like "no review at this
+# head". These helpers only explain a refusal that
+# ``reviews_allow_source_attestation`` already reached; they never decide one.
+DETAIL_SNIPPET_LIMIT = 160
+VERDICT_SHORT_SHA_LINE = re.compile(
+    r"^VERDICT:[ \t]+APPROVE[ \t]+(?P<sha>[0-9a-f]{7,39})(?![0-9a-f])", re.IGNORECASE
+)
+VERDICT_OPEN = re.compile(r"^VERDICT:", re.IGNORECASE)
+
+
+def _snippet(text: str) -> str:
+    """One log-safe line: control characters folded, workflow-command colons split."""
+    flat = re.sub(r"[\x00-\x1f\x7f]+", " ", text).strip().replace("::", ": :")
+    if len(flat) > DETAIL_SNIPPET_LIMIT:
+        return flat[: DETAIL_SNIPPET_LIMIT - 3] + "..."
+    return flat
+
+
+def _refusing_later_line(lines: list[str], *, verdict_carrier: bool) -> str | None:
+    """The first later line that makes the carrier refuse, with the same tests
+    ``comment_body_ready`` (marker) or ``comment_body_verdict_ready`` (verdict) apply."""
+    for line in lines[1:]:
+        if verdict_carrier:
+            if not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+                return line
+            continue
+        verdict = verdict_disposition(line)
+        if verdict is not None:
+            if not verdict:
+                return line
+        elif not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+            return line
+    return None
+
+
+def body_refusal_reason(body: str, head: str) -> str | None:
+    """Why a COMMENT body attests nothing for ``head``; ``None`` when it attests."""
+    if comment_body_ready(body) or comment_body_verdict_ready(body, head):
+        return None
+    parts = split_body(body)
+    if parts is None:
+        return "the body has an unclosed code fence or HTML comment, so it is ambiguous"
+    visible, fenced = parts
+    substantive = [line for line in visible if line.strip()]
+    if not substantive:
+        return "the body is empty"
+    first = substantive[0]
+    if VERDICT_OPEN.match(first):
+        verdict = _verdict_first_line(body)
+        if verdict is None:
+            short = VERDICT_SHORT_SHA_LINE.match(first)
+            if short is not None:
+                return (
+                    f"its VERDICT line names the short SHA {short.group('sha')}; "
+                    f"the carrier needs the full 40-hex head {head}"
+                )
+            if VERDICT_APPROVE_LINE.match(first) is not None:
+                return (
+                    "the text after the SHA on its VERDICT line conditions or "
+                    f"contradicts the approval: '{_snippet(first)}'"
+                )
+            return f"its first line is not `VERDICT: APPROVE {head}`: '{_snippet(first)}'"
+        if verdict[0] == "block":
+            return f"its first line is a VERDICT: BLOCK statement: '{_snippet(first)}'"
+        if verdict[1] != head:
+            return f"its VERDICT line names {verdict[1]}, not the head {head}"
+        lines, verdict_carrier = substantive, True
+    elif MARKER_OPEN.match(normalize_body(first)):
+        if not positive_line(first):
+            return (
+                "its marker line carries a tail outside the closed vocabulary "
+                f"(post the bare marker or `SOURCE_REVIEW_READY for head {head}`): "
+                f"'{_snippet(first)}'"
+            )
+        lines = [
+            line for line in without_verdict_table_headers(visible) if line.strip()
+        ]
+        verdict_carrier = False
+    else:
+        return (
+            "its first line is neither a readiness marker nor "
+            f"`VERDICT: APPROVE {head}`: '{_snippet(first)}'"
+        )
+    fenced_lines = fenced if verdict_carrier else without_verdict_table_headers(fenced)
+    for line in fenced_lines:
+        if STATE_TOKEN.search(line) or negation_hit(line):
+            return (
+                "a line inside a code fence states a disposition or a blocker or "
+                f"retraction phrase: '{_snippet(line)}'"
+            )
+    refusing = _refusing_later_line(lines, verdict_carrier=verdict_carrier)
+    if refusing is not None:
+        phrase = NEGATION.search(strip_negated_verdict_word(strip_negated_change(refusing)))
+        if phrase is not None and phrase.group(0).strip():
+            what = f"matches the blocker or retraction phrase '{_snippet(phrase.group(0))}'"
+        else:
+            what = "states a disposition"
+        return (
+            f"a later line of its own body {what}, which both carriers refuse even "
+            f"as narration; reword or drop it: '{_snippet(refusing)}'"
+        )
+    return "it does not carry a positive disposition for this head"
+
+
+def _describe(review: dict[str, Any]) -> str:
+    return f"{_review_login(review)}'s review at {review.get('submitted_at')}"
+
+
+def refusal_details(
+    reviews: list[dict[str, Any]],
+    *,
+    head: str,
+    pull: dict[str, Any] | None = None,
+) -> list[str]:
+    """Name what refused a head's attestation, for the log (#14929).
+
+    Diagnostic only: it reports the evidence ``reviews_allow_source_attestation``
+    reads and never changes its answer.
+    """
+    if reviews_allow_source_attestation(reviews, head=head, pull=pull):
+        return []
+    details: list[str] = []
+    unordered = [r for r in reviews if _state(r) != "PENDING" and not r.get("submitted_at")]
+    if unordered:
+        details.append(
+            f"{len(unordered)} submitted review(s) have no timestamp, so supersession "
+            "cannot be ordered"
+        )
+    for native in _latest_decisive(reviews):
+        if _state(native) == "CHANGES_REQUESTED":
+            details.append(
+                f"{_describe(native)} is a native CHANGES_REQUESTED; only a later "
+                "APPROVED or DISMISSED review from that login clears it"
+            )
+    reported: set[int] = set()
+    for negative in _negative_statements(reviews, head):
+        if _cleared_by_later_positive(negative, reviews, head):
+            continue
+        reported.add(id(negative))
+        reason = body_refusal_reason(_body(negative), head) or "it states a negative"
+        details.append(
+            f"{_describe(negative)} on this head vetoes admission: {reason}. A later "
+            f"SOURCE_REVIEW_READY, `VERDICT: APPROVE {head}` or native APPROVED review "
+            "from the same login on this head clears it"
+        )
+    effective = _effective_statements(reviews, head)
+    for latest in _latest_by_login(effective):
+        if _withdrawn_by_later_native(latest, reviews):
+            details.append(
+                f"{_describe(latest)} was withdrawn by a later native review from "
+                "the same login"
+            )
+            continue
+        if _comment_attests(latest, head) or id(latest) in reported:
+            continue
+        reason = body_refusal_reason(_body(latest), head) or "it attests nothing"
+        detail = f"{_describe(latest)} is that login's latest on this head and attests nothing: {reason}"
+        login = _review_login(latest)
+        earlier = [
+            r for r in effective
+            if _review_login(r) == login
+            and _order(r) < _order(latest)
+            and _comment_attests(r, head)
+        ]
+        if earlier:
+            detail += (
+                f". It supersedes the same login's attesting review at "
+                f"{max(earlier, key=_order).get('submitted_at')} although the head "
+                "has not changed; post a fresh plain marker review"
+            )
+        details.append(detail)
+    if not effective and not any(
+        _at_head(r, head) and _state(r) == "APPROVED" and _trusted(r) for r in reviews
+    ):
+        others = sum(1 for r in reviews if _trusted(r) and not _at_head(r, head))
+        untrusted = sum(1 for r in reviews if _at_head(r, head) and not _trusted(r))
+        detail = f"no trusted COMMENT or APPROVED review targets head {head}"
+        if others:
+            detail += f"; {others} trusted review(s) target other commits"
+        if untrusted:
+            detail += f"; {untrusted} review(s) on this head come from untrusted associations"
+        details.append(detail)
+    if not details and not pull_allows_source_attestation(pull, head=head):
+        details.append(
+            f"the description carries no `Source review: REVIEW_READY {head}` line "
+            "for this head"
+        )
+    return details
 
 
 def parse_paginated(text: str) -> list[dict[str, Any]]:
@@ -2053,6 +2277,67 @@ def self_test() -> None:
         head=head,
     )
 
+    # #14929: both carriers read residual lines the same way. A neutral residual
+    # admits under either carrier; a retraction phrase refuses under either.
+    verdict_open = f"VERDICT: APPROVE {head} — no blocking findings on this head."
+    for residual, admits in (
+        ("- Residual: the hosted lane on this head has not run.", True),
+        ("Not checked by me. No cargo build or test run.", True),
+        ("- The commit message still states the withdrawn attribution.", False),
+        ("REPAIR_REQUIRED", False),
+    ):
+        marker_body = f"SOURCE_REVIEW_READY\n\n{residual}"
+        verdict_body = f"{verdict_open}\n\n{residual}"
+        assert comment_body_ready(marker_body) is admits, residual
+        assert comment_body_verdict_ready(verdict_body, head) is admits, residual
+        assert (body_refusal_reason(marker_body, head) is None) is admits, residual
+        assert (body_refusal_reason(verdict_body, head) is None) is admits, residual
+    reason = body_refusal_reason(
+        f"{verdict_open}\n\n- The commit message still states the withdrawn attribution.",
+        head,
+    )
+    assert reason is not None and "'withdrawn'" in reason, reason
+    assert "later line of its own body" in reason, reason
+    short = body_refusal_reason(f"VERDICT: APPROVE {head[:10]} — no blocking findings.", head)
+    assert short is not None and "short SHA" in short and head in short, short
+    # A refused carrier superseding an attesting review at the same head is named.
+    superseded = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:01Z", body="SOURCE_REVIEW_READY"),
+        review(state="COMMENTED", commit_id=head, id=2,
+               submitted_at="2026-10-15T01:00:02Z",
+               body=f"VERDICT: APPROVE {head[:10]} — no blocking findings."),
+    ]
+    assert not reviews_allow_source_attestation(superseded, head=head)
+    details = refusal_details(superseded, head=head)
+    assert len(details) == 1, details
+    assert "short SHA" in details[0] and "supersedes" in details[0], details
+    assert "2026-10-15T01:00:01Z" in details[0], details
+    # A vetoing negative names its own refusing line.
+    vetoed = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:01Z",
+               body=f"{verdict_open}\n\n- The earlier timing claim is withdrawn."),
+    ]
+    assert not reviews_allow_source_attestation(vetoed, head=head)
+    details = refusal_details(vetoed, head=head)
+    assert len(details) == 1 and "vetoes admission" in details[0], details
+    assert "'withdrawn'" in details[0] and "timing claim" in details[0], details
+    # No review at the head says so, counting reviews that target other commits.
+    details = refusal_details(
+        [review(state="COMMENTED", commit_id=other, body="SOURCE_REVIEW_READY")], head=head
+    )
+    assert details == [
+        f"no trusted COMMENT or APPROVED review targets head {head}; "
+        "1 trusted review(s) target other commits"
+    ], details
+    # An attesting set produces no details, and review text cannot inject a
+    # workflow command or a line break into the log.
+    assert refusal_details(
+        [review(state="COMMENTED", commit_id=head, body="SOURCE_REVIEW_READY")], head=head
+    ) == []
+    assert _snippet("a\n::error::x\r") == "a : :error: :x"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -2125,6 +2410,11 @@ def main() -> int:
             f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",
             file=sys.stderr,
         )
+        # #14929: name the evidence that refused, so a carrier refused by its own
+        # later line, or a later body that superseded an attesting review at an
+        # unchanged head, does not read as "no review at this head".
+        for detail in refusal_details(reviews, head=args.head, pull=pull):
+            print(f"::error::source review refusal detail: {detail}", file=sys.stderr)
         return 1
     return 0
 
