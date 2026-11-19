@@ -7194,7 +7194,11 @@ impl OwnerReturnPin {
             // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
             // Err(..) }` (RIPR-SPEC-0154 example 2).
             matches_operands = operands;
-            let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
+            // #15397: an async owner's operand is `owner(..).await`, as in the
+            // `assert_eq!` forms; its bare call is a future, not its value.
+            let Some(call) =
+                self.awaited_call_shape(poll_context, &matches_operands[0], &self.name)
+            else {
                 return false;
             };
             // A pattern resolves `None` or `Some(..)` in the test's scope, so

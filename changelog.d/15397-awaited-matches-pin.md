@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust async test that pins an `async fn`'s result with `assert!(matches!(owner(..).await, Ok(8)))` now reads `exposed`, like `assert_eq!(owner(..).await, Ok(8))` and the synchronous `matches!` form. ripr read it as `weakly_exposed` with "ripr could not confirm that this assertion observes the changed behavior". A `matches!` on the un-awaited call of an async owner (its future) no longer counts as a pin ([#15397](https://github.com/EffortlessMetrics/ripr-swarm/issues/15397)).
