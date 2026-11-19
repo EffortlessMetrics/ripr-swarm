@@ -304,31 +304,37 @@ fn route_for(
             enabled: false,
             command: None,
             guidance_category: None,
-            guidance: (!report.remediation.is_empty()).then(|| report.remediation.join("; ")),
+            // The notice names the build prerequisite exactly as the other
+            // surfaces do; an explicit disable has no remediation, so none.
+            guidance: if report.remediation.is_empty() {
+                None
+            } else {
+                language.unavailable_adapter_notice()
+            },
         };
     }
     let enabled = report.effective_enabled;
-    let (guidance_category, guidance) = if enabled {
+    let remediation = (!report.remediation.is_empty()).then(|| report.remediation.join("; "));
+    let (guidance_category, guidance) =
         if matches!(language, LanguageId::TypeScript | LanguageId::JavaScript) {
             (
                 Some(TsFullRepoGuidance::CATEGORY),
-                Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+                Some(with_enable_steps(
+                    TsFullRepoGuidance::REPAIR_ROUTE,
+                    remediation,
+                )),
             )
         } else if language == LanguageId::Python {
             (
                 Some(PythonRepoExposureGuidance::CATEGORY),
-                Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
+                Some(with_enable_steps(
+                    PythonRepoExposureGuidance::REPAIR_ROUTE,
+                    remediation,
+                )),
             )
-        } else if report.remediation.is_empty() {
-            (None, None)
         } else {
-            (None, Some(report.remediation.join("; ")))
-        }
-    } else if report.remediation.is_empty() {
-        (None, None)
-    } else {
-        (None, Some(report.remediation.join("; ")))
-    };
+            (None, remediation)
+        };
     PilotLanguageRoute {
         language,
         file_count,
@@ -342,6 +348,15 @@ fn route_for(
         )),
         guidance_category,
         guidance,
+    }
+}
+
+/// Keep the stable diff-first repair route and append any enable steps, so a
+/// disabled-but-available language names both (#2961).
+fn with_enable_steps(route: &str, remediation: Option<String>) -> String {
+    match remediation {
+        Some(steps) => format!("{route} {steps}"),
+        None => route.to_string(),
     }
 }
 

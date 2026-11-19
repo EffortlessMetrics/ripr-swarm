@@ -280,7 +280,9 @@ pub(crate) fn availability_report_for_detected(
         file_count,
         configured: match enabled {
             Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
-            Some(false) => ConfiguredIntent::Disabled,
+            // Absence from a built-in default set is not an explicit disable:
+            // only a loaded `ripr.toml` can turn a language off.
+            Some(false) if !auto_defaulted => ConfiguredIntent::Disabled,
             _ => ConfiguredIntent::Unspecified,
         },
         auto_policy: if auto_enabled {

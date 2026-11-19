@@ -3170,7 +3170,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
                 AvailabilityState::ConfiguredEnabledButUnavailable
             );
             assert_unavailable(route, true);
-            assert_eq!(route.guidance, Some(report.remediation.join("; ")));
+            assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
             continue;
         }
         assert_eq!(route.command.as_deref(), Some(route_command().as_str()));
