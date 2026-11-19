@@ -320,7 +320,8 @@ fn skipped_after_baseline(after_lib: &str, after_tests: &str) -> Result<Scenario
     let identity_refused = gate["analysis_scope"]["coverage_refused"]
         .as_array()
         .is_some_and(|refused| refused.iter().any(|reason| reason == "analyzer_version"));
-    if !complete && !(identity_refused && repo.dirty_build()?) {
+    let refused_on_dirty_build = identity_refused && repo.dirty_build()?;
+    if !(complete || refused_on_dirty_build) {
         return Err(format!(
             "fixture: want a rust_workspace_complete gate scope, got {}",
             gate["analysis_scope"]

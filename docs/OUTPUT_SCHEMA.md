@@ -4187,8 +4187,9 @@ no `changed_owner` in a file holding a withheld owner, or a malformed
 disclosure reads `not_evaluated` instead, so a `cfg` twin's genuine change is
 neither resolved nor silently opted out. `baseline update --remove-resolved`
 keeps both. Removing the attribute later makes the owner's seams current
-debt again, so they read as new. The diff-scope `--check-output` ledger route
-projects no withheld Rust finding, so it has nothing to reconcile. The Markdown formats
+debt again, so they read as new. Only the repo-exposure gap-ledger route
+carries the `owner_opt_outs` disclosure; a gate decision without it applies no
+owner opt-out reading. The Markdown formats
 print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
 under the summary table (`repo-exposure-md`) or the seam total
 (`repo-seams-md`). The repo badges withhold the seams from their count and add

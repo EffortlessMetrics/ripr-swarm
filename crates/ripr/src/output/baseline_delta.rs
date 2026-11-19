@@ -1690,14 +1690,21 @@ pub(super) fn owner_opt_out_absence(
                 })
         }
         None => {
-            let path = entry.path?;
+            let Some(path) = entry.path else {
+                return opt_outs.owners.iter().next().map(|withheld| {
+                    OwnerOptOutAbsence::Ambiguous(format!(
+                        "the current analysis withholds `{withheld}` by an owner opt-out (owner_mutants_skip), and the entry records neither a changed_owner nor a path to tell whether it is that owner's; re-create the baseline with a current build"
+                    ))
+                });
+            };
+            let path = comparable_path(path);
             opt_outs
                 .owners
                 .iter()
                 .find(|withheld| {
                     withheld
                         .split_once("::")
-                        .is_some_and(|(file, _)| file == path)
+                        .is_some_and(|(file, _)| comparable_path(file) == path)
                 })
                 .map(|withheld| {
                     OwnerOptOutAbsence::Ambiguous(format!(
@@ -1706,6 +1713,17 @@ pub(super) fn owner_opt_out_absence(
                 })
         }
     }
+}
+
+/// A repo-relative path in one spelling: `\\` read as `/` and leading `./`
+/// segments dropped, so a legacy entry's path compares with an owner key.
+fn comparable_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let mut rest = path.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    rest.to_string()
 }
 
 /// Whether a baseline entry absent from current evidence may be read as
@@ -4276,9 +4294,15 @@ mod tests {
         // A legacy entry (no changed_owner) in a file holding a withheld
         // owner is not evaluated; one in another file still resolves.
         let mut baseline: Value =
-            serde_json::from_str(&owner_baseline(&[("legacy", None), ("elsewhere", None)]))
-                .map_err(|err| err.to_string())?;
+            serde_json::from_str(&owner_baseline(&[
+                ("legacy", None),
+                ("elsewhere", None),
+                ("spelled", None),
+            ]))
+            .map_err(|err| err.to_string())?;
         baseline["entries"][1]["path"] = serde_json::json!("src/h.rs");
+        // The same file spelled with `./` and a backslash still matches.
+        baseline["entries"][2]["path"] = serde_json::json!(".\\src\\g.rs");
         let baseline = baseline.to_string();
         let mut current: Value =
             serde_json::from_str(&opted_out_gate_decision(serde_json::json!({
@@ -4298,6 +4322,11 @@ mod tests {
             "{items:?}"
         );
         assert_eq!(
+            items.get("spelled").map(|item| item.2.clone()),
+            Some(serde_json::json!("not_evaluated")),
+            "{items:?}"
+        );
+        assert_eq!(
             items.get("elsewhere").map(|item| item.0.as_str()),
             Some("resolved"),
             "{items:?}"
@@ -4306,7 +4335,7 @@ mod tests {
         // absent entry, the plain one too.
         current["analysis_scope"]["owner_opt_outs"]["withheld"] = serde_json::json!(2);
         let items = owner_delta(&baseline, &current.to_string())?;
-        for id in ["legacy", "elsewhere"] {
+        for id in ["legacy", "elsewhere", "spelled"] {
             assert_eq!(
                 items.get(id).map(|item| item.2.clone()),
                 Some(serde_json::json!("not_evaluated")),
@@ -4314,6 +4343,15 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn comparable_path_folds_dot_prefixes_and_backslashes() {
+        assert_eq!(comparable_path("./src/g.rs"), "src/g.rs");
+        assert_eq!(comparable_path(".\\src\\g.rs"), "src/g.rs");
+        assert_eq!(comparable_path("././src/g.rs"), "src/g.rs");
+        assert_eq!(comparable_path("src/g.rs"), "src/g.rs");
+        assert_ne!(comparable_path("../src/g.rs"), "src/g.rs");
     }
 
     fn two_gap_baseline() -> &'static str {
