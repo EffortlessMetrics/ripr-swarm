@@ -143,3 +143,26 @@ fn a_bare_call_of_an_async_owner_in_matches_is_no_pin() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn an_awaited_pin_on_a_literal_neither_version_returns_is_not_credited() -> Result<(), String> {
+    // `fee(4)` is `Ok(8)` before and `Ok(12)` after, so `Ok(99)` fails on
+    // both versions and notices nothing (#12716); `.await` must not hide it.
+    for assertion in [
+        "assert!(matches!(fee(4).await, Ok(99)));",
+        "assert_eq!(fee(4).await, Ok(99));",
+    ] {
+        let tests = format!(
+            "use billing::fee;\n\n#[tokio::test]\nasync fn fee_ok() {{\n    {assertion}\n}}\n"
+        );
+        let finding = return_finding(true, &tests)?;
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{assertion}: {finding}"
+        );
+    }
+    // Control: the same import form with the baseline value is credited.
+    let tests = "use billing::fee;\n\n#[tokio::test]\nasync fn fee_ok() {\n    assert!(matches!(fee(4).await, Ok(8)));\n}\n";
+    assert_eq!(return_finding(true, tests)?["classification"], "exposed");
+    Ok(())
+}

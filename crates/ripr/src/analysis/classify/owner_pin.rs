@@ -7369,7 +7369,12 @@ impl OwnerReturnPin {
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+            // #15397 review: an awaited call evaluates like its bare call.
+            && closed.provably_unpinned(
+                &self.name,
+                call.trim_end_matches(".unwrap()").trim_end_matches(".await"),
+                expected,
+            )
         {
             return false;
         }

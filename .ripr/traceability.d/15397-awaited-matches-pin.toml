@@ -6,4 +6,5 @@ tests = [
   "crates/ripr/tests/awaited_matches_pin.rs::the_synchronous_matches_pin_keeps_its_credit",
   "crates/ripr/tests/awaited_matches_pin.rs::an_awaited_wildcard_matches_stays_weak",
   "crates/ripr/tests/awaited_matches_pin.rs::a_bare_call_of_an_async_owner_in_matches_is_no_pin",
+  "crates/ripr/tests/awaited_matches_pin.rs::an_awaited_pin_on_a_literal_neither_version_returns_is_not_credited",
 ]
