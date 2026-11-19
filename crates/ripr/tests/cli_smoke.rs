@@ -235,6 +235,9 @@ mod unsupported_diff_exit;
 #[path = "cli_smoke/value_refusal_json.rs"]
 mod value_refusal_json;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_complete_with_limits.rs"]
+mod verify_complete_with_limits;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/verify_execute_root.rs"]
 mod verify_execute_root;
 #[cfg(unix)]

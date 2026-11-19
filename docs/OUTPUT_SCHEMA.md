@@ -1143,7 +1143,17 @@ verify=complete|outcome=O|findings=N|exposed=N
   (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
-  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
+  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`, or (#14821)
+  `verify=complete_with_limits|outcome=O|findings=N|exposed=E|limits=CLASS:COUNT,...`
+  when `unexposed_findings_remain` is the only unmet condition and every
+  unexposed finding is an analyzer limit no test edit can close: a
+  candidate-current, non-preview, non-withheld `static_unknown`,
+  `infection_unknown` or `propagation_unknown` finding with no contributing,
+  owner-bound (not proximity-only) related test of `weak` or `smoke` oracle
+  strength, with the listed counts reconciling to the full summary. `limits`
+  lists those classes in vocabulary order. It upgrades no finding: the limits
+  stay unproven, and `no_static_path`, `weakly_exposed` and
+  `reachable_unrevealed` findings always refuse. It is projected
   from the producer's `analysis_outcome` and the full `summary` counts, not the
   displayed or triaged subset. Its `findings`/`exposed` equal the header's
   `findings=`/`exposed=` except under `--suppression-policy`: the header

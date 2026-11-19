@@ -32,12 +32,21 @@ on it would make `verify=complete` unreachable in ordinary repositories; the
 human, GitHub and JSON disclosures keep naming it;
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
-requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+requires `verify=complete` (or `verify=complete_with_limits`, below) before claiming done. An empty findings list alone is not completion evidence.
 When full summary findings exceed full summary exposed findings the refusal
 reason is `unexposed_findings_remain` (#13825). It names what it counts rather
 than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
 is reported under the header's `limits=`, not `gaps=`, so the record never
 claims gaps remain beside a `gaps=0` header.
+When that is the only unmet condition and every unexposed finding is an
+analyzer limit no test edit can close (a candidate-current, non-preview,
+non-withheld `static_unknown`, `infection_unknown` or `propagation_unknown`
+finding with no owner-bound related test asserting only weakly), the record
+reads `verify=complete_with_limits|...|limits=CLASS:COUNT,...` (#14821), and
+the consumer may finish with those limits disclosed. It upgrades no finding
+and establishes no test adequacy; `no_static_path`, `weakly_exposed` and
+`reachable_unrevealed` findings, weak related tests and suppressed unexposed
+findings keep the refusal.
 Explain navigation retains its printed format for artifact replay with an
 explicit suppression policy, since that combination refuses Agent format.
 

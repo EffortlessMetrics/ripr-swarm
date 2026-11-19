@@ -9,6 +9,7 @@
 
 use super::CheckOutput;
 use crate::analysis_outcome::AnalysisOutcomeKind;
+use crate::domain::{ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTestMiss};
 
 /// Why a check run does not establish completion, in record order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,12 +62,76 @@ pub(crate) struct CheckVerification {
     /// Every unmet condition, in [`VerificationRefusal`] order. Empty means
     /// complete.
     pub(crate) refusals: Vec<VerificationRefusal>,
+    /// Set only when the one refusal is
+    /// [`VerificationRefusal::UnexposedFindingsRemain`] and every unexposed
+    /// finding is an analyzer limit no test edit can close (#14821): the
+    /// per-class counts, in [`ExposureClass::ALL`] order, that the
+    /// `verify=complete_with_limits` record discloses. `refusals` still names
+    /// the refusal, so [`Self::is_complete`] stays strict.
+    pub(crate) closable_limits: Option<Vec<(ExposureClass, usize)>>,
 }
 
 impl CheckVerification {
+    /// Strict completion: every finding reads exposed and nothing refuses.
     pub(crate) fn is_complete(&self) -> bool {
         self.refusals.is_empty()
     }
+}
+
+/// Whether `finding` is an analyzer limit a test edit cannot close (#14821).
+///
+/// Fail-closed on every axis:
+///
+/// - only the three unknown classes, never `no_static_path` (an uncalled
+///   owner is a test-side gap, #14820) and never a `weakly_exposed` /
+///   `reachable_unrevealed` finding, even behind a named limit;
+/// - only candidate-current, non-preview evidence;
+/// - never when a contributing related test that is not proximity-only
+///   asserts only weakly (`weak` / `smoke`): strengthening it is still work
+///   the agent can do (#11825);
+/// - and only with positive evidence that a test runs the owner and asserts
+///   something: at least one related test whose relation establishes reach
+///   ([`crate::domain::RelationReason::establishes_reach`]) and that carries
+///   an assertion. Examined-only rows count here (a static limit's reaching
+///   test is often examined-only, `assertion_not_observing`, because ripr
+///   could not match its assertion to the change), but they never supply the
+///   weak-oracle veto above, which reads the decision set. A limit no test
+///   reaches, or reached only by tests that assert nothing, is not a
+///   finished workflow.
+fn is_test_unclosable_limit(finding: &Finding) -> bool {
+    let owner_is_function = finding.probe.owner.is_some();
+    let contributing = || {
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.is_contributing())
+    };
+    finding.is_candidate_actionable()
+        && matches!(
+            finding.class,
+            ExposureClass::StaticUnknown
+                | ExposureClass::InfectionUnknown
+                | ExposureClass::PropagationUnknown
+        )
+        && finding.language_status != Some(LanguageStatus::Preview)
+        && !contributing().any(|test| {
+            !test
+                .relation_reason
+                .is_some_and(crate::domain::RelationReason::is_proximity_only)
+                && matches!(
+                    test.oracle_strength,
+                    OracleStrength::Weak | OracleStrength::Smoke
+                )
+        })
+        && finding.related_tests.iter().any(|test| {
+            test.relation_reason
+                .is_some_and(|reason| reason.establishes_reach(owner_is_function))
+                && test.miss != Some(RelatedTestMiss::NoAssertion)
+                && test
+                    .oracle
+                    .as_deref()
+                    .is_some_and(|oracle| !oracle.trim().is_empty())
+        })
 }
 
 impl CheckOutput {
@@ -103,12 +168,57 @@ impl CheckOutput {
         if self.no_scope_provided {
             refusals.push(VerificationRefusal::NoScope);
         }
+        let closable_limits = (refusals == [VerificationRefusal::UnexposedFindingsRemain])
+            .then(|| self.test_unclosable_limits())
+            .flatten();
         CheckVerification {
             outcome,
             findings: self.summary.findings,
             exposed: self.summary.exposed,
             refusals,
+            closable_limits,
         }
+    }
+
+    /// Per-class counts of the unexposed findings when every one of them is
+    /// an analyzer limit no test can close (#14821), else `None`. The counts
+    /// must reconcile with the full summary: exposed findings in the list
+    /// equal `summary.exposed`, and exposed plus limits equal
+    /// `summary.findings`. A withheld (suppressed or opted-out) unexposed
+    /// finding never completes, so a policy cannot legitimize a gap.
+    fn test_unclosable_limits(&self) -> Option<Vec<(ExposureClass, usize)>> {
+        let withheld = self.withheld_finding_ids();
+        let mut exposed = 0usize;
+        let mut limits: Vec<(ExposureClass, usize)> = Vec::new();
+        for finding in &self.findings {
+            let is_withheld = withheld.contains(finding.id.as_str());
+            if finding.class == ExposureClass::Exposed {
+                if !is_withheld {
+                    exposed += 1;
+                }
+                continue;
+            }
+            if is_withheld || !is_test_unclosable_limit(finding) {
+                return None;
+            }
+            match limits.iter_mut().find(|(class, _)| *class == finding.class) {
+                Some((_, count)) => *count += 1,
+                None => limits.push((finding.class.clone(), 1)),
+            }
+        }
+        let limited: usize = limits.iter().map(|(_, count)| count).sum();
+        if limited == 0
+            || exposed != self.summary.exposed
+            || exposed + limited != self.summary.findings
+        {
+            return None;
+        }
+        limits.sort_by_key(|(class, _)| {
+            ExposureClass::ALL
+                .iter()
+                .position(|candidate| candidate == class)
+        });
+        Some(limits)
     }
 
     /// Whether an untracked routed path belongs to a language this run
@@ -146,8 +256,8 @@ mod tests {
         CheckFindingsInputs,
     };
     use crate::app::CheckOutput;
-    use crate::app::tests::check_output_with;
-    use crate::domain::LanguageId;
+    use crate::app::tests::{check_output_with, sample_finding};
+    use crate::domain::{ExposureClass, Finding, LanguageId, OracleStrength, RelationReason};
 
     fn complete_no_findings() -> Result<CheckOutput, String> {
         let mut output = check_output_with(Vec::new());
@@ -306,6 +416,236 @@ mod tests {
             verdict.refusals,
             vec![UnanalyzedWorkingTree, UntrackedSourceExcluded, NoScope]
         );
+        Ok(())
+    }
+
+    /// A complete-with-findings run over `findings`, with the full summary
+    /// counts reconciled to the list.
+    fn complete_with(findings: Vec<crate::domain::Finding>) -> Result<CheckOutput, String> {
+        let mut output = complete_no_findings()?;
+        if let Some(outcome) = output.analysis_outcome.as_mut() {
+            outcome.kind = AnalysisOutcomeKind::CompleteWithFindings;
+        }
+        output.summary.findings = findings.len();
+        output.summary.exposed = findings
+            .iter()
+            .filter(|finding| finding.class == ExposureClass::Exposed)
+            .count();
+        output.findings = findings;
+        Ok(output)
+    }
+
+    fn finding(id: &str, class: ExposureClass, strength: OracleStrength) -> Finding {
+        let mut finding = sample_finding("src/lib.rs", 10);
+        finding.id = id.to_string();
+        finding.class = class;
+        finding.probe.owner = Some(crate::domain::SymbolId("crate::f".to_string()));
+        for test in &mut finding.related_tests {
+            test.oracle_strength = strength.clone();
+            test.relation_reason = Some(RelationReason::DirectOwnerCall);
+            test.oracle = Some("assert_eq!(f(1), 2);".to_string());
+        }
+        finding
+    }
+
+    /// The #14821 repro 1 shape: gaps closed, three exposed findings, and
+    /// only analyzer limits left, each pinned by a strong owner-bound test.
+    fn limits_only() -> Vec<Finding> {
+        vec![
+            finding("a", ExposureClass::Exposed, OracleStrength::Strong),
+            finding("b", ExposureClass::StaticUnknown, OracleStrength::Strong),
+            finding("c", ExposureClass::InfectionUnknown, OracleStrength::Strong),
+            finding("d", ExposureClass::StaticUnknown, OracleStrength::Strong),
+        ]
+    }
+
+    #[test]
+    fn analyzer_limits_alone_complete_with_limits_and_stay_disclosed() -> Result<(), String> {
+        let verdict = complete_with(limits_only())?.verification();
+        assert!(!verdict.is_complete(), "strict completion stays strict");
+        assert_eq!(verdict.refusals, vec![UnexposedFindingsRemain]);
+        assert_eq!(
+            verdict.closable_limits,
+            Some(vec![
+                (ExposureClass::InfectionUnknown, 1),
+                (ExposureClass::StaticUnknown, 2),
+            ])
+        );
+
+        // A reaching test whose assertion ripr could not match to the limit
+        // (`none` strength, as static_unknown rows carry) still counts.
+        let mut unmatched = limits_only();
+        unmatched[1].related_tests[0].oracle_strength = OracleStrength::None;
+        unmatched[1].related_tests[0].miss =
+            Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        assert!(
+            complete_with(unmatched)?
+                .verification()
+                .completes_with_limits()
+        );
+
+        // The repro 1 static_unknown shape: the only reaching row is
+        // examined-only, its assertion unmatched to the change.
+        let mut examined_only = limits_only();
+        examined_only[1].related_tests[0].role = crate::domain::RelatedTestRole::ExaminedOnly;
+        examined_only[1].related_tests[0].oracle_strength = OracleStrength::None;
+        examined_only[1].related_tests[0].miss =
+            Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        assert!(
+            complete_with(examined_only)?
+                .verification()
+                .closable_limits
+                .is_some()
+        );
+
+        // A weak test related only by proximity is not bound to the owner.
+        let mut nearby = limits_only();
+        let mut weak_nearby = nearby[1].related_tests[0].clone();
+        weak_nearby.oracle_strength = OracleStrength::Smoke;
+        weak_nearby.relation_reason = Some(RelationReason::SameTestFile);
+        nearby[1].related_tests.push(weak_nearby);
+        assert!(
+            complete_with(nearby)?
+                .verification()
+                .completes_with_limits()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn any_test_closable_finding_keeps_the_refusal() -> Result<(), String> {
+        let refuses = |findings: Vec<Finding>| -> Result<(), String> {
+            let verdict = complete_with(findings)?.verification();
+            assert_eq!(verdict.refusals, vec![UnexposedFindingsRemain]);
+            assert_eq!(verdict.closable_limits, None, "{verdict:?}");
+            Ok(())
+        };
+        // A real gap, an uncalled owner and a weak finding behind a named
+        // limit are test-side work.
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+        ] {
+            let mut findings = limits_only();
+            findings.push(finding("gap", class, OracleStrength::Strong));
+            refuses(findings)?;
+        }
+        let mut named_limit = limits_only();
+        named_limit[1].class = ExposureClass::WeaklyExposed;
+        named_limit[1].static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        refuses(named_limit)?;
+
+        // A smoke-only (#14820) or weak owner-bound related test can still be
+        // strengthened, even when one strong test also relates.
+        for strength in [OracleStrength::Smoke, OracleStrength::Weak] {
+            let mut smoke = limits_only();
+            smoke[2].related_tests[0].oracle_strength = strength.clone();
+            refuses(smoke)?;
+            let mut mixed = limits_only();
+            let mut weak = mixed[2].related_tests[0].clone();
+            weak.oracle_strength = strength;
+            mixed[2].related_tests.push(weak);
+            refuses(mixed)?;
+            // A weak row with no recorded relation counts as bound.
+            let mut unknown_relation = limits_only();
+            let mut unrelated = unknown_relation[3].related_tests[0].clone();
+            unrelated.oracle_strength = OracleStrength::Weak;
+            unrelated.relation_reason = None;
+            unknown_relation[3].related_tests.push(unrelated);
+            refuses(unknown_relation)?;
+        }
+
+        // No test reaches the limit, only a proximity or name relation does,
+        // or the reaching test asserts nothing: no positive evidence.
+        let mut bare = limits_only();
+        bare[1].related_tests.clear();
+        refuses(bare)?;
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::OwnerNamedTest,
+            RelationReason::AssertionTargetAffinity,
+        ] {
+            let mut unbound = limits_only();
+            unbound[1].related_tests[0].relation_reason = Some(reason);
+            refuses(unbound)?;
+        }
+        let mut no_relation = limits_only();
+        no_relation[1].related_tests[0].relation_reason = None;
+        refuses(no_relation)?;
+        let mut calls_only = limits_only();
+        calls_only[1].related_tests[0].oracle_strength = OracleStrength::None;
+        calls_only[1].related_tests[0].oracle = Some(String::new());
+        refuses(calls_only)?;
+        let mut no_assertion = limits_only();
+        no_assertion[1].related_tests[0].oracle_strength = OracleStrength::None;
+        no_assertion[1].related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoAssertion);
+        refuses(no_assertion)?;
+        // An examined-only weak row is outside the decision set: no veto.
+        let mut examined_weak = limits_only();
+        let mut examined = examined_weak[1].related_tests[0].clone();
+        examined.role = crate::domain::RelatedTestRole::ExaminedOnly;
+        examined.oracle_strength = OracleStrength::Smoke;
+        examined_weak[1].related_tests.push(examined);
+        assert!(
+            complete_with(examined_weak)?
+                .verification()
+                .closable_limits
+                .is_some()
+        );
+
+        // Preview-language and base-side evidence never completes.
+        let mut preview = limits_only();
+        preview[1].language_status = Some(crate::domain::LanguageStatus::Preview);
+        refuses(preview)?;
+        let mut stale = limits_only();
+        stale[1].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        refuses(stale)?;
+
+        // A withheld unexposed finding: a policy cannot legitimize a gap.
+        let mut withheld = complete_with(limits_only())?;
+        withheld.owner_opt_outs = vec![crate::analysis::owner_opt_out::OwnerOptOut {
+            finding_id: "b".to_string(),
+            owner: "f".to_string(),
+            reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
+        }];
+        assert_eq!(withheld.verification().closable_limits, None);
+
+        // Counts that do not reconcile with the full summary refuse.
+        let mut drift = complete_with(limits_only())?;
+        drift.summary.findings += 1;
+        assert_eq!(drift.verification().closable_limits, None);
+        Ok(())
+    }
+
+    #[test]
+    fn limits_never_complete_beside_another_refusal() -> Result<(), String> {
+        let mut stale = complete_with(limits_only())?;
+        stale.unanalyzed_working_tree = true;
+        assert_eq!(stale.verification().closable_limits, None);
+        let mut partial = complete_with(limits_only())?;
+        if let Some(outcome) = partial.analysis_outcome.as_mut() {
+            outcome.kind = AnalysisOutcomeKind::AnalysisFailed;
+        }
+        assert_eq!(partial.verification().closable_limits, None);
+        let mut missing = complete_with(limits_only())?;
+        missing.analysis_outcome = None;
+        assert_eq!(missing.verification().closable_limits, None);
+        let mut unscoped = complete_with(limits_only())?;
+        unscoped.no_scope_provided = true;
+        assert_eq!(unscoped.verification().closable_limits, None);
+        // All exposed is strict completion, not completion with limits.
+        let exposed = complete_with(vec![finding(
+            "a",
+            ExposureClass::Exposed,
+            OracleStrength::Strong,
+        )])?
+        .verification();
+        assert!(exposed.is_complete());
+        assert_eq!(exposed.closable_limits, None);
         Ok(())
     }
 }
