@@ -637,7 +637,8 @@ selects, resolved against `--root` as `ripr check` resolves it. A configured
 default `.ripr/suppressions.toml` stays silent. A present manifest, default or
 configured, is parsed with the same parser as `check`, its line-numbered
 violations fail the command, and a valid one adds
-`✓ suppressions valid (<path>, N entries)` (#15308).
+`✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
+advisory case above loads no config, so it does not check the manifest.
 
 ### `ripr lsp`
 

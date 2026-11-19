@@ -148,3 +148,35 @@ fn a_valid_manifest_is_named_with_its_entry_count() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_directory_at_the_manifest_path_fails_instead_of_passing() -> Result<(), String> {
+    let root = workspace("directory")?;
+    fs::create_dir_all(root.join(".ripr/suppressions.toml")).map_err(|error| error.to_string())?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result.err().ok_or("a directory is not a manifest")?;
+    if !error.starts_with(".ripr/suppressions.toml validation failed:\nfailed to read ") {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_control_byte_in_the_manifest_path_is_escaped_on_success() -> Result<(), String> {
+    let root = workspace("escape")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        // TOML spells the control byte as an escape; the loaded path holds ESC.
+        "[suppressions]\npath = \"s\\u001b[31m.toml\"\n",
+    )?;
+    write(&root, "s\u{1b}[31m.toml", VALID_MANIFEST)?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let output = result?;
+    if output.contains('\u{1b}') || !output.contains("suppressions valid (") {
+        return Err(format!("raw control byte or missing line: {output:?}"));
+    }
+    Ok(())
+}

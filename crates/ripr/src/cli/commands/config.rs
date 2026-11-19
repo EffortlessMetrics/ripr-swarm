@@ -127,11 +127,13 @@ fn validate_suppressions_manifest(
         ));
     }
     match load_suppressions_for_root_at(root, relative) {
-        Ok(entries) => Ok(Some(format!(
+        // The path is repository text that reaches stdout through a plain
+        // `println!`; failures are escaped by the CLI error sink instead.
+        Ok(entries) => Ok(Some(crate::terminal_text::terminal_safe(format!(
             "✓ suppressions valid ({display}, {} entr{})",
             entries.len(),
             if entries.len() == 1 { "y" } else { "ies" }
-        ))),
+        )))),
         Err(violations) => Err(format!(
             "{display} validation failed:\n{}",
             violations.join("\n")

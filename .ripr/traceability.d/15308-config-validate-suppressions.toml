@@ -7,4 +7,6 @@ tests = [
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_malformed_default_manifest_fails_without_any_ripr_toml",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_malformed_configured_manifest_fails_with_its_own_path",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_valid_manifest_is_named_with_its_entry_count",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_directory_at_the_manifest_path_fails_instead_of_passing",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_control_byte_in_the_manifest_path_is_escaped_on_success",
 ]
