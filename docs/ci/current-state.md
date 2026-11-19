@@ -1,11 +1,15 @@
 # CI Current State
 
-Snapshot: November 18, 2026 (America/New_York).
+Snapshot: November 19, 2026 (America/New_York).
 Inspected main: `0c058d5179586b04ad1f0e874608757d7e7f0829`.
+The routed workflow was rechecked byte-identical at
+`73a5ff3f73b65784d249db07839a0596c287318f`; the run cohort below retains its
+November 18 subjects and attempt identities.
 
 This is the installed-state inventory, not a claim that the rebuild is complete.
-[CI strategy](../CI.md#qualification-rebuild-architecture) owns the target
-execution architecture; [merge flow](../MERGE_FLOW.md) owns the installed
+[CI strategy](../CI.md#qualification-rebuild-architecture) indexes the target;
+[implementation contracts](QUALIFICATION_REBUILD.md) own the proposed detailed
+design; [merge flow](../MERGE_FLOW.md) owns the installed
 request/landing procedure; the
 [implementation plan](../../plans/ci-lifecycle-rebuild/implementation-plan.md)
 sequences the existing owners. Recheck source and native objects when resuming.
@@ -117,6 +121,7 @@ job spans, including setup and finalization, not just test-step timings.
 | Two required nextest shards | Installed; the earlier four-shard description is historical |
 | Product-policy feature split, #14781 | Landed; default automation and the normal xtask executable remain product-linked |
 | Product-free `cargo policy docs-gate`, #14772 | Landed scoped interface; the required docs workflow has not switched to it |
+| Product-free user-text matcher | Interface and actual workflow consumer installed; modern eligible bases use cargo policy, older bases retain xtask fallback |
 | Markdown contract coverage, #14989 / #14992 | Landed; some Markdown changes intentionally require product-backed behavioral proof |
 | Canonical `ProductGatePlan` | Observational contract on main; workflow consumers have not completed migration |
 | Staged DAG, #13514 | Existing Draft, not activated or economically qualified |
@@ -124,6 +129,8 @@ job spans, including setup and finalization, not just test-step timings.
 | Inventory reuse, #13481 / #14493 / #14501 | Existing Draft stack; source-custody reconciliation hold must be resolved by its existing owner |
 | Compiler-unit extraction | ADR 0027 accepted; enabling boundaries have landed, larger private implementation/test extraction remains |
 | Native combined-stack rehearsal | Isolated evidence; dynamic production membership, trusted finalization and full-product acceptance remain open |
+| Bounded extension selector, #15176 | Published Draft; real-Git extracted-shell controls pass, Rust/hosted qualification outstanding |
+| Product-free document roles, #15177 | Published Draft; source-conserved move and CLI controls, native execution outstanding |
 
 ## Important unresolved boundaries
 
@@ -133,6 +140,17 @@ selection assumptions must be reconciled before the one-combined-G cutover.
 A lower code/extension change plus an upper docs-only change is a required
 negative control. A successfully landed lower prefix is not automatically a
 withdrawn or invalid upper candidate.
+
+The user-text base preparation directly consumes GROUP_BASE_SHA, checking
+identity and ancestry but not independently protected C/B0. Admission similarly
+uses the immediate event base; its membership walk can omit a prior speculative
+prefix, and terminal eligibility still expects each immediate PR base to be
+main. These are source-observed reconstruction boundaries, not a claim that a
+native production exploit or complete replacement has been qualified.
+
+#8082's broad PR is a reference-only split tracker under its recorded
+disposition. Current-main successors continue the integration responsibility;
+the old branch must not be revived or independently qualified.
 
 The terminal result currently binds admission to its run attempt. Bounded
 earlier shard-artifact reuse does not authorize admission reuse or hide a newer
@@ -148,10 +166,16 @@ dependencies.
 
 ## Measurement and authority
 
-The newer primary target is **under 20 total raw runner-minutes for the complete
-required qualification**. Historical critical-path budgets remain a separate
-latency objective. Charge setup, compilation, all consumers, verification,
-transfer and cleanup; also report failed/replaced work and cost per landed PR.
+The newer primary target is **under 20 total raw runner-minutes per normal
+accepted submission/stack**, across all associated merge-group attempts,
+runner-allocating prefixes, retries/replacements and required preparation.
+The [#4841 clarification](https://github.com/EffortlessMetrics/ripr-swarm/issues/4841#issuecomment-6999978169)
+retains the separate under-20 elapsed objective. Charge setup, compilation,
+all consumers, verification, transfer and cleanup. Exact-G totals are diagnostic;
+report stack totals and landed-PR counts without hiding an expensive stack in
+per-PR averages. Keep H/control work and unsuccessful submissions in explicit
+lifecycle totals. The eleven individual full-G observations above are not a
+complete accepted-stack accounting cohort.
 
 Cache hits are optional acceleration, not proof. No main replay or periodic
 warmer is required for correctness. A cold path must recompute safely.

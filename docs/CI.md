@@ -9,195 +9,49 @@ New to RIPR in CI? Start with the short ordered path in
 
 ## Qualification rebuild architecture
 
-This is the execution target under #4984, #14500 and #8198, not an activation
-claim. [Current state](ci/current-state.md) records the inspected installed
-route. [Merge flow](MERGE_FLOW.md) remains the operational request/landing
-procedure; [ProductGatePlan](ci/PRODUCT_GATE_PLAN.md) owns gate propositions and
-applicability. The [implementation plan](../plans/ci-lifecycle-rebuild/implementation-plan.md)
-connects the existing candidates, proof requirements and rollback boundaries.
+The [implementation contracts](ci/QUALIFICATION_REBUILD.md) define the proposed
+architecture under #4984, #14500 and #8198. [Current state](ci/current-state.md)
+records inspected installed behavior; [merge flow](MERGE_FLOW.md) remains the
+operational request/landing procedure. The
+[delivery plan](../plans/ci-lifecycle-rebuild/implementation-plan.md) sequences
+existing owners, candidates, proof and rollback. None activates the cutover.
 
-### Lifecycle, cost and placement
+The selected lifecycle is quiet development and local review, explicit cheap
+trusted exact-H admission, GitHub's native queue, complete applicable actual-G
+qualification, and cheap landed-M reconciliation. Current full label-requested
+PR qualification stays until its replacement is qualified and enforced.
 
-Development and review use focused local evidence. Draft, Ready, ordinary
-updates and reviews start no automatic CI, including skipped or cheap wrappers.
-The target explicit merge request performs cheap, trusted, exact-H admission.
-GitHub's native queue then qualifies the actual combined G once for its complete
-applicable portfolio. Landing reads back M without routine main product replay.
-The current full label-requested PR qualification remains until this replacement
-is qualified and enforced.
+The primary target is **under 20 total raw runner-minutes per normal accepted
+submission/stack**, including its merge-group attempts, runner-allocating
+prefixes, retries/replacements and required preparation. Retain the separate
+under-20 elapsed objective and report enqueue-to-result and enqueue-to-landing.
+Exact-G costs are diagnostic; stack totals and landed-PR counts remain visible
+without dividing away an expensive stack. H/control work and unsuccessful
+submissions remain in lifecycle totals. A short critical path on many machines
+is not the aggregate compute target.
 
-The primary economics target is **under 20 total raw runner-minutes per complete
-required qualification**. Wall-clock completion, queue wait, failed/replaced
-work and runner-minutes per landed PR are separate measures. A 19-minute critical
-path on many machines does not meet that compute target. Enabling changes may
-land with narrower measured acceptance; they do not close the parent target.
+The design's load-bearing boundaries are:
 
-Keep the existing hosted execution route as the baseline. No new machine,
-self-hosted fleet, Hermes dependency, controller service or second queue is a
-prerequisite. Native grouping, actual dispatch count and product-execution count
-are different facts; a merge-group size setting does not batch workflow builds.
+- Obligation → producer → compatible build family → placement. Extend the
+  existing ProductGatePlan/#13514 owner; retain grouped producers, every
+  applicable required proposition, separate doctests and both Clippy configurations.
+- Prepare compatible binaries/inventory once; verify actual consumers, preserve
+  a complete cold path, and keep mutable state private. Do not turn every
+  consumer miss into another independent Cargo build.
+- Keep requested stack, complete native composition, protected B0, control
+  generation C, candidate G and execution attempts distinct. Event ancestry
+  does not independently authenticate protected source.
+- Prefer protected native finalization; qualify attachment, producer identity
+  and enforcement separately. Hermes, a new App or a new fleet is not presumed.
+- Retire only positively invalidated exact-G lifetimes or owned work made
+  unnecessary by a known failure; preserve valid siblings and settled prefixes.
+- Follow ADR 0027 for measured compiler-unit boundaries and existing resource
+  owners. No second queue, permanent controller, global registry or main warmer.
 
-### One semantic plan, explicit effects
-
-Extend the existing pure typed ProductGatePlan and its staged owner (#13514).
-Do not introduce a parallel obligation registry. The plan describes required
-obligations, conservative applicability, preparation compatibility, dependencies
-and acceptable completion evidence. Placement is a separate projection: packing
-or splitting jobs must not change selected behavior.
-
-Use narrow ports for repository/GitHub state, Cargo execution, process ownership
-and artifacts. Keep business decisions in their existing Rust semantic owners.
-YAML should declare platform events, permissions, allocations, dependencies and
-invocations, not another copy of admission or gate truth. A large general-purpose
-script replacing large YAML is not the intended boundary.
-
-Keep these identities separate and join them explicitly:
-
-| Identity | Required information |
-| --- | --- |
-| Qualification subject | Repository, authorized destination, frozen protected comparison base B0, complete ordered PR/H membership and dependency edges, exact G and tree |
-| Control and obligation plan | Protected control generation C, plan/schema version, selected obligations, applicability reasons and expected nonempty inventories |
-| Prepared build family | Exact source/input identity, Cargo/toolchain and nextest versions, host/target, resolved features, profile, flags, relevant build environment and output manifest |
-| Execution | Admission transaction, run/job/producer attempt, worker outcome, verifier/finalizer attempt, reuse provenance and current eligibility |
-
-A filename, matching test count, cache key or caller-supplied SHA is not enough.
-Trusted control C is distinct from candidate G and from the event's immediate
-base. The latter can itself be a speculative prefix. Read complete membership;
-do not infer the whole group from the last PR, queue position 1, or a ref suffix.
-
-### Preparation and consumers
-
-Prepare once **per compatible build family**, not once for every configuration
-by assertion. Start with a same-runner locality reference and compare a small
-number of placements before introducing transport. A shared archive is an option
-to qualify, not a dependency of the redesign.
-
-- The native test producer supplies its exact compiled inventory to the
-  existing file-policy validator. Package-only and workspace-unified inventories
-  can differ through features/host/configuration; retain distinct preparation
-  when equivalence is not established. Static test scanning is not a native
-  compiled-inventory substitute.
-- Guide/CLI consumers borrow the Cargo-selected exact-candidate executable and
-  its validated context. A process-local OnceLock is not cross-process
-  preparation. CI must expose whether a consumer reused the product or fell
-  back to Cargo; accepting an arbitrary PATH or target-directory binary is
-  not the repair.
-- Tests whose assertion is compiler/build/install behavior retain that behavior
-  in a private bounded fixture. Do not prohibit all nested Cargo indiscriminately.
-- Default-feature workspace tests, separate doctests, default-feature Clippy and
-  all-features RIPR Clippy retain their distinct propositions. Do not add back
-  the already-removed redundant cargo check.
-- Keep nextest's current selection, ignored-test, isolation and exact-cover
-  contract for the first migration. Resource-only scheduling changes need
-  parity; a later pure-test batching experiment needs per-case result parity
-  and state-contamination controls before changing the runner contract.
-- Goldens, fixtures, corpora, packet schemas and applicable extension proof
-  remain mandatory where selected. The 13 core ProductGatePlan IDs alone are
-  not permission to discard additional installed required producers.
-
-Share immutable prepared outputs, not mutable target/report/fixture workspaces.
-Consumers own private writable state. Seal retained results only after child
-process groups have terminated and been reaped; a parent exiting does not
-release a still-writing descendant's resource.
-
-Cache restoration is optional acceleration. Preserve trusted writer/reader
-boundaries, exact compatibility and a complete cold route. Measure producer,
-archive, transfer, extraction and every consumer together. A new key generation
-is adopted only when the real reader uses it; a merged producer is not a saving.
-Do not restore main replay just to warm caches.
-
-### Compiler boundaries and resource budgets
-
-Follow accepted [ADR 0027](adr/0027-one-user-facing-package-lockstep-support-crates.md),
-not an aesthetic microcrate rewrite. Extract private production implementation
-together with its private tests into measured lockstep support crates, preserving
-the public ripr facade and package/install contract. Continue the existing
-contract/outcome prerequisites, then TypeScript, Python and LSP/MCP boundaries
-as measurement justifies them.
-
-The existing criterion is an attributed largest compiler-unit peak at or below
-8,000,000,000 bytes. It is not an 8-GB aggregate-host claim. Track simultaneous
-process-tree memory and host headroom separately; an integration-binary count
-reduction does not establish a smaller monolithic libtest compiler.
-
-One execution unit has one CPU/memory/disk budget across Cargo, test workers,
-fixture compilers and cleanup. Cache enablement must not multiply compiler
-concurrency. Use the existing resource/process owners; do not add a new global
-lease registry or require a perfect descendant graph before a safely bounded
-discovery process may start. Keep ordinary local checks focused rather than
-moving the hosted suite into commit/push hooks.
-
-### Documentation and evidence paths
-
-A Markdown suffix is not a proof of product independence. Classify asserting
-readers and their inputs: pure prose/policy can use the lightweight repo-policy
-owner; CLI help, command examples, adapter/agent contracts and other product
-consumers retain the required executable tests. Unknown or mixed scope widens.
-A lower code/extension member plus an upper docs-only member must select the
-complete applicable G portfolio.
-
-The landed docs-gate interface covers a subset. Migrate retained obligations
-individually, demonstrate report/verdict parity and actual consumer adoption,
-then switch the workflow. Do not label the current heavy docs route as cheap
-because a lightweight command exists.
-
-Separate mandatory packet/schema integrity from costly analysis within PR
-evidence. Reuse exact-base and exact-G facts where valid and bound repeated
-analysis. A timeout disclosed as unavailable can be honest and still waste
-minutes. Changing which analysis is required needs an explicit policy decision;
-do not silently move a current mandatory obligation into advisory/nightly work.
-
-### Authoritative finalization, retry and retirement
-
-The finalizer consumes the expected plan and authoritative GitHub producer facts
-without executing candidate code. Missing, failed, cancelled, timed-out,
-wrong-subject, incompatible, incomplete or superseded required work cannot
-become success. A policy-authorized not-applicable row is explicit; a skipped
-aggregate is not product qualification.
-
-Prefer a qualified repository-native protected-workflow mechanism. The
-merge-group-only ruleset-workflow validation failure is a separate reproduced
-provider issue under #14500. Do not add PR triggers to evade it. A narrowly
-scoped App-bound publisher is a fallback to qualify if the native mechanism
-cannot enforce provenance, not a presumed Hermes dependency.
-
-Check attachment and check authenticity are different controls. A protected
-workflow_dispatch that checks out H does not move its automatic workflow check
-from the dispatch ref to H. An explicit exact-H check must be bound correctly;
-a familiar context name or the Actions issuer alone does not distinguish a
-candidate-created same-name result. The isolated omit-the-trusted-callee and
-spoofed-success controls must fail before any protection cutover.
-
-Separate admission identity, producer attempt and finalizer attempt. A transient
-finalizer failure may reuse complete authenticated exact-G producers only under
-the qualified reuse contract. A newer failed/cancelled producer that uploaded
-nothing still supersedes an older success when the attempt policy says so;
-artifact presence alone cannot decide.
-
-Cancel only positively retired exact-G lifetimes or work made unnecessary by a
-known required failure. A newer run, advancing main, or a lower member landing
-does not by itself invalidate another G. Distinguish successful prefix settlement
-from withdrawal/recomposition. Use a tested existing-controller liveness helper
-before expensive phases and, if needed, a bounded read-only in-job watchdog.
-An optional protected reconciler cancels exact retired run IDs without running
-candidate content. API uncertainty is unknown, not authority to cancel or pass.
-Never key whole-queue cancellation simply by PR or main.
-
-GitHub's Actions merge_group event supports checks_requested; the separate
-destroyed webhook is not an available Actions activity type. Do not implement a
-nonexistent destroyed Actions trigger.
-
-### Acceptance and activation
-
-Every optimization needs complete subject/obligation conservation, wrong-input
-controls, cold correctness and whole-route cost. Retain counterexamples and
-failed runs. Use focused local experiments first, then selected hosted
-qualification; do not run every alternative through the full matrix.
-
-The settings transaction remains separately authorized and guarded by native
-singleton, multi-member and bad-middle canaries, trusted-source spoofing controls,
-retry/retirement controls and rollback. A known-good isolated small-crate
-rehearsal does not establish dynamic full-product production qualification.
+See the [technical reference](ci/QUALIFICATION_REBUILD.md) for the identity
+records, effect boundaries, execution families, retry rules, acceptance matrix
+and staged migration. The current provider validation blocker and unqualified
+native boundaries remain explicit; the design does not manufacture success.
 
 
 ## Python wheel applicability (#4987)
@@ -396,8 +250,8 @@ retired subscribers cannot be replaced with job guards that still allocate runs.
 
 The source retirement under #4842 removes 41 automatic event roots from 28
 workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
-builds are gone. Callable qualification leaves remain available to the existing
-#8082 owner; explicit manual proof and separately purposed security, corpus and
+builds are gone. Callable qualification leaves remain available to current-main
+successors of #8082's reference-only split tracker; explicit manual proof and separately purposed security, corpus and
 maintenance schedules retain their declared scope. #14500 retires main product
 replay and makes the sentinel a native-proof observer; full H/G qualification
 remains. Trusted finalization, label cutover and #4842 timer retirement remain
@@ -415,7 +269,8 @@ Native activation remains incomplete; these event edges are bootstrap debt:
 
 Do not convert the protected PR result into a cheap success while a direct merge
 could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
-rollback. Preserve #8082's caller implementation; do not create a parallel
+rollback. Preserve the current caller and its successor ownership; #8082's
+reference-only branch is not an activation candidate. Do not create a parallel
 controller. The existing label route remains the bounded bootstrap interface
 until its replacement is qualified. After verified activation, admission is
 conditional authorization to land, actual G is qualified once, and the owning
@@ -1136,8 +991,14 @@ test can catch the same failure earlier with clearer repair instructions.
 
 ### CI Actuals
 
-Forecasts should become measurable. Planned lane actuals should emit
-`target/ci/ci-actuals.json` with one record per lane:
+Forecasts should become measurable. The historical planned lane summary below
+is not an installed emitted schema and is insufficient for qualification
+accounting. The [CI actuals contract](ci/ci-actuals.md) defines proposed unique
+native job-execution records, accepted-stack and exact-G totals, lifecycle totals and
+explicit cache states. Extend the existing audit owner rather than creating
+another operational registry.
+
+Historical illustrative lane summary:
 
 ```json
 {
@@ -1312,8 +1173,13 @@ repair, verify the executed reusable-workflow revision and preparation-step
 result; a checked-out workflow blob in the test context alone does not prove
 which controller executed.
 
-The independent user-text judge uses the validated merge-group event `base_sha`
-before all constituents, or the validated PR merge's first parent. Conflicting,
+The independent user-text judge currently uses the validated merge-group event
+`base_sha`, or the validated PR merge's first parent. An upper native event's
+base can itself be an unlanded prefix; it is not established as before all
+constituents or as independently protected control. The
+[rebuild contract](ci/QUALIFICATION_REBUILD.md#four-identities-not-one-branch-sha)
+separates that remaining trust boundary from the already-installed lightweight
+matcher. Conflicting,
 missing or unavailable identities fail before worktree creation. The base's
 matcher judges the complete candidate tree: `cargo policy check-user-text --tree`
 when that base provides it, otherwise the legacy xtask interface and pinned

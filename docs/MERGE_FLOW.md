@@ -147,20 +147,25 @@ Start native canaries with build concurrency 1, one-entry landing, squash and
 all entries required to pass. These are bootstrap settings, not a universal
 throughput ceiling. Merge limits do not batch builds. Tune from measured first-G
 pass rate, invalidations, queue age, capacity and cost per accepted change.
-The newer primary target is under 20 total raw runner-minutes for complete
-required qualification. Historical complete-active elapsed targets remain a
-separate latency measure; queue delay and failed/retried work are also recorded,
-not omitted. See the [execution architecture](CI.md#qualification-rebuild-architecture)
+The newer primary target is under 20 total raw runner-minutes per normal accepted
+submission/stack across its merge-group attempts, runner-allocating prefixes,
+retries/replacements and required preparation. Retain the separate under-20
+elapsed objective and report enqueue-to-result and enqueue-to-landing. Exact-G
+totals remain diagnostic; stack totals and landed-PR counts must not hide an
+expensive stack in per-PR averages. H/control work and unsuccessful submissions
+remain in explicit lifecycle totals. See the [execution architecture](CI.md#qualification-rebuild-architecture)
 and [bounded implementation sequence](../plans/ci-lifecycle-rebuild/implementation-plan.md).
 
 ## Existing implementation owners and cutover order
 
-Keep #8082's existing caller owner and the landed #8890/#8327 request work.
-Do not overwrite their branches or recreate their completed slices.
+Keep the current-main caller successors and the landed #8890/#8327 request
+work. #8082 is a reference-only split tracker under its recorded disposition,
+not a branch to revive or qualify. Do not overwrite existing candidate branches
+or recreate their completed slices.
 
 | Seam | Existing owner | Queue-specific work |
 |---|---|---|
-| Subject and trust | #4836 / #8082 | Replace PR-only assumptions with actual G identity and verified constituent admission; preserve source/control separation |
+| Subject and trust | #4836 / #14500; current-main #8082 successors | Replace PR-only assumptions with actual G identity and verified constituent admission; preserve source/control separation |
 | Review and request | #4985 / #4986 / #8157 | Exact-H admission and pre-enqueue final judgment; late finding/head-change withdrawal; no repeated expensive PR run |
 | Portfolio/event perimeter | #4987 / #4841 | One applicable G transaction, conservative selectors, required child completeness; retire duplicate broad callers only after replacement proof |
 | Cache and settings | #7827 / #4832 / #4834 / #4838 | Cold fixture/dependency preparation, safe cache writer, reviewed live enforcement apply/readback and rollback |

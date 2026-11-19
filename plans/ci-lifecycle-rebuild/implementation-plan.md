@@ -5,11 +5,13 @@ Status: proposed execution design; installed behavior is recorded separately
 Owner: existing repository CI and compiler-boundary owners
 Linked proposal: n/a; selected direction is retained in #4984 and #14500
 Linked specs: [ProductGatePlan](../../docs/ci/PRODUCT_GATE_PLAN.md)
+Technical design: [Qualification rebuild contracts](../../docs/ci/QUALIFICATION_REBUILD.md)
 Linked ADRs: [ADR 0027](../../docs/adr/0027-one-user-facing-package-lockstep-support-crates.md)
 Live issue / PR: [#14500](https://github.com/EffortlessMetrics/ripr-swarm/issues/14500), [#8198](https://github.com/EffortlessMetrics/ripr-swarm/issues/8198), [#11566](https://github.com/EffortlessMetrics/ripr-swarm/issues/11566)
 
-This plan sequences delivery. [CI strategy](../../docs/CI.md#qualification-rebuild-architecture)
-owns the execution architecture, [merge flow](../../docs/MERGE_FLOW.md) owns
+This plan sequences delivery. The [technical reference](../../docs/ci/QUALIFICATION_REBUILD.md)
+owns the proposed implementation contracts, [CI strategy](../../docs/CI.md#qualification-rebuild-architecture)
+indexes the architecture, and [merge flow](../../docs/MERGE_FLOW.md) owns
 the installed request/landing route, and native issues/PRs own current work.
 No plan row appoints a worker, clears a hold, activates a workflow or changes
 protection. Resume the existing candidate at its earliest missing judgment.
@@ -22,8 +24,10 @@ The inspected source is main
 producers and receipts. Ordinary development Actions are largely retired,
 but the explicit label route still runs complete PR qualification before
 complete queue qualification. The primary new target is under 20 total raw
-runner-minutes per complete required qualification, not merely a sub-20-minute
-critical path.
+runner-minutes per normal accepted submission/stack across all associated
+merge-group attempts, runner-allocating prefixes, retries/replacements and
+required preparation. Retain the separate under-20 elapsed objective; a short
+critical path or favorable final G alone cannot establish the aggregate target.
 
 The [eleven-run baseline cohort](../../docs/ci/current-state.md#baseline-cohort)
 spans 83.42–109.47 raw runner-minutes,
@@ -57,6 +61,30 @@ migration and execution representation. Do not start another extraction.
 The #13481 / #14493 / #14501 source-custody hold remains: recover the existing
 verified coordinated bundle before changing or qualifying that stack.
 
+#8082 is a reference-only split tracker under its recorded disposition, not a
+branch to revive or qualify. Continue its current-main successor responsibilities
+and preserve #13862 / #13863 staging custody.
+
+### Dependency and release boundaries
+
+| Slice | Existing candidate / claim | Required predecessor | First accepted consumer / completion evidence |
+| --- | --- | --- | --- |
+| Whole-group extension selection | Draft #15176 under #14500 | Existing required route | Real prefix/settlement/unknown controls, then actual selected extension result; no whole-membership claim |
+| Product-free document roles | Draft #15177 under #14644 | Existing repo-policy boundary | Both entrypoints preserve reports/verdicts; actual docs-route adoption is later |
+| Plan/projection reconciliation | Draft #13514 under #8197 / #8198 | Current producer/configuration inventory | Grouped producer parity and complete expected outcomes; source remains inactive until execution acceptance |
+| Guide preparation | Draft #13906 | Compatible candidate CLI and real cold deadline | Required guide consumers use it; every CI miss returns through one family owner |
+| Native inventory reuse | #13481 / #14493 / #14501 under #13705 | Existing owner resolves source-custody hold | Existing native validator consumes the exact compatible producer inventory |
+| Compiler-unit reduction | ADR 0027; #12726 / #14199 | Existing contract/outcome boundaries | Largest compiler peak and public/package/test parity, with whole-route cost disclosed |
+| Execution placement | #8198 / #8194 / #8195 | Accepted plan, compatible preparation and bounded resource behavior | Same-runner reference versus small placement comparison, complete actual-G proof and cost |
+| Native subject and authority | #14500 / #4836, current-main successors | Complete membership/C binding and qualified publication mechanism | Isolated positive/spoof/stack/retry controls plus actual-product canary |
+| Protected cutover | #4834 / #4838 / #4840 / #4842 | Qualified successor, full enforcement readback and separate authorization | Reachable old/new generation, actual protected M, rollback and quiet event perimeter |
+| Integrated economics | #4841 / #11566 | Activated applicable lifecycle/execution path | Defined operating cohort, complete accepted-stack totals, exact-G diagnostics and explicit lifecycle cost |
+
+These are continuation points, not new reservations or automatic assignments.
+Independent enabling slices may land before the two activation prerequisites
+join. The final compute target does not block a separately qualified lifecycle
+correctness improvement; neither one alone closes the integrated parent.
+
 ## Work item: reconcile the executable plan
 
 Status: blocked on the existing staged candidate's integration/proof, not new design authority
@@ -77,14 +105,29 @@ branches, private controllers and unpartitioned tests are not an accepted
 economical topology. Join existing policy, corpus, capability, PR-evidence and
 extension producers as well as the 13 core ProductGatePlan IDs.
 
+Concrete reconciliation against current main is required before scheduling:
+
+- Map dependencies/process/network to the existing ci-policy producer, and
+  goldens/fixtures to check-with-fixtures; do not restore duplicate commands.
+- Admit and record the installed effective hosted profile configuration,
+  including CARGO_PROFILE_DEV_DEBUG=0. The staged validator currently rejects
+  all CARGO_PROFILE_* overrides and misses the profile-alignment step.
+- Replace the staged four-sequential-shard/first-parent assumptions with current
+  two-shard observations and the complete-G subject contract.
+- Separate the staged row's producer grouping from runner placement. Its
+  24-row Rust denominator is not the complete docs/extension/wider portfolio.
+- Qualify bootstrap under protected current source; the new controller cannot
+  grant authority to its own introduction.
+
 ### Acceptance and proof
 
 - Compare the old and candidate plans on docs, product, optional features,
   extension, workflows, policy, mixed and unknown changes.
 - Preserve command/configuration, selected cases, doctests, ignored cases,
   quarantine/retry semantics and required result meaning.
-- Each mandatory obligation executes exactly once or consumes explicitly
-  compatible authenticated evidence. Unknown is not an empty success.
+- Each mandatory proposition receives one authorized discharge. A grouped
+  producer may satisfy several propositions under its existing contract;
+  compatible authenticated reuse is explicit. Unknown is not an empty success.
 - Seed independent failures in policy, tests, doctests, static Rust, contracts,
   extension and evidence; each must refuse the final result.
 - Run the existing plan/parity tests, `cargo policy check-workflows`,
@@ -110,9 +153,13 @@ xtask facades. The documentation-role check is one bounded leaf; it does not
 replace the whole precommit table. Verify the lightweight executable identity
 before it judges inputs. Keep product-dependent checks with their producer.
 
-The trusted-base user-text matcher has a separate existing #8198 extraction
-owner. Land its lightweight interface first; switch the workflow only after
-the trusted base contains it. A candidate-only matcher cannot judge itself.
+The product-free user-text interface and actual workflow consumer are already
+installed. Modern bases use cargo policy check-user-text; older bases retain
+the xtask fallback. Do not assign this extraction/adoption again. The remaining
+native-stack task is independently protected C/B0 source selection: the current
+workflow uses event GROUP_BASE_SHA with ancestry checks, which can still be an
+unlanded lower G. Preserve old-base compatibility without letting the candidate
+choose its own judge.
 
 ### Acceptance and proof
 
@@ -159,6 +206,9 @@ names alone is insufficient. Keep check-covered-by's source scan separate.
 
 - Wrong source, feature/profile, toolchain, path, digest and producer attempts
   refuse reuse; missing preparation safely rebuilds or returns its real failure.
+- CI rebuilds return through the one preparation owner for that family;
+  consumers must not each launch Cargo on a miss. Local standalone fallback
+  remains a separate qualified mode.
 - Trace actual Cargo launches and which consumers reached the shared path.
 - Keep the exact-cover verifier and bijective case/binary identities. The
   recorded 31,435-case/411-binary run is a baseline, not a forever fixed count.
@@ -249,21 +299,24 @@ reclassification of an assertion failure as a flake.
 ## Work item: select and finalize the complete native subject
 
 Status: mixed; bounded selector corrections can land independently
-Live owner: #8082 / #14500; preserve #13862 / #13863 staging ownership
+Live owner: #14500 and current-main #8082 successors; preserve #13862 / #13863 staging ownership
 Blocked by: dynamic membership, source authority and native canaries
 Blocks: cheap-H / combined-G-only production cutover
 
 ### Production delta
 
-Freeze protected B0, complete ordered PR/H membership/dependencies and G/tree
-independently of the event's immediate speculative base. Keep control generation
-C protected. A native upper PR's immediate base branch need not be main;
-validate its authorized stack destination instead.
+Distinguish requested selection, registered native stack and all unlanded
+contributions included in G. Freeze the protected comparison anchor B0 for this
+actual G, complete ordered PR/H/dependencies and G/tree independently of the
+event's immediate speculative base and the earlier request-time branch tip.
+Keep C independently protected. A native upper PR's immediate base branch need
+not be main; validate its authorized stack destination instead.
 
 Correct each current selector at its existing owner. #15128 owns blobless docs
 history fetching, not proof that the selected base is the protected anchor.
-The extension selector's current event-base assumption is a distinct bounded
-correction; it must preserve conservative selection on unavailable history.
+Draft #15176 corrects the extension selector's current event-base assumption;
+its native Rust/hosted qualification remains outstanding. It does not establish
+complete membership, label union or trusted control source.
 
 The finalizer must distinguish successful lower-prefix settlement from
 withdrawal, changed membership or recomposition. Bind exact-H checks to H;
@@ -289,7 +342,7 @@ settings mutation or new App/controller prerequisite.
 ## Work item: own retries, failure termination and obsolete work
 
 Status: ready for a bounded existing-controller design; native predicate pending
-Live owner: #14500 / #8082 and existing shard-reuse owners
+Live owner: #14500 / current-main #8082 successors and existing shard-reuse owners
 Blocked by: authoritative exact-G lifetime mapping and attempt policy
 Blocks: economical retries and reclamation without cancelling valid work
 
@@ -350,9 +403,19 @@ scan that loses a secret added and removed inside the original history.
   complete applicable G proof. Bad middle, stale member and late blocker refuse.
 - Zero ordinary development starts across fresh and older contexts; do not
   make routine restacking the operating model.
-- Full-run occupied runner-minutes below 20 for the accepted target cohort,
+- Aggregate raw runner-minutes below 20 per accepted submission/stack in the target cohort,
   plus separately reported elapsed, cold/warm, CPU, memory, disk, transfer,
   failures, retries, invalidations and cost per landed PR.
+- Include all associated merge-group attempts, runner-allocating prefixes,
+  retries/replacements and required off-run preparation. Retain exact-G totals
+  as diagnostics; report stack totals and landed-PR counts without hiding an
+  expensive stack in per-PR averages. H/control work and unsuccessful submissions
+  also remain in explicit lifecycle totals.
+- Retain the separate under-20 qualification-elapsed objective from first
+  associated allocation to complete result, without resetting on retry or
+  replacement. Report enqueue-to-result and enqueue-to-landing separately,
+  without turning queue delay into a universal under-20 SLA. These boundaries follow the
+  [#4841 clarification](https://github.com/EffortlessMetrics/ripr-swarm/issues/4841#issuecomment-6999978169).
 - No obligation is moved outside the measurement window to make the total pass.
 - Exact landed M readback and one coherent rollback generation.
 
@@ -383,6 +446,60 @@ compatible execution units; do not make one giant preparation job or fewer
 shards an architectural rule.
 
 ## Evidence protocol and completion
+
+### Native acceptance matrix
+
+These are future discriminators, not claims that this documentation revision
+executed them or authorizes production settings changes. Retain each actual
+source, subject, native context, result and cost.
+
+| Case | Required observation | Existing owner |
+| --- | --- | --- |
+| Exact singleton | Cheap product-free H admission on H, complete G proof, protected exact-M readback | #14500 / #4840 |
+| Selected middle PR of a larger stack | Only the requested open downstack selection is authorized; upper members remain outside the request | #14500 |
+| Dynamic two-/three-member native stack | Provider membership is read, not hardcoded; event count and heavy-execution count are separate | #14500 / #4841 |
+| Lower extension/Rust/control change, upper docs | Full applicability and label union; lower control bytes never become protected C | #14500 / #8197 |
+| Non-main immediate stack base | Verified dependency edges reach the authorized destination | #14500 |
+| Missing/extra/reordered member or changed lower H | Refuse before expensive allocation or final success; top-H equality is insufficient | #14500 |
+| Correct G membership but preceding unlanded member lacks current admission or has wrong C | Refuse; native queue membership and matching trees cannot replace authenticated exact-H admission | #14500 |
+| Bad middle member | Complete G fails; prefix observation emits no canonical product success; native ejection/landing outcome retained | #4840 |
+| Omitted trusted callee or forged same-name result | Provider enforcement refuses the candidate's same-App success | #4836 / #4838 |
+| Missing/skipped/cancelled producer, empty or duplicate inventory | Required result refuses even if unrelated jobs are green | #8195 / #13514 |
+| Grouped policy or golden/fixture producer failure | Every owned logical obligation remains non-success; no duplicate substitute command masks it | #13514 |
+| Wrong build family / toolchain / target / flags | Reuse refuses; complete compatible preparation remains owned | #13705 / #13906 |
+| Cold miss in several consumers | Exactly the owned family producer rebuilds; consumers do not each invoke Cargo | #13906 / #8198 |
+| Old success, newer failure without an artifact | Native job history prevents fallback to old green evidence | #14500 / #10605 |
+| Failed finalizer, valid unchanged producers | Qualified same-run recovery avoids compilation and discloses both producer/finalizer attempts | #14500 |
+| Missing job pages, expired/corrupt artifact or changed C/plan | No final success; bounded recovery preserves the original state | #14500 |
+| Uncertain publication response or delayed older finalizer | Reconcile native check identity before retry; do not overwrite a newer refusal | #14500 |
+| Required producer fails while siblings run | Stop/reap only now-unnecessary owned work; retain original failure and diagnostics | #8198 / #14500 |
+| Valid speculative sibling / unrelated main advance | Valid G continues; no PR- or main-wide cancellation | #14500 |
+| Same-history lower prefix settles | Still-valid upper G remains live; exact settlement relation is retained | #14500 |
+| Equal tree, different merge/history identity without an accepted mapping | Unknown/refused, not settled; initial SQUASH acceptance binds native per-member commits to the captured G chain and final M to complete G | #14500 |
+| Withdrawn/recomposed G, including rerun race | Retired lifetime stops; its valid replacement survives | #14500 |
+| Unknown/partial native reads | No success, invented retirement or duplicate queue mutation | #14500 |
+| Late review blocker / withdrawal races with M | Refuse where still effective; if M wins, retain actual landing and incident outcome | #4985 / #4840 |
+| Main advances again before landed readback | Locate exact M in protected history, not only current tip equality | #4840 |
+| Old, reconciled and fresh PR contexts | No ordinary development starts across Actions and separately observed providers | #4842 |
+| Rollback | Complete previous qualification is reachable before successor protection is removed | #4838 / #4840 |
+
+### Delivery decision record
+
+For each slice, keep one current native record with:
+
+- selected claim, existing owner/candidate and exact source;
+- expected producer/obligation and consumer delta;
+- dependency or custody hold, plus the concrete resume condition;
+- discriminating executed proof and unexecuted dimensions;
+- actual allocation/cost observations, including unfavorable attempts;
+- acceptance at that slice's scope and the next missing parent criterion.
+
+This is the repository's existing issue/PR continuation record, not another
+tracker. A useful local or enabling result can be accepted without pretending
+it completed the whole lifecycle. Do not repeatedly run broad proof while an
+unchanged known failure or a source-custody prerequisite remains unresolved.
+
+### Focused-to-native proof sequence
 
 Use existing native receipts before purchasing new baseline runs. For each
 selected candidate, retain exact source/base/G, effective configuration,
