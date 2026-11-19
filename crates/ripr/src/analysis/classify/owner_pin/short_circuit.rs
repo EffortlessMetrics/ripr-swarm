@@ -651,6 +651,11 @@ fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
     if let Some(literal) = literal_boundary(text) {
         return Value::read(&literal).map(|_| Atom::Literal(literal));
     }
+    // #15030: an escape-free string literal is read by its text, before
+    // the split too (`"a/b"`, `"100%"`; Devin review on #15160).
+    if plain_string_body(text).is_some() {
+        return Some(Atom::Literal(text.to_string()));
+    }
     for operator in ['%', '/'] {
         if let Some((left, right)) = text.split_once(operator) {
             let parameter = parameters.iter().position(|name| name == left.trim())?;
@@ -669,11 +674,10 @@ fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
             });
         }
     }
-    if let Some(parameter) = parameters.iter().position(|name| name == text) {
-        return Some(Atom::Parameter(parameter));
-    }
-    // #15030: an escape-free string literal is read by its text.
-    plain_string_body(text).map(|_| Atom::Literal(text.to_string()))
+    parameters
+        .iter()
+        .position(|name| name == text)
+        .map(Atom::Parameter)
 }
 
 /// The text of a plain string literal `"..."` with no escape and no inner
@@ -944,6 +948,14 @@ mod tests {
             (
                 "fn f(flag: &String) -> bool {",
                 "flag == \"a||b\" || flag == \"c\"",
+            ),
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag == \"a\" || flag == \"a/b\"",
+            ),
+            (
+                "fn f(flag: &str) -> bool {",
+                "flag == \"100%\" || flag == \"x\"",
             ),
         ] {
             assert!(tail(function, changed).is_some(), "{function} {changed}");
