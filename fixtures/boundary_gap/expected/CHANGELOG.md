@@ -1,10 +1,10 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.183 for rebound std macro scopes (#12852)
+## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
 A macro-generated test that sits beside a rebound std macro name takes no
-invocation scopes, which bumps the analyzer cache schema to 1.183. Move the
-portable unchanged-attempt snapshots to 1.183, recompute the
+invocation scopes, which bumps the analyzer cache schema to 1.184. Move the
+portable unchanged-attempt snapshots to 1.184, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent verify
 commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing

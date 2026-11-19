@@ -429,9 +429,9 @@ pub(crate) struct RepoSeam {
     /// before the fact existed, which words the read neutrally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner_borrows_receiver: Option<bool>,
-    /// The owner function's opt-out (`#[mutants::skip]`, #14139), read once
-    /// from parser-backed attributes at extraction through
-    /// [`crate::analysis::owner_opt_out::function_owner_opt_out`]. Not part of
+    /// The owner function's opt-out (`#[mutants::skip]` on the owner or an
+    /// enclosing scope, #14139, #15000), decided once at extraction through
+    /// [`crate::analysis::owner_opt_out::FileOwnerOptOuts`]. Not part of
     /// the seam ID. The repo-scope formats withhold such seams from their
     /// counts and disclose the number; other consumers ignore it. Absent for
     /// every seam whose owner carries no opt-out, so cached and serialized

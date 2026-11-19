@@ -2189,23 +2189,34 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
     );
+    // The call an exception assertion's callable form makes
+    // (`assertRaises(E, levels.parse, "")`, RIPR-SPEC-0238 rule 13) is a
+    // call of the test like one written in its body.
+    let calls = |spelled: &dyn Fn(&str) -> bool| {
+        spelled(&test.body_text)
+            || test
+                .assertions
+                .iter()
+                .filter_map(|assertion| assertion.callable_call.as_deref())
+                .any(spelled)
+    };
     test.imports.iter().any(|import| {
         (!is_method_owner
             && import.imported == owner.name
             && import.alias != owner.name
             && import_module_may_be_owners(import, owner, &test.file)
-            && contains_call_name(&test.body_text, &import.alias))
+            && calls(&|text| contains_call_name(text, &import.alias)))
             || (imported_module_matches_owner(import, owner, &test.file)
                 // A parameter, fixture or assignment named like the module
                 // alias (`def test_one(pkg): pkg.one(...)`) calls a local
                 // value, not the imported module.
                 && !test_rebinds_import_alias(test, &import.alias)
-                && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
+                && calls(&|text| contains_attribute_call(text, &import.alias, &owner.name)))
             || (!is_method_owner
                 && submodule_receivers(import, owner, &test.file)
                     .iter()
                     .any(|receiver| {
-                        contains_attribute_call(&test.body_text, receiver, &owner.name)
+                        calls(&|text| contains_attribute_call(text, receiver, &owner.name))
                     })
                 && !test_rebinds_import_alias(test, &import.alias))
     })

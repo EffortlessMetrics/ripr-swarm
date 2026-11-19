@@ -23,3 +23,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_appended_int_arm_old_input (3)
+
+Reason:
+RIPR-SPEC-0197: #14194 withholds the false exposed return_value reading this SPEC's Known Limitation names, so the finding is weakly_exposed
+
+Command:
+`cargo xtask goldens bless rust_predicate_appended_int_arm_old_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

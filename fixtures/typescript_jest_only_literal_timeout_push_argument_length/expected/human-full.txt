@@ -91,5 +91,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_jest_only_literal_timeout_push_argument_length/input --diff <cwd>/fixtures/typescript_jest_only_literal_timeout_push_argument_length/diff.patch --mode fast probe:src_log.ts:typescript_preview:e9bf70d7
   ripr context --root <cwd>/fixtures/typescript_jest_only_literal_timeout_push_argument_length/input --diff <cwd>/fixtures/typescript_jest_only_literal_timeout_push_argument_length/diff.patch --mode fast --at probe:src_log.ts:typescript_preview:e9bf70d7
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

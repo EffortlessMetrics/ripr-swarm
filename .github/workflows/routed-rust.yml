@@ -211,7 +211,7 @@ jobs:
             reason=non_docs
             while IFS= read -r -d '' path; do
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) reason=release_surface; return 0 ;;
                 # Rust tests assert the exact prose of the agent-contract markdown
                 # (#14986); classifying it docs-only skips the lanes that read it.
                 .agents/skills/*|.claude/skills/*|docs/agent-context/*) reason=agent_contract_markdown; return 0 ;;
@@ -347,7 +347,7 @@ jobs:
             while IFS= read -r path; do
               [ -n "$path" ] || continue
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) return 1 ;;
                 # Same non-docs set as the detect-docs-only job (#14986).
                 .agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
@@ -889,16 +889,38 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-docs-gate
-      - name: Prepare locked owner-return fixture dependencies
+      - name: Prepare locked workspace and fixture dependencies
         run: |
+          cargo fetch --locked --manifest-path Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+      - name: Docs policy preflight
+        env:
+          RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        run: cargo policy preflight
+      # #14986: a docs-only PR edits markdown that Rust tests pin to exact
+      # prose, and this is the only lane such a PR runs. #14992 routes the
+      # agent-contract skills and docs/agent-context through the Rust lanes, so
+      # what remains here is the markdown the classifier still calls docs-only:
+      # AGENTS.md, CLAUDE.md, .factory/skills/**, docs/AGENT_WORKFLOWS.md,
+      # docs/PR_AUTOMATION.md, the public guides and READMEs, the spec template
+      # and the repo-policy executable-file fixtures. Run after policy preflight
+      # and before the full precommit table so a separate precommit failure does
+      # not hide the direct markdown-contract execution receipt. Both remain
+      # required; precommit can reuse the test binaries built here.
+      - name: Markdown contract tests (prose pinned by Rust tests)
+        run: |
+          cargo test -p xtask \
+            --test gh_pr_status_no_settings \
+            --test ripr_public_guide_contract \
+            --test spec_template_contract \
+            --test pr_readiness_workflow_contract \
+            --test executable_frontdoor
       - name: Doc/spec gates (full precommit table)
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: |
-          cargo policy preflight
           cargo xtask precommit
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both

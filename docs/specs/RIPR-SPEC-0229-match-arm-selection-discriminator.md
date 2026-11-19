@@ -651,7 +651,11 @@ the diff changes `None => 1` to `None => 0`.
   case `grid-match-helper`.
   A same-file `macro_rules!` that may define an item of the owner's name
   (#7985) makes the owner call ambiguous, so it credits nothing; a macro
-  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  defining an unrelated name does not. A statement-position invocation of
+  a macro defined outside the file that spells an item declaration of the
+  owner's name (`emit!(fn suit_color(..) { .. });`) is ambiguous the same
+  way; a call or bare mention there, and a std macro that expands to a
+  literal (`stringify!`), are not (#8467). Unit tests: `macro_item_names.rs`
   `tests` and the `helper_transfer.rs` unit test
   `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
   test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in

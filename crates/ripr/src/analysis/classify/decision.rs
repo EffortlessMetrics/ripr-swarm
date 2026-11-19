@@ -378,6 +378,11 @@ fn contains_macro_invocation(expression: &str) -> bool {
     false
 }
 
+/// #3700: the typed next step for a wrapper error seam. It names what static
+/// analysis cannot establish instead of prescribing an assertion the suite may
+/// already contain.
+pub(in crate::analysis) const WRAPPER_ERROR_BINDING_NEXT_STEP: &str = "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.";
+
 pub(in crate::analysis) fn recommended_next_step(
     probe: &Probe,
     class: &ExposureClass,
@@ -431,7 +436,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
                 // what static analysis cannot establish; discriminating this
                 // seam needs real mutation testing or deeper conversion
                 // modeling (Into/From through Box).
-                "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling."
+                WRAPPER_ERROR_BINDING_NEXT_STEP
             } else if matches!(probe.family, ProbeFamily::ReturnValue)
                 && super::exact_error_variant(&probe.expression).is_some()
             {

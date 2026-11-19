@@ -20,6 +20,34 @@ Static exposure findings are product output, not security claims. Report a
 finding as a vulnerability only when it creates a concrete security risk in the
 tool, packaging, distribution, or release process.
 
+## Analyzing A Repository You Do Not Trust
+
+`ripr` reads a repository through `git`, and `git` can run programs that the
+repository's own configuration names. A `git clone` never copies
+`.git/config`, but an extracted archive or a nested repository inside a
+checkout can carry one. Every `ripr` git call therefore:
+
+- disables `core.fsmonitor`, points `core.hooksPath` at the null device and
+  takes no optional index lock, so no file-system monitor or hook runs;
+- passes `--no-ext-diff --no-textconv` on the diffs it parses, so no external
+  diff or text-conversion program runs;
+- sets `log.showSignature=false`, so `gpg.program` is not run to verify
+  signed commits;
+- resets every `filter.<driver>.clean`, `.smudge`, `.process` and `.required`
+  key that the repository (or worktree) configuration defines to the value
+  your own system or global git configuration gives it, or to nothing. A
+  driver you installed yourself, such as Git LFS from `git lfs install`,
+  keeps working. A driver defined only in the repository, such as one from
+  `git lfs install --local`, does not run during `ripr` reads, so files it
+  filters can show as modified to `ripr`. A repository-defined driver whose
+  name contains `=` cannot be reset, and `ripr` refuses to run git there.
+
+Not covered: a populated submodule is examined by its own `git status`
+child, which reads that submodule's configuration, and its repository-defined
+filter drivers are not reset. Programs that the analyzed project's own build
+or test tooling runs when you ask `ripr` to execute tests are also outside
+these pins. Treat a tree from an untrusted source accordingly.
+
 ## Reporting A Vulnerability
 
 Use GitHub private vulnerability reporting for this repository when available.

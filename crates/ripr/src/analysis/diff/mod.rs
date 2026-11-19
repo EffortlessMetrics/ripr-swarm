@@ -7,6 +7,7 @@ mod load;
 mod model;
 mod parse;
 mod path;
+mod side_prefix;
 mod source;
 pub(crate) use base_owner::{ModuleDeclarations, verified_base_owner};
 pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};

@@ -201,7 +201,7 @@ predate the RIPR producer envelope, so `ripr outcome` reads them (with a
 warning) but `ripr agent verify` rejects them as non-canonical. Exercise
 `agent verify` and `agent receipt` through the real loop instead: run
 `ripr agent repair --phase before` on a pilot seam, add the focused test,
-then run the `--phase after` command it prints. Both artifacts must live under
+then run the `ripr continue ... --attempt` command it prints. Both artifacts must live under
 `--root`; two identical snapshots exit 3 (no repository movement) by design.
 
 Run the generator self-pin smoke with the binary built from the release commit

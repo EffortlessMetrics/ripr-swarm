@@ -57,7 +57,6 @@ Hidden:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
 Note: ripr established no static test path for any of the 3 changed expression(s) in this diff (2
   found no path, 1 could not be classified). Scope analyzed: 3 changed expression(s) and 0
   statically linked related test(s). This is not a coverage assessment. A test may already exercise

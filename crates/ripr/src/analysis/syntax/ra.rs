@@ -1056,6 +1056,7 @@ fn summarize_file_with_collectors(
         external_docs: Some(super::external_docs::parsed_source_includes_external_docs(
             text, &source,
         )),
+        constant_syntax: Some(super::constant_items::constant_syntax(text, &source)),
     })
 }
 
@@ -4834,6 +4835,7 @@ pub fn wrapped(input: &str, depth: usize) -> bool {
             item_scopes: None,
             macro_candidates: None,
             external_docs: None,
+            constant_syntax: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

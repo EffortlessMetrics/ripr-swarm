@@ -84,5 +84,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast probe:src_quote.py:python_preview:ca5fb9df
   ripr context --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast --at probe:src_quote.py:python_preview:ca5fb9df
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -655,3 +655,126 @@ fn unbound_namesake_routes_get_no_credit() -> Result<(), String> {
     assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }
+
+/// RIPR-SPEC-0228 examples 3, 4 and 6 (#12771): a test that runs the owner and
+/// reads only other fields of the receiver, directly or through a getter
+/// whose body plainly returns another field, cannot observe the write. That
+/// is a gap (`weakly_exposed`, the field-value discriminator missing), not an
+/// abstention.
+#[test]
+fn reads_of_only_other_fields_are_a_gap() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n    pub fn n(&self) -> u32 {\n        self.m\n    }\n    pub fn m_value(&self) -> u32 {\n        self.m\n    }\n}\n";
+    for (case, lines) in [
+        (
+            "reads another field",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m, 1);",
+        ),
+        (
+            "reads another field through a getter",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m_value(), 1);",
+        ),
+        (
+            "reads a getter named after the field that returns another",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.n(), 1);",
+        ),
+    ] {
+        let found = finding_at(
+            owner,
+            "tests/t.rs",
+            &format!("use probe::Counter;\n{}", test_body(lines)),
+        )?;
+        assert_eq!(
+            found.class,
+            ExposureClass::WeaklyExposed,
+            "{case}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+/// The other-field read places a test only when nothing else in it may read
+/// the written field: every other shape keeps abstaining.
+#[test]
+fn other_field_reads_that_may_hide_the_field_keep_abstaining() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n    pub fn total(&self) -> u32 {\n        self.n + self.m\n    }\n    pub fn clear(&mut self) {\n        self.n = 0;\n    }\n    pub fn n_plain(&self) -> u32 {\n        self.n\n    }\n}\npub fn peek(c: &Counter) -> u32 {\n    c.n\n}\n";
+    for (case, lines) in [
+        (
+            "a computed getter that reads the field",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.total(), 2);",
+        ),
+        (
+            "a helper given the binding",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m, 1);\n    assert_eq!(probe::peek(&c), 1);",
+        ),
+        (
+            "the field copied to a local first",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    let n = c.n;\n    assert_eq!(c.m, 1);\n    assert_eq!(n, 1);",
+        ),
+        (
+            "the written field beside the other in one assertion",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert!(c.n + c.m > 0);",
+        ),
+        (
+            "a getter of the written field beside the other",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m, c.n_plain());",
+        ),
+        (
+            "the owner called twice",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    c.reset();\n    assert_eq!(c.m, 1);",
+        ),
+        (
+            "a &mut method between the call and the read",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    c.clear();\n    assert_eq!(c.m, 1);",
+        ),
+        (
+            "a method on the other field",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.m.to_string(), \"1\");",
+        ),
+        (
+            "a field the type does not declare",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert_eq!(c.k, 1);",
+        ),
+        (
+            "the whole binding in the assertion",
+            "    let mut c = Counter { n: 5, m: 1 };\n    c.reset();\n    assert!(c.m == 1 && format!(\"{c:?}\").len() > 0);",
+        ),
+    ] {
+        let found = finding_at(
+            owner,
+            "tests/t.rs",
+            &format!("use probe::Counter;\n{}", test_body(lines)),
+        )?;
+        assert_ne!(
+            found.class,
+            ExposureClass::WeaklyExposed,
+            "{case} must not start a gap: {found:#?}"
+        );
+        assert_ne!(found.class, ExposureClass::Exposed, "{case}: {found:#?}");
+    }
+    Ok(())
+}
+
+/// Review of #12771: an owner that copies the written field into a sibling
+/// before the write, run twice, leaves the first write in the sibling, so a
+/// sibling read after two calls may observe it. Only one call places it.
+#[test]
+fn a_sibling_read_after_two_owner_calls_keeps_abstaining() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.m = self.n;\n        self.n = 1;\n    }\n}\n";
+    let test = |lines: &str| format!("use probe::Counter;\n{}", test_body(lines));
+    let twice = finding_at(
+        owner,
+        "tests/t.rs",
+        &test(
+            "    let mut c = Counter { n: 0, m: 7 };\n    c.reset();\n    c.reset();\n    assert_eq!(c.m, 1);",
+        ),
+    )?;
+    assert_ne!(twice.class, ExposureClass::WeaklyExposed, "{twice:#?}");
+    assert_ne!(twice.class, ExposureClass::Exposed, "{twice:#?}");
+    let once = finding_at(
+        owner,
+        "tests/t.rs",
+        &test("    let mut c = Counter { n: 0, m: 7 };\n    c.reset();\n    assert_eq!(c.m, 0);"),
+    )?;
+    assert_eq!(once.class, ExposureClass::WeaklyExposed, "{once:#?}");
+    Ok(())
+}
