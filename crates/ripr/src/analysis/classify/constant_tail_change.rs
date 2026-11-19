@@ -42,7 +42,7 @@
 //! #14938: the same folder also answers the opposite question for probe
 //! seeding, [`is_equal_constant_respelling`]: a returned constant rewritten
 //! as the same value (`65` → `0x41`, `"A"` → `"\x41"`, `1.0` → `1e0`) with
-//! every numeric literal suffix kept. Floats fold (as bit patterns) only
+//! every numeric literal suffix kept. Floats fold (as exact decimals) only
 //! for that equality; a float tail is never an admitted change.
 
 use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
@@ -259,12 +259,14 @@ enum Const {
     Byte(u8),
     Char(char),
     Str(String),
-    /// A float literal as its `f64` and `f32` bit patterns, so two spellings
-    /// fold equal only when they are the same value at either width. Two
+    /// A float literal as its exact decimal value, `digits × 10^exponent`
+    /// with no leading or trailing zero digit (zero is empty digits), so two
+    /// spellings fold equal only when they are the same rational number and
+    /// therefore round alike at every width, `f16` and `f128` included. Two
     /// floats are never [`distinct`]: only equality is read from them.
     Float {
-        f64_bits: u64,
-        f32_bits: u32,
+        digits: String,
+        exponent: i64,
     },
     /// Elements of an array (`vec == false`) or `vec!` (`vec == true`).
     List {
@@ -415,13 +417,46 @@ fn fold_literal(literal: &ast::Literal) -> Option<Const> {
             let digits = text
                 .strip_suffix(number.suffix().unwrap_or(""))?
                 .replace('_', "");
-            Some(Const::Float {
-                f64_bits: digits.parse::<f64>().ok()?.to_bits(),
-                f32_bits: digits.parse::<f32>().ok()?.to_bits(),
-            })
+            exact_decimal(&digits)
         }
         _ => None,
     }
+}
+
+/// A float literal's text (`1.5`, `15e-1`, `1.`, `2E+3`, no `_` or suffix)
+/// as its exact decimal [`Const::Float`]; `None` for any other shape.
+fn exact_decimal(text: &str) -> Option<Const> {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], text.get(at + 1..)?),
+        None => (text, "0"),
+    };
+    let exponent_digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+    if exponent_digits.is_empty()
+        || exponent_digits.len() > 9
+        || !exponent_digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if whole.is_empty()
+        || !format!("{whole}{fraction}")
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut exponent = exponent.parse::<i64>().ok()? - i64::try_from(fraction.len()).ok()?;
+    let digits = format!("{whole}{fraction}");
+    let digits = digits.trim_start_matches('0');
+    let trimmed = digits.trim_end_matches('0');
+    exponent += i64::try_from(digits.len() - trimmed.len()).ok()?;
+    if trimmed.is_empty() {
+        exponent = 0;
+    }
+    Some(Const::Float {
+        digits: trimmed.to_string(),
+        exponent,
+    })
 }
 
 /// #14938: whether `new` respells the constant expression `old` as the same
@@ -1150,6 +1185,9 @@ mod tests {
             ("b'A'", "b'\\x41'"),
             ("1.0", "1e0"),
             ("0.5f32", "5e-1f32"),
+            ("0.0", "0e5"),
+            ("1.", "10e-1"),
+            ("2E+3", "2000.0"),
             ("[1, 2]", "[0x1, 0b10]"),
             ("true", "!false"),
         ] {
@@ -1166,6 +1204,10 @@ mod tests {
             ("65", "66"),
             ("\"A\"", "\"B\""),
             ("1.0", "1.5"),
+            // Values that round alike in f64 but differ at a wider type.
+            ("9007199254740992.0f128", "9007199254740993.0f128"),
+            ("9007199254740992.0", "9007199254740993.0"),
+            ("0.1", "0.10000000000000000555"),
             ("0.0", "-0.0"),
             ("[1, 2]", "[1, 2, 3]"),
             // A suffix added, removed or changed can change the inferred type.
@@ -1196,8 +1238,8 @@ mod tests {
     fn a_float_tail_is_still_not_an_admitted_constant_change() -> Result<(), String> {
         // #14938 folds floats for equality only; #14852 keeps refusing them.
         let old = Const::Float {
-            f64_bits: 1.0f64.to_bits(),
-            f32_bits: 1.0f32.to_bits(),
+            digits: "1".into(),
+            exponent: 0,
         };
         let list = Const::List {
             vec: false,

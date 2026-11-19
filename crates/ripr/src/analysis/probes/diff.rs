@@ -617,8 +617,12 @@ pub(crate) fn probes_for_file_with_relations(
             };
             // The removed line it replaced is the same value too, so it seeds
             // no deleted-behavior probe either.
+            // The line is wholly that constant, so every other shape on it
+            // (`true == false` inside `return !false == false;`) lies inside
+            // the same unchanged value and is dropped too.
+            let equal_constant_line = canonical_shapes.iter().any(&equal_constant_return);
             if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
-                && canonical_shapes.iter().any(&equal_constant_return)
+                && equal_constant_line
             {
                 equal_constant_counterparts.push(removed.line);
             }
@@ -738,7 +742,7 @@ pub(crate) fn probes_for_file_with_relations(
                 .filter(|shape| {
                     !unchanged_return(shape)
                         && !respelled_return(shape)
-                        && !equal_constant_return(shape)
+                        && !equal_constant_line
                         && !guard_only_arm(shape)
                         && !carried_header(shape)
                         && !unchanged_in_header(shape)

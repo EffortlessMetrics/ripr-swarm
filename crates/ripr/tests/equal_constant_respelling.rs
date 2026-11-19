@@ -97,6 +97,13 @@ fn an_equal_value_respelling_seeds_no_finding() -> Result<(), String> {
         ("i32", "-128", "-0x80", "-128"),
         ("f64", "1.0", "1e0", "1.0"),
         ("[i32; 2]", "[1, 2]", "[0x1, 0b10]", "[1, 2]"),
+        // A comparison inside the value is the same constant too.
+        (
+            "bool",
+            "return true == false;",
+            "return !false == false;",
+            "false",
+        ),
     ] {
         let findings = TempRepo::create(ty, old, new, expected)?.findings()?;
         if !findings.is_empty() {
@@ -159,6 +166,12 @@ fn an_equal_value_with_changed_behavior_keeps_its_finding() -> Result<(), String
     for (ty, old, new, expected) in [
         ("i32", "65;", "return 0x41;", "65"),
         ("i8", "-(-128i8)", "128i8", "-128"),
+        (
+            "bool",
+            "return true == false;",
+            "return true == true;",
+            "true",
+        ),
     ] {
         let findings = TempRepo::create(ty, old, new, expected)?.findings()?;
         if !findings
