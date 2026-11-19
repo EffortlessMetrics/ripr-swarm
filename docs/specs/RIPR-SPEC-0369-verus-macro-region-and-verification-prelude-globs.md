@@ -162,9 +162,12 @@ covered by this entry until it is re-read and added.
 New-audit procedure: re-read the published crate's prelude export list at the
 exact version (no macro named like a trusted assertion), add that exact version
 string to `AUDITED_PRELUDE_VERSIONS` in `analysis/facts/drop_in.rs` and to the
-table above, extend `verification_prelude_globs_credit_only_audited_locked_versions`,
-and bump `CACHE_SCHEMA_VERSION`. Remove a version the same way if a re-read finds
-an assertion-like export.
+table above, and extend `verification_prelude_globs_credit_only_audited_locked_versions`.
+Remove a version the same way if a re-read finds an assertion-like export. No
+`CACHE_SCHEMA_VERSION` bump is needed: persisted classifications key on the
+analyzer build identity (`build_identity::cache_identity`, the commit or a
+source digest), so a build with a different audit table never reads entries
+another build wrote (#14116).
 
 This grants no credit of its own: an assertion in a file
 with such a glob is credited exactly as it would be without the glob, and a
