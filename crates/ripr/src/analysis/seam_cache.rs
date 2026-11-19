@@ -1447,7 +1447,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
+/// `1.63`: `env` and `option_env` join the trusted macro names, so the
+/// stored binding candidates may name them (#14116); `1.62` candidates
+/// cannot, and would hide a `macro_rules! env` from the binding scan.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.63";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5528,7 +5531,8 @@ mod tests {
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
+        // 1.62 -> 1.63: `env`/`option_env` binding candidates (#14116).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.63");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
