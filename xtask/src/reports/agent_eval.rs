@@ -911,18 +911,21 @@ fn tap_count(output: &str, prefix: &str) -> Option<u64> {
 }
 
 /// Node reports a test file that failed to load (an import or syntax error)
-/// as a top-level `not ok` row named after the file, not after a test.
+/// as a top-level `not ok` row for the file's own subprocess. Only that row's
+/// YAML block carries the subprocess `exitCode:`; a failed test's row never
+/// does, whatever its title says.
 fn tap_file_failed(output: &str) -> bool {
-    const SOURCE_SUFFIXES: [&str; 6] = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
-    output.lines().any(|line| {
-        line.strip_prefix("not ok ")
-            .and_then(|rest| rest.split_once(" - "))
-            .is_some_and(|(_, name)| {
-                SOURCE_SUFFIXES
-                    .iter()
-                    .any(|suffix| name.trim().ends_with(suffix))
-            })
-    })
+    let mut in_failed_row = false;
+    for line in output.lines() {
+        if line.starts_with("not ok ") {
+            in_failed_row = true;
+        } else if line.starts_with("ok ") || line.starts_with("# Subtest:") || line == "  ..." {
+            in_failed_row = false;
+        } else if in_failed_row && line.trim_start().starts_with("exitCode:") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Run the scenario's tests: one test file (`existing`, `eval_weak`,
@@ -1926,7 +1929,10 @@ verify=refused|outcome=complete_with_findings\n";
         let failed = format!("ok 1 - hours\nnot ok 2 - one hour\n{}", summary(2, 1));
         assert_eq!(classify_suite(ts, Some(1), &failed), Suite::TestFailed);
         // A test file that failed to load is a file-named row, not a catch.
-        let unloaded = format!("not ok 1 - test/eval_reference.test.ts\n{}", summary(1, 1));
+        let unloaded = format!(
+            "not ok 1 - test/eval_reference.test.ts\n  ---\n  location: 'test/eval_reference.test.ts:1:1'\n  failureType: 'testCodeFailure'\n  exitCode: 1\n  error: 'test failed'\n  ...\n{}",
+            summary(1, 1)
+        );
         assert!(matches!(
             classify_suite(ts, Some(1), &unloaded),
             Suite::NotEstablished(_)
