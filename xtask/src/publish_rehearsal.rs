@@ -112,6 +112,10 @@ pub(crate) fn vendored_ripr_crate(
 
 fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
     let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
+    // Size alone does not keep development tests out of the customer
+    // package: read the members of both archives (#15216).
+    crate::source_package_contents::check_crate_file("ripr-contract", &contract_crate, version)?;
+    crate::source_package_contents::check_crate_file("ripr", &ripr_crate, version)?;
     // Leave the packaged crates where `cargo package` would put them, so
     // callers (CI release-proof) can consume the exact rehearsed archives.
     let package_out = Path::new("target/package");

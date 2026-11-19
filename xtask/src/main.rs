@@ -48,6 +48,7 @@ mod generation_pins;
 mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;
+mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;

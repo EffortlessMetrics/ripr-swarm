@@ -15,7 +15,12 @@ categories = ["development-tools", "development-tools::testing"]
 # package (`cli_help_hierarchy` and its two shared helpers). Test-only sources
 # are left out because the crate otherwise exceeds the crates.io 10 MiB upload
 # limit (#14071): out-of-line unit-test modules (`tests.rs`, `tests/`,
-# `*_tests.rs`, all declared under `#[cfg(test)]`) and the rest of `tests/`.
+# `*_tests.rs`, all declared under `#[cfg(test)]`) and the rest of `tests/`,
+# plus test-only modules with other names (`src/testing/**`, the Kani proof
+# harnesses and the enumerated `#[cfg(test)]` modules) and test fixture data.
+# `cargo xtask publish-dry-run` reads the packaged members and refuses any
+# module that only a test or Kani build compiles, any undeclared source and any
+# `src/` data that no production `include_*!` reads (#15216).
 # Include patterns are gitignore-style and the last match wins, so the
 # production modules whose names end in `_tests.rs` are listed again after the
 # exclusion. A new production module with such a name must be added there, or
@@ -30,6 +35,23 @@ include = [
   "!src/**/tests.rs",
   "!src/**/tests/**",
   "!src/**/*_tests.rs",
+  "!src/analysis/language/python/bool_oracle_tests/**",
+  "!src/testing/**",
+  "!src/**/kani_proofs.rs",
+  "!src/**/*_kani.rs",
+  "!src/kani_smoke.rs",
+  "!src/app/kani_import/fixtures/**",
+  "!src/analysis/classify/activation/method_hop_rows.rs",
+  "!src/analysis/classify/activation/rebinding_scan.rs",
+  "!src/analysis/classify/stop_reason_contract.rs",
+  "!src/analysis/language/python/may_reach.rs",
+  "!src/analysis/source_role_corpus.rs",
+  "!src/analysis/test_grip_evidence/value_contradiction/fold_plan.rs",
+  "!src/analysis/verification_plan/resources.rs",
+  "!src/analysis/witness/language_projection_fixtures.rs",
+  "!src/analysis/witness/parity.rs",
+  "!src/lsp/saved_edit_measurement.rs",
+  "!src/lsp/saved_edit_sequence.rs",
   "src/analysis/classify/related_tests.rs",
   "src/analysis/facts/macro_generated_tests.rs",
   "src/analysis/facts/parameterized_tests.rs",
