@@ -5343,6 +5343,7 @@ fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), 
 /// `reports ci-summary` states it before the findings. Checked for a blocking
 /// decision, a configuration error and an unknown `RIPR_GATE_MODE`, against a
 /// `visible-only` run of the same input that adds neither.
+#[cfg(unix)]
 #[test]
 fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
 -> Result<(), Box<dyn Error>> {
