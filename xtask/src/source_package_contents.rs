@@ -148,6 +148,9 @@ struct ModuleGraph {
     compiled: BTreeSet<String>,
     /// Files and directory prefixes (ending in `/`) of test-only modules.
     test_only: BTreeSet<String>,
+    /// Files loaded through `#[path]`: like `mod.rs`, they own their
+    /// directory, so their children sit beside them.
+    path_loaded: BTreeSet<String>,
 }
 
 impl ModuleGraph {
@@ -188,7 +191,14 @@ fn module_graph(members: &BTreeMap<String, Vec<u8>>) -> Result<ModuleGraph, Stri
         if let Some(error) = parse.errors().first() {
             return Err(format!("member {file} does not parse: {error}"));
         }
-        let owns_directory = roots.contains(&file) || file.ends_with("/mod.rs");
+        // An inner `#![cfg(test)]` makes the whole file test-only.
+        if absent_from_production(&parse.tree())? {
+            graph.compiled.remove(&file);
+            graph.test_only.insert(file);
+            continue;
+        }
+        let owns_directory =
+            roots.contains(&file) || file.ends_with("/mod.rs") || graph.path_loaded.contains(&file);
         let file_dir = parent_dir(&file);
         // `include!`, `include_str!` and `include_bytes!` outside test-only
         // items read a file into the production build. An `include!`d
@@ -247,6 +257,7 @@ fn walk_items(
         let test_only = scope.test_only || absent_from_production(&module)?;
         let path_attr = path_attribute(&module);
         if let Some(list) = module.item_list() {
+            let test_only = test_only || absent_from_production(&list)?;
             let module_dir = match &path_attr {
                 Some(path) => format!("{}{}/", scope.module_dir, path.trim_end_matches('/')),
                 None => format!("{}{name}/", scope.module_dir),
@@ -268,11 +279,13 @@ fn walk_items(
                     scope.file_dir
                 };
                 let file = normalize(&format!("{base}{path}"));
-                let subtree = if file.ends_with("/mod.rs") {
-                    parent_dir(&file)
-                } else {
-                    format!("{}/", file.trim_end_matches(".rs"))
-                };
+                // A `#[path]` file's children sit beside it, among other
+                // modules' files, so no directory is test-only; children of
+                // a test-only one read as undeclared (refused).
+                let subtree = file.clone();
+                if !test_only {
+                    graph.path_loaded.insert(file.clone());
+                }
                 (vec![file], subtree)
             }
             None => (
@@ -356,7 +369,10 @@ fn attribute_text(attr: &ast::Attr) -> String {
         .to_string()
         .chars()
         .filter(|ch| !ch.is_whitespace())
-        .collect()
+        .collect::<String>()
+        // An inner attribute (`#![cfg(..)]`) applies to its enclosing
+        // module and reads the same way as an outer one.
+        .replacen("#![", "#[", 1)
 }
 
 fn item_absent_from_production(item: &ast::Item) -> Result<bool, String> {
@@ -586,6 +602,40 @@ mod tests {
         )?;
         assert!(
             error.contains("src/record.rs (module compiled only"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_loaded_files_own_their_directory_and_inner_cfg_test_gates_a_file() -> Result<(), String>
+    {
+        check_source_package(
+            "ripr",
+            &members(&[
+                ("src/lib.rs", "mod a;\n"),
+                ("src/a.rs", "#[path = \"x.rs\"]\nmod m;\n"),
+                ("src/x.rs", "mod c;\n"),
+                ("src/c.rs", ""),
+            ]),
+        )?;
+        let error = refusal(
+            "ripr",
+            &[
+                (
+                    "src/lib.rs",
+                    "mod helpers;\nmod inline {\n    #![cfg(test)]\n    mod deep;\n}\n",
+                ),
+                ("src/helpers.rs", "#![cfg(test)]\npub fn helper() {}\n"),
+                ("src/inline/deep.rs", ""),
+            ],
+        )?;
+        assert!(
+            error.contains("src/helpers.rs (module compiled only"),
+            "{error}"
+        );
+        assert!(
+            error.contains("src/inline/deep.rs (module compiled only"),
             "{error}"
         );
         Ok(())
