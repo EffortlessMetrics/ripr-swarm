@@ -102,6 +102,12 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`.\n",
     },
+    // #15201: the same near miss after the command gets no `--all` either.
+    Case {
+        args: &["check", "--al"],
+        exit: 2,
+        stderr: "ripr: unknown check argument \"--al\". Run `ripr check --help --all`.\n",
+    },
     Case {
         args: &["-x", "check"],
         exit: 2,
