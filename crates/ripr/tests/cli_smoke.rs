@@ -37768,6 +37768,44 @@ fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result
     Ok(())
 }
 
+/// `init` in a root with nothing ripr can read (a brand-new repository with
+/// only a README) warns that `ripr check` has nothing to analyze, instead of
+/// writing a Rust configuration in silence. The warning is advisory (files
+/// are written, exit 0), and a root that has source stays quiet.
+#[test]
+fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-no-source-warning");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    // Fixture check: no manifest and no source file of any language.
+    assert!(!repo.join("Cargo.toml").exists());
+    let repo_arg = repo.display().to_string();
+
+    let empty = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&empty);
+    assert!(
+        repo.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {empty:?}"
+    );
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("has no Cargo.toml and no source file ripr reads yet"),
+        "init into a root without source must warn: {stderr}"
+    );
+
+    std::fs::write(repo.join("app.py"), "def f():\n    return 1\n").map_err(|e| e.to_string())?;
+    let with_source = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&with_source);
+    let quiet = String::from_utf8_lossy(&with_source.stderr);
+    assert!(
+        !quiet.contains("no source file ripr reads yet"),
+        "a root with source must stay quiet: {quiet}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
 /// #5252 item 7: `init` into a directory that is not a Git work tree warns
 /// instead of silently writing branch-based configuration; a real repo stays
 /// quiet. The warning is advisory: files are still written, exit stays 0.
