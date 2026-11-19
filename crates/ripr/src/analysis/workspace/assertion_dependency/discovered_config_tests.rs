@@ -158,9 +158,26 @@ fn identity_probe_never_runs_a_wrapper_the_analyzed_tree_names() -> Result<(), S
         "the identity probe ran a program the analyzed tree named"
     );
 
-    // Control: the raw probe (no snapshot admission) does run the wrapper,
-    // so the refusal above is the snapshot, not a dead stimulus.
-    assert!(metadata_probe_result(&fixture.root).is_err());
+    // Control: the probe's own fixed command, with no snapshot admission,
+    // does run the wrapper, so the refusal above is the snapshot and not a
+    // dead stimulus. A caller's RUSTC/RUSTC_WRAPPER (an exported sccache, for
+    // example) outranks the config key in Cargo, so only the control drops
+    // those; the production path above keeps the caller's environment.
+    let output =
+        std::fs::File::create(fixture.root.join("control.json")).map_err(|e| e.to_string())?;
+    let mut control = metadata_command(&fixture.root, output);
+    for key in [
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTC",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+    ] {
+        control.env_remove(key);
+    }
+    let status = control.status().map_err(|e| e.to_string())?;
+    assert!(!status.success(), "the failing wrapper must fail the probe");
     assert!(marker.exists(), "control: cargo metadata runs the wrapper");
     Ok(())
 }
