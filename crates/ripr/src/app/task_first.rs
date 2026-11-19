@@ -3044,6 +3044,18 @@ pub(crate) fn check_repair_route(
         if gripped.next().is_some() && gripped.next().is_none() {
             return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
         }
+        // #15157: a changed `a < b && c == d` line holds one spot per
+        // comparison; the join refuses to pick between them, which is a tie
+        // on the changed line, not a line no spot could be tied to.
+        let tied = super::repair_card_handoff::seams_tied_on_finding_line(finding, &classified);
+        if !tied.is_empty() {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralSpotsOnChangedLine {
+                spots: tied
+                    .iter()
+                    .map(|entry| entry.seam.expression().to_string())
+                    .collect(),
+            });
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam {
             seams_in_file: classified.len(),
         });

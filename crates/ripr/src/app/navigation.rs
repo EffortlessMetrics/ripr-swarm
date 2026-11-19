@@ -179,6 +179,13 @@ pub(crate) enum RepairRouteRefusal {
     NoBindingSeam {
         seams_in_file: usize,
     },
+    /// Several same-kind spots sit on this finding's changed line (one per
+    /// comparison in `a < b && c == d`) and none is more specific than the
+    /// others, so no single spot binds the finding (#15157). `spots` holds
+    /// each tied spot's code, in file order.
+    SeveralSpotsOnChangedLine {
+        spots: Vec<String>,
+    },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
     /// (#10702).
@@ -263,6 +270,23 @@ impl RepairRouteRefusal {
                  for you; `ripr pilot` lists them, or follow the Next step above",
                 if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
+            Self::SeveralSpotsOnChangedLine { spots } => {
+                const NAMED: usize = 3;
+                let mut named = spots
+                    .iter()
+                    .take(NAMED)
+                    .map(|spot| format!("`{spot}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if spots.len() > NAMED {
+                    named.push_str(&format!(" and {} more", spots.len() - NAMED));
+                }
+                format!(
+                    "no repair start offered: this finding's changed line holds {} spots \
+                     ({named}) and ripr will not pick one for you; follow the Next step above",
+                    spots.len()
+                )
+            }
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
@@ -1178,6 +1202,28 @@ mod tests {
             "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
+        );
+        // #15157: a tie on the changed line names the tied spots, not "could
+        // not tie one", and caps the list.
+        let tied = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["min_bound < j".to_string(), "a_elem == b_elem".to_string()],
+        }
+        .advisory(gate);
+        assert_eq!(
+            tied,
+            "no repair start offered: this finding's changed line holds 2 spots \
+             (`min_bound < j`, `a_elem == b_elem`) and ripr will not pick one for you; \
+             follow the Next step above"
+        );
+        let many = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: ["a", "b", "c", "d", "e"].map(str::to_string).to_vec(),
+        }
+        .advisory(gate);
+        assert!(
+            many.contains("holds 5 spots (`a`, `b`, `c` and 2 more)")
+                && !many.contains("`d`")
+                && !many.contains("could not tie"),
+            "{many}"
         );
         let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
         assert_eq!(
