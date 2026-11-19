@@ -1876,6 +1876,35 @@ mod tests {
     }
 
     #[test]
+    fn single_line_prose_maps_code_spans_after_multibyte_text() {
+        // Parser offsets are bytes; multibyte text before and between spans
+        // must not shift which bytes are copied verbatim.
+        let input = "é ✓ <b> `<i>` 日本 @octocat `@u` end";
+        let expected = "é ✓ &lt;b> `<i>` 日本 @\u{2060}octocat `@u` end";
+        for helper in [inline_prose, inline_prose_literal, table_cell_text] {
+            let once = helper(input);
+            assert_eq!(once, expected);
+            assert_eq!(helper(&once), once);
+        }
+    }
+
+    #[test]
+    fn table_cell_text_escapes_a_pipe_inside_a_code_span() {
+        // GFM splits table cells before inline parsing, so a raw `|` inside a
+        // code span would still end the cell; `\|` renders as `|` in the code.
+        let cell = table_cell_text("run `a|b` then a|b");
+        assert_eq!(cell, "run `a\\|b` then a\\|b");
+        let table = format!("| h |\n| --- |\n| {cell} |\n");
+        let codes = pulldown_cmark::Parser::new_ext(&table, pulldown_cmark::Options::ENABLE_TABLES)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Code(code) => Some(code.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(codes, vec!["a|b".to_owned()]);
+    }
+
+    #[test]
     fn markdown_text_escapes_backslashes() {
         assert_eq!(markdown_text("a\\b"), "a\\\\b");
         assert_eq!(markdown_text("no backslash"), "no backslash");
