@@ -325,6 +325,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             candidate_index.base_may_rebind_trusted_macros(),
         )
     });
+    // #14936: a deleted early return giving the value the remaining tail
+    // gives is not discriminated by a pin on the owner's return.
+    context.deleted_guard_agreement = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::deleted_guard_agreement(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
     context.compile_time_guarded = owner_fn.is_none()
         && candidate_index
             .probe_index_file(probe, index)

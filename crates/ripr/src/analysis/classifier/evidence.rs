@@ -2044,6 +2044,18 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #14936: a deleted `if <cond> { return <constant>; }` whose constant
+        // is the candidate owner's whole-body constant tail returns the same
+        // value on both sides for every input the guard took, so an exact pin
+        // on the owner's return does not discriminate the deletion.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+        {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No

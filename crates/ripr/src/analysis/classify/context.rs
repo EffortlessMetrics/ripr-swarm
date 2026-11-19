@@ -61,6 +61,10 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// whole-body constant tail on the base side; `None` when any part of
     /// that reading failed.
     pub constant_tail_change: Option<super::ConstantTailChange>,
+    /// #14936: the removed-only probe is a deleted early-return guard whose
+    /// constant equals the candidate owner's whole-body constant tail, so no
+    /// pin on the owner's return discriminates it. Only withholds credit.
+    pub deleted_guard_agreement: Option<super::DeletedGuardAgreement>,
     /// #12040: the changed line is, or declares a constant named by, a
     /// same-file compile-time assertion. Selects the `compile_time_invariant`
     /// stop reason and withholds a ruled-out reach (`no_static_path`) as
@@ -110,6 +114,7 @@ impl<'a> ProbeContext<'a> {
             const_flow: None,
             binding_return_flow: None,
             constant_tail_change: None,
+            deleted_guard_agreement: None,
             compile_time_guarded: false,
             unary_tail: None,
             #[cfg(feature = "lang-rust")]
