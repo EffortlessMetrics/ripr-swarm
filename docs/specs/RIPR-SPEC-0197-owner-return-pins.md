@@ -1570,9 +1570,13 @@ declarations cannot be read, no witness completes and propagation reads
 `unknown` (`cfg_gated_owner`), so the finding reads no stronger than
 `propagation_unknown`. Ungated owners, an owner beside an unrelated
 `cfg(test)` module and a same-named function on another path keep the
-credit. Limit: a `#[path]` module declaration anywhere in the workspace is
-read as able to retarget any owner, so it withholds this credit
-workspace-wide until `#[path]` targets are resolved per owner.
+credit. A `#[path]` module declaration is read as able to retarget any
+owner outside a default crate root (`src/lib.rs`, `src/main.rs`); a crate
+root stays ungated unless a `#[path]` literal names its file name or a
+target cannot be read as a literal, since a `mod` declaration cannot move
+or compile out a crate root. Limit: owners outside crate roots in a
+workspace with any `#[path]` declaration withhold this credit until
+`#[path]` targets are resolved per owner.
 
 ### Format owner tails (#6578)
 

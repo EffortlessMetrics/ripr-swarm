@@ -11,3 +11,8 @@
   The gate fails closed: a workspace file whose `mod` declarations cannot
   be parsed refuses the credit too. Other returned shapes (`format!`,
   `concat!`, `Ok(..)` and early-return tails) are not covered yet (#15198).
+- Rust: a `#[path]` module declaration (such as a
+  `#[cfg(test)] #[path = "test_support.rs"] mod tests;`) no longer gates
+  owners in a default crate root (`src/lib.rs`, `src/main.rs`) whose file
+  name no `#[path]` literal names; other owners still read it as able to
+  retarget them (#15104).
