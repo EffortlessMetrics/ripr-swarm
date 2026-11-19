@@ -935,7 +935,7 @@ fn submodule_repository_helper_does_not_run() -> Result<(), String> {
     let mut round = 0usize;
     let mut restat = || -> Result<(), String> {
         round += 1;
-        let body = if round % 2 == 0 {
+        let body = if round.is_multiple_of(2) {
             CHANGED_LIB
         } else {
             BASE_LIB
