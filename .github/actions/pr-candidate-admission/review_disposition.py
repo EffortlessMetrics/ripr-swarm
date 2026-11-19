@@ -1188,6 +1188,27 @@ def negative_reason(body: str, head: str) -> str:
     return body_refusal_reason(body, head) or "it states a negative"
 
 
+def _superseded_note(
+    statement: dict[str, Any], reviews: list[dict[str, Any]], head: str
+) -> str:
+    """Name the same login's earlier attesting review at ``head`` that
+    ``statement`` replaced, the silent revocation #14929 reports."""
+    login = _review_login(statement)
+    earlier = [
+        r for r in _effective_statements(reviews, head)
+        if _review_login(r) == login
+        and _order(r) < _order(statement)
+        and _comment_attests(r, head)
+    ]
+    if not earlier:
+        return ""
+    return (
+        ". It supersedes the same login's attesting review at "
+        f"{max(earlier, key=_order).get('submitted_at')} although the head has not "
+        "changed; post a fresh plain marker review"
+    )
+
+
 def _describe(review: dict[str, Any]) -> str:
     return f"{_review_login(review)}'s review at {review.get('submitted_at')}"
 
@@ -1224,11 +1245,12 @@ def refusal_details(
             continue
         reported.add(id(negative))
         reason = negative_reason(_body(negative), head)
-        details.append(
+        detail = (
             f"{_describe(negative)} on this head vetoes admission: {reason}. A later "
             f"SOURCE_REVIEW_READY, `VERDICT: APPROVE {head}` or native APPROVED review "
             "from the same login on this head clears it"
         )
+        details.append(detail + _superseded_note(negative, reviews, head))
     effective = _effective_statements(reviews, head)
     for latest in _latest_by_login(effective):
         if _withdrawn_by_later_native(latest, reviews):
@@ -1241,20 +1263,7 @@ def refusal_details(
             continue
         reason = body_refusal_reason(_body(latest), head) or "it attests nothing"
         detail = f"{_describe(latest)} is that login's latest on this head and attests nothing: {reason}"
-        login = _review_login(latest)
-        earlier = [
-            r for r in effective
-            if _review_login(r) == login
-            and _order(r) < _order(latest)
-            and _comment_attests(r, head)
-        ]
-        if earlier:
-            detail += (
-                f". It supersedes the same login's attesting review at "
-                f"{max(earlier, key=_order).get('submitted_at')} although the head "
-                "has not changed; post a fresh plain marker review"
-            )
-        details.append(detail)
+        details.append(detail + _superseded_note(latest, reviews, head))
     if not effective and not any(
         _at_head(r, head) and _state(r) == "APPROVED" and _trusted(r) for r in reviews
     ):
@@ -2420,6 +2429,14 @@ def self_test() -> None:
                body=f"{verdict_open}\n\n- The earlier timing claim is withdrawn."),
     ]
     assert not reviews_allow_source_attestation(vetoed, head=head)
+    retracted = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:00Z", body="SOURCE_REVIEW_READY"),
+        *vetoed,
+    ]
+    details = refusal_details(retracted, head=head)
+    assert len(details) == 1 and "vetoes admission" in details[0], details
+    assert "attesting review at 2026-10-15T01:00:00Z" in details[0], details
     details = refusal_details(vetoed, head=head)
     assert len(details) == 1 and "vetoes admission" in details[0], details
     assert "phrase 'withdrawn'" in details[0] and "timing claim" in details[0], details
