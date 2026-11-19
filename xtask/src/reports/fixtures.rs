@@ -147,6 +147,12 @@ pub(crate) fn goldens_check() -> Result<(), String> {
     }
 }
 
+/// The one-line verdict `goldens check-with-fixtures` prints on a clean run.
+/// Without it a clean exit 0 is indistinguishable from a no-op (#15153).
+fn goldens_pass_line(fixtures: usize) -> String {
+    format!("goldens check-with-fixtures: pass ({fixtures} fixtures compared)")
+}
+
 /// What a `goldens check` run established, before the caller decides how to
 /// treat violations.
 enum GoldenCheckRun {
@@ -202,6 +208,9 @@ fn golden_check_run_with_fixture_report(fixtures_report: bool) -> Result<GoldenC
     }
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
+        if fixtures_report {
+            println!("{}", goldens_pass_line(run_set.fixtures.len()));
+        }
         Ok(GoldenCheckRun::Clean)
     } else {
         let message = goldens_check_failure_message(&entries, &run_set.violations, &provenance);
@@ -3570,6 +3579,14 @@ mod tests {
     fn joint_fixture_command_rejects_extra_arguments_before_execution() {
         let result = goldens_impl(&["check-with-fixtures".into(), "ignored-filter".into()]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn goldens_pass_line_names_the_compared_fixture_count() {
+        assert_eq!(
+            super::goldens_pass_line(3),
+            "goldens check-with-fixtures: pass (3 fixtures compared)"
+        );
     }
 
     #[test]
