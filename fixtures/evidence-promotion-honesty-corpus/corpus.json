@@ -20296,6 +20296,54 @@
       ]
     },
     {
+      "id": "rust_predicate_appended_str_arm_truth_assert",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_str_arm_truth_assert",
+      "vector": "a_truthiness_assertion_on_an_appended_string_arm_input_pins_the_bool_owner",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_str_arm_false_side_only",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_str_arm_false_side_only",
+      "vector": "a_false_side_string_input_leaves_the_appended_arm_unexercised",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_forwarding_wrapper_invisible_input",
       "language": "rust",
       "tier": "pure",

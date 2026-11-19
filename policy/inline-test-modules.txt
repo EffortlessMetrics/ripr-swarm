@@ -25,6 +25,7 @@ crates/ripr-contract/src/domain/language_capability_drift.rs|1
 crates/ripr-contract/src/domain/limit_guidance.rs|1
 crates/ripr-contract/src/domain/probe.rs|4
 crates/ripr-contract/src/domain/proof_domains.rs|1
+crates/ripr-contract/src/domain/python_changed_headline_row.rs|1
 crates/ripr-contract/src/domain/refusal_remedy.rs|1
 crates/ripr-contract/src/domain/summary.rs|1
 crates/ripr-contract/src/domain/support.rs|1
