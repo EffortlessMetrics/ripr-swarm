@@ -1601,10 +1601,14 @@ fn macro_binding_sites_in_tree(
                     continue;
                 }
                 // RIPR-SPEC-0369: an exact verification-prelude glob exports no
-                // assertion macro, so it cannot rebind a trusted name.
+                // assertion macro, so it cannot rebind a trusted name. A plain
+                // import that binds the root name (`use other::vstd;`) takes
+                // the path over for the module, as for the standard roots; an
+                // absolute `::vstd` path still names the extern crate.
                 if item.star_token().is_some()
                     && is_assertion_free_prelude_glob(&item)
                     && !drop_in_shadowed(root, external)
+                    && (external || !root_imported())
                     && drop_in_verified(root)
                 {
                     continue;
