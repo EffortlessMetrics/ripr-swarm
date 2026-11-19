@@ -45,9 +45,9 @@ shows through its diagnostics and commands, are in the
 - ripr warnings offer a Show Output action, and an error popup shows the
   server's real failure instead of a generic message ([#2062](https://github.com/EffortlessMetrics/ripr-swarm/issues/2062), [#2167](https://github.com/EffortlessMetrics/ripr-swarm/issues/2167)).
 - The managed server download shows progress and says which release it
-  fetches ([#2065](https://github.com/EffortlessMetrics/ripr-swarm/issues/2065)). Managed servers are installed atomically: the archive
-  checksum, the staged binary and an install receipt are checked before the
-  new server replaces the cached one ([#3184](https://github.com/EffortlessMetrics/ripr-swarm/issues/3184)).
+  fetches ([#2065](https://github.com/EffortlessMetrics/ripr-swarm/issues/2065)). A managed server is installed in a staging folder
+  and checked (archive checksum, staged binary, install receipt) before it
+  replaces the cached one, and a failed replacement puts the cached one back ([#3184](https://github.com/EffortlessMetrics/ripr-swarm/issues/3184)).
 - Changing `ripr.trace.server` applies right away instead of restarting the
   server ([#2168](https://github.com/EffortlessMetrics/ripr-swarm/issues/2168)).
 - Agent-loop copy commands run from the Command Palette, without a ripr
