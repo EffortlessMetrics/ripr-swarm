@@ -212,6 +212,22 @@ pub(crate) enum RepairRouteRefusal {
     },
 }
 
+/// Longest tied-spot snippet the repair-start note quotes (#15157).
+const TIED_SPOT_CHARS: usize = 80;
+
+/// One tied spot's code on one bounded line: a seam's expression keeps its
+/// source line breaks (a multi-line string or call), and the refusal is one
+/// advisory line, so collapse whitespace and cut a long snippet with `…`.
+fn one_line_spot(spot: &str) -> String {
+    let collapsed = spot.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= TIED_SPOT_CHARS {
+        return collapsed;
+    }
+    let mut bounded: String = collapsed.chars().take(TIED_SPOT_CHARS).collect();
+    bounded.push('…');
+    bounded
+}
+
 impl RepairRouteRefusal {
     /// The one-line advisory for the check triage screen (#8729).
     /// `full_gate_command` is the bound `ripr repair <finding-id>` command
@@ -275,7 +291,7 @@ impl RepairRouteRefusal {
                 let mut named = spots
                     .iter()
                     .take(NAMED)
-                    .map(|spot| format!("`{spot}`"))
+                    .map(|spot| format!("`{}`", one_line_spot(spot)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 if spots.len() > NAMED {
@@ -1224,6 +1240,19 @@ mod tests {
                 && !many.contains("`d`")
                 && !many.contains("could not tie"),
             "{many}"
+        );
+        // A multi-line or long spot stays on the one advisory line.
+        let long = "x".repeat(120);
+        let bounded = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["a ==\n    \"two\nlines\"".to_string(), long.clone()],
+        }
+        .advisory(gate);
+        assert!(!bounded.contains('\n'), "{bounded}");
+        assert!(
+            bounded.contains("holds 2 spots (`a == \"two lines\"`, `")
+                && bounded.contains(&format!("{}…`", "x".repeat(80)))
+                && !bounded.contains(&"x".repeat(81)),
+            "{bounded}"
         );
         let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
         assert_eq!(
