@@ -1037,6 +1037,7 @@ fn extract_rstest_cases_reads_named_case_rows() {
             "#[case::below(50, 0)]".to_string(),
             "#[case(100, 0)]".to_string(),
             "#[case::r#above (200, 20)]".to_string(),
+            "#[case :: égal(100, 0)]".to_string(),
             "#[case::two::parts(7, 7)]".to_string(),
             "#[cases(9, 9)]".to_string(),
         ]
@@ -1055,6 +1056,7 @@ fn extract_rstest_cases_reads_named_case_rows() {
             vec!["50".to_string(), "0".to_string()],
             vec!["100".to_string(), "0".to_string()],
             vec!["200".to_string(), "20".to_string()],
+            vec!["100".to_string(), "0".to_string()],
         ],
         "named rows bind like plain rows; a multi-segment path or another attribute binds nothing"
     );

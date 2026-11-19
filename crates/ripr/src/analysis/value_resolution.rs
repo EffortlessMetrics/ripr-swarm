@@ -1946,18 +1946,21 @@ fn rstest_case_attr_args(attr: &str) -> Option<&str> {
     if let Some(args) = attr_call_args(attr, "case") {
         return Some(args);
     }
-    let rest = attr_inner(attr)?.strip_prefix("case::")?;
-    let open = rest.find('(')?;
-    let description = rest[..open].trim_end();
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    // A path may be spaced (`case :: equal`), as the syntax reader accepts.
+    let path = inner[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let description = path.strip_prefix("case::")?;
     let identifier = description.strip_prefix("r#").unwrap_or(description);
     let mut chars = identifier.chars();
-    let starts = chars
-        .next()
-        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic());
-    if !starts || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+    let starts = chars.next().is_some_and(|c| c == '_' || c.is_alphabetic());
+    if !starts || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
         return None;
     }
-    let args = rest[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
+    let args = inner[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
     Some(args)
 }
 
