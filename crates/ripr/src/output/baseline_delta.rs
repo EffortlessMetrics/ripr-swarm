@@ -4138,7 +4138,10 @@ mod tests {
     }
 
     /// Bucket and markers of the delta item for each seam id.
-    fn owner_delta(baseline: &str, current: &str) -> Result<BTreeMap<String, (String, Value, Value)>, String> {
+    fn owner_delta(
+        baseline: &str,
+        current: &str,
+    ) -> Result<BTreeMap<String, (String, Value, Value)>, String> {
         let report = build_baseline_delta_report(BaselineDeltaInput {
             root: ".".to_string(),
             baseline_path: "baseline.json".to_string(),
@@ -4276,13 +4279,14 @@ mod tests {
                 .map_err(|err| err.to_string())?;
         baseline["entries"][1]["path"] = serde_json::json!("src/h.rs");
         let baseline = baseline.to_string();
-        let mut current: Value = serde_json::from_str(&opted_out_gate_decision(serde_json::json!({
-            "withheld": 1,
-            "reason": "owner_mutants_skip",
-            "seam_ids": ["fresh0001"],
-            "owners": ["src/g.rs::skipped"],
-        })))
-        .map_err(|err| err.to_string())?;
+        let mut current: Value =
+            serde_json::from_str(&opted_out_gate_decision(serde_json::json!({
+                "withheld": 1,
+                "reason": "owner_mutants_skip",
+                "seam_ids": ["fresh0001"],
+                "owners": ["src/g.rs::skipped"],
+            })))
+            .map_err(|err| err.to_string())?;
         current["analysis_scope"]["changed_files"] = serde_json::json!(["src/g.rs", "src/h.rs"]);
         current["analysis_scope"]["changed_production_files"] =
             serde_json::json!(["src/g.rs", "src/h.rs"]);
