@@ -1423,7 +1423,7 @@ owner = "ci/nextest-discovery"
 surface = "ci"
 classification = "tooling"
 reason = "#14906: runner-provided POSIX stdlib supervisor bounds discovery before test execution; Linux repo-policy controls exercise deadline, cancellation, metadata-only export and the actual workflow shell without Nextest or a workspace build."
-covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+covered_by = ["cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "tools/ci/test_nextest_discovery.py"
@@ -1432,4 +1432,4 @@ owner = "ci/nextest-discovery"
 surface = "ci"
 classification = "test"
 reason = "#14906: runner-provided POSIX stdlib supervisor bounds discovery before test execution; Linux repo-policy controls exercise deadline, cancellation, metadata-only export and the actual workflow shell without Nextest or a workspace build."
-covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+covered_by = ["cargo xtask check-file-policy"]
