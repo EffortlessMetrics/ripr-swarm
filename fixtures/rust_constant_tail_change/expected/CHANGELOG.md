@@ -57,3 +57,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (6)
+
+Reason:
+RIPR-SPEC-0197 (#14936): the deleted same-value guards of pick and gate read weakly_exposed
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
