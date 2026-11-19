@@ -828,12 +828,23 @@ pub(crate) fn probes_for_file_with_relations(
                         None => line,
                     }
                 });
+                // #14333: a line inside an unsafe boundary opened earlier
+                // (`let repr = unsafe { .. };` in an `unsafe fn`) shows the
+                // edited line as its changed text. The boundary label stays
+                // the expression, so the probe id, gap id and unsafe
+                // obligation are unchanged, and `before` (the old line) and
+                // `after` now name the same edit.
+                let after = if shape.unsafe_interior {
+                    text.to_string()
+                } else {
+                    canonical_text.clone()
+                };
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
                     before,
-                    Some(canonical_text.clone()),
+                    Some(after),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
@@ -6238,6 +6249,7 @@ mod tests {
             text,
             standalone_call: false,
             unsafe_boundary: false,
+            unsafe_interior: false,
         }
     }
 

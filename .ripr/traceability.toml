@@ -13781,6 +13781,9 @@ tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests",
   "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::probe_walk_resolves_unchecked_assumption_through_use_bindings",
   "crates/ripr/src/analysis/probes/classify.rs::tests",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::a_mid_line_block_inside_an_unsafe_fn_shows_the_edited_line",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::an_interior_line_of_an_unsafe_block_shows_the_edited_line",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged",
 ]
 fixtures = [
   "fixtures/unsafe_boundary_probe",
@@ -13788,6 +13791,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/probes/classify.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/probes/family.rs",
   "crates/ripr/src/analysis/facts/model.rs",
 ]
