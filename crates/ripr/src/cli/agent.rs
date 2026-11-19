@@ -3443,7 +3443,10 @@ mod tests {
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
-            Err("--at expects FILE:LINE, got \"src/lib.rs\"".to_string())
+            Err(
+                "--at expects FILE:LINE (for example src/lib.rs:12), got \"src/lib.rs\""
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs:abc"])),

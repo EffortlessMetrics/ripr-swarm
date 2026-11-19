@@ -356,12 +356,10 @@ pub(crate) fn parse_policy_history_options(
             }
             "--pr-number" => {
                 i += 1;
-                pr_number = Some(non_empty_string_arg(
-                    args,
-                    i,
-                    "--pr-number",
-                    "policy history",
-                )?);
+                let value = non_empty_string_arg(args, i, "--pr-number", "policy history")?;
+                let parsed =
+                    crate::cli::commands_numeric::parse_positive_u64(&value, "--pr-number")?;
+                pr_number = Some(parsed.to_string());
             }
             "--out" => {
                 i += 1;

@@ -113,7 +113,7 @@ fn typo_budget(name: &str) -> usize {
     }
 }
 
-fn edit_distance(left: &str, right: &str) -> usize {
+pub(crate) fn edit_distance(left: &str, right: &str) -> usize {
     let right_chars: Vec<char> = right.chars().collect();
     let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
     let mut current = vec![0; right_chars.len() + 1];
