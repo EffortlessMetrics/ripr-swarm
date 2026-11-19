@@ -12,8 +12,9 @@ use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, body_exercises_dunder_protocol,
-    dunder_method_class, import_source_module_matches_owner, is_python_identifier_char,
+    HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
+    body_calls_owner, body_exercises_dunder_protocol, dunder_method_class,
+    import_source_module_matches_owner, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class, test_references_owner_class,
 };
@@ -378,6 +379,16 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
         });
     }
+    if let Some(limit) = super::range_activation::changed_range_limit(
+        line_text,
+        old_line_text,
+        owner,
+        owner_source,
+        related_candidates,
+        focus,
+    ) {
+        return Some(limit);
+    }
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
@@ -519,63 +530,238 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
 /// a comment or an open string. A tripled quote opens a string that only the
 /// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
 /// code after it is visible (#9992); a triple string left open at the end of
-/// the prefix hides what follows. F-string fields are not read here.
+/// the prefix hides what follows. The replacement field of an f-string is code
+/// (#14754 review): `f"{parse('')}"` ends the prefix inside a field, so the
+/// call there stays visible.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
-    let chars: Vec<char> = prefix.chars().collect();
-    // The active delimiter and its width (1 or 3).
-    let mut open: Option<(char, usize)> = None;
-    let mut index = 0;
-    while index < chars.len() {
-        let ch = chars[index];
-        if let Some((quote, width)) = open {
-            let closes = ch == quote
-                && chars.len() - index >= width
-                && chars[index..index + width].iter().all(|c| *c == quote);
-            if ch == '\\' {
-                index += 2;
-            } else if closes {
-                open = None;
-                index += width;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if ch == '#' {
+    PrefixScan::default().hides(prefix)
+}
+
+/// One open string literal on the prefix scanner's stack.
+#[derive(Clone)]
+struct Literal {
+    quote: u8,
+    triple: bool,
+    formatted: bool,
+    /// The scanner is inside this f-string's replacement field: its text
+    /// is code, not string text.
+    in_field: bool,
+    /// Open braces of that field (a dict or set literal nests).
+    field_depth: usize,
+}
+
+/// What one step of the prefix scanner did.
+enum PrefixStep {
+    /// Read one construct and moved on.
+    Advanced,
+    /// A `#`, or a single-line f-string whose quote pairing cannot be
+    /// followed: everything after this position on the line is hidden.
+    HidesRest,
+    /// The reading of this step depends on text past the end of the prefix (a
+    /// quote that may yet be tripled, a brace that may yet be doubled, an
+    /// f-string still open). Nothing was changed.
+    LeansOnEnd,
+}
+
+/// The `python_prefix_hides_code` lexer, resumable over growing prefixes of
+/// one line: `hides` answers for a prefix, and a later call with a longer
+/// prefix of the same line continues from the last position whose reading no
+/// longer prefix can change, instead of from the start of the line (#14195).
+#[derive(Default)]
+pub(super) struct PrefixScan {
+    /// Byte offset in the line where the next step starts.
+    index: usize,
+    /// The open literals at `index`.
+    stack: Vec<Literal>,
+    /// The step at `index` hides everything after it on the line.
+    hides_rest: bool,
+}
+
+impl PrefixScan {
+    /// The answer for `prefix`. Every call takes a prefix of the same line,
+    /// and no prefix is shorter than the one before it.
+    pub(super) fn hides(&mut self, prefix: &str) -> bool {
+        if self.hides_rest {
             return true;
         }
-        if ch == '\'' || ch == '"' {
-            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
-            let width = if triple { 3 } else { 1 };
+        // Steps that read the same under any longer prefix move the kept
+        // position itself.
+        while self.index < prefix.len() {
+            match prefix_step(prefix, &mut self.index, &mut self.stack, true) {
+                PrefixStep::Advanced => {}
+                PrefixStep::HidesRest => {
+                    self.hides_rest = true;
+                    return true;
+                }
+                PrefixStep::LeansOnEnd => break,
+            }
+        }
+        if self.index >= prefix.len() {
+            return stack_hides(&self.stack);
+        }
+        // The last few characters of this prefix are read as the prefix ends
+        // here, on a copy; the next call reads them again with more text.
+        let (mut index, mut stack) = (self.index, self.stack.clone());
+        while index < prefix.len() {
+            if matches!(
+                prefix_step(prefix, &mut index, &mut stack, false),
+                PrefixStep::HidesRest
+            ) {
+                return true;
+            }
+        }
+        stack_hides(&stack)
+    }
+}
+
+/// The prefix ends in string text: an open literal, outside any of its fields.
+fn stack_hides(stack: &[Literal]) -> bool {
+    stack.last().is_some_and(|literal| !literal.in_field)
+}
+
+/// One step of the prefix lexer at `index`. With `settled_only`, a step whose
+/// reading depends on text past the end of `prefix` is not taken.
+fn prefix_step(
+    prefix: &str,
+    index: &mut usize,
+    stack: &mut Vec<Literal>,
+    settled_only: bool,
+) -> PrefixStep {
+    let bytes = prefix.as_bytes();
+    let at = *index;
+    let byte = bytes[at];
+    let in_code = stack.last().is_none_or(|literal| literal.in_field);
+    if in_code {
+        if byte == b'#' {
+            return PrefixStep::HidesRest;
+        }
+        if byte == b'\'' || byte == b'"' {
+            if settled_only && at + 2 >= bytes.len() {
+                return PrefixStep::LeansOnEnd;
+            }
+            let triple = bytes.get(at + 1) == Some(&byte) && bytes.get(at + 2) == Some(&byte);
+            let formatted = ends_with_f_prefix(&prefix[..at]);
             // A single-line f-string whose quote pairing cannot be followed
             // (3.12 same-quote nesting in a field, a newline in a field)
             // hides what follows: a miss, never an invented call (#9230).
-            if !triple
-                && chars_end_with_f_prefix(&chars[..index])
-                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
-            {
-                return true;
+            if !triple && formatted {
+                let mut chars = prefix[at..].chars();
+                let mut ran_out = false;
+                let ambiguous = single_line_fstring_is_ambiguous(std::iter::from_fn(|| {
+                    let next = chars.next();
+                    ran_out |= next.is_none();
+                    next
+                }));
+                if ambiguous {
+                    return PrefixStep::HidesRest;
+                }
+                if settled_only && ran_out {
+                    return PrefixStep::LeansOnEnd;
+                }
             }
-            open = Some((ch, width));
-            index += width;
-            continue;
+            stack.push(Literal {
+                quote: byte,
+                triple,
+                formatted,
+                in_field: false,
+                field_depth: 0,
+            });
+            *index += if triple { 3 } else { 1 };
+            return PrefixStep::Advanced;
         }
-        index += 1;
+        if let Some(literal) = stack.last_mut()
+            && literal.in_field
+        {
+            if byte == b'{' {
+                literal.field_depth += 1;
+            } else if byte == b'}' {
+                literal.field_depth = literal.field_depth.saturating_sub(1);
+                if literal.field_depth == 0 {
+                    literal.in_field = false;
+                }
+            }
+        }
+        *index += 1;
+        return PrefixStep::Advanced;
     }
-    open.is_some()
+    let Some((quote, triple, formatted)) = stack
+        .last()
+        .map(|literal| (literal.quote, literal.triple, literal.formatted))
+    else {
+        *index += 1;
+        return PrefixStep::Advanced;
+    };
+    if byte == b'\\' {
+        // The backslash and the char it escapes. Two bytes: the rest of a
+        // multi-byte char is never a quote, a brace or a `#`.
+        *index += 2;
+        return PrefixStep::Advanced;
+    }
+    if triple {
+        if byte == quote {
+            if bytes.len() - at < 3 {
+                if settled_only {
+                    return PrefixStep::LeansOnEnd;
+                }
+            } else if bytes[at..at + 3].iter().all(|b| *b == quote) {
+                stack.pop();
+                *index += 3;
+                return PrefixStep::Advanced;
+            }
+        }
+    } else if byte == quote {
+        stack.pop();
+        *index += 1;
+        return PrefixStep::Advanced;
+    }
+    if formatted && (byte == b'{' || byte == b'}') {
+        let Some(next) = bytes.get(at + 1) else {
+            if settled_only {
+                return PrefixStep::LeansOnEnd;
+            }
+            if byte == b'{'
+                && let Some(literal) = stack.last_mut()
+            {
+                literal.in_field = true;
+                literal.field_depth = 1;
+            }
+            *index += 1;
+            return PrefixStep::Advanced;
+        };
+        if *next == byte {
+            // `{{` and `}}` are escaped braces, not a field.
+            *index += 2;
+            return PrefixStep::Advanced;
+        }
+        if byte == b'{'
+            && let Some(literal) = stack.last_mut()
+        {
+            literal.in_field = true;
+            literal.field_depth = 1;
+        }
+    }
+    *index += 1;
+    PrefixStep::Advanced
 }
 
 /// Whether the identifier run that ends `before` is an `f` string prefix
 /// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
-/// longer name such as `perf`.
-fn chars_end_with_f_prefix(before: &[char]) -> bool {
-    let run = before
-        .iter()
+/// longer name such as `perf`. Stops at the third identifier character: the
+/// answer is already `false`, and the caller pays this per quote.
+fn ends_with_f_prefix(before: &str) -> bool {
+    let mut run = before
+        .chars()
         .rev()
-        .take_while(|ch| is_python_identifier_char(**ch))
-        .count();
-    let prefix: String = before[before.len() - run..].iter().collect();
-    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+        .take_while(|ch| is_python_identifier_char(*ch));
+    let (last, first) = (run.next(), run.next());
+    run.next().is_none()
+        && matches!(
+            (
+                first.map(|ch| ch.to_ascii_lowercase()),
+                last.map(|ch| ch.to_ascii_lowercase())
+            ),
+            (None, Some('f')) | (Some('r'), Some('f')) | (Some('f'), Some('r'))
+        )
 }
 
 /// Whether the single-line f-string literal that starts at the first character
@@ -1695,6 +1881,75 @@ fn contains_identifier(text: &str, identifier: &str) -> bool {
         .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
 }
 
+/// Reach into a changed helper that enters its module only from another
+/// module (#12955). Every related test reaches `owner` through a function of
+/// another module that imports and calls it (`cross_module_caller_call`), or
+/// no test relates at all while more functions of other modules call it than
+/// the relation follows. The adapter does not evaluate values across that
+/// module boundary, so the edit is read as unresolved: never graded as a gap,
+/// and never `no_static_path`.
+///
+/// `cross_module_over_cap` is [`cross_module_callers_exceed_cap`] for the
+/// owner, computed by the caller only when no test relates to it.
+pub(super) fn cross_module_reach_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    helper_callers: &[HelperOwnerCallCandidate<'_>],
+    cross_module_over_cap: bool,
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty() {
+        return cross_module_over_cap.then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules call `{}`",
+                owner.name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules import and call `{}`; the Python preview adapter does not follow that many cross-module callers, so it does not read this edit as having no test path.",
+                owner.name
+            ),
+        });
+    }
+    // Helpers are only gathered when no test relates to the owner directly,
+    // so equal lengths mean every related candidate is a helper candidate;
+    // the check keeps the limit off if candidates are ever appended later.
+    if helper_callers.is_empty()
+        || related_candidates.len() != helper_callers.len()
+        || !helper_callers.iter().all(|helper| helper.cross_module)
+    {
+        return None;
+    }
+    let mut callers: Vec<&str> = helper_callers
+        .iter()
+        .map(|helper| helper.caller.as_str())
+        .collect();
+    callers.sort_unstable();
+    callers.dedup();
+    let shown = callers
+        .iter()
+        .take(3)
+        .map(|caller| format!("`{caller}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = callers.len().saturating_sub(3);
+    let shown = if more == 0 {
+        shown
+    } else {
+        format!("{shown} and {more} more")
+    };
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::MissingImportGraph,
+        evidence: format!(
+            "static_limit missing_import_graph: related tests reach `{}` only through callers in other modules ({shown})",
+            owner.name
+        ),
+        missing: format!(
+            "Static limit `missing_import_graph`: related tests reach `{}` only through functions of other modules that import it ({shown}); the Python preview adapter does not evaluate values across the module boundary, so it does not grade this edit as a gap.",
+            owner.name
+        ),
+    })
+}
+
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
 ///
 /// - A dunder method owner whose related tests all relate only through
@@ -1849,6 +2104,8 @@ pub(super) mod tests {
             nested_called_by_parent: false,
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
+            route_returns_body: false,
+            route_dict_annotation: false,
         }
     }
 

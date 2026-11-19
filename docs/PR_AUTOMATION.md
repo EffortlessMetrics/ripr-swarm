@@ -67,14 +67,13 @@ first Ready, validate the body offline and fix every line it names:
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
 below apply to candidate preparation. Ordinary development does not request CI.
-The selected, reviewed candidate uses the installed qualification route. After
-verified queue activation, use
-[the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for conditional landing and actual-G qualification. During the current bootstrap,
-GitHub can still require the installed H check before enqueue; the delivery owner
-may request that check through `merge-ready` after completing this preparation.
-Auxiliary event retirement does not replace that producer with cheap H admission.
-Retire its label request only after the replacement is qualified and enforced.
+The selected, reviewed candidate uses the installed qualification route. Apply
+`merge-ready` to request PR qualification, inspect its results, make the final
+integration judgment, then use
+[the native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
+for conditional landing and actual-G qualification. Auxiliary event retirement
+does not replace that producer with cheap H admission. Retire its label request
+only after the replacement is qualified and enforced.
 The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
@@ -776,8 +775,12 @@ outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
 before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog. Bless from the Linux arbiter
-platform, never from a Windows host; the sanctioned route is documented in
+appends the fixture expected-output changelog only for surfaces that differ
+under the gate comparison. Gate-equivalent output preserves the original
+expected bytes and leaves the changelog untouched. On Windows, any genuine
+change is refused before writing expected files or the changelog: the Windows
+projection cannot establish canonical Linux golden bytes. Apply changes from
+the Linux arbiter platform; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) compare the line

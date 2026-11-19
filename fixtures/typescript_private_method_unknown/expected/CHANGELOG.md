@@ -85,3 +85,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_private_method_unknown (7)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

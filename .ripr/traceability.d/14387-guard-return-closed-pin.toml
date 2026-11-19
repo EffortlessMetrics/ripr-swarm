@@ -8,5 +8,7 @@ tests = [
   "crates/ripr/tests/guard_return_closed_pin.rs::a_diff_that_also_changes_the_guard_keeps_the_pin_unproven",
   "crates/ripr/tests/guard_return_closed_pin.rs::a_file_that_rebinds_a_prelude_variant_keeps_the_pin_unproven",
   "crates/ripr/tests/guard_return_closed_pin.rs::a_file_that_may_rebind_an_integer_type_keeps_the_pin_unproven",
+  "crates/ripr/tests/guard_return_closed_pin.rs::an_exact_pin_on_a_changed_tail_branch_value_is_exposed_only_where_it_runs",
+  "crates/ripr/src/analysis/classify/owner_value.rs::tests::a_tail_if_else_chain_reads_as_guards_and_a_tail",
 ]
 fixtures = ["fixtures/rust_guard_return_changed_guard"]

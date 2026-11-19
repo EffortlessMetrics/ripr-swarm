@@ -23,6 +23,7 @@ use super::generated_rust_corpus::{
     discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable,
     discover_analyzable_rust_corpus_tolerating_unreadable,
 };
+use super::owner_opt_out;
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
@@ -2721,22 +2722,39 @@ pub(crate) fn diff_only_rust_files(
         .collect()
 }
 
+/// Admits a test by `(file, header line)`; see [`SecondStageScope`].
+pub(crate) type RelationPoolPredicate<'s> = Box<dyn Fn(&Path, usize) -> bool + 's>;
+
+/// How a consumer narrows the second stage (#12940). A remaining seam is
+/// evaluated when `keep_without_relation` accepts it, or when it relates to
+/// a test that `relation_pool` admits. Every other seam must be one the
+/// consumer provably discards whatever its evidence says.
+pub(crate) struct SecondStageScope<'s> {
+    /// Seam-only predicate, decided without related-test evidence.
+    pub(crate) keep_without_relation: Box<dyn Fn(&RepoSeam) -> bool + Sync + 's>,
+    /// Admits a test by `(file, header line)` when a seam related to it may
+    /// still be kept. Relation lookups run only against admitted tests, so a
+    /// small pool keeps the narrowing cheap.
+    pub(crate) relation_pool: RelationPoolPredicate<'s>,
+    /// Which relation reasons to a pool test keep a seam. Must accept every
+    /// reason through which the consumer could still keep the seam.
+    pub(crate) counts_relation: fn(test_grip_evidence::RelationReason) -> bool,
+    /// False when the pool may be too large for per-seam lookups: any
+    /// admitted test then keeps every seam, as if all were related.
+    pub(crate) relation_lookup: bool,
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
-/// Predicate over remaining seams; `false` means the consumer provably
-/// discards the seam whatever its evidence says (#12940).
-pub(crate) type SecondStageFilter<'s> = Box<dyn Fn(&RepoSeam) -> bool + 's>;
-
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
     fn first_stage_sufficient(&self) -> bool;
     fn retained_payloads(&self) -> usize;
     /// Narrows the second stage after the first stage ran and was not
-    /// sufficient. Returns a predicate over the remaining seams that must be
-    /// `false` only for a seam the consumer will provably discard whatever its
-    /// evidence says. `None` evaluates every remaining seam.
-    fn second_stage_filter<'s>(&'s self, _index: &RustIndex) -> Option<SecondStageFilter<'s>> {
+    /// sufficient; see [`SecondStageScope`]. `None` evaluates every
+    /// remaining seam.
+    fn second_stage_scope(&self) -> Option<SecondStageScope<'_>> {
         None
     }
 }
@@ -2842,8 +2860,8 @@ fn classify_scoped_seams_streamed(
     }
     // Skipped seams are not counted as unevaluated: the consumer proved it
     // would discard them, so no scoped result can depend on them.
-    if let Some(keep) = consumer.second_stage_filter(index) {
-        rest.retain(|ordinal| keep(&seams[*ordinal]));
+    if let Some(scope) = consumer.second_stage_scope() {
+        rest = narrow_second_stage(seams, rest, &pass, &scope)?;
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(
@@ -2856,6 +2874,52 @@ fn classify_scoped_seams_streamed(
         .ok_or("review evidence evaluation count overflow")?;
     cancellation::checkpoint()?;
     Ok((evaluated, 0, pass.limitations()?))
+}
+
+/// The remaining ordinals `scope` keeps (#12940). The pool is the tests a
+/// kept seam may relate to; a seam the seam-only predicate rejects survives
+/// only through a relation to a pool test.
+fn narrow_second_stage(
+    seams: &[RepoSeam],
+    rest: Vec<usize>,
+    pass: &test_grip_evidence::EvidencePass<'_>,
+    scope: &SecondStageScope<'_>,
+) -> Result<Vec<usize>, String> {
+    let before = rest.len();
+    let started = std::time::Instant::now();
+    let pool = pass.related_test_pool(|file, line| (scope.relation_pool)(file, line));
+    if !scope.relation_lookup && !pool.is_empty() {
+        trace_latency_phase(
+            "evidence_for_seams",
+            &format!("second_stage_unnarrowed_pool_{}_rest_{before}", pool.len()),
+            started.elapsed(),
+        );
+        return Ok(rest);
+    }
+    let keep_without_relation = &scope.keep_without_relation;
+    let keep = pass.seams_kept_by_scope(
+        seams,
+        &rest,
+        |seam| keep_without_relation(seam),
+        &pool,
+        scope.counts_relation,
+    );
+    cancellation::checkpoint()?;
+    let kept = rest
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(ordinal, kept)| kept.then_some(ordinal))
+        .collect::<Vec<_>>();
+    trace_latency_phase(
+        "evidence_for_seams",
+        &format!(
+            "second_stage_narrowed_pool_{}_rest_{before}_kept_{}",
+            pool.len(),
+            kept.len()
+        ),
+        started.elapsed(),
+    );
+    Ok(kept)
 }
 
 fn classify_evidence_windows(
@@ -4523,7 +4587,17 @@ fn seams_from_index_files(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let owners = FileOwners {
+            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            // #15000: one owner opt-out decision per file, the same one diff
+            // scope applies, so a seam inside a skipped `impl`, `trait`,
+            // inline module or file is withheld like a fn-level one.
+            opt_outs: owner_opt_out::FileOwnerOptOuts::decide(
+                &facts.source,
+                facts.used_lexical_fallback,
+                facts.functions.iter(),
+            ),
+        };
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4545,7 +4619,7 @@ fn seams_from_index_files(
             ) else {
                 continue;
             };
-            if admission.admits(&seam, &facts.source, &owners)? {
+            if admission.admits(&seam, &facts.source, &owners.lookup)? {
                 seams.push(seam);
             }
         }
@@ -4701,7 +4775,17 @@ pub(crate) fn inventory_seams_from_index_bounded(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let owners = FileOwners {
+            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            // #15000: one owner opt-out decision per file, the same one diff
+            // scope applies, so a seam inside a skipped `impl`, `trait`,
+            // inline module or file is withheld like a fn-level one.
+            opt_outs: owner_opt_out::FileOwnerOptOuts::decide(
+                &facts.source,
+                facts.used_lexical_fallback,
+                facts.functions.iter(),
+            ),
+        };
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4715,12 +4799,12 @@ pub(crate) fn inventory_seams_from_index_bounded(
             if let Some(seam) = build_seam_from_shape(
                 file,
                 shape,
-                &lookup,
+                &owners,
                 &facts.source,
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) && admission.admits(&seam, &facts.source, &lookup)?
+            ) && admission.admits(&seam, &facts.source, &owners.lookup)?
             {
                 collector.push(seam);
             }
@@ -4892,10 +4976,17 @@ fn written_field_is_nonpublic(seam: &RepoSeam, source: &str) -> bool {
         )
 }
 
+/// One production file's owner resolution: the line lookup and the owner
+/// opt-out decision (#14139, #15000) over the same indexed functions.
+struct FileOwners<'a> {
+    lookup: rust_index::FileOwnerLookup<'a>,
+    opt_outs: owner_opt_out::FileOwnerOptOuts,
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
-    owners: &rust_index::FileOwnerLookup<'_>,
+    owners: &FileOwners<'_>,
     source: &str,
     line_starts: &[usize],
     crlf_pairs: &CrlfPairPositions,
@@ -4912,7 +5003,7 @@ fn build_seam_from_shape(
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
         Some(written_field_of_shape(
-            owners.owner(shape.start_line())?,
+            owners.lookup.owner(shape.start_line())?,
             shape,
         )?)
     } else {
@@ -4925,7 +5016,7 @@ fn build_seam_from_shape(
     if kind == SeamKind::CallPresence && shape.value_consumed {
         return None;
     }
-    let owner_fact = owners.owner(shape.start_line())?;
+    let owner_fact = owners.lookup.owner(shape.start_line())?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -4968,7 +5059,24 @@ fn build_seam_from_shape(
         crlf_pairs,
     )
     .with_owner_call(owner_call)
-    .with_source_lines(shape.source_lines());
+    .with_source_lines(shape.source_lines())
+    // #14139, #15000: the one owner opt-out decision (the owner's own
+    // parser-backed attributes, then its enclosing `fn`, `impl`, `trait`,
+    // inline module and file); a lexically read owner has none and is never
+    // opted out. Owners are resolved by line, so the decision attaches only
+    // when no other function starts or ends on the shape's lines: a shape on
+    // a line shared with another function keeps reporting rather than
+    // inherit a neighbour's opt-out.
+    .with_owner_opt_out(
+        if owners
+            .lookup
+            .owns_lines_alone(owner_fact, shape.start_line(), shape.end_line())
+        {
+            owners.opt_outs.reason(owner_fact)
+        } else {
+            None
+        },
+    );
     // #12061: a field write is read back from the receiver only when the
     // owner borrows it; record which so every surface words the read alike.
     let seam = if kind == SeamKind::FieldConstruction
@@ -8115,6 +8223,69 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         let (reused, fresh) = result?;
         if outside(&fresh) || outside(&reused) {
             return Err("an unknown `#[path]` target must withdraw the unlinked claim".into());
+        }
+        Ok(())
+    }
+
+    /// #14962: a `[lib] test = false` library withholds its module tree's
+    /// unit tests, and a `src/main.rs` written later that declares the same
+    /// module compiles it into a bin `cargo test` runs. The core is built
+    /// before the bin exists on disk (the mount scan reads the disk); reusing
+    /// it once the bin is written must revive the tests exactly as a fresh
+    /// build does, as #12947 requires for a revived outside-tree file.
+    #[test]
+    fn reuse_reviving_cargo_test_skipped_tests_matches_fresh() -> Result<(), String> {
+        let util = "pub fn f(a: i32) -> i32 { a + 2 }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn t() { assert_eq!(f(5), 7); }\n}\n";
+        let core_src = [("src/lib.rs", "pub mod util;\n"), ("src/util.rs", util)];
+        let main = ("src/main.rs", "mod util;\nfn main() {}\n");
+        let target_src = [core_src[0], core_src[1], main];
+        let root = reuse_fixture_root("reuse-cargo-test-skipped", &core_src)?;
+        let util_tests = |index: &RustIndex| {
+            index
+                .files()
+                .get(Path::new("src/util.rs"))
+                .map_or(0, |facts| facts.tests.len())
+        };
+        // (core tests, core withheld), (reused tests, fresh tests)
+        type Observed = ((usize, bool), (usize, usize));
+        let run = || -> Result<Observed, String> {
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"reusefix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[lib]\ntest = false\n",
+            )?;
+            let core = bytes_of(&core_src);
+            let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+            let premise = (
+                util_tests(&core_index.index),
+                core_index
+                    .index
+                    .cargo_test_skipped_files
+                    .contains(Path::new("src/util.rs")),
+            );
+            write_file(&root.join(main.0), main.1)?;
+            let target = bytes_of(&target_src);
+            let reused =
+                rust_index::reuse_cached_index_with_loaded_files(core_index, &root, &target, &[])?;
+            let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            let reused_json =
+                serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+            let fresh_json = serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+            if reused_json != fresh_json {
+                return Err("reused index must serialize identically to a fresh build".into());
+            }
+            Ok((
+                premise,
+                (util_tests(&reused.index), util_tests(&fresh.index)),
+            ))
+        };
+        let result = run();
+        let _ = std::fs::remove_dir_all(&root);
+        let (premise, revived) = result?;
+        if premise != (0, true) {
+            return Err("fixture must start with the library's unit tests withheld".into());
+        }
+        if revived != (1, 1) {
+            return Err("a tested bin compiling the module must revive its test".into());
         }
         Ok(())
     }

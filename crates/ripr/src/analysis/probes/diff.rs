@@ -84,6 +84,8 @@ pub(crate) fn probes_for_file_with_relations(
     // the old lines of a multi-line `&&`/`||` chain that an added predicate
     // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
+    // #14938: old lines whose replacement only respelled a returned constant.
+    let mut equal_constant_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -118,6 +120,14 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_string_continuations = old_source
         .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
+    // #14181: lines of a build-time `const { assert!(..) }` block, also when
+    // rustfmt splits it, select no runtime family.
+    let added_const_assertions = find_file_facts(index, &changed.path)
+        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_const_assertions = old_source
+        .map(super::lexical::inline_const_assertion_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -133,6 +143,25 @@ pub(crate) fn probes_for_file_with_relations(
     for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
         *flag |= removed_verification.contains(&line.line);
     }
+    // Where each side's actual trailing line comments start, read from the
+    // whole file so a `//` inside a string or block comment is never one.
+    let added_comments = find_file_facts(index, &changed.path)
+        .map(|facts| super::unchanged_code_line::line_comment_columns(&facts.source))
+        .unwrap_or_default();
+    let removed_comments = old_source
+        .map(super::unchanged_code_line::line_comment_columns)
+        .unwrap_or_default();
+    // Both files as the lexical scanner reads them, built only when a pair
+    // needs it. Without the old file there is no reading of the removed
+    // side, so such a pair stays probed.
+    let lexical_lines = std::cell::OnceCell::new();
+    let read_lexical_lines = || {
+        let new = find_file_facts(index, &changed.path)?;
+        Some((
+            super::unchanged_code_line::LexicalLines::of(&new.source),
+            super::unchanged_code_line::LexicalLines::of(old_source?),
+        ))
+    };
     let added_at = changed
         .added_lines
         .iter()
@@ -165,7 +194,48 @@ pub(crate) fn probes_for_file_with_relations(
                 && !removed_position.contains(&removed.line)
                 && !added_string_continuations.contains(&new_side_line)
                 && !removed_string_continuations.contains(&removed.line);
-        if respelling || whitespace_only {
+        // #14175: the same code with a trailing line comment added, removed
+        // or reworded is the same program.
+        let added_comment = added_comments.get(&new_side_line).copied();
+        let removed_comment = removed_comments.get(&removed.line).copied();
+        let comment_only = super::unchanged_code_line::is_trailing_line_comment_only_change(
+            added_text,
+            added_comment,
+            removed_text,
+            removed_comment,
+        );
+        // #14175: a positional pair whose parsed text is the same changed
+        // only in bytes the diff reader drops: its line ending (a CRLF/LF
+        // rewrite, a final newline added or removed) or a line-1 byte-order
+        // mark. Rust reads CRLF as LF everywhere, string literals included,
+        // so the pair is the same program text.
+        let line_ending_only =
+            added_text.trim_end_matches('\r') == removed_text.trim_end_matches('\r');
+        // Equal text can still change meaning when another edited line moved
+        // a comment or string boundary (a block comment turned into line
+        // comments around a statement), so both rules also need the two
+        // lines to read as the same code in their own files.
+        let unchanged_code = (comment_only || line_ending_only)
+            && match (lexical_lines.get_or_init(read_lexical_lines), comment_only) {
+                (Some((new, old)), true) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    added_comment,
+                    old,
+                    removed.line,
+                    removed_comment,
+                ),
+                (Some((new, old)), false) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    None,
+                    old,
+                    removed.line,
+                    None,
+                ),
+                (None, _) => false,
+            };
+        if respelling || whitespace_only || unchanged_code {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
@@ -282,12 +352,17 @@ pub(crate) fn probes_for_file_with_relations(
     };
     // Added lines whose only lexical family is `static_unknown`: a type-bound
     // line, or (#14094) a string-literal continuation line, whose text is
-    // data even when it reads like code. A removed line pairs with them on
-    // that family alone.
+    // data even when it reads like code, or (#14181) a line of a build-time
+    // `const { assert!(..) }` block. A removed line pairs with them on that
+    // family alone.
     let added_static_only = added_bounds
         .iter()
         .zip(&changed.added_lines)
-        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .map(|(bound, line)| {
+            *bound
+                || added_string_continuations.contains(&line.new_side_line)
+                || added_const_assertions.contains(&line.new_side_line)
+        })
         .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
@@ -447,8 +522,10 @@ pub(crate) fn probes_for_file_with_relations(
             text,
             removed_counterpart.as_deref(),
         );
+        let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
             .into_iter()
+            .filter(|_| !in_const_assertion)
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
             .filter(|shape| propagation_subject.is_none() || shape.family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
@@ -500,6 +577,55 @@ pub(crate) fn probes_for_file_with_relations(
                                 .any(|other| other.family != ProbeFamily::ReturnValue)
                     })
             };
+            // #14938: a returned constant respelled as the same value
+            // (`65` as `0x41`, `"A"` as `"\x41"`, `1.0` as `1e0`) changed
+            // no behavior, so no test could notice it and the line seeds no
+            // probe. Only a line that is wholly that value (a tail, maybe
+            // `return`ed, with its `;` or `,`) qualifies, so text outside
+            // the shape is known unchanged and a string or comment elsewhere
+            // on the line cannot hide an edit.
+            let equal_constant_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        let bare = |line: &str| {
+                            let line = line.trim();
+                            let line = line.strip_prefix("return ").unwrap_or(line);
+                            line.strip_suffix([';', ','])
+                                .unwrap_or(line)
+                                .trim()
+                                .to_string()
+                        };
+                        // The statement envelope must match too: `65;`
+                        // becoming `return 0x41;` adds an early return.
+                        let envelope = |line: &str| {
+                            let line = line.trim();
+                            (
+                                line.starts_with("return "),
+                                line.ends_with(';'),
+                                line.ends_with(','),
+                            )
+                        };
+                        let value = bare(&shape_text);
+                        bare(text) == value
+                            && envelope(text) == envelope(removed)
+                            && crate::analysis::classify::is_equal_constant_respelling(
+                                &bare(removed),
+                                &value,
+                            )
+                    })
+            };
+            // The removed line it replaced is the same value too, so it seeds
+            // no deleted-behavior probe either.
+            // The line is wholly that constant, so every other shape on it
+            // (`true == false` inside `return !false == false;`) lies inside
+            // the same unchanged value and is dropped too.
+            let equal_constant_line = canonical_shapes.iter().any(&equal_constant_return);
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && equal_constant_line
+            {
+                equal_constant_counterparts.push(removed.line);
+            }
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -616,6 +742,7 @@ pub(crate) fn probes_for_file_with_relations(
                 .filter(|shape| {
                     !unchanged_return(shape)
                         && !respelled_return(shape)
+                        && !equal_constant_line
                         && !guard_only_arm(shape)
                         && !carried_header(shape)
                         && !unchanged_in_header(shape)
@@ -742,7 +869,9 @@ pub(crate) fn probes_for_file_with_relations(
         // code. Its text (`if x > 3 { return Err(e) }` in a help message)
         // selects no behavioral family; the literal's own rule below decides
         // whether the edited text keeps one `static_unknown`.
-        let families = if added_string_continuations.contains(&added.new_side_line) {
+        let families = if added_string_continuations.contains(&added.new_side_line)
+            || in_const_assertion
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line_against(text, removed_counterpart.as_deref())
@@ -765,7 +894,32 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            probes.extend(retargeted);
+            // #14132: two changed bindings that are operands of one comparison
+            // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
+            // it. The comparison is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded. Bindings in different
+            // terms of one line (`a < b && c < d`) keep their own probes.
+            for seeded in retargeted {
+                let already_retargeted = probes.iter().any(|kept| {
+                    kept.probe.family == seeded.probe.family
+                        && kept.probe.location.line == seeded.probe.location.line
+                        && kept.probe.expression == seeded.probe.expression
+                        && kept
+                            .binding_relation
+                            .as_ref()
+                            .zip(seeded.binding_relation.as_ref())
+                            .is_some_and(|(kept, seeded)| {
+                                bindings_share_a_comparison(
+                                    &seeded.predicate_expression,
+                                    &kept.binding,
+                                    &seeded.binding,
+                                )
+                            })
+                });
+                if !already_retargeted {
+                    probes.push(seeded);
+                }
+            }
             continue;
         }
         // #11400: a changed `const` value is its readers' new return value.
@@ -860,6 +1014,9 @@ pub(crate) fn probes_for_file_with_relations(
         if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
+        if equal_constant_counterparts.contains(&removed.line) {
+            continue;
+        }
         if let Some(definition) = removed_macros
             .as_ref()
             .and_then(|map| map.owner_of_line(removed.line))
@@ -884,6 +1041,7 @@ pub(crate) fn probes_for_file_with_relations(
         // #14094: deleted string-literal text is not deleted code either.
         let families = if removed_bounds.lines[removed_index]
             || removed_string_continuations.contains(&removed.line)
+            || removed_const_assertions.contains(&removed.line)
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
@@ -909,6 +1067,19 @@ pub(crate) fn probes_for_file_with_relations(
                     || probes
                         .iter()
                         .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
+            {
+                continue;
+            }
+            // #14181: an edited line of a build-time `const { assert!(..) }`
+            // block is judged by its replacement's probe, which carries this
+            // text as `before`; the short operands (`N`) give the token
+            // pairing above nothing to match.
+            if family == ProbeFamily::StaticUnknown
+                && removed_const_assertions.contains(&removed.line)
+                && added_const_assertions.contains(&removed.new_side_line)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
             {
                 continue;
             }
@@ -2292,7 +2463,7 @@ fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
             // Out-of-line `mod name;` (no brace index) and self-closed
             // blocks contribute no scope; the composer owns cross-file
             // roles and bare syntax lines stay eligible.
-            let (opens, closes) = brace_delta(&masked_line[brace..]);
+            let (opens, closes) = brace_delta(masked_line.get(brace..).unwrap_or_default());
             if opens > closes {
                 stack.push((depth + 1, requires_test, line_number));
             }
@@ -2345,7 +2516,13 @@ fn parse_inline_module(
     index: usize,
 ) -> Option<(bool, Option<usize>)> {
     let mut attributes: Vec<String> = Vec::new();
-    let mut masked_rest = masked_lines[index].trim();
+    let masked_line = masked_lines[index];
+    // #14089: every step below only drops a prefix, so `masked_rest` stays a
+    // suffix of `masked_line` and the brace offset can be returned relative
+    // to the whole line. Trimming the end too left the offset relative to
+    // the rest after attributes and indentation, and the caller sliced the
+    // whole line there, inside a multibyte char on `#[cfg(test)] mod dक्x {`.
+    let mut masked_rest = masked_line.trim_start();
     let mut original_rest = original_lines[index].trim();
     // Same-line attributes, in lockstep: structure from masked text, text
     // from the original. Divergence fails closed (fewer attributes).
@@ -2354,7 +2531,7 @@ fn parse_inline_module(
         split_leading_attribute(original_rest),
     ) {
         attributes.push(attribute.to_string());
-        masked_rest = masked_remainder.trim();
+        masked_rest = masked_remainder.trim_start();
         original_rest = original_remainder.trim();
     }
     let masked_rest = strip_visibility(masked_rest);
@@ -2362,15 +2539,16 @@ fn parse_inline_module(
     if after_mod
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return None;
     }
     let name_start = masked_rest.len() - after_mod.trim_start().len();
     let name = after_mod.trim_start();
-    // Module name: one identifier; anything else is not an item we scope.
+    // Module name: one identifier (Unicode `XID_Continue`, #14089); anything
+    // else is not an item we scope.
     let end = name
-        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|character: char| !(character == '_' || unicode_ident::is_xid_continue(character)))
         .unwrap_or(name.len());
     if end == 0 {
         return None;
@@ -2402,9 +2580,10 @@ fn parse_inline_module(
             }
         }
     }
+    let rest_start = masked_line.len() - masked_rest.len();
     Some((
         attributes_require_test(&attributes),
-        Some(name_start + end + brace_offset),
+        Some(rest_start + name_start + end + brace_offset),
     ))
 }
 
@@ -2421,7 +2600,7 @@ pub(super) fn strip_visibility(text: &str) -> &str {
     if after_pub
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return text;
     }
@@ -2627,6 +2806,20 @@ fn added_run_start(
     starts: &std::collections::BTreeMap<usize, usize>,
 ) -> usize {
     ChangedFile::added_run_start_from(starts, added_new_side_line)
+}
+
+/// Whether two bindings are named in the same `&&`/`||` term of a predicate
+/// line, so they are operands of one comparison (#14132).
+fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) -> bool {
+    let names = |term: &str, name: &str| {
+        term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name)
+    };
+    // Comment and string text is not an operand: `a < lo && c < hi { // a`.
+    mask_comments_and_strings(predicate_line)
+        .split("&&")
+        .flat_map(|term| term.split("||"))
+        .any(|term| names(term, first) && names(term, second))
 }
 
 fn has_matching_added_line(
@@ -4832,6 +5025,164 @@ mod tests {
             !string_interior.is_empty(),
             "multiline literal interior whitespace keeps its probe: {string_interior:?}"
         );
+    }
+
+    /// #14175: a trailing line comment added, removed or reworded beside
+    /// unchanged code seeds no probe; a changed token beside it, and a `//`
+    /// that is string or block-comment content, keep theirs.
+    #[test]
+    fn trailing_line_comment_only_edits_seed_no_probe() {
+        let source = |line: &str| format!("fn f(total: u32) -> u32 {{\n{line}\n    total\n}}\n");
+        let probes = |added: &str, removed: &str| {
+            block_probes(&source(added), &[(2, added)], &[(2, 2, removed)])
+        };
+        for (added, removed) in [
+            // Added, removed, reworded.
+            ("    if total > 100 { // big orders", "    if total > 100 {"),
+            ("    if total > 100 {", "    if total > 100 { // big orders"),
+            (
+                "    if total > 100 { // large",
+                "    if total > 100 { // big",
+            ),
+            // Spacing before the comment and a string beside it.
+            ("    log(\"a // b\");   // note", "    log(\"a // b\");"),
+            ("    let c = '/'; // slash", "    let c = '/'; // divide"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(seeded.is_empty(), "{added} vs {removed}: {seeded:?}");
+        }
+        for (added, removed) in [
+            // The code changed too.
+            (
+                "    if total >= 100 { // big orders",
+                "    if total > 100 {",
+            ),
+            ("    if total > 100 { // big", "    if total > 10 { // big"),
+            // The `//` is string content on one or both sides.
+            ("    log(\"a // c\");", "    log(\"a // b\");"),
+            ("    log(\"a\"); // b", "    log(\"a // b\");"),
+            // The `//` sits in a block comment that then closes onto code.
+            ("    /* x // y */ g(total);", "    /* x // y */ h(total);"),
+            // Indentation is code layout the whitespace rule owns.
+            ("        g(total); // note", "    g(total);"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(!seeded.is_empty(), "{added} vs {removed} lost its probe");
+        }
+        // The closing line of a multi-line string: the first `//` is string
+        // content, so rewording it changes the value.
+        let multiline =
+            "fn f() -> &'static str {\n    let s = \"open\n  see // here\"; // note\n    s\n}\n";
+        let string_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // there\"; // note")],
+        );
+        assert!(
+            !string_tail.is_empty(),
+            "a `//` inside a multi-line string keeps its probe"
+        );
+        let comment_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // here\"; // remark")],
+        );
+        assert!(comment_tail.is_empty(), "{comment_tail:?}");
+
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(5),
+                "a(); // x",
+                Some(5)
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a();", None, "a(); ", None
+            )
+        );
+        // A column that does not land on `//` in the changed text.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(4),
+                "a();",
+                None
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(40),
+                "a();",
+                None
+            )
+        );
+        // A line that is only a comment is not this rule's subject.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "    // x",
+                Some(4),
+                "    // y",
+                Some(4)
+            )
+        );
+        assert_eq!(
+            super::super::unchanged_code_line::line_comment_columns(
+                "a(); // x\nlet u = \"http://h\";\n  b(); // y\n"
+            ),
+            std::collections::BTreeMap::from([(1, 5), (3, 7)])
+        );
+    }
+
+    /// #14175: a positional pair with the same text (a line-ending rewrite,
+    /// a final newline added or removed) seeds no probe, also beside a real
+    /// edit in the same block and for punctuation-only lines; the edited line
+    /// keeps its probe.
+    #[test]
+    fn line_ending_only_pairs_seed_no_probe() {
+        let source = "pub fn discount(total: u32) -> u32 {\r\n    if total > 100 {\r\n        total - 10\r\n    } else {\r\n        total\r\n    }\r\n}\r\n";
+        let lines = [
+            "pub fn discount(total: u32) -> u32 {",
+            "    if total > 100 {",
+            "        total - 10",
+            "    } else {",
+            "        total",
+            "    }",
+            "}",
+        ];
+        let added = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, *text))
+            .collect::<Vec<_>>();
+        let removed = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, 1, *text))
+            .collect::<Vec<_>>();
+        let churn = block_probes(source, &added, &removed);
+        assert!(churn.is_empty(), "{churn:?}");
+
+        // The same rewrite with one real edit: only that line is probed.
+        let mut edited = removed.clone();
+        edited[1] = (2, 1, "    if total >= 100 {");
+        let mixed = block_probes(source, &added, &edited);
+        assert!(!mixed.is_empty(), "the edited line lost its probe");
+        assert!(
+            mixed.iter().all(|probe| probe.location.line == 2),
+            "{mixed:?}"
+        );
+
+        // A diff file with CRLF line endings leaves the carriage return on
+        // one side only.
+        let one_sided = block_probes(
+            "fn f(total: u32) -> u32 {\n    total - 10\n}\n",
+            &[(2, "    total - 10")],
+            &[(2, 2, "    total - 10\r")],
+        );
+        assert!(one_sided.is_empty(), "{one_sided:?}");
     }
 
     #[test]
@@ -8285,6 +8636,31 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+
+    /// #14089: the module brace offset was measured from the text after the
+    /// same-line attribute and indentation, then used to slice the whole
+    /// line, which landed inside a multibyte char of the module name.
+    #[test]
+    fn cfg_test_module_scope_reads_a_same_line_attribute_before_a_non_ascii_name() {
+        let source = "#[cfg(test)] mod dक्iscarded {\n\
+             \x20   const DEEP: u32 = 1;\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(source, 2));
+        assert!(!line_in_cfg_test_module(source, 4));
+        // Indented, with visibility, and a same-line nested block.
+        let nested = "    #[cfg(test)] pub(crate) mod 日本 { mod inner {\n\
+             \x20       const DEEP: u32 = 1;\n\
+             \x20   }\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(nested, 2));
+        assert!(line_in_cfg_test_module(nested, 3));
+        assert!(!line_in_cfg_test_module(nested, 5));
+        // `modé` is one identifier, not the `mod` keyword.
+        let not_a_module = "#[cfg(test)]\nmodé {\n    const X: u32 = 1;\n}\n";
+        assert!(!line_in_cfg_test_module(not_a_module, 3));
     }
     fn macro_source_index(path: &Path, source: &str) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {

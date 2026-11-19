@@ -24,7 +24,7 @@ remain available under [Package and server details](#package-and-server-details)
    workspace state, not unsaved editor buffers.
 3. Run `ripr: Show Status`. It names the selected workspace root, server source,
    analysis state, enabled languages, and the next safe action.
-4. Let analysis refresh, or run `ripr: Refresh Diagnostics`. Use
+4. Let analysis refresh, or run `ripr: Refresh Full Analysis`. Use
    `ripr: Restart Server` after changing server or startup settings.
 5. Open Problems and hover a RIPR diagnostic to inspect the changed behavior,
    related test, missing discriminator, or static limitation.
@@ -87,6 +87,19 @@ Open VSX extension:
 
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
+
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
 
 ### Server Resolution
 
@@ -152,6 +165,12 @@ separate supply-chain boundary.
 ## Settings
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
+  Use the full path; a leading `~` means your home directory (for example
+  `~/.cargo/bin/ripr`). A relative path such as `./target/debug/ripr` is
+  refused, because it would not be resolved against the workspace folder. On
+  Windows the full path starts with a drive letter, a colon and a separator,
+  or with a UNC root; `C:ripr.exe` and `\tools\ripr.exe` are refused the same way. A
+  bare command name is looked up on `PATH`.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
   actions. Defaults to `true`; set it to `false` to hide the main status-bar
   item and skip starting the language server. `ripr: Show Status` still names
@@ -297,13 +316,20 @@ quieter.
 
 ## Commands
 
+The `ripr: Get Started` walkthrough (Command Palette, `Welcome: Open
+Walkthrough...`) covers trusting the workspace, opening a Rust file, checking
+that the server started with `ripr: Diagnose Setup`, reading the first
+finding, and acting on it.
+
 - `ripr: Restart Server`
-- `ripr: Refresh Diagnostics`
+- `ripr: Refresh Full Analysis`
 - `ripr: Select Workspace Root`
 - `ripr: Show Output`
 - `ripr: Show Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`
@@ -330,7 +356,6 @@ quieter.
 - `ripr: Open Report`
 - `ripr: Show Main Analysis Limit`
 - `ripr: Show Result Record Status`
-- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Result Record Command (Result Record Status)`
 - `ripr: Open Repair Attempt History`
 - `ripr: Show Repair Route Summary`

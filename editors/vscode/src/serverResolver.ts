@@ -1,8 +1,10 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { knownExtensionVersion } from './extensionVersion';
 import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   combineActiveManagedServerIdentity,
@@ -33,6 +35,69 @@ const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
  */
 const CONFIGURED_PATH_REMEDY =
   'Fix or clear ripr.server.path so it points at an existing ripr server executable.';
+
+/**
+ * `ripr.server.path` as the process launcher will see it. Settings are not
+ * shell input, so a leading `~` is not expanded for us: `~/.cargo/bin/ripr`
+ * (where `cargo install ripr` puts the binary) would be looked up as a
+ * literal directory named `~`. Only a leading `~` followed by a separator,
+ * or `~` alone, means the home directory; `~user` and a `~` elsewhere in
+ * the path are left as written.
+ */
+export function expandConfiguredServerPath(
+  configured: string,
+  homeDirectory: string = os.homedir(),
+  platform: NodeJS.Platform = process.platform
+): string {
+  const trimmed = configured.trim();
+  if (homeDirectory.length === 0) {
+    return trimmed;
+  }
+  if (trimmed === '~') {
+    return homeDirectory;
+  }
+  // A backslash is a separator only on Windows; elsewhere it is a file-name
+  // character, so `~\ripr` there is a bare name, not a home-relative path.
+  if (trimmed.startsWith('~/') || (platform === 'win32' && trimmed.startsWith('~\\'))) {
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
+    return pathApi.join(homeDirectory, trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+/**
+ * A relative `ripr.server.path` with a directory part (`./target/debug/ripr`,
+ * `bin\ripr.exe`) would be resolved against the extension host's working
+ * directory, which is not the workspace and differs between launches. Refuse
+ * it by name instead of reporting a confusing "could not start". A bare
+ * command name stays allowed: it is a PATH lookup, not a relative path.
+ */
+export function relativeConfiguredPathFailure(
+  configuredPath: string,
+  platform: NodeJS.Platform = process.platform
+): ResolveFailure | undefined {
+  if (platform === 'win32') {
+    // Fully qualified means a drive letter, colon and separator, or a UNC root
+    // (`\\server\share\x`). `C:ripr.exe` depends on the drive's current
+    // directory and `\tools\ripr.exe` on the current drive, so neither names
+    // one stable file even though the second is "absolute" to path.win32.
+    const fullyQualified = /^[A-Za-z]:[\\/]/.test(configuredPath) || /^[\\/]{2}[^\\/]/.test(configuredPath);
+    const bareCommand = !/[\\/:]/.test(configuredPath);
+    if (fullyQualified || bareCommand) {
+      return undefined;
+    }
+  } else if (path.posix.isAbsolute(configuredPath) || !configuredPath.includes('/')) {
+    return undefined;
+  }
+  return {
+    message: `configured ripr.server.path ${configuredPath} is not an absolute path.`,
+    detail:
+      `ripr.server.path is ${JSON.stringify(configuredPath)}, which depends on the current directory or drive. ` +
+      'It is not resolved against the workspace folder, so it cannot name one stable file.',
+    kind: 'other',
+    remedy: 'Set ripr.server.path to the full path of the ripr executable (a leading ~ means your home directory), or clear it.'
+  };
+}
 
 export type ServerSource = 'configured' | 'bundled' | 'managed_cache' | 'managed_download' | 'path';
 
@@ -109,8 +174,12 @@ export async function resolveServer(
   output: vscode.OutputChannel,
   runtime: ServerResolverRuntime = defaultResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
-  const configuredPath = config.serverPath.trim();
+  const configuredPath = expandConfiguredServerPath(config.serverPath);
   if (configuredPath.length > 0) {
+    const relativeFailure = relativeConfiguredPathFailure(configuredPath);
+    if (relativeFailure) {
+      return relativeFailure;
+    }
     // On Windows, explicit paths may point to .cmd/.bat shims (e.g. npm global
     // or Scoop wrappers), which require cmd.exe shell resolution (#14647).
     // Direct .exe paths do not need a shell and retain native spawn errors.
@@ -143,7 +212,11 @@ export async function resolveServer(
     version = requestedServerVersion(context, config);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
+    const message =
+      config.serverVersion.trim().length > 0
+        ? 'ripr.server.version is invalid.'
+        : 'The matching ripr server version is unknown.';
+    return { message, detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
@@ -375,8 +448,14 @@ export function requestedServerVersion(context: vscode.ExtensionContext, config:
   if (configured.length > 0) {
     return validateManagedServerVersion(configured.replace(/^v/, ''));
   }
-  const version = context.extension?.packageJSON?.version;
-  return validateManagedServerVersion(typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0');
+  const version = knownExtensionVersion(context);
+  if (version === undefined) {
+    throw new Error(
+      "The extension's own version could not be read, so the matching server version is unknown. " +
+        'Set ripr.server.version to the ripr release to use, or reinstall the extension.'
+    );
+  }
+  return validateManagedServerVersion(version);
 }
 
 function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatform): string {

@@ -271,3 +271,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — test_compared_with_non_literal_not_exact (22)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`

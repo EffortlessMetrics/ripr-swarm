@@ -448,6 +448,8 @@ mod tests {
             source: std::sync::Arc::from(source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         }
     }
 

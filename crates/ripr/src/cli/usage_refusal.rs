@@ -36,6 +36,11 @@ pub(crate) const CODE_UNKNOWN_COMMAND: &str = "unknown_command";
 pub(crate) const CODE_SELECTOR_MISS: &str = "selector_miss";
 /// Machine code of a value flag given no value, or an empty one (#11979).
 pub(crate) const CODE_MISSING_VALUE: &str = "missing_value";
+/// Machine code of a required flag the invocation left out (#14076).
+pub(crate) const CODE_MISSING_REQUIRED: &str = "missing_required";
+/// Machine code of two flags the invocation gave that cannot be used
+/// together (#14925).
+pub(crate) const CODE_CONFLICTING_FLAGS: &str = "conflicting_flags";
 /// Machine code of a value that does not have the shape its flag takes,
 /// such as a word where a whole number belongs (#11979).
 pub(crate) const CODE_INVALID_VALUE: &str = "invalid_value";
@@ -69,6 +74,8 @@ pub(crate) fn note_unknown_argument(token: &str, message: &str, pointer: &str) {
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: pointer.to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -83,6 +90,8 @@ pub(crate) fn note_unknown_value(token: &str, message: &str, pointer: Option<&st
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: command.to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -96,6 +105,8 @@ pub(crate) fn note_unknown_command(token: &str, message: &str) {
             purpose: PURPOSE_LIST_COMMANDS,
             command: "ripr --help".to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -107,6 +118,8 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -114,6 +127,35 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
 /// one. Command parsers keep their own wording; only the code travels.
 pub(crate) fn empty_value(flag: &str, message: &str) -> String {
     note_missing_value(flag, message);
+    message.to_string()
+}
+
+/// The refusal for a required flag the invocation left out. The token is
+/// the flag to add; command parsers keep their own wording.
+pub(crate) fn missing_required(flag: &str, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_MISSING_REQUIRED.to_string(),
+        message: message.to_string(),
+        token: Some(flag.to_string()),
+        next: None,
+        disposition: None,
+        choices: None,
+    });
+    message.to_string()
+}
+
+/// The refusal for two given flags that cannot be used together. The token
+/// is one of them: dropping it clears this conflict. Command parsers keep
+/// their own wording.
+pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_CONFLICTING_FLAGS.to_string(),
+        message: message.to_string(),
+        token: Some(flag.to_string()),
+        next: None,
+        disposition: None,
+        choices: None,
+    });
     message.to_string()
 }
 
@@ -125,6 +167,8 @@ pub(crate) fn note_invalid_value(value: &str, message: &str) {
         message: message.to_string(),
         token: (!value.is_empty()).then(|| value.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -137,7 +181,35 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
         message: message.to_string(),
         token: Some(selector.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
+}
+
+/// Note a typed `repair`/`continue` refusal (exit 3) at its one owner
+/// (#14931). The code and disposition are the `RepairRefusalCode` the
+/// stderr `refusal code=` line already names, the disposition derived from
+/// the code; `next` is always null.
+pub(crate) fn note_typed_refusal(code: crate::app::task_first::RepairRefusalCode, message: &str) {
+    note_typed_refusal_with_choices(code, message, None);
+}
+
+/// [`note_typed_refusal`] for a selection refusal that also offers the
+/// commands its owner composed from typed seam or attempt ids (#14980). The
+/// owner passes exactly the listing it printed on stderr; nothing here is
+/// lifted from prose.
+pub(crate) fn note_typed_refusal_with_choices(
+    code: crate::app::task_first::RepairRefusalCode,
+    message: &str,
+    choices: Option<crate::output::refusal::RefusalChoices>,
+) {
+    let mut block = RefusalBlock::from_prose(code.as_str(), message);
+    // These steps can quote a user-supplied item or selector, so a typed
+    // refusal never offers its step as a runnable `next` (#14931).
+    block.next = None;
+    block.disposition = Some(code.disposition().as_str());
+    block.choices = choices;
+    record(block);
 }
 
 /// Whether argv explicitly requests JSON: a `--json` token, or `--format`
@@ -196,7 +268,11 @@ fn argv_command(args: &[String]) -> Option<String> {
 fn fills_help_route(code: &str) -> bool {
     matches!(
         code,
-        CODE_UNKNOWN_VALUE | CODE_MISSING_VALUE | CODE_INVALID_VALUE
+        CODE_UNKNOWN_VALUE
+            | CODE_MISSING_VALUE
+            | CODE_INVALID_VALUE
+            | CODE_MISSING_REQUIRED
+            | CODE_CONFLICTING_FLAGS
     )
 }
 
@@ -207,14 +283,26 @@ fn fills_help_route(code: &str) -> bool {
 /// escaped. Consumes the note either way.
 pub(super) fn document_for(args: &[String], error: &CommandError) -> Option<String> {
     let mut block = take()?;
-    if !matches!(error, CommandError::Failure(_)) || !json_requested(args) {
+    // A usage error is a could-not-complete failure; a typed repair/continue
+    // refusal is a decision (exit 3) and the only decision that carries a
+    // disposition.
+    let class_matches = match error {
+        CommandError::Failure(_) => block.disposition.is_none(),
+        CommandError::Decision(_) => block.disposition.is_some(),
+        _ => false,
+    };
+    if !class_matches || !json_requested(args) {
         return None;
     }
     if !error.message().contains(&block.message) {
         return None;
     }
-    // The document's message is the stderr prose the process printed.
-    block.message = error.message().to_string();
+    // The document's message is the stderr prose the process printed. A
+    // typed refusal keeps its plain-words prose: the `refusal code=` line
+    // that follows it on stderr is the `code` and `disposition` fields.
+    if block.disposition.is_none() {
+        block.message = error.message().to_string();
+    }
     if block.next.is_none()
         && fills_help_route(&block.code)
         && let Some(command) = argv_command(args)

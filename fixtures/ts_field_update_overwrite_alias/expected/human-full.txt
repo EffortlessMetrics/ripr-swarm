@@ -87,5 +87,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_field_update_overwrite_alias/input --diff <cwd>/fixtures/ts_field_update_overwrite_alias/diff.patch --mode fast probe:src_stats.ts:typescript_preview:d2fea2a2
   ripr context --root <cwd>/fixtures/ts_field_update_overwrite_alias/input --diff <cwd>/fixtures/ts_field_update_overwrite_alias/diff.patch --mode fast --at probe:src_stats.ts:typescript_preview:d2fea2a2
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

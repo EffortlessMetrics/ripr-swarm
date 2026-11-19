@@ -349,3 +349,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`

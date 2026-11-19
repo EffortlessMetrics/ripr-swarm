@@ -1803,7 +1803,7 @@ fn collect_global_declarations(statements: &[Stmt], out: &mut Vec<String>) {
 }
 
 /// Visit statement suites at every nesting depth, without crossing expressions.
-fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
+pub(super) fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
     visit_statements_while(statements, &mut |stmt| {
         out(stmt);
         true

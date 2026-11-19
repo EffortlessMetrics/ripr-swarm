@@ -429,3 +429,79 @@ fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The static limit the boundary edit in `total` at `owner_file` earns under
+/// the `pricing.rate` callee patch in `test_file`, with `workspace_files`
+/// given to the src-ambiguity and test-local shadow passes as the workspace
+/// analysis does.
+fn callee_patch_limit(
+    owner_file: &str,
+    test_file: &str,
+    workspace_files: &[&str],
+) -> Option<crate::domain::StaticLimitKind> {
+    let source = "def rate():\n    return 2\n\n\ndef total(x):\n    if x > 10:\n        return x * rate()\n    return x\n";
+    let old = "    if x >= 10:";
+    let new = "    if x > 10:";
+    let test_source = "from unittest.mock import patch\n\nfrom svc.a.src.pricing import total\n\n\ndef test_total_at_the_boundary():\n    with patch(\"pricing.rate\", return_value=3):\n        assert total(10) == 30\n";
+    let mut owners = extract_owners(Path::new(owner_file), source);
+    let files = workspace_files
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    super::related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files
+            .iter()
+            .filter(|file| !super::source_utils::is_test_file(file)),
+    );
+    super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let owner = owners.iter().find(|owner| owner.name == "total");
+    assert!(owner.is_some(), "owner total in {source}");
+    let owner = owner?;
+    let tests = extract_tests(Path::new(test_file), test_source);
+    assert_eq!(tests.len(), 1, "{test_source}");
+    let candidates = super::related_tests::related_test_candidates(owner, &tests);
+    assert!(!candidates.is_empty(), "test must relate: {test_source}");
+    let focus = super::assertion_selection::PythonAssertionFocus::for_change(
+        super::probe_shape::classify_probe_shape(new).0,
+        new,
+        Some(old),
+    );
+    super::static_limits::static_limit_for_focused_change(
+        new,
+        Some(old),
+        None,
+        &focus,
+        owner,
+        super::approx_band::PythonBandSource {
+            text: source,
+            sole_line_replacement: false,
+        },
+        &candidates,
+    )
+    .map(|limit| limit.kind)
+}
+
+/// #14035: a callee-only patch target's prefix must identify the owner's
+/// module for the test before the stand-in lifts `mocked_module`. A test-local
+/// `pricing.py` ahead on `sys.path` (#13706) or a rival project's
+/// `src/pricing.py` (#4566) is the module `patch("pricing.rate")` would
+/// replace instead, so the owner's `rate` still runs and the limit stays.
+#[test]
+fn a_shadowed_callee_patch_target_module_keeps_the_limit() {
+    use crate::domain::StaticLimitKind;
+    let owner = "svc/a/src/pricing.py";
+    let local = "svc/a/tests/test_pricing.py";
+    // Unshadowed control: the src-layout short name lifts the limit.
+    assert_eq!(callee_patch_limit(owner, local, &[owner, local]), None);
+    assert_eq!(
+        callee_patch_limit(owner, local, &[owner, "svc/a/tests/pricing.py", local]),
+        Some(StaticLimitKind::MockedModule)
+    );
+    let rival = "svc/b/tests/test_pricing.py";
+    assert_eq!(callee_patch_limit(owner, rival, &[owner, rival]), None);
+    assert_eq!(
+        callee_patch_limit(owner, rival, &[owner, "svc/b/src/pricing.py", rival]),
+        Some(StaticLimitKind::MockedModule)
+    );
+}

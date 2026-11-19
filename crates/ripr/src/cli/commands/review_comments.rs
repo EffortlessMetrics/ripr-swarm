@@ -10,12 +10,12 @@
 use crate::analysis;
 use crate::app::CheckInput;
 use crate::app::agent_brief::{
-    AgentBriefChangedOwner, AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
-    BoundedAgentBrief,
+    AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, BoundedAgentBrief,
 };
 use crate::app::review_comments_receipt::ReviewCommentsReceiptRun;
 use crate::cli::commands_agent_support::{
-    agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
+    AgentBriefOwnerAttribution, agent_brief_lines_from_diff,
+    agent_brief_owner_attribution_for_lines,
 };
 use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::commands_options::ReviewCommentsOptions;
@@ -36,17 +36,23 @@ use super::review_guidance_index_handoff::{
 };
 use super::write_text_file;
 
-const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
+/// Default cooperative budget: `ripr check`'s 600 s analysis default (#12940).
+/// At 120 s a 87-file diff on ripr-swarm (2,646 indexed files) timed out in
+/// canonical analysis; with 600 s diffs of 3 to 238 files completed in
+/// 43 to 381 s on 4 vCPU.
+const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 600_000;
 
 /// Default ceiling on the union of analyzable workspace files and changed
-/// owner-attribution inputs. Match the repo-scope default and the diff
-/// narrowing threshold (raised in #4972 after this repository grew beyond
-/// 800 files) and stay below the 1,600–1,700-file external failure shapes
-/// in #3768. Guidance indexes the whole workspace, so it does not follow
-/// the 10,000-file diff memory guard.
+/// owner-attribution inputs. It was 1,200 while the guidance second stage
+/// evaluated every caller-file seam, which drove the 1,600–1,700-file
+/// failures in #3768 and a 13.9 GB OOM on this repository (#12940). Since
+/// #13919 bounds that stage, ripr-swarm (2,646 indexed files) peaks at
+/// 0.99–1.87 GB for diffs of 3 to 238 files, so the default admits about
+/// twice that workspace (#12940). Guidance indexes the whole workspace, so
+/// it does not follow the 10,000-file diff memory guard.
 /// This is input admission, not an RSS bound or evidence that admitted
 /// execution will complete on every runner.
-const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 1200;
+const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 5000;
 
 /// Env override for [`REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT`], in the
 /// `RIPR_MAX_DIFF_INDEX_FILES` family. Operators on larger, well-resourced
@@ -514,10 +520,7 @@ fn review_comments_with_admission(
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, crate::core_error::CoreError>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
     load_ceiling: impl FnOnce() -> Result<GuidancePayloadCeiling, String>,
-    attribute_owners: impl FnOnce(
-        &Path,
-        &[AgentBriefLine],
-    ) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>),
+    attribute_owners: impl FnOnce(&Path, &[AgentBriefLine]) -> AgentBriefOwnerAttribution,
 ) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_review_comments_help();
@@ -838,10 +841,13 @@ fn review_comments_with_admission(
     // (#1604); an expiry inside it surfaces at the deadline check below.
     receipt.step("owner_attribution");
     receipt.write_atomic(&receipt_path)?;
-    let (changed_owners, enclosing_owners) =
-        analysis::cancellation::with_token(&cancellation, || {
-            attribute_owners(&input.root, &changed_lines)
-        });
+    let AgentBriefOwnerAttribution {
+        changed_owners,
+        enclosing_owners,
+        edited_function_headers,
+    } = analysis::cancellation::with_token(&cancellation, || {
+        attribute_owners(&input.root, &changed_lines)
+    });
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -855,7 +861,8 @@ fn review_comments_with_admission(
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_tests(changed_tests)
         .with_changed_owners(changed_owners)
-        .with_enclosing_owners(enclosing_owners);
+        .with_enclosing_owners(enclosing_owners)
+        .with_edited_function_headers(edited_function_headers);
     let changed_owner_names = working_set
         .changed_owners
         .iter()
@@ -1249,8 +1256,8 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
 
     Ok(ReviewCommentsOptions {
         root,
-        base: base.ok_or_else(|| "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`".to_string())?,
-        head: head.ok_or_else(|| "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())?,
+        base: base.ok_or_else(|| crate::cli::usage_refusal::missing_required("--base", "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`"))?,
+        head: head.ok_or_else(|| crate::cli::usage_refusal::missing_required("--head", "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`"))?,
         gap_ledger,
         check_output,
         suppression_policy,
@@ -2368,6 +2375,7 @@ mod tests {
             changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
+            edited_function_headers: None,
             base: Some("HEAD~1".to_string()),
             diff: None,
             seam_id: None,
@@ -2992,7 +3000,7 @@ mod tests {
                     analysis::cancellation::current_token().is_some(),
                     Ordering::SeqCst,
                 );
-                (Vec::new(), Vec::new())
+                AgentBriefOwnerAttribution::unknown()
             },
         );
         if !saw_token.load(Ordering::SeqCst) {
@@ -3060,7 +3068,7 @@ mod tests {
             GuidancePayloadCeiling::from_env,
             move |_root, _lines| {
                 attributed.store(true, Ordering::SeqCst);
-                (Vec::new(), Vec::new())
+                AgentBriefOwnerAttribution::unknown()
             },
         );
         let receipt: serde_json::Value = serde_json::from_str(
@@ -3638,7 +3646,7 @@ mod tests {
                     );
                     let owners = agent_brief_owner_attribution_for_lines(root, lines);
                     assert_eq!(
-                        owners.0.len(),
+                        owners.changed_owners.len(),
                         3,
                         "positive control must build a real owner index"
                     );
@@ -3809,31 +3817,41 @@ mod tests {
     }
 
     #[test]
-    fn guidance_payload_default_admits_current_family_but_refuses_failure_scale()
+    fn guidance_payload_default_admits_this_workspace_but_refuses_past_the_ceiling()
     -> Result<(), String> {
+        // #12940: ripr-swarm indexes 2,646 files and completes under the
+        // bounded second stage, so the default admits it with headroom and
+        // still refuses one file past the ceiling.
         let ceiling = GuidancePayloadCeiling::parse(
             Err(std::env::VarError::NotPresent),
             Err(std::env::VarError::NotPresent),
         )?;
-        assert_eq!(ceiling.max_index_files, 1200);
+        assert_eq!(ceiling.max_index_files, 5000);
         ceiling.enforce(
             analysis::CorpusPayloadSize {
-                file_count: 1200,
-                total_bytes: 1200,
+                file_count: 2646,
+                total_bytes: 2646,
             },
-            1200,
+            2646,
+        )?;
+        ceiling.enforce(
+            analysis::CorpusPayloadSize {
+                file_count: 5000,
+                total_bytes: 5000,
+            },
+            5000,
         )?;
         let error = ceiling
             .enforce(
                 analysis::CorpusPayloadSize {
-                    file_count: 1700,
-                    total_bytes: 1700,
+                    file_count: 5001,
+                    total_bytes: 5001,
                 },
-                1700,
+                5001,
             )
             .err()
-            .ok_or("the measured external failure scale must remain refused by default")?;
-        assert!(error.contains("=1200"));
+            .ok_or("a corpus past the default ceiling must remain refused")?;
+        assert!(error.contains("=5000"));
         assert!(error.contains("Narrowing only the diff does not reduce the workspace file count"));
         Ok(())
     }

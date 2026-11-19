@@ -26,6 +26,7 @@ Linked issues:
 Linked PRs:
 
 - #14534 (this contract)
+- #13037 amendment (reached computed tail)
 
 Amends RIPR-SPEC-0231 (Rust oracle kind and strength admission) for the
 `return_value` seam kind only.
@@ -203,6 +204,103 @@ refuses.
     discriminate stage is not `Yes`, and its summary reads "kind matches; the
     call does not reach the seam's branch".
 
+## Amendment (#13037): a reached computed tail is observed by its exact pin
+
+`ripr check` read a changed computed return (`base * 2` under `if express`)
+as `weakly_exposed` even when a test pinned the exact value that branch
+returns: observation of a `return_value` probe was confirmed only by an
+assertion that repeats a token of the changed expression, and `800` names no
+token of `base * 2`. The repo seam view `ripr repair` reads already credited
+the same pin, so the two commands disagreed.
+
+An exact pin now also confirms observation when
+`return_seam_tail_reached_by_call` (same file as the gate above) holds. It is
+strict where the gate above keeps today's credit: every unreadable shape
+answers no credit.
+
+- The assertion is an equality (`assert_eq!`, not `assert_ne!`, and not a
+  `debug_` form a release test run compiles out) and exactly one compared
+  operand is a bare owner call (no wrapper, no local argument) whose
+  arguments are `true`/`false` or integer expressions that fold with no
+  bindings (`100`, `50 + 50`).
+- The other compared operand is a value the test fixes itself: `true`,
+  `false` or an integer expression that folds with no bindings, read through
+  a `let` when it names one. An expected value computed by calling code
+  (`let expected = helper(..)`) may call the owner and move with it.
+- The test body does not shadow the owner's name (`let shipping_cost =
+  |..| 800;`), so the asserted call is the owner.
+- The owner's name is unique in a complete workspace index (so the bare
+  call cannot reach a same-named free function, test stub or associated
+  function), and its plain, non-`mut` parameters are typed `bool` or a
+  recognized integer type and are never rebound or mutated. The owner body
+  carries no attribute (a `#[cfg]` could swap a statement the fold reads).
+- The seam is the whole tail of exactly one branch of the `if` chain that is
+  itself the owner body's tail, so the branch value is the returned value.
+- Every statement before that tail is either `let NAME = EXPR;` whose
+  initializer folds (it calls nothing, so it cannot exit or panic), which
+  binds `NAME` for later conditions, or an `if COND { .. }` without `else`
+  whose condition folds false.
+- Every condition on the path folds, reading the parameters, those bindings
+  and, for a top-level owner, `const` items declared once at the top level
+  of the owner's file with a literal initializer and a known integer type,
+  named in no `use`, in a file with no top-level glob `use`. A `static` can
+  change before the owner reads it, so it does not resolve. The fold
+  selects the seam's branch.
+- Every integer the fold produces must fit `i32` (an unconstrained
+  literal's type), every integer width the owner names (parameters, return
+  type, annotations, literal suffixes) and each read constant's declared
+  width, since with overflow checks off the runtime wraps where the fold
+  would not. An owner naming `usize`, `isize`, `u128` or `i128`, or spelling
+  any non-primitive type (an alias such as `type Byte = u8;` could hide a
+  narrower width), is not read. Nor is an owner that is not at its file's
+  top level, or whose file could give a primitive name another meaning: a
+  `type` item named like a primitive (`pub type i32 = u8;`), a `use` naming
+  a primitive (`use core::primitive::u8 as i32;`), a top-level glob `use`,
+  or a macro that could expand to such an item (`macro_rules!`, or a
+  top-level item macro invocation). A raw identifier (`r#i32`) counts as
+  the primitive it spells. The scan is deliberately coarse: a `use` that
+  only names a primitive without rebinding it (`use core::primitive::u8 as
+  Byte;`) also refuses, which only withholds credit.
+- A remainder by `-1` does not fold: `MIN % -1` panics in the operand's own
+  width (in release too), so a call with those arguments never reaches the
+  tail, though the fold's wider arithmetic would read 0.
+- A test binding that the test writes again after the call (`got %= ..`, or
+  any compound assignment) is not a bare pin of the call's value.
+
+The admission is the bool field pin's: the test is not `should_panic`, the
+assertion macros are the standard ones, and no `use` rebinds the owner's
+name. The import and cross-package owner defeats apply as for every other
+owner pin. The rule only confirms observation; it adds no oracle kind or strength.
+
+Acceptance:
+
+1. `assert_eq!(shipping_cost(100, 10, true), 800)` on `base * 2`:
+   `exposed`.
+2. `assert_eq!(shipping_cost(100, 10, false), 400)` only: not `exposed`.
+3. `assert_ne!(shipping_cost(100, 10, true), 1200)`: not `exposed`.
+4. An earlier `if order_cents >= FREE_OVER_CENTS { return 0; }` the call
+   takes (`(100, 9000, true)`): not `exposed`; `(100, 10, true)`: `exposed`.
+5. A computed constant (`5 * 1_000`), a constant named in a `use` or
+   declared only inside a nested module, a `let` that calls a function, an
+   attributed statement, a same-named function elsewhere, a rebound
+   parameter, a computed operand (`f(..) / 2`) or a local argument: not
+   `exposed`.
+6. A narrow local that wraps (`let n: u8 = 200; let total = n + 100;`, or
+   the same through `type Byte = u8;` or a primitive-named
+   `pub type i32 = u8;`), a
+   `static` threshold, a closure that shadows the owner in the test, and an
+   expected value computed by a helper that calls the owner: not `exposed`.
+   `debug_assert_eq!` and a top-level glob import are refused here too, as a
+   second guard behind refusals that already hold upstream.
+
+Fixtures `fixtures/rust_computed_return_tail_reached` (promoted),
+`fixtures/rust_computed_return_tail_other_branch` (not promoted) and
+`fixtures/rust_computed_return_tail_wrapping_local` (not promoted: a `u8`
+local wraps, so the call takes the other branch) and
+`fixtures/rust_computed_return_tail_primitive_alias` (not promoted: the
+same wrap through `pub type i32 = u8;`) pin both sides in the
+evidence-promotion honesty corpus.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test`
@@ -224,6 +322,16 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_earlier_return_the_call_takes_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::shapes_the_fold_cannot_read_keep_todays_reading`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_constant_declared_only_inside_the_test_module_does_not_resolve`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapped_or_computed_operand_is_not_a_bare_pin`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::an_expected_value_the_test_computes_by_calling_code_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_13037.rs::a_release_elided_assertion_or_a_glob_import_is_not_credited`
 
 ## Implementation Mapping
 
@@ -233,6 +341,11 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence.rs`: `branch_gate_withholds`,
   its call in `oracle_discriminates_seam_in_test`, and the per-test
   downgrade in `best_oracle`.
+- `crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs`:
+  `return_seam_tail_reached_by_call` (#13037).
+- `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
+  admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
+  observation confirmation.
 
 ## Metrics
 

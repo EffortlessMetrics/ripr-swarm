@@ -120,15 +120,21 @@ pub(crate) fn supplement_absent_file_limitations(
 }
 
 pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    worktree_regular_source_file(root, relative).is_some()
+}
+
+/// Where the changed path `relative` is on disk as a regular file reached
+/// through real directories below `root`, when it is.
+pub(crate) fn worktree_regular_source_file(root: &Path, relative: &Path) -> Option<PathBuf> {
     if relative.is_absolute()
         || relative
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
-        return false;
+        return None;
     }
     if is_regular_source_below_root(root, relative) {
-        return true;
+        return Some(root.join(relative));
     }
     // Git diffs keep the repository-relative path. `--root` is often a
     // crate subdirectory, so `root.join(diff_path)` misses a file that
@@ -148,10 +154,10 @@ pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path
             continue;
         }
         if is_regular_source_below_root(root, Path::new(suffix)) {
-            return true;
+            return Some(root.join(suffix));
         }
     }
-    false
+    None
 }
 
 fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
@@ -740,6 +746,30 @@ mod tests {
             assert_eq!(limitation.affected_items, Some(1));
         }
         assert!(limitations_for_unreadable_unchanged_paths(&[])?.is_empty());
+        Ok(())
+    }
+
+    /// #14078: the human headline for an unchanged path the walk could not
+    /// read must not call it a changed file. The detail says "unchanged", so
+    /// a headline saying "changed" contradicts its own line.
+    #[test]
+    fn unreadable_unchanged_path_limitation_headline_does_not_call_it_changed() -> Result<(), String>
+    {
+        let limitations =
+            limitations_for_unreadable_unchanged_paths(&[PathBuf::from("src/locked.rs")])?;
+        let [limitation] = limitations.as_slice() else {
+            return Err(format!("expected one limitation, got {limitations:?}"));
+        };
+        let headline = limitation.kind.plain_label();
+        assert_eq!(headline, "some files were not fully analyzed");
+        assert!(!headline.contains("changed"), "{headline}");
+        assert!(
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("unchanged")),
+            "{limitation:?}"
+        );
         Ok(())
     }
 

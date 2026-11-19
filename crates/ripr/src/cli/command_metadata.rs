@@ -225,12 +225,14 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
             Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
-        // with prose on stderr and an empty stdout, like the card family.
-        // #12417: the unanchored discovery refusal joins both, and status
-        // spells it too instead of reporting state for a non-project.
-        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-        // #11584: selection-arm refusals leave stdout empty; under `--json`
-        // a typed after-phase refusal or failure prints its document.
+        // with prose on stderr. #12417: the unanchored discovery refusal
+        // joins both, and status spells it too instead of reporting state
+        // for a non-project. #14931: under `--json` their typed refusals
+        // write the `cli_refusal` document on stdout.
+        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+        // #11584/#14931: under `--json` a selection-arm refusal prints the
+        // `cli_refusal` document and a typed after-phase refusal or failure
+        // prints its own document.
         "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
@@ -622,7 +624,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "--base and --head revisions",
-            "cooperative time budget (default 120000 ms)",
+            "cooperative time budget (default 600000 ms)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/review/comments.json"),
@@ -1970,7 +1972,7 @@ const METADATA: &[CommandMetadata] = &[
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
         not_applicable_reason: None,
     },
@@ -2026,7 +2028,7 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[
             "no workspace, package or Git repository anchors the current directory (unanchored_root): state is not reported for a non-project; run from inside the project or pass `--root <dir>`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "reads workflow state; it does not resume or mutate the loop.",
         not_applicable_reason: None,
     },
@@ -3651,7 +3653,7 @@ mod tests {
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
-            ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",

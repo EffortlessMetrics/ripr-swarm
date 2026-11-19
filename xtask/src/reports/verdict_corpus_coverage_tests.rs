@@ -1014,6 +1014,25 @@ fn abstaining_reject_examples_open_with_reject_and_pin_an_unresolved_outcome() {
 }
 
 #[test]
+fn abstain_marked_examples_count_only_when_the_marker_opens_the_item() {
+    let spec = "## Behavior\n\n1. [abstain] Accept: not an example.\n\n## Acceptance Examples\n\n1. [abstain] Accept: a bench helper reads zero findings.\n2. [abstain] **Bold lead**: `no_static_path` plus a named limit.\n3. Accept: a helper [abstain] marked mid-sentence.\n4. [abstained] Accept: a different token.\n5. [abstain]\n   Accept: the text starts on the next line.\n6. Accept: a credited twin.\n\n```text\n7. [abstain] inside a fence\n```\n\n- example `marked-slug`: [abstain] Accept: the slug form.\n- example `plain-slug`: Accept: the plain slug.\n";
+    // Only the leading token marks an item: a mid-sentence marker (3), a
+    // longer token (4), a plain twin (6), a fenced line (7) and text outside
+    // the examples section are left out.
+    assert_eq!(
+        abstaining_reject_examples(spec),
+        [
+            ExampleKey::Number(1),
+            ExampleKey::Number(2),
+            ExampleKey::Number(5),
+            ExampleKey::Slug("marked-slug".to_string())
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    );
+}
+
+#[test]
 fn reject_example_ids_read_the_owning_repository_specs_and_none_for_a_tempdir() -> Result<(), String>
 {
     let ids = abstaining_reject_example_ids_for_corpus(&repo_path(CORPUS_DIR))?;
@@ -1026,6 +1045,11 @@ fn reject_example_ids_read_the_owning_repository_specs_and_none_for_a_tempdir() 
     assert!(!ids.contains("RIPR-SPEC-0157#8"), "{ids:?}");
     // The phrase sits on a continuation line of RIPR-SPEC-0158 example 12.
     assert!(ids.contains("RIPR-SPEC-0158#12"), "{ids:?}");
+    // RIPR-SPEC-0154 example 7 opens with the `[abstain]` marker; its split
+    // twin, example 3 (the production predicate still seeds a probe), does
+    // not.
+    assert!(ids.contains("RIPR-SPEC-0154#7"), "{ids:?}");
+    assert!(!ids.contains("RIPR-SPEC-0154#3"), "{ids:?}");
     let dir = std::env::temp_dir().join(format!("ripr-reject-ids-{}", std::process::id()));
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     let none = abstaining_reject_example_ids_for_corpus(&dir);

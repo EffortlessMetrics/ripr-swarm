@@ -48,7 +48,7 @@ ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 | `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) for those: select the function with `path` + `function` so the entry survives edits, and pass it with `--suppression-policy` to `ripr check` and `ripr review-comments` (see [Suppressing in CI](#suppressing-in-ci)) |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an enclosing `impl` or `trait` block, inline module, or a file-level `#![mutants::skip]` is honored the same way and names that scope (RIPR-SPEC-0450). `#[mutants::skip] mod name;` is not followed into the module's file; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) for that: select the function with `path` + `function` so the entry survives edits, and pass it with `--suppression-policy` to `ripr check` and `ripr review-comments` (see [Suppressing in CI](#suppressing-in-ci)) |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 
@@ -194,6 +194,14 @@ verified re-export). Changing an unrelated test, even one in the same file or
 with the same name in another module, does not keep a gap advisory.
 `gate-decision.md` states the reason for each one.
 
+A changed gap that ripr withholds as a static limitation is listed too, not
+dropped. For example, a changed function no test calls, whose boundary operand
+is computed (`cents % 100 > 49`), prints as `no_static_path` in `missed-txt`.
+`comments.json` lists it under `suppressed` with reason `static_limitation`,
+and the gate reports it as `suppressed` with that reason. It does not block:
+ripr cannot yet name a bounded repair for it, so a cargo-mutants run or a
+reviewer has to decide whether it needs a test (#13892).
+
 ### Observed
 
 Run with a development build of `ripr 0.11.0` on the example crate, with a
@@ -216,10 +224,10 @@ bare clone as `origin`:
   acknowledge a gap for one pull request. The gap stays visible in the report.
 - Large workspaces: `review-comments` refuses with `review_guidance_oversized`
   (exit `2`, so the gate also exits `2`) when its index input passes about
-  1,200 files (the workspace corpus plus changed files it reads for
+  5,000 files (the workspace corpus plus changed files it reads for
   attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
-  enough memory; the limit is an input cap, not a memory bound, and its memory
-  cost on large workspaces is not measured here. Separately, `ripr check`
+  enough memory; the limit is an input cap, not a memory bound. On a
+  2,646-file workspace it peaked under 2 GB. Separately, `ripr check`
   can return a partial result when the diff exceeds the 200-file or
   1,000-changed-line budget. Raise `RIPR_PARTIAL_DIFF_FILE_BUDGET` and/or
   `RIPR_PARTIAL_DIFF_LINE_BUDGET` as needed. The effective line budget is

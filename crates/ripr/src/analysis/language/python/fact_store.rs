@@ -75,7 +75,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// module skip root is withheld; `23` entries lack both.
 /// `25`: a function records a single direct class return for validated
 /// factory discovery; `24` entries lack that return-identity evidence.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "25";
+/// `26`: try-body assertions respect ordered, binding-checked exception
+/// handlers; older entries may omit a re-raised assertion or credit an unknown handler.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "26";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

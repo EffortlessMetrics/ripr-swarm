@@ -39,6 +39,10 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// Top-level status for a completed non-blocking run that is not a clean
+/// enforcing `pass`: advisory evidence was recorded, or the mode is
+/// visible-only (which never blocks on findings and so never reads `pass`).
+const GATE_STATUS_ADVISORY: &str = "advisory";
 /// The warning that marks a calibrated-gate block caused by a changed file the
 /// parser declined (#14485). The inline CLI detail looks for it.
 pub(crate) const UNPARSED_BLOCK_WARNING: &str = "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes";
@@ -696,11 +700,15 @@ fn candidate_from_guidance_item(source: &str, item: &Value, suppressed: bool) ->
         .to_string();
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
-            .or_else(|| string_field(item.pointer("/seam/file"))),
+            .or_else(|| string_field(item.pointer("/seam/file")))
+            // Flat suppressed entries (withheld changed gaps #13892, summary-cap
+            // and nearby-test entries) carry a flat file/line.
+            .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")
             .and_then(Value::as_u64)
-            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64)),
+            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64))
+            .or_else(|| item.get("line").and_then(Value::as_u64)),
     };
     let recommended_file = item
         .pointer("/suggested_test/recommended_file")
@@ -1284,6 +1292,11 @@ fn gate_reason(
     context: GateReasonContext<'_>,
     configured_acknowledgement_labels: &[String],
 ) -> String {
+    if candidate.suppression_reason.as_deref() == Some("static_limitation") {
+        return "changed gap withheld from repair guidance as `static_limitation`; \
+                preserved as advisory, not resolved"
+            .to_string();
+    }
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -1548,8 +1561,9 @@ fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
 
 /// The gate warning for an analysis scope that discloses reviewed-scope seams
 /// withheld as static limitations (`static_limited_omitted_seams`, present
-/// only when nonzero): ripr could not judge them, so they are not gate
-/// candidates and their absence is not a clean result. A value that is not a
+/// only when nonzero): ripr could not judge them, so they are not blocking
+/// candidates (the changed-scope gap seams among them are evaluated as
+/// `suppressed`, #13892) and their absence is not a clean result. A value that is not a
 /// non-negative integer warns too.
 fn static_limited_scope_warning(scope: &Value) -> Option<String> {
     let value = scope.get("static_limited_omitted_seams")?;
@@ -1558,7 +1572,8 @@ fn static_limited_scope_warning(scope: &Value) -> Option<String> {
         Some(count) => format!(
             "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
              scope were withheld because their static evidence is opaque or unknown at a \
-             stage; they are not gate candidates, so the absence of a gate candidate for \
+             stage; they are not blocking candidates (changed-scope gap seams among them are \
+             listed as suppressed decisions), so the absence of a blocking candidate for \
              them is not evidence that the changes are tested; run `ripr check` on the same diff to \
              inspect them"
         ),
@@ -1583,16 +1598,35 @@ fn top_level_status(
         GATE_STATUS_BLOCKED
     } else if summary.acknowledged > 0 {
         "acknowledged"
-    } else if mode == GateMode::VisibleOnly
-        || summary.advisory > 0
-        || summary.suppressed > 0
-        || summary.unknown_confidence > 0
-        || !warnings.is_empty()
-    {
-        "advisory"
+    } else if mode == GateMode::VisibleOnly || has_advisory_evidence(summary, warnings) {
+        GATE_STATUS_ADVISORY
     } else {
         "pass"
     }
+}
+
+/// Evidence that reads `advisory` in every mode: an advisory, suppressed or
+/// unknown-confidence candidate, or a warning.
+fn has_advisory_evidence(summary: &GateSummary, warnings: &[String]) -> bool {
+    summary.advisory > 0
+        || summary.suppressed > 0
+        || summary.unknown_confidence > 0
+        || !warnings.is_empty()
+}
+
+/// Whether a report reads `advisory` only because visible-only mode never
+/// blocks on findings: the run recorded no advisory evidence and no
+/// exception-policy violation. `top_level_status` owns the status; this names
+/// the one case where the token says nothing about findings, so the renderer
+/// can disclose it (#7445) without changing the status vocabulary.
+pub(super) fn advisory_from_visible_only_posture_alone(report: &GateDecisionReport) -> bool {
+    report.status == GATE_STATUS_ADVISORY
+        && report.mode == GateMode::VisibleOnly
+        && !has_advisory_evidence(&report.summary, &report.warnings)
+        && report
+            .exception_policy
+            .as_ref()
+            .is_none_or(|policy| policy.violations.is_empty())
 }
 
 fn acknowledgement_labels(input: &GateEvaluateInput) -> Vec<String> {

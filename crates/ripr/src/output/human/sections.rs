@@ -209,6 +209,43 @@ fn digest_missing_entry(finding: &Finding) -> Option<(String, String)> {
     Some((label, value))
 }
 
+/// The plain-language `Why <class>: <reason>` line for a finding, shared by
+/// the check digest and the `ripr explain` verdict so both give the same
+/// reason in the same words. `None` when no hint applies or the digest's own
+/// `Analyzer limit` line already states the reason.
+pub(super) fn why_class_line(finding: &Finding) -> Option<String> {
+    let refused_macro = refused_assertion_macro(finding);
+    // #11519: an owner reached without a placeable call prints an `Analyzer
+    // limit` line and a Next step that already say why ripr could not
+    // decide; the generic "could not determine a static exposure state"
+    // hint restates them and spends a line of the first-view read budget.
+    // Specific hints (unresolved fixture, guard refusal) are never dropped.
+    let limit_names_the_reason = finding.class == ExposureClass::StaticUnknown
+        && finding.static_limit_kind
+            == Some(crate::domain::StaticLimitKind::RustIndirectOwnerCallUnresolved)
+        && finding
+            .missing
+            .iter()
+            .find(|missing| !restates_no_static_path_evidence(finding, missing))
+            .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
+    let digest_missing = digest_missing_entry(finding);
+    // #14308: an `Analyzer limit` line that repeats the Why hint word for
+    // word states the fact once; the hint is dropped, the limit line stays.
+    let limit_restates_hint = |hint: &str| {
+        digest_missing.as_ref().is_some_and(|(label, value)| {
+            label == "Analyzer limit" && restates_digest_fact(hint, value)
+        })
+    };
+    unresolved_fixture_hint(finding)
+        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
+        .or_else(|| {
+            classification_hint(&finding.class, &finding.ripr, refused_macro)
+                .filter(|_| !limit_names_the_reason)
+        })
+        .filter(|hint| !limit_restates_hint(hint))
+        .map(|hint| format!("Why {}: {hint}", finding.class.plain_label()))
+}
+
 /// Two digest values state the same fact: equal after collapsing whitespace,
 /// dropping one terminal period and ignoring ASCII case.
 fn restates_digest_fact(left: &str, right: &str) -> bool {
@@ -251,37 +288,9 @@ pub(crate) fn render_finding_digest_with_config(
     }
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    let refused_macro = refused_assertion_macro(finding);
-    // #11519: an owner reached without a placeable call prints an `Analyzer
-    // limit` line and a Next step that already say why ripr could not
-    // decide; the generic "could not determine a static exposure state"
-    // hint restates them and spends a line of the first-view read budget.
-    // Specific hints (unresolved fixture, guard refusal) are never dropped.
-    let limit_names_the_reason = finding.class == ExposureClass::StaticUnknown
-        && finding.static_limit_kind
-            == Some(crate::domain::StaticLimitKind::RustIndirectOwnerCallUnresolved)
-        && finding
-            .missing
-            .iter()
-            .find(|missing| !restates_no_static_path_evidence(finding, missing))
-            .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
     let digest_missing = digest_missing_entry(finding);
-    // #14308: an `Analyzer limit` line that repeats the Why hint word for
-    // word states the fact once; the hint is dropped, the limit line stays.
-    let limit_restates_hint = |hint: &str| {
-        digest_missing.as_ref().is_some_and(|(label, value)| {
-            label == "Analyzer limit" && restates_digest_fact(hint, value)
-        })
-    };
-    if let Some(hint) = unresolved_fixture_hint(finding)
-        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
-        .or_else(|| {
-            classification_hint(&finding.class, &finding.ripr, refused_macro)
-                .filter(|_| !limit_names_the_reason)
-        })
-        .filter(|hint| !limit_restates_hint(hint))
-    {
-        out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
+    if let Some(line) = why_class_line(finding) {
+        out.push_str(&format!("  {line}\n"));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
     // so it wraps like the next step instead of truncating.
@@ -762,6 +771,15 @@ pub(super) fn render_finding_with_shared_sections(
         severity,
         finding.confidence
     ));
+    // `ripr explain` is where a reader asks "why this verdict"; give the
+    // plain-language reason the check digest gives, in the same words, next
+    // to the internal token instead of leaving the token unexplained.
+    // `--format human-full` keeps its integrator-facing block unchanged.
+    if wording == JsonPointerWording::ExplainNamesCheck
+        && let Some(line) = why_class_line(finding)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
     if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
     {
         out.push_str(&format!("  {line}\n"));

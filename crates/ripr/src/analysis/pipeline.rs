@@ -1,3 +1,5 @@
+#[cfg(any(feature = "lang-perl", feature = "lang-python"))]
+use super::language::LanguageAdapter;
 #[cfg(feature = "lang-perl")]
 use super::language::PerlAdapter;
 #[cfg(feature = "lang-python")]
@@ -5,9 +7,8 @@ use super::language::PythonAdapter;
 #[cfg(feature = "lang-typescript")]
 use super::language::TypeScriptAdapter;
 use super::language::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
-    unanalyzed_source_language,
+    LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope, RustAdapter,
+    diff_limit_env, is_script_language, positive_limit_from_env, route, unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -1450,8 +1451,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
-    let parsed_diff =
+    let mut parsed_diff =
         diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+    // #15121: a file the diff creates by copy is new code the patch does not
+    // carry; read it as an added file before any guard or adapter counts it.
+    // A hunkless copy that was read as an added file is a text change, even
+    // when its section also carries a file-mode change.
+    let copied_lines_read = diff::expand_copy_destinations(
+        &mut parsed_diff.changed_files,
+        &parsed_diff.copy_destination_paths,
+        &options.root,
+    )?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,
@@ -2244,9 +2254,9 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     // Rename metadata can register a binary file without any text hunks.
     // That path must retain the same non-text refusal as an unrenamed blob.
+    let non_text_only = !copied_lines_read && has_only_non_text_changes(diff_text);
     if !diff_text.trim().is_empty()
-        && ((changed_files.is_empty() && renamed_file_count == 0)
-            || has_only_non_text_changes(diff_text))
+        && ((changed_files.is_empty() && renamed_file_count == 0) || non_text_only)
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
@@ -2256,7 +2266,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         // schema change); a well-formed diff with only binary or mode changes
         // gets its own wording so the recovery does not tell the reader to
         // fix a valid diff.
-        let (recovery, detail) = if has_only_non_text_changes(diff_text) {
+        let (recovery, detail) = if non_text_only {
             (
                 "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
                 NON_TEXT_ONLY_DETAIL,
@@ -2387,6 +2397,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 .saturating_add(file.removed_lines.len())
         })
         .sum::<usize>();
+    let mut changed_line_index = crate::analysis_outcome::ChangedLineIndex::default();
+    for file in changed_files.iter() {
+        changed_line_index.record(
+            super::stable_path_text(&file.path),
+            file.added_lines.iter().map(|line| line.new_side_line),
+        );
+    }
     let kind = if limitations.iter().any(|limitation| {
         matches!(
             limitation.kind,
@@ -2513,6 +2530,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_consumed_sources,
         owner_opt_outs,
         language_view: Some(language_view),
+        changed_lines: Some(changed_line_index),
         preview_fact_caches,
     })
 }
@@ -2829,6 +2847,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         // reports every owner.
         owner_opt_outs: Vec::new(),
         language_view: Some(language_view),
+        changed_lines: None,
         preview_fact_caches: Vec::new(),
     })
 }
@@ -10444,6 +10463,38 @@ index 0000000..1111111 100644
             .iter()
             .map(|file| (file.path.as_str(), file.changed_lines, file.limit_env))
             .collect()
+    }
+
+    #[test]
+    fn lowered_python_limit_leaves_a_rust_only_diff_at_full_scope() -> Result<(), String> {
+        // #14172: with Rust and Python enabled and the Python limit lowered
+        // to 500, an 800-line Rust-only diff is within every limit that
+        // applies to it. The Rust adapter's partition must not clamp it to
+        // the Python limit, so the run stays at full scope.
+        let root = temp_root("py-lowered-limit-rust-only")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn seed() -> u32 { 0 }\n",
+        )?;
+        let diff = multi_file_diff(&["src/lib.rs"], 800, |index| {
+            format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+        });
+        let result =
+            with_forced_diff_limit_env(&[(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")], || {
+                run_pipeline_for_diff_text(
+                    &sample_rust_diff_options(root.clone()),
+                    &OraclePolicy::default(),
+                    &[LanguageId::Rust, LanguageId::Python],
+                    &crate::config::RustLanguageConfig::default(),
+                    &diff,
+                )
+            })?;
+        assert!(
+            result.partial_scope.is_none(),
+            "a Rust-only diff must not be partitioned by the Python limit: {:?}",
+            result.partial_scope
+        );
+        Ok(())
     }
 
     #[test]

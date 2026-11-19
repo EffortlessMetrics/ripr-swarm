@@ -19,7 +19,9 @@
 //!   at the test body's top level, then each enclosing module's own `use`
 //!   items and item definitions, following `use super::*` outward and
 //!   reading other globs. A binding inside a nested block of the test leaves
-//!   every call of that name unsettled.
+//!   every call of that name unsettled. A `const`, `static` or tuple
+//!   `struct` of the name in one of those scopes is what the bare call runs,
+//!   so the call settles away from every definition (#14087).
 //!
 //! A call settles on the owner only when the spelled path matches the
 //! owner and nothing else. It settles on another definition only when it
@@ -122,6 +124,16 @@ pub(crate) struct CallIdentityMemos {
     /// candidate index, the seam walk, the receiver owner above, the seam
     /// inventory). Keyed by the index state it was computed under.
     pub(super) macro_site_scans: super::owner_pin::SharedMacroScans,
+    /// #13754: every `matches` binding site in the workspace, for the
+    /// `assert!(matches!(..))` argument check. Parsed once per index, not once
+    /// per owner-pin syntax instance, so the diff pass, the seam walk and
+    /// every other instance over this index share one corpus scan.
+    pub(super) matches_binding_sites: std::sync::OnceLock<
+        Vec<(
+            std::path::PathBuf,
+            crate::analysis::syntax::MacroBindingSite,
+        )>,
+    >,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -440,6 +452,10 @@ impl std::fmt::Debug for CallIdentityMemos {
 /// off) and how the package splits `src/` between its crates.
 struct PackageCallIdentityShape {
     remaps_module_paths: bool,
+    /// A `tests/` file remaps only modules of its own directory
+    /// ([`path_attributes_stay_in_test_dir`]): that moves no module of an
+    /// owner outside `tests/`, so only owners under `tests/` turn the rule off.
+    remaps_test_modules: bool,
     layout: CrateLayout,
 }
 
@@ -452,17 +468,27 @@ struct PackageCallIdentityShape {
 fn scan_call_identity_shapes(
     index: &RustIndex,
 ) -> BTreeMap<Option<String>, std::sync::Arc<PackageCallIdentityShape>> {
-    let mut remaps: BTreeMap<Option<String>, bool> = BTreeMap::new();
+    // Per package: (a `#[path]` that may move any module, a `#[path]` that
+    // only rearranges an integration-test crate).
+    let mut remaps: BTreeMap<Option<String>, (bool, bool)> = BTreeMap::new();
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
         let package = package_key(path);
-        let remapped = remaps.entry(package.clone()).or_insert(false);
-        if !*remapped
-            && has_path_attribute(&facts.data().source)
+        remaps.entry(package.clone()).or_insert((false, false));
+        if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
         {
-            *remapped = true;
+            // A `tests/` file whose remaps stay in its own directory can only
+            // rearrange that integration-test crate (#12771).
+            let in_tests =
+                under_tests_dir(path) && path_attributes_stay_in_test_dir(&facts.data().source);
+            let flags = remaps.entry(package.clone()).or_insert((false, false));
+            if in_tests {
+                flags.1 = true;
+            } else {
+                flags.0 = true;
+            }
         }
         if under_tests_dir(path) {
             continue;
@@ -483,7 +509,7 @@ fn scan_call_identity_shapes(
     // already holds every package with an indexed file.
     remaps
         .into_iter()
-        .map(|(package, remaps_module_paths)| {
+        .map(|(package, (remaps_module_paths, remaps_test_modules))| {
             let lib = libs.get(&package).cloned().unwrap_or_default();
             let main = mains.get(&package).cloned().unwrap_or_default();
             let declared = |sources: Vec<std::sync::Arc<str>>| match sources.as_slice() {
@@ -495,6 +521,7 @@ fn scan_call_identity_shapes(
                 (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
             let shape = PackageCallIdentityShape {
                 remaps_module_paths,
+                remaps_test_modules,
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -554,6 +581,7 @@ fn call_identity_shape(
             // replaces both answered `false`/no-roots for this case.
             std::sync::Arc::new(PackageCallIdentityShape {
                 remaps_module_paths: false,
+                remaps_test_modules: false,
                 layout: CrateLayout {
                     package: package.map(str::to_string),
                     roots: None,
@@ -666,9 +694,18 @@ enum Matches {
     Some(BTreeSet<usize>),
 }
 
+/// Stands in [`Matches::Some`] for a binding that is none of the indexed
+/// definitions: a `const`, `static` or tuple-`struct` item of the name.
+const ELSEWHERE: usize = usize::MAX;
+
 impl Matches {
     fn none() -> Self {
         Self::Some(BTreeSet::new())
+    }
+
+    /// The name is bound to an item that is not one of the definitions.
+    fn elsewhere() -> Self {
+        Self::Some(BTreeSet::from([ELSEWHERE]))
     }
 
     fn union(self, other: Self) -> Self {
@@ -803,9 +840,7 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if (rivals.is_empty() && !solo)
-            || package_remaps_module_paths(index, owner_package.as_deref())
-        {
+        if (rivals.is_empty() && !solo) || package_remaps_owner_module_paths(index, owner) {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -1089,6 +1124,20 @@ impl OwnerCallIdentity {
                 }
                 return from_globs.union(matches);
             }
+            if scope.value_items.contains(name) {
+                // A `const`, `static` or tuple `struct` of the name binds the
+                // bare call to itself (#14087). A module that also holds a
+                // placed `fn` of the name (a `cfg` alternative) keeps both
+                // readings; a function body's item is never the module's.
+                let item = Matches::elsewhere();
+                let here = match base {
+                    Some(base) if !scope.fn_body && self.module_is_placed(base) => {
+                        item.union(self.matches_module(Some(base.to_vec())))
+                    }
+                    _ => item,
+                };
+                return from_globs.union(here);
+            }
             if scope.defines.contains(name) {
                 return from_globs.union(self.matches_module(base.map(<[String]>::to_vec)));
             }
@@ -1326,7 +1375,16 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// [`file_module_segments`] reads. A raw scan: a match inside a string or
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
-    call_identity_shape(index, package).remaps_module_paths
+    let shape = call_identity_shape(index, package);
+    shape.remaps_module_paths || shape.remaps_test_modules
+}
+
+/// Whether a `#[path]` in `package` may move a module path of `owner`'s
+/// crate: any remap outside `tests/`, or a `tests/` remap when the owner
+/// itself lives under `tests/` (#12771).
+fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    let shape = call_identity_shape(index, package_key(&owner.file).as_deref());
+    shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
 }
 
 /// Whether every `#[path]` in `source` only selects between the two files of
@@ -1422,6 +1480,64 @@ fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
             }
             _ => false,
         })
+}
+
+/// Whether every `#[path]` in a `tests/` file is a plain `#[path = ".."]` on
+/// a module declaration whose literal stays below the declaring directory: no
+/// `..` segment, no absolute or drive path, no backslash (#12771). Such a remap
+/// only mounts files below that directory into its integration-test crate, so
+/// it cannot move the module path of an owner or rival read from `src/`
+/// (a file mounted from a nested `src/` under `tests/` is classified by its
+/// own package key, as it was before this rule). A `#[path]` inside a macro body, a `cfg_attr` carrier, a
+/// parse error or any other shape fails closed (`false`).
+fn path_attributes_stay_in_test_dir(source: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasAttrs},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
+    let mut accepted = 0usize;
+    for module in file.syntax().descendants().filter_map(ast::Module::cast) {
+        for attr in module.attrs() {
+            let text = attr.syntax().text().to_string();
+            if !attribute_sets_path(&text) {
+                continue;
+            }
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let Some(value) = compact
+                .strip_prefix("#[path=\"")
+                .and_then(|rest| rest.strip_suffix("\"]"))
+            else {
+                return false;
+            };
+            if value.is_empty()
+                || value.starts_with('/')
+                || value.contains(['\\', ':', '"'])
+                || value.split('/').any(|segment| segment == "..")
+            {
+                return false;
+            }
+            accepted += 1;
+        }
+    }
+    let total = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .filter(|attr| attribute_sets_path(&attr.syntax().text().to_string()))
+        .count();
+    accepted > 0 && total == accepted
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -1526,7 +1642,13 @@ fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<
         }
         segments.truncate(at);
     }
-    path.extend(segments.into_iter().map(str::to_string));
+    // Scopes record plain names (`r#b` and `b` are one module), so the
+    // definition's path drops the raw prefix the parser id keeps.
+    path.extend(
+        segments
+            .into_iter()
+            .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string()),
+    );
     Some(path)
 }
 
@@ -2793,7 +2915,7 @@ fn own_crate_names_of(
 /// historic admission (#9218) — the import names the owner closely enough
 /// that no rival claims it. Declined calls supply no row; activation retains
 /// the unresolved identity.
-pub(super) fn qualified_owner_calls_resolve(
+pub(in crate::analysis) fn qualified_owner_calls_resolve(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -2920,6 +3042,24 @@ fn closure_param_shadowed(
                         })
                 })
             })
+    })
+}
+
+/// Whether a bare call of the owner's name in `test` settles on the owner
+/// through the shared identity authority, imports included (an integration
+/// test's `use package::owner`). Only a settled `Owner` answers yes; an
+/// unsettled or rival reading does not (#13700).
+pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if let Some(identity) = shared_owner_call_identity(index, owner) {
+        return identity.resolve_call(test, index, &[]) == CallTarget::Owner;
+    }
+    shared_solo_owner_call_identity(index, owner).is_some_and(|identity| {
+        let scope = identity.test_scope(test, index);
+        identity.target_of(&identity.resolve_spelled(&[], &scope)) == CallTarget::Owner
     })
 }
 
@@ -3180,6 +3320,96 @@ pub(super) fn bare_name_renames_another_function(
     false
 }
 
+/// Whether the module scope a bare call of the owner's name resolves in
+/// can only bind that name through globs of the standard library (`use
+/// std::cmp::*;` around a bare `max(..)` beside a changed crate-level `max`,
+/// #14069). That module has no import or item of the name and does not glob
+/// its parent, so nothing there names the owner: the call is the standard
+/// function, or it does not compile.
+///
+/// Decided at the first module scope only, and only when a standard glob
+/// was read on the way. A function-body scope is passed through when it
+/// binds nothing by that name and holds no glob other than standard-library
+/// ones (a body-level standard glob may not export the name at all, so it
+/// never decides alone: the enclosing module must also offer no route to
+/// the owner). Fails open on any
+/// unreadable glob, a glob rooted anywhere else, a `std`/`core`/`alloc` name
+/// the scope rebinds, and an owner with no placeable call identity.
+pub(super) fn bare_name_bound_only_by_std_globs(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let spells_std_glob = index.files().get(&test.file).is_some_and(|facts| {
+        let source: &str = &facts.source;
+        // `use std::cmp::{*};` spells the glob without `::*`.
+        source.contains('*')
+            && STD_ROOTS
+                .iter()
+                .any(|root| source.contains(&format!("{root}::")))
+    });
+    if !spells_std_glob {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(scopes) = test_scope.scopes.as_deref() else {
+        return false;
+    };
+    let name = owner.name.trim_start_matches("r#");
+    let raw_name = format!("r#{name}");
+    let binds = |scope: &NameScope| {
+        scope.block_binds(name)
+            || scope.block_binds(&raw_name)
+            || scope.imports_of(name).next().is_some()
+            || scope.imports_of(&raw_name).next().is_some()
+            || scope.defines.contains(name)
+            || scope.defines.contains(&raw_name)
+            || scope.local_bindings.contains_key(name)
+            || scope.local_bindings.contains_key(&raw_name)
+    };
+    // The lexical scopes a bare name in the test body can see: the body's
+    // scopes out to, and including, the first module scope.
+    let module_at = scopes.scopes.iter().position(|scope| !scope.fn_body);
+    let Some(module_at) = module_at else {
+        return false;
+    };
+    let visible = &scopes.scopes[..=module_at];
+    // A glob's root resolves through every visible scope, so a rebinding in
+    // the enclosing module (`use crate::facade as core;`) reaches a glob
+    // written in the test body.
+    let root_rebound = |root: &String| {
+        visible.iter().any(|scope| {
+            scope.child_modules.contains(root)
+                || scope.imports_of(root).next().is_some()
+                || scope.defines.contains(root.as_str())
+        })
+    };
+    let std_globs_only = |scope: &NameScope| {
+        scope.globs.iter().all(|glob| {
+            glob.as_ref().is_some_and(|path| {
+                path.first()
+                    .is_some_and(|root| STD_ROOTS.contains(&root.as_str()) && !root_rebound(root))
+            })
+        })
+    };
+    if visible
+        .iter()
+        .any(|scope| binds(scope) || !std_globs_only(scope))
+    {
+        return false;
+    }
+    visible.iter().any(|scope| !scope.globs.is_empty())
+}
+
+/// Crate roots of the standard library, as a glob import spells them.
+const STD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
+
 /// Whether `source` spells `as <name>` (or `as r#<name>`) at identifier
 /// boundaries, or the name straight after a comment: the text every renaming
 /// import of `name` contains. A cheap necessary condition only; comments,
@@ -3207,8 +3437,9 @@ fn source_spells_rename_to(source: &str, name: &str) -> bool {
 }
 
 /// Whether every free-call spelling of the owner's name in `test` is bare
-/// and that bare name is a renaming import of another function (#14069):
-/// the test then calls the other function and never the owner. A qualified
+/// and that bare name is a renaming import of another function, or is bound
+/// only by standard-library globs (#14069): the test then calls the other
+/// function and never the owner. A qualified
 /// spelling (`super::discount(..)`) or a value mention that may still reach
 /// the owner keeps the prior relation.
 pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
@@ -3216,9 +3447,11 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
     owner: &FunctionSummary,
     test: &TestSummary,
 ) -> bool {
-    // The rename check comes first: its text prefilter answers almost every
-    // test without masking and scanning the body.
-    if !bare_name_renames_another_function(index, owner, test) {
+    // The binding checks come first: their text prefilters answer almost
+    // every test without masking and scanning the body.
+    if !bare_name_renames_another_function(index, owner, test)
+        && !bare_name_bound_only_by_std_globs(index, owner, test)
+    {
         return false;
     }
     let qualifiers = call_qualifiers(&test.body, &owner.name);
@@ -3487,6 +3720,45 @@ fn qualified_call_names_owner(
         None => (false, qualifier),
     };
     anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
+}
+
+/// Whether every call of free function `owner`'s name in `test` is a bare
+/// call that a `const`, a `static` or a tuple `struct` of that name binds in
+/// the scopes around the test (#14087):
+///
+/// ```text
+/// mod tests {
+///     const render: fn(i32) -> i32 = super::other;
+///     #[test] fn t() { assert_eq!(render(100), 10); }
+/// }
+/// ```
+///
+/// The item beats a glob and every enclosing scope, so the test runs the
+/// item's value and the changed `fn render` never runs. `true` withholds the
+/// owner; anything the scopes do not settle keeps the prior relation: a
+/// qualified call of the owner beside the bare one, the owner passed as a
+/// value, a nested-block binding, an unparseable file. A `const` that itself
+/// aliases the owner (`const render: fn(i32) -> i32 = super::render;`) is
+/// withheld too: the initializer is not read.
+pub(in crate::analysis) fn test_calls_only_a_local_value_item(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    // The scopes are memoized per test; most tests declare no such item and
+    // stop here.
+    identity.name_scopes(test, index).is_some_and(|scopes| {
+        scopes
+            .scopes
+            .iter()
+            .any(|scope| scope.value_items.contains(&owner.name))
+    }) && identity.resolve_test(test, index) == CallTarget::Other
 }
 
 /// Whether every call of `name` in `test` is spelled through a module that the
@@ -4776,6 +5048,35 @@ mod blocks {
             assert!(!std::sync::Arc::ptr_eq(&root, &other));
         }
         Ok(())
+    }
+
+    /// A `tests/` remap that stays in its own directory cannot move an
+    /// owner's module path; every other `#[path]` shape keeps the rule off
+    /// (#12771).
+    #[test]
+    fn test_dir_path_attributes_stay_only_below_their_directory() {
+        use super::path_attributes_stay_in_test_dir as stays;
+        assert!(stays("mod rows;\n#[path = \"other/rows.rs\"]\nmod far;\n"));
+        assert!(stays(
+            "#[path = \"a.rs\"] mod a;\nmod b { #[path = \"c/d.rs\"] mod d; }\n"
+        ));
+        // No `#[path]` at all is not this shape.
+        assert!(!stays("mod rows;\n"));
+        for declined in [
+            "#[path = \"../src/lib.rs\"] mod lib;",
+            "#[path = \"other/../../src/x.rs\"] mod x;",
+            "#[path = \"/abs/x.rs\"] mod x;",
+            // A drive path, split so the local-context policy sees no literal one.
+            concat!("#[path = \"C", ":/x.rs\"] mod x;"),
+            "#[path = \"other\\\\x.rs\"] mod x;",
+            "#[path = r\"x.rs\"] mod x;",
+            "#[cfg_attr(unix, path = \"x.rs\")] mod x;",
+            "#[r#path = \"x.rs\"] mod x;",
+            "macro_rules! m { () => { #[path = \"x.rs\"] mod x; } }",
+            "#[path = \"x.rs\"] mod x; fn broken(",
+        ] {
+            assert!(!stays(declined), "{declined}");
+        }
     }
 
     /// Two same-named owners on one source line (inline sibling modules)
@@ -6429,5 +6730,700 @@ fn integration_rename_case() {
             );
         }
         Ok(())
+    }
+
+    /// #14069 fixture: a changed crate-level `max` beside test modules that
+    /// reach a bare `max(..)` through different scopes.
+    const STD_GLOB_LIB: &str = "\
+pub fn max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[cfg(test)]
+mod std_glob_only {
+    use std::cmp::*;
+
+    #[test]
+    fn std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod grouped_std_glob_only {
+    use std::cmp::{*};
+
+    #[test]
+    fn grouped_std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_only {
+    #[test]
+    fn body_std_glob_only_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod std_and_parent_globs {
+    use super::*;
+    use std::collections::*;
+
+    #[test]
+    fn std_and_parent_globs_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_under_parent_glob {
+    use super::*;
+
+    #[test]
+    fn body_std_glob_under_parent_glob_case() {
+        use std::collections::*;
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod explicit_import_beside_std_glob {
+    use super::max;
+    use std::collections::*;
+
+    #[test]
+    fn explicit_import_beside_std_glob_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod rebound_std_root {
+    mod std {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use std::cmp::*;
+
+    #[test]
+    fn rebound_std_root_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod enclosing_rebound_std_root {
+    mod facade {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use facade as core;
+
+    #[test]
+    fn enclosing_rebound_std_root_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod qualified_beside_std_glob {
+    use std::cmp::*;
+
+    #[test]
+    fn qualified_beside_std_glob_case() {
+        assert_eq!(crate::max(3, 3), 3);
+    }
+}
+";
+
+    const STD_GLOB_INTEGRATION: &str = "\
+use std::cmp::*;
+
+#[test]
+fn integration_std_glob_case() {
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_OWN_CRATE_INTEGRATION: &str = "\
+use modules::*;
+use std::collections::*;
+
+#[test]
+fn integration_own_crate_glob_case() {
+    let _seen: HashSet<u32> = HashSet::new();
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_CASES: [&str; 4] = [
+        "std_glob_only_case",
+        "grouped_std_glob_only_case",
+        "body_std_glob_only_case",
+        "integration_std_glob_case",
+    ];
+
+    const STD_GLOB_KEPT_CASES: [&str; 7] = [
+        "enclosing_rebound_std_root_case",
+        "std_and_parent_globs_case",
+        "body_std_glob_under_parent_glob_case",
+        "explicit_import_beside_std_glob_case",
+        "rebound_std_root_case",
+        "qualified_beside_std_glob_case",
+        "integration_own_crate_glob_case",
+    ];
+
+    fn std_glob_index() -> RustIndex {
+        index(&[
+            ("src/lib.rs", STD_GLOB_LIB),
+            ("tests/std_glob.rs", STD_GLOB_INTEGRATION),
+            ("tests/own_glob.rs", STD_GLOB_OWN_CRATE_INTEGRATION),
+        ])
+    }
+
+    fn std_glob_parts<'a>(
+        index: &'a RustIndex,
+        test_name: &str,
+    ) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "max")
+            .ok_or("owner `max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == test_name)
+            .ok_or_else(|| format!("test `{test_name}` must be indexed"))?;
+        Ok((owner, test))
+    }
+
+    /// #14069: a module that offers the owner's bare name only through
+    /// standard-library globs calls the standard function, not the owner.
+    #[test]
+    fn a_name_bound_only_by_std_globs_is_not_a_call_of_the_owner() -> Result<(), String> {
+        let index = std_glob_index();
+        for name in STD_GLOB_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: only a standard glob can bind the bare name"
+            );
+            assert!(
+                test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: every call is the standard function"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // The scope answer alone: only a qualified owner call keeps the
+        // relation while the bare name is still standard-bound.
+        let (owner, qualified) = std_glob_parts(&index, "qualified_beside_std_glob_case")?;
+        assert!(bare_name_bound_only_by_std_globs(&index, owner, qualified));
+        for name in STD_GLOB_KEPT_CASES
+            .into_iter()
+            .filter(|name| *name != "qualified_beside_std_glob_case")
+        {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: another route may bind the bare name"
+            );
+        }
+        Ok(())
+    }
+
+    /// A raw-identifier definition in the test's own module binds the bare
+    /// name ahead of any glob, so the standard-glob rule stays out.
+    #[test]
+    fn a_raw_definition_beside_a_std_glob_is_still_the_owner() -> Result<(), String> {
+        let index = index(&[(
+            "src/lib.rs",
+            "\
+use std::cmp::*;
+
+pub fn r#max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[test]
+fn raw_definition_case() {
+    assert_eq!(r#max(3, 3), 3);
+}
+",
+        )]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name.trim_start_matches("r#") == "max")
+            .ok_or("owner `r#max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "raw_definition_case")
+            .ok_or("test `raw_definition_case` must be indexed")?;
+        assert!(!bare_name_bound_only_by_std_globs(&index, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, test
+        ));
+        Ok(())
+    }
+
+    /// #14069 through the related-test relation `ripr check` uses.
+    #[test]
+    fn a_std_glob_bound_call_relates_by_name_only() -> Result<(), String> {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation,
+        };
+        let index = std_glob_index();
+        let (owner, _) = std_glob_parts(&index, "std_glob_only_case")?;
+        let probe = Probe {
+            id: ProbeId("probe:test".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("a > b".to_string()),
+            expression: "a > b".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related = super::super::related_tests::find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        let reason_of = |name: &str| {
+            related
+                .iter()
+                .find(|(test, _)| test.name == name)
+                .map(|(_, reason)| *reason)
+        };
+        for name in STD_GLOB_CASES {
+            assert_ne!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the test calls the standard `max`, never the owner"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
+            assert_eq!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the owner call keeps its direct relation"
+            );
+        }
+        Ok(())
+    }
+
+    /// The #14087 single-file crate: a unique-name owner at the root beside a
+    /// differently named function, and one test module with `items` and a
+    /// test named `bound` whose body is `body`.
+    fn value_item_lib(items: &str, body: &str) -> String {
+        format!(
+            "pub fn render(x: i32) -> i32 {{\n    x + 1\n}}\n\
+             pub fn other(x: i32) -> i32 {{\n    x * 2\n}}\n\
+             #[cfg(test)]\nmod tests {{\n{items}\n    #[test]\n    fn bound() {{\n        {body}\n    }}\n}}\n"
+        )
+    }
+
+    /// Whether the `bound` test of `source` is withheld from the root
+    /// `render` by [`test_calls_only_a_local_value_item`], and whether a bare
+    /// `render(..)` in it may still lend a boundary input.
+    fn value_item_reading(source: &str) -> Option<(bool, bool)> {
+        let index = index(&[("src/lib.rs", source)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with("lib.rs::render"));
+        let test = index.tests().iter().find(|test| test.name == "bound");
+        assert!(
+            owner.is_some() && test.is_some(),
+            "the root `render` and the `bound` test must be indexed: {source}"
+        );
+        let (owner, test) = (owner?, test?);
+        Some((
+            test_calls_only_a_local_value_item(&index, owner, test),
+            qualified_owner_calls_resolve(&index, owner, test, "render(2)", test.start_line + 1),
+        ))
+    }
+
+    /// #14087: a `const`, `static` or tuple `struct` of the owner's name in a
+    /// scope around the test binds the bare call to itself. It beats a glob
+    /// and every enclosing scope, so the owner never runs: the test is
+    /// withheld and its call lends no boundary input.
+    #[test]
+    fn a_bare_call_bound_by_a_local_value_item_never_names_the_owner() {
+        const BARE: &str = "assert_eq!(render(2), 4);";
+        let cases = [
+            (
+                "module const",
+                "    const render: fn(i32) -> i32 = super::other;",
+                BARE.to_string(),
+            ),
+            (
+                "module static",
+                "    static render: fn(i32) -> i32 = super::other;",
+                BARE.to_string(),
+            ),
+            (
+                "module const beside a glob of the owner's module",
+                "    use super::*;\n    const render: fn(i32) -> i32 = other;",
+                BARE.to_string(),
+            ),
+            (
+                "tuple struct constructor",
+                "    #[derive(Debug, PartialEq)]\n    struct render(i32);",
+                "assert_eq!(render(2), render(2));".to_string(),
+            ),
+            (
+                "const at the top of the test body",
+                "    use super::*;",
+                format!("const render: fn(i32) -> i32 = other; {BARE}"),
+            ),
+        ];
+        for (label, items, body) in cases {
+            let source = value_item_lib(items, &body);
+            assert_eq!(
+                value_item_reading(&source),
+                Some((true, false)),
+                "{label}: {source}"
+            );
+        }
+    }
+
+    /// The controls for the rule above: each keeps the prior reading, so the
+    /// withholding is the value item's and nothing else's.
+    #[test]
+    fn a_local_value_item_withholds_only_the_bare_calls_it_binds() {
+        const BARE: &str = "assert_eq!(render(2), 3);";
+        let cases = [
+            (
+                "no item: the glob supplies the owner",
+                "    use super::*;",
+                BARE.to_string(),
+            ),
+            (
+                "a braced struct binds no value",
+                "    use super::*;\n    struct render { x: i32 }",
+                BARE.to_string(),
+            ),
+            (
+                "a unit struct is not callable",
+                "    use super::*;\n    struct render;",
+                BARE.to_string(),
+            ),
+            (
+                "a differently named const",
+                "    use super::*;\n    const rendered: fn(i32) -> i32 = other;",
+                BARE.to_string(),
+            ),
+            (
+                "a const inside a nested block binds only there",
+                "    use super::*;",
+                format!("{{ const render: fn(i32) -> i32 = other; let _ = render; }} {BARE}"),
+            ),
+        ];
+        for (label, items, body) in cases {
+            let source = value_item_lib(items, &body);
+            let reading = value_item_reading(&source);
+            assert_eq!(
+                reading.map(|(withheld, _)| withheld),
+                Some(false),
+                "{label}: {source}"
+            );
+        }
+        // The first three still lend the bare call as an owner input.
+        for (items, body) in [
+            ("    use super::*;", BARE),
+            ("    use super::*;\n    struct render { x: i32 }", BARE),
+            (
+                "    use super::*;\n    const rendered: fn(i32) -> i32 = other;",
+                BARE,
+            ),
+        ] {
+            let source = value_item_lib(items, body);
+            assert_eq!(value_item_reading(&source), Some((false, true)), "{source}");
+        }
+        // A qualified call of the owner beside the item names the owner: the
+        // test keeps its relation although the bare name is bound away.
+        let qualified = value_item_lib(
+            "    const render: fn(i32) -> i32 = super::other;",
+            "assert_eq!(super::render(2), 3); assert_eq!(render(2), 4);",
+        );
+        assert_eq!(
+            value_item_reading(&qualified),
+            Some((false, false)),
+            "{qualified}"
+        );
+        // The owner passed as a value may still run.
+        let as_value = value_item_lib(
+            "    const render: fn(i32) -> i32 = super::other;",
+            "let f: fn(i32) -> i32 = super::render; assert_eq!(f(2), 3); assert_eq!(render(2), 4);",
+        );
+        assert_eq!(
+            value_item_reading(&as_value).map(|(withheld, _)| withheld),
+            Some(false),
+            "{as_value}"
+        );
+        // A const in a sibling module is not in scope.
+        let sibling = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[cfg(test)]\nmod elsewhere {\n    const render: fn(i32) -> i32 = super::other;\n}\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn bound() {\n        assert_eq!(render(2), 3);\n    }\n}\n";
+        assert_eq!(
+            value_item_reading(sibling),
+            Some((false, true)),
+            "{sibling}"
+        );
+        // A `cfg` alternative of the owner in the owner's own module keeps
+        // both readings: the call is unsettled, not settled away.
+        let alternative = "#[cfg(not(test))]\npub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             #[cfg(test)]\nconst render: fn(i32) -> i32 = other;\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[test]\nfn bound() {\n    assert_eq!(render(2), 4);\n}\n";
+        assert_eq!(
+            value_item_reading(alternative).map(|(withheld, _)| withheld),
+            Some(false),
+            "{alternative}"
+        );
+    }
+
+    /// #14087 among same-named rivals: the item beats the glob of the
+    /// owner's module, so the call settles away instead of on the owner.
+    #[test]
+    fn a_local_value_item_beats_a_glob_of_the_owners_module() {
+        let source = format!(
+            "{RENDER_LIB}\n#[cfg(test)]\nmod tests {{\n    use crate::a::*;\n    \
+             const render: fn(i32) -> i32 = crate::b::render;\n    \
+             #[test]\n    fn through_the_const() {{ assert_eq!(render(2), 4); }}\n}}\n\
+             #[cfg(test)]\nmod control {{\n    use crate::a::*;\n    \
+             #[test]\n    fn through_the_glob() {{ assert_eq!(render(2), 3); }}\n}}\n"
+        );
+        let index = index(&[("src/lib.rs", source.as_str())]);
+        assert_eq!(
+            settle(&index, "::a::render", "through_the_const"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "through_the_glob"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// #14087 on the retained selection path: diff-mode related tests drop
+    /// the test whose only call is bound by the item, and keep the one that
+    /// reaches the owner through the glob.
+    #[test]
+    fn related_tests_drop_a_test_whose_bare_call_a_local_value_item_binds() {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation, SymbolId,
+        };
+        let source = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[cfg(test)]\nmod hidden {\n    const render: fn(i32) -> i32 = super::other;\n    \
+             #[test]\n    fn through_the_const() {\n        assert_eq!(render(2), 4);\n    }\n}\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+             #[test]\n    fn through_the_glob() {\n        assert_eq!(render(2), 3);\n    }\n}\n";
+        let index = index(&[("src/lib.rs", source)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with("lib.rs::render"));
+        assert!(owner.is_some(), "the root `render` must be indexed");
+        let Some(owner) = owner else {
+            return;
+        };
+        let probe = Probe {
+            id: ProbeId("probe:render".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(SymbolId(owner.id.0.clone())),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some("x + 1".to_string()),
+            expression: "x + 1".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related: Vec<(String, RelationReason)> =
+            super::super::related_tests::find_related_tests(
+                &probe,
+                Some(owner),
+                &index,
+                true,
+                None,
+                None,
+            )
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect();
+        assert_eq!(
+            related,
+            vec![(
+                "through_the_glob".to_string(),
+                RelationReason::DirectOwnerCall
+            )],
+            "{source}"
+        );
+    }
+
+    /// #14087 shape B: a `use` leaf spelled as a raw identifier binds the
+    /// plain name. Read as `r#render` it bound nothing a bare `render(..)`
+    /// could find, so a glob of the other module supplied the name instead.
+    #[test]
+    fn a_raw_identifier_import_leaf_binds_the_plain_name() {
+        let source = "\
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+#[cfg(test)]
+mod raw_beats_glob {
+    use crate::a::*;
+    use crate::b::r#render;
+
+    #[test]
+    fn raw_leaf_of_b_beside_a_glob_of_a() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_alone {
+    use crate::a::r#render;
+
+    #[test]
+    fn raw_leaf_of_a() {
+        assert_eq!(render(1), 2);
+    }
+}
+
+#[cfg(test)]
+mod raw_group {
+    use crate::{r#b::{r#render}};
+
+    #[test]
+    fn raw_segments_in_a_group() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_rename {
+    use crate::b::render as r#render;
+
+    #[test]
+    fn raw_rename_to_the_same_name() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+pub mod r#c {
+    pub fn render(x: i32) -> i32 {
+        x * 3
+    }
+
+    #[cfg(test)]
+    mod inside_raw_module {
+        use super::*;
+
+        #[test]
+        fn glob_of_the_raw_declared_parent() {
+            assert_eq!(render(2), 6);
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_declared_module {
+    use crate::r#c::render;
+
+    #[test]
+    fn raw_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+
+#[cfg(test)]
+mod plain_path_to_raw_module {
+    use crate::c::render;
+
+    #[test]
+    fn plain_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+";
+        let index = index(&[("src/lib.rs", source)]);
+        let a = "lib.rs::a::render";
+        let b = "lib.rs::b::render";
+        // A module declared `mod r#c` is the module `c`: an import path
+        // spelled either way, and a glob of it from inside, reach its
+        // `render` and no other.
+        for test in [
+            "raw_path_to_a_raw_declared_module",
+            "plain_path_to_a_raw_declared_module",
+            "glob_of_the_raw_declared_parent",
+        ] {
+            assert_eq!(
+                settle(&index, "::r#c::render", test),
+                Some(CallTarget::Owner),
+                "{test} against c"
+            );
+            assert_eq!(
+                settle(&index, a, test),
+                Some(CallTarget::Other),
+                "{test} against a"
+            );
+        }
+        for (test, on_a, on_b) in [
+            (
+                "raw_leaf_of_b_beside_a_glob_of_a",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            ("raw_leaf_of_a", CallTarget::Owner, CallTarget::Other),
+            (
+                "raw_segments_in_a_group",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            (
+                "raw_rename_to_the_same_name",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+        ] {
+            assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
+            assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
+        }
     }
 }

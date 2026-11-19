@@ -3148,16 +3148,20 @@ pub(crate) fn init_generator_self_pin_problems(
             "generated workflow must not carry an unreleased-generator pin comment".to_string(),
         );
     }
-    let cargo_pin = format!("cargo install ripr --version {version} --locked");
-    if !stdout.contains(&cargo_pin) {
+    // #5409: the workflow installs through the release's ripr-check action;
+    // the tag and the `version` input both carry the pin.
+    let action_pin =
+        format!("uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n");
+    if !stdout.contains(&action_pin) {
         problems.push(format!(
-            "generated workflow must include `{cargo_pin}` on the fallback install route"
+            "generated workflow must install through `{}`",
+            action_pin.trim_end()
         ));
     }
-    let prebuilt_pin = format!("version={version}");
-    if !stdout.contains(&prebuilt_pin) {
+    let input_pin = format!("          version: {version}\n");
+    if !stdout.contains(&input_pin) {
         problems.push(format!(
-            "generated workflow must pin `{prebuilt_pin}` on the prebuilt install route"
+            "generated workflow must pass `version: {version}` to the install action"
         ));
     }
     problems
@@ -3320,8 +3324,8 @@ fn init_generator_self_pin_check(
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
     "#### First-run status",
     "missing_start_here",
-    // The summary names the packet by its artifact, not a repo path (#11322).
-    "`start-here.md` in the `ripr-reports` artifact",
+    // The summary names the packet by its artifact, not a repo path (#11322, #14356).
+    "`ripr/reports/start-here.md` in the `ripr-reports` artifact",
     "Safe next action: run `ripr first-pr",
 ];
 
@@ -5344,7 +5348,7 @@ mod tests {
     fn init_generator_self_pin_problems_passes_quiet_self_pin_output() -> Result<(), String> {
         let version = "0.11.0";
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n          version={version}\n            cargo install ripr --version {version} --locked\n"
+            "Would write .github/workflows/ripr.yml\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n        with:\n          version: {version}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, "");
         if !problems.is_empty() {
@@ -5361,7 +5365,7 @@ mod tests {
             "ripr: note: this build of ripr ({version}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release.\n"
         );
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n          version={pinned}\n            cargo install ripr --version {pinned} --locked\n"
+            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{pinned}\n        with:\n          version: {pinned}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, &stderr);
         if problems.len() < 3 {
@@ -6266,7 +6270,7 @@ mod tests {
             "good",
             "[ \"$1 $2\" = 'reports ci-summary' ] || exit 9\n\
              printf '#### First-run status\\n- Status: `missing_start_here`\\n\
-             - Open `start-here.md` in the `ripr-reports` artifact first.\\n\
+             - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact first.\\n\
              - Safe next action: run `ripr first-pr --root .`.\\n'",
         )?;
         // First-run block present but the packet is no longer named.
@@ -6321,7 +6325,10 @@ mod tests {
                 "complete summary reported missing: {good_missing:?}"
             ));
         }
-        if unnamed_missing.len() != 1 || !unnamed_missing[0].contains("start-here.md") {
+        if unnamed_missing.len() != 1
+            || !unnamed_missing[0]
+                .contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact")
+        {
             return Err(format!(
                 "summary that no longer names start-here: {unnamed_missing:?}"
             ));
@@ -6343,5 +6350,37 @@ mod tests {
             return Err(format!("failing binary not named: {failing_missing:?}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn ci_summary_first_run_needles_match_artifact_relative_start_here_path() {
+        let current_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_current =
+            super::missing_required_needles(current_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert!(
+            missing_current.is_empty(),
+            "current ci-summary output should satisfy all needles, missing: {missing_current:?}"
+        );
+
+        let pre_14356_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_stale =
+            super::missing_required_needles(pre_14356_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert_eq!(
+            missing_stale,
+            vec!["`ripr/reports/start-here.md` in the `ripr-reports` artifact".to_string()],
+            "pre-#14356 path should be rejected"
+        );
     }
 }

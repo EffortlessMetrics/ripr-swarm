@@ -35,7 +35,8 @@ Verdicts:
   not help.
 - **false gap**: `no_static_path` although the test calls the changed code.
 
-Measured 2026-11-15 on main `60114de3`.
+Measured 2026-11-15 on main `60114de3`; the two Rust unary rows were
+re-measured 2026-11-16 with the #14815 change.
 Python tests import names explicitly (`from fx.core import f`). ripr's probe
 family is in parentheses.
 
@@ -47,21 +48,21 @@ family is in parentheses.
 | Relational flip (`x < 10` → `x > 10`) | BinaryOperator | none⁶ | EqualityOperator (`<` → `>=`) | yes (return_value) | yes (predicate) | partial (predicate) |
 | Equality (`==` → `!=`) | BinaryOperator | `==` ↔ `!=` | EqualityOperator | yes (predicate) | yes (return_value) | yes (return_value) |
 | Logical (`&&` → `\|\|`) | BinaryOperator | `and` ↔ `or` | LogicalOperator | unknown | yes (return_value) | yes (return_value) |
-| Negation removed (`!a` → `a`) | UnaryOperator | remove `not` | BooleanLiteral | unknown² | yes (return_value) | yes (return_value) |
+| Negation removed (`!a` → `a`) | UnaryOperator | remove `not` | BooleanLiteral | yes² (return_value) | yes (return_value) | yes (return_value) |
 | Membership (`in` → `not in`) | n/a | `in` ↔ `not in` | n/a | n/a | yes (return_value) | n/a |
 | Arithmetic in the returned expression (`a + b` → `a - b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | yes (return_value) | yes (return_value) | yes (return_value) |
 | Arithmetic in a local binding (`let y = a + b`) | BinaryOperator | `+` ↔ `-` | ArithmeticOperator | unknown | yes (return_value) | partial (return_value) |
 | Compound assignment (`t += b` → `t -= b`) | BinaryOperator | `+=` ↔ `-=`, `+=` → `=` | AssignmentOperator | unknown | yes (predicate) | yes (return_value) |
 | Update (`t++` → `t--`) | n/a | n/a | UpdateOperator | n/a | n/a | partial (predicate) |
-| Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | unknown² | yes (return_value) | yes (return_value) |
+| Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | yes² (return_value) | yes (return_value) | yes (return_value) |
 | Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
 | Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
-| Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | unknown | yes (return_value) | yes (return_value) |
+| Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | yes⁸ (return_value) | yes (return_value) | yes (return_value) |
 | String literal returned (`"hello"` → `""`) | FnValue | string mutation | StringLiteral | yes (return_value) | yes (return_value) | yes (return_value) |
 | Default parameter value (`n=3` → `n=4`) | n/a | number +1 | none | n/a | yes (predicate) | unknown |
 | Body replaced with a default value (`0`, `None`, `undefined`) | FnValue | none | BlockStatement | yes (return_value) | partial (return_value) | yes (return_value) |
-| Collection emptied (`vec![1, 2]` → `vec![]`) | FnValue | none | ArrayDeclaration | unknown | yes (return_value) | yes (return_value) |
+| Collection emptied (`vec![1, 2]` → `vec![]`) | FnValue | none | ArrayDeclaration | yes⁸ (return_value) | yes (return_value) | yes (return_value) |
 | Call statement deleted (`v.push(x + 1);` removed) | FnValue on the callee³ | none | BlockStatement³ | yes (call_deletion) | partial (side_effect) | yes (side_effect) |
 | Method swapped (`min` → `max`) | none | none | MethodExpression | yes (return_value) | yes (return_value) | yes (return_value) |
 | Call argument changed (`scale(x, 2)` → `scale(x, 3)`) | none | argument mutation | none | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -83,10 +84,13 @@ family is in parentheses.
 
 ¹ cargo-mutants' BinaryOperator replaces `>` with `==` and `<` (the flip row).
 It does not generate the `>=` boundary shift, which ripr does model.
-² A returned unary or bitwise expression over names (`-a`, `!ready`, `a & b`)
-stays unknown: ripr cannot yet check whether the test's inputs tell the two
-versions apart (`f(0)` does not for `-a` → `a`), so it does not claim
-`exposed`. [#14815](https://github.com/EffortlessMetrics/ripr-swarm/issues/14815).
+² When the diff changes only the owner's whole one-line tail and that tail is
+a parameter gaining or losing one `-` (signed integer) or `!` (`bool` or
+integer). `-a` and `a` agree at `0`, so a pin at `f(0)` reads
+`weakly_exposed`, and an argument ripr cannot fold to a literal (a local, a
+loop row, a constant) stays `infection_unknown`. Any other unary tail, and a
+returned bitwise expression over names (`a & b`), stays unknown
+([#14815](https://github.com/EffortlessMetrics/ripr-swarm/issues/14815)).
 ³ Not a direct operator. cargo-mutants replaces the callee's body with `()`;
 Stryker empties the whole block.
 ⁴ cargo-mutants only deletes fields of literals with a `..base`.
@@ -94,6 +98,11 @@ Stryker empties the whole block.
 ([#14814](https://github.com/EffortlessMetrics/ripr-swarm/issues/14814)).
 ⁶ mutmut only shifts comparison boundaries (`<` ↔ `<=`, `>` ↔ `>=`).
 ⁷ Only in a `match` that has a wildcard arm.
+⁸ When the function's whole body is the constant on both sides of the diff
+and the two constants fold to different values. A named, computed or
+early-returned body on either side, or constants that fold equal (`false` →
+`!true`), stays unknown
+([#14852](https://github.com/EffortlessMetrics/ripr-swarm/issues/14852)).
 
 Operator names: cargo-mutants genres from its
 [mutation patterns](https://mutants.rs/mutants.html); Stryker mutator names
@@ -105,7 +114,7 @@ the mutmut 3.3.1 source (`mutmut/node_mutation.py`).
 
 | | yes | partial | unknown | false gap | rows |
 | --- | --- | --- | --- | --- | --- |
-| Rust | 13 | 6 | 12 | 0 | 31 |
+| Rust | 17 | 6 | 8 | 0 | 31 |
 | Python | 28 | 4 | 0 | 1 | 33 |
 | TypeScript | 22 | 10 | 1 | 1 | 34 |
 
@@ -120,11 +129,8 @@ Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issu
 `break`/`continue` and forced conditions
 ([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)) are also
 unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
-unary or bitwise edits on a returned name (#14815). A returned `true` changed
-to `false`, or a `vec!` emptied, also reads unknown: the tail carries no text
-cue ripr reads as a return, and crediting it safely needs the old function
-body, not just the replaced line
-([#14852](https://github.com/EffortlessMetrics/ripr-swarm/issues/14852)).
+bitwise edits on a returned name. Unary `-`/`!` edits are read only on a
+one-line whole-body tail (#14815).
 
 **Python.** A changed module constant reads `no_static_path` even though the
 test calls the function that reads it

@@ -20,13 +20,45 @@ const CLOCK_PATCH: &str = "with patch(\"idioms.clock.time.time\", return_value=1
 /// The limit kind the change to line 5 of `idioms/clock.py` earns under the
 /// test, with the owner body `body` (its last line is the changed line).
 fn limit(body: &str, old: &str, test_source: &str) -> Option<StaticLimitKind> {
+    limit_in(
+        body,
+        old,
+        test_source,
+        "idioms/clock.py",
+        "tests/test_clock.py",
+        &[],
+    )
+}
+
+/// [`limit`] for an owner and test at the given paths, with `workspace_files`
+/// given to the src-ambiguity and test-local shadow passes as the workspace
+/// analysis does.
+fn limit_in(
+    body: &str,
+    old: &str,
+    test_source: &str,
+    owner_file: &str,
+    test_file: &str,
+    workspace_files: &[&str],
+) -> Option<StaticLimitKind> {
     let new = body.lines().last().unwrap_or_default();
     let owner_source = format!("import time\n\n\ndef stamp(prefix):\n{body}\n");
-    let owners = extract_owners(Path::new("idioms/clock.py"), &owner_source);
+    let mut owners = extract_owners(Path::new(owner_file), &owner_source);
+    let files = workspace_files
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    super::related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files
+            .iter()
+            .filter(|file| !super::source_utils::is_test_file(file)),
+    );
+    super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
     let owner = owners.iter().find(|owner| owner.name == "stamp");
     assert!(owner.is_some(), "owner stamp in {owner_source}");
     let owner = owner?;
-    let tests = extract_tests(Path::new("tests/test_clock.py"), test_source);
+    let tests = extract_tests(Path::new(test_file), test_source);
     assert_eq!(tests.len(), 1, "{test_source}");
     let candidates = related_test_candidates(owner, &tests);
     assert!(!candidates.is_empty(), "test must relate: {test_source}");
@@ -111,6 +143,32 @@ fn a_matching_owner_module_patch_target_keeps_its_credit() {
     assert_eq!(limit(new, OLD, &clock_test(CLOCK_PATCH)), None);
     let mock_patch = "from unittest import mock\n\nfrom idioms.clock import stamp\n\ndef test_stamp_uses_the_patched_clock():\n    with mock.patch(\"idioms.clock.time.time\", return_value=1700000000):\n        assert stamp(\"a\") == \"a-1700000000\"\n";
     assert_eq!(limit(new, OLD, mock_patch), None);
+}
+
+/// #14035: the patch target's prefix must identify the owner's module for
+/// the test. A test-local `clock.py` ahead on `sys.path` (#13706) or a rival
+/// project's `src/clock.py` (#4566) is the module `patch("clock....")` would
+/// import instead, so the substitution keeps the limit.
+#[test]
+fn a_shadowed_patch_target_module_keeps_the_limit() {
+    let new = "    return f\"{prefix}_{int(time.time())}\"";
+    let test = "from unittest.mock import patch\n\nfrom svc.a.src.clock import stamp\n\n\ndef test_stamp_uses_the_patched_clock():\n    with patch(\"clock.time.time\", return_value=1700000000):\n        assert stamp(\"a\") == \"a-1700000000\"\n";
+    let owner = "svc/a/src/clock.py";
+    let case =
+        |test_file: &str, workspace: &[&str]| limit_in(new, OLD, test, owner, test_file, workspace);
+    let local = "svc/a/tests/test_clock.py";
+    // Unshadowed control: the src-layout short name keeps the credit.
+    assert_eq!(case(local, &[owner, local]), None);
+    assert_eq!(
+        case(local, &[owner, "svc/a/tests/clock.py", local]),
+        Some(StaticLimitKind::MockedModule)
+    );
+    let rival = "svc/b/tests/test_clock.py";
+    assert_eq!(case(rival, &[owner, rival]), None);
+    assert_eq!(
+        case(rival, &[owner, "svc/b/src/clock.py", rival]),
+        Some(StaticLimitKind::MockedModule)
+    );
 }
 
 #[test]

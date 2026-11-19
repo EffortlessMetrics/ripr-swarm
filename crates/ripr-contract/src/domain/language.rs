@@ -533,6 +533,15 @@ pub enum StaticLimitKind {
     /// those tests, so reach is not claimed. The gap is withheld and the class
     /// is `static_unknown`; no runtime is chosen. See RIPR-SPEC-0240 / #13702.
     RustFutureNeverPolled,
+    /// A changed predicate boundary's compared operand does not bind to an
+    /// owner argument ripr can read from a test call: it is local, computed
+    /// (`cents % 100 > 49`), iterator-derived or closure-derived, so no test
+    /// input can be matched against the boundary value. The producer withholds
+    /// the repair packet; the class is unchanged (a `no_static_path` finding
+    /// stays `no_static_path`), and the sub-case is carried by the repair
+    /// route, not by this label. This names the unresolved boundary input,
+    /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
+    ActivationBoundaryInputUnresolved,
 }
 
 impl StaticLimitKind {
@@ -612,6 +621,9 @@ impl StaticLimitKind {
             }
             StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
             StaticLimitKind::RustFutureNeverPolled => "rust_future_never_polled",
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "activation_boundary_input_unresolved"
+            }
         }
     }
 
@@ -818,6 +830,12 @@ impl StaticLimitKind {
                  its future and drop it without `.await`, an executor or an async test \
                  attribute, so the changed body does not run in them. ripr does not claim reach \
                  or a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "The changed boundary compares a local, computed, iterator-derived or \
+                 closure-derived operand that ripr cannot map to a test call's arguments, so it \
+                 cannot tell which side of the boundary a test input lands on. The repair is \
+                 withheld; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1215,6 +1233,10 @@ mod tests {
             StaticLimitKind::RustFutureNeverPolled.as_str(),
             "rust_future_never_polled"
         );
+        assert_eq!(
+            StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
+            "activation_boundary_input_unresolved"
+        );
     }
 
     #[test]
@@ -1255,6 +1277,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
+            StaticLimitKind::ActivationBoundaryInputUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
@@ -1313,5 +1336,47 @@ mod tests {
             );
         }
         assert_eq!(LanguageId::display_name_for_wire("cobol"), None);
+    }
+
+    #[test]
+    fn rust_markers_reach_one_child_directory_and_no_deeper() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-rust-markers-child-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tools/nested"))
+            .map_err(|err| format!("create dirs: {err}"))?;
+        std::fs::write(root.join("tools/nested/deep.rs"), "fn f() {}\n")
+            .map_err(|err| format!("write deep.rs: {err}"))?;
+        let grandchild_only = rust_markers_at(&root);
+        std::fs::write(root.join("tools/build.rs"), "fn main() {}\n")
+            .map_err(|err| format!("write build.rs: {err}"))?;
+        let child = rust_markers_at(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!grandchild_only, "a grandchild .rs is not a marker");
+        assert!(child, "a .rs in one child directory is a marker");
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_match_arm_rewrites_the_assertion_context_spelling() {
+        use super::super::ProbeFamily;
+        let kind = StaticLimitKind::RustAssertionContextUnresolved;
+        let match_arm = kind.describe_for_family(&ProbeFamily::MatchArm);
+        assert!(match_arm.contains("`assert!`"));
+        assert!(!match_arm.contains("`assert_eq!`"));
+        assert_eq!(
+            kind.describe_for_family(&ProbeFamily::Predicate),
+            kind.describe()
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
     }
 }

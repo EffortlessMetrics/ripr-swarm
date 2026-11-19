@@ -34,23 +34,26 @@ use value_contradiction::{
 };
 pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
-    change_is_invisible_to_every_assertion, fold_owner_body_at, range_change_visibility,
+    change_is_invisible_to_every_assertion, every_owner_call_separates, fold_owner_body_at,
+    owner_change_visibility, range_change_visibility, return_seam_tail_reached_by_call,
 };
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
     CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
-    find_related_tests_with_context, required_discriminator_text, sort_related_tests_for_seam,
-    strip_comments_and_strings, test_assertion_mentions_any_target_token,
+    find_related_tests_with_context, relates_to_pool_test, required_discriminator_text,
+    sort_related_tests_for_seam, strip_comments_and_strings,
+    test_assertion_mentions_any_target_token,
 };
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
     direct_collection_mutation_receiver, is_ignored, owner_call_text,
-    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
-    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
-    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
+    predicate_line_arms_all_agree, predicate_line_bool_guards,
+    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
+    relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
+    test_counts_pushed_collection_argument, whole_signature_parameters,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -724,6 +727,63 @@ impl<'index> EvidencePass<'index> {
         out
     }
 
+    /// The tests `admit(file, header_line)` accepts, as context positions,
+    /// for [`Self::seams_kept_by_scope`] (#12940). Empty when the context
+    /// could not be built.
+    pub(crate) fn related_test_pool(
+        &self,
+        admit: impl Fn(&Path, usize) -> bool,
+    ) -> BTreeSet<usize> {
+        let Some(context) = self.context.as_ref() else {
+            return BTreeSet::new();
+        };
+        context
+            .tests
+            .iter()
+            .enumerate()
+            .filter(|(_, indexed)| admit(&indexed.test.file, indexed.test.start_line))
+            .map(|(position, _)| position)
+            .collect()
+    }
+
+    /// For each of `ordinals`, whether its seam is kept: `keep` accepts it,
+    /// or it relates to a test in `pool`, by a reason `counts_relation`
+    /// accepts, under the same relation authority evidence uses. Every seam is kept when the context is missing, so a
+    /// failed build never hides a seam here. A cancelled lookup keeps its
+    /// seam; the caller's checkpoint then stops the run.
+    pub(crate) fn seams_kept_by_scope(
+        &self,
+        seams: &[RepoSeam],
+        ordinals: &[usize],
+        keep: impl Fn(&RepoSeam) -> bool + Sync,
+        pool: &BTreeSet<usize>,
+        counts_relation: fn(RelationReason) -> bool,
+    ) -> Vec<bool> {
+        let Some(context) = self.context.as_ref() else {
+            return vec![true; ordinals.len()];
+        };
+        let token = cancellation::current_token();
+        let overlay = crate::analysis::committed_source::current_overlay();
+        ordinals
+            .par_iter()
+            .map(|ordinal| {
+                let seam = &seams[*ordinal];
+                if keep(seam) {
+                    return true;
+                }
+                if pool.is_empty() {
+                    return false;
+                }
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().is_err()
+                            || relates_to_pool_test(seam, context, pool, counts_relation)
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
     /// indexes and file-bounded scalar/line facts stay reusable.
     pub(crate) fn clear_window_memos(&self) {
@@ -1084,8 +1144,16 @@ fn evidence_for_seam_with_context(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, observed_values, missing_discriminators) =
+    let (mut activate, observed_values, mut missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
+    weaken_unselected_arm(
+        seam,
+        &related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     let pin_syntax = context.pin_syntax();
     let refuse = refuses_other_function_oracle(
         seam,
@@ -1152,7 +1220,6 @@ fn evidence_for_seam_with_context(
                 .collect()
         })
         .unwrap_or_default();
-    let mut missing_discriminators = missing_discriminators;
     if activate.state == StageState::Yes {
         let reaching: Vec<&TestSummary> = related_with_reason
             .iter()
@@ -2931,8 +2998,19 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, mut missing_discriminators) =
+    let (mut activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    // The arm reading needs every related test, not the rank-limited slice:
+    // one test that may select the arm leaves it unnamed.
+    let every_related: Vec<&TestSummary> = ranked.iter().map(|(indexed, _)| indexed.test).collect();
+    weaken_unselected_arm(
+        seam,
+        &every_related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     if activate.state == StageState::Yes {
         // #11870: the weak-read start is asked over every test that runs the
         // owner, not the rank-limited slice.
@@ -3173,6 +3251,23 @@ fn activate_evidence(
                     boundary_equality_overlap_score(seam, indexed, context, owner_fn) > 0
                 })
         });
+    // #13037: a comparison guarded by bare bool parameters
+    // (`order_cents >= FREE_OVER_CENTS && !express`) is on its boundary only
+    // for a call that also holds every guard. Without such a call the
+    // boundary is unresolved here, as in `check`, never credited from rows
+    // that miss a guard and never an actionable missing value.
+    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
+    let boundary_guard_unheld = owner_fn.and_then(|owner_fn| {
+        guarded_boundary_unheld(
+            seam,
+            owner_fn,
+            index,
+            boundary.as_ref(),
+            boundary_constant.as_ref(),
+            &activation_credited,
+        )
+    });
+    let boundary_equality_observed = boundary_equality_observed && boundary_guard_unheld.is_none();
     // A constant whose value ripr cannot see and whose declaration it
     // cannot pin to the owner's file can never be matched by a test, so
     // it routes to the unresolved-operand limitation instead of an
@@ -3183,13 +3278,13 @@ fn activate_evidence(
             .is_some_and(|constant| !constant.lookup.is_declared_once());
     // A local boundary with no input-free value (#4228) is the same
     // dead end: `check` drops its repair ask, so grip must not grade it.
-    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
     let boundary_local_unresolved = !boundary_equality_observed
         && boundary
             .as_ref()
             .is_some_and(PredicateBoundaryOperand::local_unresolved);
     let boundary_activation_operands_unresolved = boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
         || observed_argument_selection
             .as_ref()
             .is_some_and(|selection| {
@@ -3261,6 +3356,7 @@ fn activate_evidence(
     } else if ambiguous_constructor_field_owner
         || boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
     {
         StageState::Unknown
     } else if !observed.is_empty()
@@ -3277,6 +3373,7 @@ fn activate_evidence(
         state,
         if !boundary_constant_unresolved
             && !boundary_local_unresolved
+            && boundary_guard_unheld.is_none()
             && (!observed.is_empty()
                 || direct_value_insensitive_owner_call
                 || helper_value_insensitive_owner_call)
@@ -3304,6 +3401,17 @@ fn activate_evidence(
             )
         } else if boundary_local_unresolved && !related.is_empty() {
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
+        } else if let Some(guards) = boundary_guard_unheld
+            .as_ref()
+            .filter(|_| !related.is_empty())
+        {
+            format!(
+                "The boundary of seam `{}` decides the result only when {guards}, and no related test call with {guards} passes the boundary value, so ripr cannot tell whether a test reaches it",
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression())
+            )
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -3376,6 +3484,39 @@ fn activate_evidence(
         &stage.state,
     ));
     (stage, observed, missing)
+}
+
+/// #12078: a `match_arm` seam whose related tests all call the owner with
+/// inputs that select other arms is not activated by them, whatever their
+/// oracle: activation reads weak and the arm's pattern is the missing
+/// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
+/// an established activation is weakened; every refusal of the shared
+/// reading keeps the stage as it was.
+fn weaken_unselected_arm(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    activate: &mut StageEvidence,
+    missing: &mut Vec<MissingDiscriminatorFact>,
+) {
+    if seam.kind() != SeamKind::MatchArm || activate.state != StageState::Yes {
+        return;
+    }
+    let Some(owner) = owner_fn else {
+        return;
+    };
+    let Some(fact) = super::classify::repo_seam_unselected_arm(
+        seam.file(),
+        seam.display_line(),
+        owner,
+        related,
+        index,
+    ) else {
+        return;
+    };
+    *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+    missing.push(fact);
 }
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {
@@ -3608,6 +3749,16 @@ fn observed_argument_selection(
     ObservedArgumentSelection::UnresolvedBoundaryOperands
 }
 
+/// The typed limit the unresolved boundary-input summary names (#14951).
+const BOUNDARY_INPUT_LIMIT: crate::domain::StaticLimitKind =
+    crate::domain::StaticLimitKind::ActivationBoundaryInputUnresolved;
+
+/// The activate-stage summary for an unresolved boundary input. It leads with
+/// the typed `activation_boundary_input_unresolved` token, so the evidence
+/// record and [`TestGripEvidence::names_static_limit`] read the kind the
+/// producer chose instead of re-deriving it from the sentence (#14951). The
+/// sentence keeps the iterator / closure / local-or-computed sub-case, which
+/// the evidence record carries as the repair route.
 fn boundary_activation_operands_unresolved_summary(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
@@ -3617,19 +3768,75 @@ fn boundary_activation_operands_unresolved_summary(
         .lines()
         .next()
         .unwrap_or(seam.expression());
+    let limit = BOUNDARY_INPUT_LIMIT.as_str();
     if boundary_activation_operands_are_iterator_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
         )
     } else if boundary_activation_operands_are_closure_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
     } else {
         format!(
-            "Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
         )
     }
+}
+
+/// #14951: whether [`activate_evidence`] names
+/// `activation_boundary_input_unresolved` for a predicate seam whose owner no
+/// test calls, so `ripr check` can carry the same typed limit on the diff
+/// finding the seam withholds.
+///
+/// With no owner call there is no observed value, no boundary-equality
+/// overlap and no held guard, so the activate stage reduces to this order:
+/// an undeclared or ambiguous boundary constant names its own limit, an
+/// input-free-but-unfoldable local boundary names this one, an unheld bool
+/// guard names its own, and otherwise an operand that binds to no owner
+/// argument (or binds only through a projection nothing observed) names this
+/// one. The caller supplies the premise (no test calls the owner, at least one
+/// related test); `boundary_input_limit_agrees_with_the_seam_for_uncalled_owners`
+/// pins this against the full producer.
+pub(in crate::analysis) fn boundary_input_unresolved_for_uncalled_owner(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: &FunctionSummary,
+) -> bool {
+    if owner_fn.name.is_empty() || !requires_concrete_activation_values(seam) {
+        return false;
+    }
+    let constant = boundary_constant_operand(seam, index, owner_fn);
+    if constant
+        .as_ref()
+        .is_some_and(|constant| !constant.lookup.is_declared_once())
+    {
+        return false;
+    }
+    let boundary = predicate_boundary_operand(seam, owner_fn);
+    if boundary
+        .as_ref()
+        .is_some_and(PredicateBoundaryOperand::local_unresolved)
+    {
+        return true;
+    }
+    if guarded_boundary_unheld(
+        seam,
+        owner_fn,
+        index,
+        boundary.as_ref(),
+        constant.as_ref(),
+        &[],
+    )
+    .is_some()
+    {
+        return false;
+    }
+    let selection = observed_argument_selection(seam, owner_fn);
+    matches!(
+        selection,
+        ObservedArgumentSelection::UnresolvedBoundaryOperands
+    ) || selection.requires_projection()
 }
 
 fn boundary_activation_operands_are_iterator_derived(
@@ -4342,6 +4549,428 @@ fn boundary_constant_operand(
     })
 }
 
+/// #13037: for a predicate seam whose source line guards the comparison
+/// with bare bool parameters, the guards (`` `express = false` ``) when no
+/// related test call sits on the boundary value while holding every guard
+/// as a literal; `None` when the line has no such guards or a call holds
+/// them. A guard the owner may rebind, or a compared side that is not a
+/// plain parameter, counts as unheld: ripr cannot tell which rows reach the
+/// boundary.
+fn guarded_boundary_unheld(
+    seam: &RepoSeam,
+    owner_fn: &FunctionSummary,
+    index: &RustIndex,
+    boundary: Option<&PredicateBoundaryOperand>,
+    constant: Option<&BoundaryConstantOperand>,
+    tests: &[&CompactTest<'_>],
+) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let line = seam.display_line();
+    let source = index.files().get(&owner_fn.file)?;
+    let line_text = source.data().source.lines().nth(line.checked_sub(1)?)?;
+    let (guards, rebound) =
+        predicate_line_bool_guards(line_text, seam.expression(), owner_fn, line)?;
+    let describe = guards
+        .iter()
+        .map(|(guard, value)| format!("`{guard} = {value}`"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    // The whole signature, as the guards were read: a rustfmt-wrapped
+    // parameter list must still place each argument.
+    let parameters = whole_signature_parameters(owner_fn);
+    let (Some(boundary), false) = (boundary, rebound) else {
+        return Some(describe);
+    };
+    let position = |name: &str| parameters.iter().position(|parameter| parameter == name);
+    let reversed_value: String;
+    let (tested_at, value) = match position(&boundary.tested) {
+        Some(at) => (
+            at,
+            boundary
+                .local_value()
+                .or_else(|| constant.and_then(|constant| constant.lookup.value()))
+                .unwrap_or(&boundary.token),
+        ),
+        // A boundary constant on the left (`FREE_OVER_CENTS <= order_cents`)
+        // leaves the operand reader's sides swapped: the parameter is the
+        // token and the constant is the value, as `check` orients it.
+        None => {
+            let reversed = position(&boundary.token).and_then(|at| {
+                let name = super::value_resolution::constant_operand_name(&boundary.tested)?;
+                let value = super::value_resolution::named_constant(&source.source, name)
+                    .value()?
+                    .to_string();
+                Some((at, value))
+            });
+            let Some((at, value)) = reversed else {
+                return Some(describe);
+            };
+            reversed_value = value;
+            (at, reversed_value.as_str())
+        }
+    };
+    // A rebound compared parameter, or an earlier branch or return, means a
+    // call's boundary argument may never reach this comparison as passed.
+    let compared = parameters.get(tested_at).map(String::as_str).unwrap_or("");
+    if !super::classify::guarded_boundary_row_reaches(
+        owner_fn,
+        Some(&source.data().source),
+        compared,
+        line,
+    ) {
+        return Some(describe);
+    }
+    let held = tests.iter().any(|indexed| {
+        indexed.test.calls.iter().any(|call| {
+            // A qualified call must name this owner, as the activation
+            // reader requires (`rival::gate(..)` is another function).
+            let Some(expr) = (call.name == owner_fn.name
+                && super::classify::qualified_owner_calls_resolve(
+                    index,
+                    owner_fn,
+                    indexed.test,
+                    &call.text,
+                    call.line,
+                ))
+            .then(|| owner_call_text(&call.text, owner_fn))
+            .flatten()
+            .and_then(|text| single_owner_call(text, &owner_fn.name)) else {
+                return false;
+            };
+            call_arguments(expr, &owner_fn.name).is_some_and(|arguments| {
+                let guards_hold = guards.iter().all(|(guard, required)| {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter == guard)
+                        .and_then(|at| arguments.get(at))
+                        .is_some_and(|argument| {
+                            let wanted = if *required { "true" } else { "false" };
+                            // A literal, or an immutable local
+                            // (`let express = false;`) resolved per
+                            // call as `check` resolves its rows.
+                            argument.trim() == wanted
+                                || stable_local_values(seam, indexed, index, argument.trim(), call)
+                                    .iter()
+                                    .any(|resolved| resolved == wanted)
+                        })
+                });
+                let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
+                    comparable_value(argument) == comparable_value(value)
+                                // An immutable local (`let cents = 5000;`)
+                                // resolved per call, as the activation reader
+                                // resolves it.
+                                || stable_local_values(
+                                    seam,
+                                    indexed,
+                                    index,
+                                    argument.trim(),
+                                    call,
+                                )
+                                .iter()
+                                .any(|resolved| {
+                                    comparable_value(resolved) == comparable_value(value)
+                                })
+                                || constant.is_some_and(|constant| {
+                                    super::value_resolution::argument_names_constant(
+                                        argument,
+                                        &constant.name,
+                                    )
+                                })
+                });
+                guards_hold && on_boundary && guarded_call_is_asserted(indexed.test, call, expr)
+            })
+        })
+    });
+    (!held).then_some(describe)
+}
+
+/// The one owner call a test line holds, as `name(args)`. A line with two
+/// owner calls is declined: its call facts share the line text, so which
+/// call a fact's arguments belong to is not known.
+fn single_owner_call<'t>(line: &'t str, name: &str) -> Option<&'t str> {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut opens = line.match_indices(name).filter(|(at, _)| {
+        line[..*at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && line[at + name.len()..].starts_with('(')
+    });
+    let (Some((start, _)), None) = (opens.next(), opens.next()) else {
+        return None;
+    };
+    let open = start + name.len();
+    let mut depth = 0i32;
+    for (offset, ch) in line[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&line[start..=open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the guard-holding boundary call `expr` (on `call`'s line) is
+/// itself the one a discriminating assertion observes, as `check` pairs it:
+/// the call sits in that assertion's compared operands, or the line is
+/// exactly `let r = expr;` with `r` stable and a later assertion's operands
+/// name `r`. A separate unasserted call (`let _ = f(5000, false);
+/// assert_eq!(f(5000, true), ..)`) reaches the boundary but nothing
+/// observes it there.
+fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> bool {
+    // Only an assertion's compared operands observe a value: a message
+    // argument (`assert_eq!(a, b, "{free}")`) observes nothing.
+    let observed_operands = || {
+        test.assertions
+            .iter()
+            .filter(|assertion| super::classify::assertion_is_discriminating(assertion))
+            .filter_map(|assertion| {
+                assertion_operands(&assertion.text).map(|operands| (assertion, operands))
+            })
+    };
+    let inside = observed_operands().any(|(assertion, operands)| {
+        let last = assertion.line + assertion.text.lines().count().saturating_sub(1);
+        // The call is a whole compared operand (behind at most a path or
+        // a receiver), not buried in an expression that may discard its
+        // result (`f(..) * 0`, `min(f(..), 0)`).
+        (assertion.line..=last).contains(&call.line)
+            && operands
+                .iter()
+                .any(|operand| path_or_receiver_only(unparenthesized(operand), expr))
+    });
+    if inside {
+        return true;
+    }
+    let body = test.body.as_str();
+    let Some(statement) = call
+        .line
+        .checked_sub(test.start_line)
+        .and_then(|offset| body.lines().nth(offset))
+        .map(str::trim)
+        .and_then(|line| line.strip_suffix(';'))
+    else {
+        return false;
+    };
+    let Some((binding, initializer)) = statement
+        .strip_prefix("let ")
+        .and_then(|rest| rest.split_once('='))
+        .map(|(name, initializer)| {
+            (
+                name.split(':').next().unwrap_or("").trim(),
+                initializer.trim(),
+            )
+        })
+    else {
+        return false;
+    };
+    // The whole initializer is this call, behind at most a path or a
+    // receiver (`calc.shipping_cost(..)`), never an expression around it.
+    if !path_or_receiver_only(initializer, expr) || !binding_is_stable(body, binding) {
+        return false;
+    }
+    // The binding is a whole compared operand (comments and strings
+    // masked), never inside an expression that may discard it (`free * 0`).
+    observed_operands().any(|(assertion, operands)| {
+        assertion.line > call.line
+            && operands.iter().any(|operand| {
+                unparenthesized(&crate::analysis::language::mask_rust_comments_and_strings(
+                    operand,
+                )) == binding
+            })
+    })
+}
+
+/// `text` trimmed, without parentheses that wrap all of it (`((free))` is
+/// `free`); `(a) + (b)` keeps its parentheses, since they wrap only parts.
+fn unparenthesized(text: &str) -> &str {
+    let mut text = text.trim();
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let mut depth = 0usize;
+        let wraps_all = inner.chars().all(|ch| {
+            match ch {
+                '(' => depth += 1,
+                ')' => match depth.checked_sub(1) {
+                    Some(next) => depth = next,
+                    None => return false,
+                },
+                _ => {}
+            }
+            true
+        });
+        if !wraps_all || depth != 0 {
+            break;
+        }
+        text = inner.trim();
+    }
+    text
+}
+
+/// Whether `text` is exactly the call `expr`, behind at most a path or a
+/// receiver (`calc.shipping_cost(..)`, `crate::shipping_cost(..)`).
+fn path_or_receiver_only(text: &str, expr: &str) -> bool {
+    text.strip_suffix(expr).is_some_and(|prefix| {
+        prefix
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
+    })
+}
+
+/// The compared operands of an assertion macro: the first two arguments of
+/// an equality assertion, the first of `assert!`. Any other macro shape is
+/// not read.
+fn assertion_operands(text: &str) -> Option<Vec<String>> {
+    let open = text.find("!(")?;
+    let name = text[..open]
+        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .next()?;
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return None,
+    };
+    let inner = text[open + 2..].trim_end().trim_end_matches(';').trim_end();
+    let inner = inner.strip_suffix(')')?;
+    let arguments = split_top_level_commas(inner);
+    (arguments.len() >= operands).then(|| arguments[..operands].to_vec())
+}
+
+fn ident_occurrences<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = usize> + 't {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch));
+        let after = text[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_ident(ch));
+        (before && after).then_some(at)
+    })
+}
+
+/// `resolved_argument_values` for the guarded-boundary gate, declined for a
+/// local that is not [`binding_is_stable`]: the resolver reads the
+/// initializer, and a reassigned or shadowed guard or boundary must never
+/// be credited from it.
+fn stable_local_values(
+    seam: &RepoSeam,
+    indexed: &CompactTest<'_>,
+    index: &RustIndex,
+    argument: &str,
+    call: &CallFact,
+) -> Vec<String> {
+    let identifier =
+        !argument.is_empty() && argument.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+    if identifier && !binding_is_stable(indexed.test.body.as_str(), argument) {
+        return Vec::new();
+    }
+    resolved_argument_values(seam, indexed, index, argument, call)
+}
+
+/// Whether `name` is bound exactly once in `body` (`let name = ..`, never
+/// `mut`) and every other mention is a plain read: no second binding site
+/// (`let`, `for`, `if let`, `match` arm, closure parameter), no `&mut`
+/// borrow, no assignment, no field or format-string use. Text-level and
+/// deliberately over-cautious: anything unclear is unstable.
+fn binding_is_stable(body: &str, name: &str) -> bool {
+    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+    let mut bindings = 0usize;
+    for at in ident_occurrences(body, name) {
+        let line_start = body[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let line_end = body[at..]
+            .find('\n')
+            .map_or(body.len(), |newline| at + newline);
+        let line = &body[line_start..line_end];
+        let prefix = body[..at].trim_end();
+        let rest = body[at + name.len()..].trim_start();
+        if prefix.ends_with("let") {
+            bindings += 1;
+            if !rest.starts_with('=') && !rest.starts_with(':') {
+                return false;
+            }
+            continue;
+        }
+        let assigns = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|op| rest.starts_with(op))
+            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
+        // A second binding site: the name inside a `let` pattern (across
+        // lines, `let (` / `r,` / `) = ..`), a `for` pattern, a match-arm
+        // pattern, or a closure's parameters. A read on a `let` line's
+        // right-hand side (`let free = f(express);`) is not one.
+        let column = at - line_start;
+        let in_span = |open: &str, close: &str| {
+            line.match_indices(open).any(|(start, _)| {
+                let from = start + open.len();
+                line[from..]
+                    .find(close)
+                    .is_some_and(|end| (from..from + end).contains(&column))
+            })
+        };
+        let arm_pattern = line.find("=>").is_some_and(|arrow| column < arrow);
+        // A typed name outside its `let` (`fn check(r: u32)`) is a
+        // parameter binding.
+        let typed = rest.starts_with(':') && !rest.starts_with("::");
+        let rebinds = in_let_pattern(body, at)
+            || in_span("for ", " in ")
+            || arm_pattern
+            || typed
+            || line.contains('|')
+            || line.contains("fn ");
+        let odd_prefix = ["mut", "|", ".", "{", "&mut"]
+            .iter()
+            .any(|marker| prefix.ends_with(marker));
+        if assigns || rebinds || odd_prefix {
+            return false;
+        }
+    }
+    bindings == 1
+}
+
+/// Whether byte `at` of `body` sits in a `let` pattern: after a `let`
+/// keyword and before that statement's binding `=`, across lines.
+fn in_let_pattern(body: &str, at: usize) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    body.match_indices("let").any(|(start, _)| {
+        let keyword = body[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && body[start + 3..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+        if !keyword || start >= at {
+            return false;
+        }
+        let from = start + 3;
+        let bytes = body.as_bytes();
+        let binding_eq = (from..body.len()).find(|&index| {
+            bytes[index] == b'='
+                && !matches!(bytes.get(index + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    index.checked_sub(1).and_then(|before| bytes.get(before)),
+                    Some(b'=' | b'<' | b'>' | b'!')
+                )
+        });
+        binding_eq.is_none_or(|end| (from..end).contains(&at))
+    })
+}
+
 /// A direct owner call whose compared argument names the boundary
 /// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
 /// own file does not declare a constant of the same name.
@@ -5018,7 +5647,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
         );
         !contradicted
             || pin_syntax
-                .equality_assertion_refusal(probe, test, assertion, index)
+                .equality_assertion_refusal(probe, Some(owner_fn), test, assertion, index)
                 .is_none()
     })
 }

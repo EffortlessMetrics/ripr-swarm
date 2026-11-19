@@ -43,6 +43,10 @@ pub(crate) enum Product {
     EmbedFileScan,
     StrippedFileImports,
     ItemSyntax,
+    FnCfgGates,
+    LocalMacroCalls,
+    CfgGatesOfFn,
+    OwnerFoldPlan,
 }
 
 impl Product {
@@ -65,6 +69,10 @@ impl Product {
             Self::EmbedFileScan => "embed_file_scan",
             Self::StrippedFileImports => "stripped_file_imports",
             Self::ItemSyntax => "item_syntax",
+            Self::FnCfgGates => "fn_cfg_gates",
+            Self::LocalMacroCalls => "local_macro_calls",
+            Self::CfgGatesOfFn => "cfg_gates_of_fn",
+            Self::OwnerFoldPlan => "owner_fold_plan",
         }
     }
 }
@@ -222,21 +230,62 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     sources: &[&str],
     compute: impl Fn(&str) -> T + Sync,
 ) -> Vec<T> {
+    let queries: Vec<MemoQuery<'_>> = sources
+        .iter()
+        .map(|source| MemoQuery {
+            discriminator: 0,
+            extra: "",
+            source,
+        })
+        .collect();
+    memoize_many_with(product, &queries, |query| compute(query.source))
+}
+
+/// One [`memoize_with`] consultation for [`memoize_many_with`]: the same
+/// discriminator, extra query and source the serial call keys on.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MemoQuery<'a> {
+    pub(crate) discriminator: usize,
+    pub(crate) extra: &'a str,
+    pub(crate) source: &'a str,
+}
+
+/// Whether the calling thread holds a scope, so a product stored now is
+/// served to a later [`memoize_with`] on this thread. A batch that only warms
+/// the memo for a later serial fold checks this first: without a scope the
+/// warmed products are dropped and the fold recomputes them.
+pub(crate) fn active() -> bool {
+    MEMO.with(|memo| memo.borrow().depth > 0)
+}
+
+/// [`memoize_many`] for queries that also carry a discriminator and an extra
+/// query: each result is exactly what `memoize_with(product,
+/// query.discriminator, query.extra, query.source, || compute(query))`
+/// returns, in order, and `compute` runs once per distinct key the scope has
+/// not yet stored, on the rayon pool unless the caller is a pool worker. The
+/// same caveats as [`memoize_many`] apply: the memo is only touched on the
+/// calling thread and `compute` runs without a scope.
+#[track_caller]
+pub(crate) fn memoize_many_with<T: Clone + Send + 'static>(
+    product: Product,
+    queries: &[MemoQuery<'_>],
+    compute: impl Fn(&MemoQuery<'_>) -> T + Sync,
+) -> Vec<T> {
     use rayon::prelude::*;
     let fan_out = rayon::current_thread_index().is_none();
-    let run = |items: &[&str]| -> Vec<T> {
+    let run = |items: &[&MemoQuery<'_>]| -> Vec<T> {
         if fan_out {
-            items.par_iter().map(|source| compute(source)).collect()
+            items.par_iter().map(|query| compute(query)).collect()
         } else {
-            items.iter().map(|source| compute(source)).collect()
+            items.iter().map(|query| compute(query)).collect()
         }
     };
-    if MEMO.with(|memo| memo.borrow().depth == 0) {
-        return run(sources);
+    if !active() {
+        return run(&queries.iter().collect::<Vec<_>>());
     }
-    let keys: Vec<Key> = sources
+    let keys: Vec<Key> = queries
         .iter()
-        .map(|source| key(product, 0, "", source))
+        .map(|query| key(product, query.discriminator, query.extra, query.source))
         .collect();
     for key in &keys {
         crate::analysis::probe_read_trace::memo(product.name(), &key.1);
@@ -266,19 +315,20 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     for _ in missing.len()..keys.len() {
         record_memo_outcome(true);
     }
-    let missing_sources: Vec<&str> = missing.iter().map(|position| sources[*position]).collect();
-    let computed = run(&missing_sources);
+    let missing_queries: Vec<&MemoQuery<'_>> =
+        missing.iter().map(|position| &queries[*position]).collect();
+    let computed = run(&missing_queries);
     MEMO.with(|memo| {
         let mut memo = memo.borrow_mut();
         for (position, value) in missing.iter().zip(computed) {
             memo.entries.insert(keys[*position], Rc::new(value));
         }
     });
-    // Every key is stored now; a source repeated in `sources` reads the one
-    // product computed for its text, as the serial calls would.
+    // Every key is stored now; a query repeated in `queries` reads the one
+    // product computed for its key, as the serial calls would.
     keys.iter()
-        .zip(sources)
-        .map(|(key, source)| recall(key).unwrap_or_else(|| compute(source)))
+        .zip(queries)
+        .map(|(key, query)| recall(key).unwrap_or_else(|| compute(query)))
         .collect()
 }
 

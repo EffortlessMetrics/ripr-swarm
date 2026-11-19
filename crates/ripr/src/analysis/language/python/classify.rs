@@ -19,18 +19,21 @@ use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_
 use super::message_pin;
 use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_evidence};
 use super::no_behavior::{
-    changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
-    is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
+    BracketLine, bare_string_statement_text, changed_default_overridden_params,
+    format_param_name_list, is_annotation_only_def_change, is_annotation_only_var_change,
+    is_comment_or_whitespace_only_change, is_new_def_header_without_defaults,
+    is_python_no_behavior_line_at, is_structural_def_header_text,
 };
+use super::owner_result_field::{owner_result_field_read, unread_owner_result_field};
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo, helper_owner_call_candidates,
-    python_repair_placement, related_test_candidates, related_tests_for_candidates,
-    sort_related_candidates, verify_command_for_test,
+    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo,
+    cross_module_callers_exceed_cap, helper_owner_call_candidates, python_repair_placement,
+    related_test_candidates, related_tests_for_candidates, sort_related_candidates,
+    verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{
@@ -38,7 +41,7 @@ use super::sink_alignment::{
     enclosing_literal_pair,
 };
 use super::static_limits::{
-    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword,
+    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword, cross_module_reach_limit,
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, integer_literal_swap,
     module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
     unresolved_pytest_fixture_names,
@@ -137,6 +140,8 @@ pub(super) struct PythonNoBehaviorContext {
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
     pub(super) new_line_in_multiline_string: bool,
+    /// Bracket-continuation facts for the changed line (#13875).
+    pub(super) brackets: BracketLine,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -158,6 +163,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
     pub(super) pytest_import_unshadowed: bool,
+    /// This owner's loop header changed in a multi-line diff. Without an
+    /// isolated old-body witness, sibling edits cannot borrow oracle credit.
+    pub(super) compound_loop_edit: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -277,13 +285,36 @@ fn classify_change_full<'a>(
     // behavioral) keeps its probe.
     let new_is_noop = no_behavior.new_line_in_docstring
         || no_behavior.new_line_type_checking_only
-        || is_python_no_behavior_line(line_text);
+        || is_python_no_behavior_line_at(line_text, no_behavior.brackets.new_in);
     let old_is_noop = old_line_text.is_none_or(|old| {
         no_behavior.old_line_in_docstring
             || no_behavior.old_line_type_checking_only
-            || is_python_no_behavior_line(old)
+            || is_python_no_behavior_line_at(old, no_behavior.brackets.old_in)
     });
     if new_is_noop && old_is_noop {
+        return None;
+    }
+    // A bare string inside brackets is behavior, but only its statement says
+    // what kind (#13875). With no statement span (an unlexable file) there is
+    // nothing to shape it by, so it keeps the earlier no-op reading rather than
+    // a bare string's default shape and an oracle it does not have. An
+    // unlexable new file counts every line as in brackets with no span; then
+    // the old side has no trustworthy bracket evidence either, so it is read
+    // bracket-blind too.
+    let new_file_unlexed = no_behavior.brackets.new_in && no_behavior.brackets.span.is_none();
+    let old_reads_noop = if new_file_unlexed {
+        old_line_text.is_none_or(|old| {
+            no_behavior.old_line_in_docstring || is_python_no_behavior_line_at(old, false)
+        })
+    } else {
+        old_is_noop
+    };
+    if is_python_no_behavior_line_at(line_text, false)
+        && !line_text.trim().is_empty()
+        && !line_text.trim_start().starts_with('#')
+        && no_behavior.brackets.span.is_none()
+        && old_reads_noop
+    {
         return None;
     }
     // Trailing-comment / inter-token-whitespace guard (#10706): the same
@@ -484,7 +515,12 @@ fn classify_change_for_owner_inner<'a>(
     {
         return None;
     }
-    let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
+    let statement_text =
+        bare_string_statement_text(line_text, no_behavior.brackets.span, owner_source);
+    let (family, delta) = classify_probe_shape_with_old(
+        statement_text.as_deref().unwrap_or(line_text),
+        old_line_text,
+    );
     // Analysis keeps `family`; only the finding's own presentation reads a
     // plain local value edit as a value (#13587).
     // The changed line's probe family (and, for a field change, its changed
@@ -507,6 +543,14 @@ fn classify_change_for_owner_inner<'a>(
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
     };
+    // #12955: with no related test at all, whether too many cross-module
+    // callers went unfollowed decides between `no_static_path` and unknown.
+    let cross_module_over_cap = related_candidates.is_empty()
+        && helper_callers.is_empty()
+        && match related.as_deref_mut() {
+            Some(memo) => memo.cross_module_over_cap(owner, owners),
+            None => cross_module_callers_exceed_cap(owner, owners),
+        };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
     // per finding, so a test with such an assertion is replaced by its
@@ -856,6 +900,31 @@ fn classify_change_for_owner_inner<'a>(
         },
         None => alignment,
     };
+    // The bound result of a self-returning owner method, asserted exactly on
+    // the changed field: the shape the unread-owner-result-field repair asks
+    // for, credited so that repair can close.
+    let owner_result_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                owner_result_field_read(owner, source, line, &family, &related, &related_candidates)
+            })
+        })
+        .flatten();
+    let alignment = match owner_result_read {
+        Some(read) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(read.assertion_text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_owner_result_field".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: read.test_name,
+                test_file: read.test_file,
+                text: read.assertion_text,
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -868,13 +937,21 @@ fn classify_change_for_owner_inner<'a>(
     // Limits that apply when the leading one does not; re-read when the
     // imported-literal lift (#9226) drops the leading limit.
     let fallback_limits = || {
-        module_object_rebind_limit(
-            line_text,
-            old_line_text,
+        cross_module_reach_limit(
             owner,
             &related_candidates,
-            alignment.credited.as_ref().filter(|_| alignment.observes()),
+            &helper_callers,
+            cross_module_over_cap,
         )
+        .or_else(|| {
+            module_object_rebind_limit(
+                line_text,
+                old_line_text,
+                owner,
+                &related_candidates,
+                alignment.credited.as_ref().filter(|_| alignment.observes()),
+            )
+        })
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
         .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
         .or_else(|| {
@@ -893,6 +970,17 @@ fn classify_change_for_owner_inner<'a>(
         },
         &related_candidates,
     )
+    .or_else(|| {
+        super::range_activation::loop_context_limit(
+            owner,
+            owner_source.unwrap_or(""),
+            line,
+            line_text,
+            old_line_text,
+            no_behavior.sole_line_replacement,
+            no_behavior.compound_loop_edit,
+        )
+    })
     // A pinned lambda body edit or dataclass default edit is read by the
     // module-value credit, which lifts only the limit its own reading answers.
     .filter(|limit| {
@@ -1026,6 +1114,18 @@ fn classify_change_for_owner_inner<'a>(
             )
         })
         .flatten();
+    let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
+        e.activation == BoundaryActivation::Unresolved
+            || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
+    }) && super::boundary::unresolved_loop_list_boundary(
+        line,
+        line_text,
+        old_line_text,
+        owner_source,
+        owner,
+        &related_candidates,
+        &focus,
+    );
     let boundary_gap = boundary
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
@@ -1128,19 +1228,14 @@ fn classify_change_for_owner_inner<'a>(
             && inactive_term.is_none()
             && !no_behavior.multi_line_def_header_line)
             .then(|| {
-                guard_activation::python_guarded_arm_gap(
+                guard_activation::python_old_side_guarded_arm_gap(
                     &view.owner,
                     view.source,
                     view.line,
                     &related_candidates,
                     &focus,
+                    &view.parameters,
                 )
-                .filter(|gap| {
-                    super::deleted_lines::guard_names_only_parameters(
-                        &gap.discriminator,
-                        &view.parameters,
-                    )
-                })
             })
             .flatten()
     });
@@ -1435,6 +1530,17 @@ fn classify_change_for_owner_inner<'a>(
                 "A strong Python oracle reaches `{}`, but the changed integer literal feeds an imported call whose result the preview adapter does not evaluate, so static evidence cannot confirm the assertion notices the edit.",
                 owner.name
             )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && loop_boundary_unknown
+    {
+        (
+            ExposureClass::InfectionUnknown,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Unknown,
+            Vec::new(),
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -1738,7 +1844,7 @@ fn classify_change_for_owner_inner<'a>(
     };
     let reach = StageEvidence::new(reach_state, Confidence::Low, &reach_summary);
     let infect = StageEvidence::new(
-        if static_limit.is_some() {
+        if static_limit.is_some() || matches!(class, ExposureClass::InfectionUnknown) {
             StageState::Unknown
         } else if boundary_downgraded
             || term_downgraded
@@ -1757,6 +1863,8 @@ fn classify_change_for_owner_inner<'a>(
                 "Static limit `{}` prevents a safe Python infection claim.",
                 limit.kind.as_str()
             )
+        } else if matches!(class, ExposureClass::InfectionUnknown) {
+            "Static evidence cannot determine whether the loop comparison reached its changed equality boundary.".to_string()
         } else if boundary_downgraded {
             if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
                 "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
@@ -2094,6 +2202,21 @@ fn classify_change_for_owner_inner<'a>(
             placement.location_reason
         ));
     }
+    // The unread-owner-result-field fact is evidence only: it never changes
+    // the class or the alignment above. It is read only where the strong
+    // oracle observes a different sink, so the gap ledger can delegate that
+    // one bounded shape and keep every other orthogonal finding denied.
+    if matches!(class, ExposureClass::WeaklyExposed)
+        && static_limit.is_none()
+        && repair_placement.is_some()
+        && surfaced_alignment.oracle_alignment == "orthogonal"
+        && surfaced_alignment.alignment_reason == "strong_oracle_observes_different_sink"
+        && let Some(fact) = owner_source.and_then(|source| {
+            unread_owner_result_field(owner, source, line, &family, &related, &related_candidates)
+        })
+    {
+        evidence.push(fact.evidence_line());
+    }
     // Row-local misses are explanation only (#5491): written after the class
     // and every stage are final, and read by no decision above.
     annotate_row_misses(
@@ -2235,8 +2358,15 @@ fn classify_change_for_owner_inner<'a>(
             .find(|helper| std::ptr::eq(helper.candidate.test, test))
         {
             evidence.push(format!(
-                "helper_owner_call: {} calls {} ({})",
-                helper.caller, owner.name, test.name
+                "{}: {} calls {} ({})",
+                if helper.cross_module {
+                    "cross_module_caller_call"
+                } else {
+                    "helper_owner_call"
+                },
+                helper.caller,
+                owner.name,
+                test.name
             ));
         }
         let selection = candidate
@@ -2344,6 +2474,7 @@ fn classify_change_for_owner_inner<'a>(
         missing_discriminators,
     }
     .into_public();
+    let infection_unknown = matches!(class, ExposureClass::InfectionUnknown);
     let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         confidence_basis,
@@ -2365,11 +2496,15 @@ fn classify_change_for_owner_inner<'a>(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation,
-        stop_reasons: static_limit
-            .as_ref()
-            .map(stop_reason_for_python_static_limit)
-            .into_iter()
-            .collect(),
+        stop_reasons: if infection_unknown {
+            vec![crate::domain::StopReason::InfectionEvidenceUnknown]
+        } else {
+            static_limit
+                .as_ref()
+                .map(stop_reason_for_python_static_limit)
+                .into_iter()
+                .collect()
+        },
         related_tests_matched_total: None,
         related_tests: related,
         recommended_next_step: recommended,

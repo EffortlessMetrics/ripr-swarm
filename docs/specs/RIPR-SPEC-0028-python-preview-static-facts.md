@@ -411,10 +411,18 @@ Known limits of this pass: directories a pytest `pythonpath` setting
 `sys.path` are not read, so a shadowing module reachable only through one is not
 detected; the model is one pytest invocation per project, so cross-project
 `sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
-nor is a subproject directory used as the working directory; and the
-module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
-`owner_module_paths` directly and are not gated by the shadow, the same as the
-pre-existing rival-module case (#4566).
+nor is a subproject directory used as the working directory.
+The module-attribute sites go through the same identity gate (#14035): a module
+constant read as `pricing.LIMIT` binds a boundary value, `table.Table` after
+`import table` witnesses the owner's class for the same-class transitive-reach
+limitation, and the target prefix of a `patch("clock.time.time",
+return_value=...)` substitution or of a callee-only patch such as
+`patch("pricing.rate", return_value=3)` names the owner's module only while
+that module name identifies the owner for the test, so a test-local shadow
+(#13706) or a rival src-layout module (#4566) of that name gives none of them.
+The source-import reachability walk of `imported_call_operator` is deliberately
+not gated: a stricter walk would find fewer withholding operator definitions
+and so widen credit.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -1412,6 +1420,64 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  Unread owner-result field (#13827, the Python analogue of Rust #13804): a
+  changed unconditional, top-level `self.<field> = ...` statement alone on
+  the changed line (no other statement starts or ends there; the field not
+  starting with `__`), whose right-hand side holds no call, walrus or bare
+  `self`, in a plain method
+  whose only `return` is its last statement `return self` (or in `__init__`,
+  with no `return`) of a plain top-level class (no base, keyword, decorator, or
+  class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
+  `__dict__`, `__new__`, `__class__`, `property`, `getattr(`, `attrgetter`,
+  `setattr(`, `vars(`, `locals(` or `globals(`; every method taking `self`
+  first and running straight through, with no nested `def` or `class`,
+  lambda, generator expression, `try`, `global`, `nonlocal` or import, since a
+  closure kept from `__init__` can overwrite the field after the builder
+  returns; nothing else in the owner module naming the class, since
+  `Req.timeout = _fixed` after the class body replaces the method; an ASCII
+  owner module and test body, since Python folds identifiers by NFKC; no dunder
+  attribute in the class (`self.__getstate__()` returns the instance
+  dictionary); no store
+  to a method name on any base, since `self.timeout = ...` shadows the
+  builder on the instance; a class body of only undecorated methods, literal
+  bindings, docstrings and `pass`, since any other class-level value could be a
+  descriptor; no `case` line; no class-level binding of the field; no other
+  write of the field in the method; only plain assignments after the changed
+  line besides the final `return self`, with no call and no bare `self`; no
+  bare `self` anywhere in the class but the owner's final `return self` (an
+  `s = self` or `self.me = self` alias can overwrite the field); no other store
+  of `.<field>` in the class but `self.<field> = ...` in `__init__`, which runs
+  first (another method's write, kept as a bound method, can overwrite it); no
+  method name loaded in the class except as a call's callee (a bound method
+  kept on the instance runs later); and no
+  read of `.<field>` anywhere in the class, which could derive an attribute the
+  test reads) stays `orthogonal`, but its `weakly_exposed` finding carries the
+  evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
+  when the one related test is a strong, undecorated, fixture-free,
+  module-level pytest function whose body is straight-line
+  (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
+  (or `Cls(...)` for `__init__`, `Cls` the test module's one import of the
+  class, `from <owner module> import Cls` without an alias, which nothing in the test module
+  rebinds or attribute-writes and no autouse fixture, setup hook or opaque
+  module code can reach; the test module importing nothing else but `pytest`)
+  exactly once, makes no call but the owner construction and call, names no
+  dunder, uses
+  `<binding>` only as reads of other non-dunder, non-method attributes (a
+  bound method read like `reset = r.reset` can be called later; no call, method
+  call, subscript, whole-value use, rebinding or walrus), calls the owner once,
+  and never names the field anywhere in its text (nor `patch`, `mock`,
+  `getattr`, `setattr`, `vars(`, `globals(`, `locals(`, `exec(` or `eval(`).
+  The gap ledger delegates `orthogonal`/`strong_oracle_observes_different_sink`
+  to an agent packet only with that line for the card's own selected test and
+  `self.<field>` discriminator (reason
+  `python_unread_owner_result_field_with_bounded_repair_route`); every other
+  orthogonal card stays `python_oracle_alignment_pair_not_delegatable`. The
+  card then suggests `assert <binding>.<field> == <expected value>`.
+  `strong_oracle_observes_owner_result_field` (`direct`) credits the same shape
+  with that repair applied: the field read once, only in one top-level
+  `assert <binding>.<field> == <literal>` (either side, no message), so a
+  repair the fact starts can close. A relational or computed comparison, or an
+  owner that returns another object, takes no such credit.
   `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
   edit that deletes the leading `isinstance(other, <own class>) and` from the
   method's only `return`, when the remaining expression is exactly
@@ -1915,6 +1981,151 @@ cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
 
+A deleted guard that also names a local or a module constant is read through
+its parameter-only `and` conjuncts (#11889 residual): in
+`if seq_index is None and start < 0:` the conjunct `start < 0` is evaluated
+and `seq_index is None` is dropped, so a row with `start = 0` is excluded
+whatever the local held. Names other than owner parameters resolve on the new
+side and stay untrusted, so a guard over them alone, or one whose parameter
+conjuncts all hold or cannot be read, keeps the existing verdict. A guard
+holding `or`, a conditional expression, a `lambda` or a comprehension is read
+whole (parameters only) or not at all: dropping an operand there can turn a
+true guard false. A conjunct that calls or binds something
+(`fill(items) and len(items) > 0`, `(n := seen) and start < 0`) can change
+what another conjunct reads, so such a guard is not read at all, on either
+side; the `isinstance(` and `len(` atoms the guard reader evaluates itself are
+not such a call. A call is a `(` outside string literals that follows a name,
+`)` or `]`; a parenthesis after a keyword opens a group or a display
+(`kind in ('a', 'b')`, `not (x)`) and is not one. An early exit or an `if`/`elif` chain condition keeps a row
+off the line by holding, which a partial conjunction cannot show, so those are
+read only when the whole condition names parameters alone. The reported guard
+text stays the whole condition.
+
+## Cross-Module Caller Amendment (2026-11-08, #12955)
+
+A top-level helper that no test calls itself, reached by a test only through a
+function of another module that imports it, no longer reads `no_static_path`.
+The first `helper_owner_call` hop may also enter from a top-level function of
+another module that binds the helper through `from <helper module> import
+<name>` (aliased or not) and bare-calls that binding; later hops stay in the
+file of the function they call, within the same three-hop bound, and past the
+module boundary only top-level functions are callers. A method of another
+module is never followed, because a test's bare call of its name is not shown
+to reach it. Such a
+test is related with the reach-only `cross_module_caller_call` relation: it
+carries no oracle, and when every related test is reached that way the finding
+is `static_unknown` with no repair card. Its limit is `missing_import_graph`,
+naming the caller and its file, unless a limit read from the changed line itself
+(for example `dynamic_dispatch`) applies first; either way the finding stays
+`static_unknown`. A test that also reaches the helper through a
+same-module caller keeps the existing `helper_owner_call` reading.
+
+The binding is read from the caller file's top-level import statements and
+top-level definitions only: the import's module must be the helper's module
+under the same provenance rules a test import uses (src-layout ambiguity and
+rival definitions included); it must be the only top-level import binding that
+local name; and no top-level `def` or `class` of the caller's file may share
+it. A module-level assignment, or a second import inside a `try`/`if` block,
+that rebinds a name a top-level import already binds is not seen, so that
+top-level binding can still make an edge; that only moves `no_static_path` to
+`static_unknown`. A binding that exists only inside a function or a `try`/`if`
+block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+local rebinding, a binding passed as a value rather than called, and a
+same-named function of another module make no edge. When more than 32
+top-level functions of other modules call the helper, none of them is followed; with no
+other related test the finding is `static_unknown` and says that reach through
+them was not checked, so a heavily imported helper never reads
+`no_static_path` on that account alone.
+
+## Bracketed String Argument Amendment (2026-11-16, #13875)
+
+A line holding only a string literal is a docstring or standalone string
+statement, and is a no-op, only when it does not start inside an open `(`,
+`[` or `{`. Inside brackets it is an argument, often one part of an implicitly
+concatenated message, so changing it changes a value. Bracket-continuation
+lines come from one lex of each side: the new file and the rebuilt old file.
+Such a line, including a `"msg",` form with an argument comma or a trailing
+`# comment`, takes the probe
+family of its whole enclosing statement, which also selects the related
+assertions it is judged against. So a message inside `raise E(` is an error path that only an exact
+error-variant assertion observes, and a return assertion never credits it.
+When a side has no bracket evidence (the file does not lex, or there is no
+rebuilt old file), a string-to-string edit keeps the no-op reading. Comment and
+blank lines inside brackets stay no-ops.
+
+Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
+`tests.rs::a_changed_message_argument_with_a_trailing_comma_is_an_error_path`,
+`tests.rs::a_changed_message_argument_with_a_trailing_comment_is_an_error_path`,
+`tests.rs::a_bracketed_raise_message_is_not_credited_to_a_return_assertion`,
+`tests.rs::an_unlexable_file_keeps_a_changed_bare_string_quiet`,
+`deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and
+`deleted_lines_tests.rs::changed_string_argument_inside_brackets_gets_a_finding`.
+
+## Changed Range Header Amendment (#12948)
+
+A strong exact-value assertion on an owner does not establish that a changed
+`range(...)` header affects that call. An empty range, or an added iteration
+whose contribution is zero, can leave the returned result unchanged.
+
+The Python adapter retains existing oracle credit for a changed bare `range`
+header only when a strong related literal-input call establishes distinct old
+and new integer sums in this closed owner shape: initialize one accumulator to
+zero, iterate a bare `range` with one to three readable integer arguments,
+perform only `acc += item`, then return `acc`. The range builtin and bound
+parameters must remain intact. Literal bounds and the existing bounded integer
+offset reader are supported; checked arithmetic refuses overflow without
+walking or allocating the range.
+
+The witness must be the selected assertion's direct owner call, compared with an
+integer literal by plain equality or unittest `assertEqual`. Discarded calls,
+assertion messages, nested calls and comparisons between calls do not supply
+the witness; partial or multiline row excerpts remain unresolved.
+
+The expected signed integer must equal one of the modeled old/new sums; an
+assertion that fails for both results is not a discriminator. Test-side writes
+to `range`, including dynamic or foreign attribute writes, withhold credit.
+The test body must reach its selected top-level assertion without another
+assertion or unknown effect; only inert literal bindings and modeled owner
+calls are admitted around that assertion. A preceding failing assertion,
+exceptional argument or destructuring failure cannot lend a witness.
+
+Calls must bind every declared parameter with a known scalar value or literal
+default. Excess, duplicate, unknown or positional-only keyword arguments,
+missing required parameters and unsupported argument forms withhold credit.
+Computed defaults or annotations are outside the closed owner model.
+
+Every range-bound input must retain its integer type before offset
+normalization. Integral-valued floats such as `3.0` still raise `TypeError`
+in Python range; decimal equality normalization cannot turn them into integer
+witnesses. This check covers all arguments of both headers and every modeled
+call, including prior calls in the selected test. Unused scalar parameters
+need not be integers, and the existing supported-expression boundary remains.
+
+The old-body witness is the existing `sole_line_replacement` fact: the
+production file contains exactly one added line replacing one removed line at
+the same coordinate. Other production edits keep the header unresolved.
+Applicability uses the native For iterator's line span, so changed interior
+lines of multiline headers and wrapped iterators fail closed rather than
+bypassing the model. Only bare single-line range replacements are evaluated.
+
+In a multi-line production diff, a changed For/AsyncFor header also withholds
+credit from every other changed finding on that same qualified owner,
+including removed-only evidence. A sibling accumulator or return edit can
+cancel the apparent range difference; the generic owner-name exact oracle
+cannot establish the combined old/new result. Header ownership comes from
+the narrowest native source owner before quiet-line filtering. Old headers
+use reconstructed old-source coordinates and retained qualified symbols,
+never a deletion insertion point that may belong to the next function.
+Independent and enclosing owners do not inherit a nested helper's limit;
+ambiguous repeated qualified definitions conservatively share it.
+
+Without that witness, the change carries `unsupported_syntax`, unknown
+infection and a non-exposed classification. Missing old text, unreadable
+inputs, zero steps, rebinding, other loop bodies and unavailable owner source
+remain unresolved. This does not add a repair-packet producer or change the
+packet validator. The Rust range-bound producer in RIPR-SPEC-0370 remains a
+separate proposed contract.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python
@@ -1966,3 +2177,29 @@ adapter contributes:
 - `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`
 - `language_adapter_python_static_limit_transitive_reach`
+
+### Unresolved loop-comparison boundary (#12954)
+
+For a changed adjacent relational comparison in the closed iterator and
+accumulator selection shape (either `best = next(it)` followed by `for x in it`,
+or `best = xs[0]` followed by `for x in xs[1:]`, both with conditional
+`best = x` and `return best`), an unresolved boundary is
+`infection_unknown` when each oracle-eligible test has one or more assertions
+and each has a strong direct comparison of the owner call on an integer list
+or tuple with an integer. The owner may have a second parameter unused by this
+closed body, bound positionally, by name, or by an integer-literal default.
+When there are two parameters, every default must be an integer literal even
+when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
+does not resolve the loop's comparison operands. A
+single line with multiple assertions or `and`
+conjuncts qualifies only when every statement and conjunct is such a direct
+pin. A test with exactly one direct owner-call assignment followed by one
+integer equality assertion on that local also qualifies when test facts show
+no implicit setup, substitution, opaque module or edited-test uncertainty.
+Qualified calls must resolve to the owner through test imports. The changed
+condition must be the comparison alone: a further `and` or `or` operand can run
+on different iterations after the edit, so the selector is not closed. The
+result-alias form reads the test's own assignment; an earlier test's call
+assigned to a local of the same name does not stand in for it. The finding carries an infection stop
+reason and no repair suggestion. Other source and test shapes retain their
+existing behavior.

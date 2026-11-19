@@ -76,6 +76,14 @@ path without text hunks. The existing deletion, submodule, artifact and
 prior-limitation guard conditions are unchanged. Pure rename-only input without
 content or mode changes retains complete `no_changed_lines`.
 
+A `copy from`/`copy to` section is not a rename: its source stays in place,
+so every line of the destination is new code the patch does not carry. When
+the section's header and both lines name the same pair of paths, the diff
+intake reads the destination from the working tree as an added file, the
+changed lines the patch names without copy detection. A destination that is
+not a regular file below the root is disclosed as
+`changed_file_absent_from_worktree`.
+
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
@@ -97,6 +105,20 @@ Paired plain `---`/`+++` markers are ordinary body lines while both declared
 sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
+Text after a hunk whose declared counts are complete is not that hunk's body
+(#14072): empty lines there are padding, and git's mail signature separator
+(`-- `) or mbox message separator (`From <object id> <date>`) ends the hunk, so
+a patch saved with trailing blank lines and `git format-patch` output are
+well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
+is still an excess body line, also behind such padding, and a hunk that still
+owes lines reads an empty line as context and `-- ` as a removal.
+
+A `diff --git` section whose header names one path under two different
+mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
+`diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
+A header repeating one token on both sides, a header whose two paths differ,
+and a section carrying rename or copy metadata keep their literal paths; other
+custom side prefixes are not guessed (#15103).
 
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse

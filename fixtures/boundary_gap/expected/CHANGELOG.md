@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.182 after module-const reach (#13592)
+
+A module-level `const` read only by a same-module function gains a reader
+entry, which bumps the analyzer cache schema to 1.182. Move the portable
+unchanged-attempt snapshots to 1.182, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
 ## Pending - branch-local return-value grip (#14496)
 
 A `return_value` seam inside a branch the pinned call does not take no longer
@@ -1611,3 +1621,14 @@ The per-byte slice-counter boundary credit bumps the analyzer cache schema to
 commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing
 remain unchanged. No other fixture output is regenerated.
+
+## Pending — boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

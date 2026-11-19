@@ -793,6 +793,7 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
+use super::no_behavior::BracketLine;
 use super::owners_tests::{extract_owners, extract_tests};
 use super::sink_alignment::{
     enclosing_literal_pair, oracle_compares_whole_collection, oracle_contains_value_literal,
@@ -4254,6 +4255,282 @@ fn real_body_change_in_same_function_still_classifies() -> Result<(), String> {
         ExposureClass::Exposed,
         "a real return-value change observed by a strong oracle stays exposed"
     );
+    Ok(())
+}
+
+#[test]
+fn bracket_continuation_ranges_cover_lines_that_start_inside_a_bracket() -> Result<(), String> {
+    // #13875: lines 3-5 start inside `BadPayload(`; the brackets inside the
+    // string and the comment on line 7 are not brackets.
+    let source = concat!(
+        "def f(e):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load (the payload\"\n",
+        "        \" because\",\n",
+        "    ) from e\n",
+        "    x = [1, 2]\n",
+        "    # (not a bracket\n",
+        "    return x\n",
+    );
+    let ranges = super::no_behavior::bracket_continuation_line_ranges(source)
+        .ok_or_else(|| "a valid module must lex".to_string())?;
+    assert_eq!(ranges, vec![3..=5]);
+    // An unclosed bracket does not lex, so callers fail closed.
+    assert!(super::no_behavior::bracket_continuation_line_ranges("x = (\n").is_none());
+    Ok(())
+}
+
+#[test]
+fn a_bare_string_inside_brackets_is_behavior_but_comments_stay_no_ops() {
+    use super::no_behavior::is_python_no_behavior_line_at;
+    assert!(!is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        true
+    ));
+    assert!(is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        false
+    ));
+    assert!(is_python_no_behavior_line_at("        # a comment", true));
+    assert!(is_python_no_behavior_line_at("   ", true));
+}
+
+#[test]
+fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), String> {
+    // #13875 (mutmut on itsdangerous 672971d6, serializer.py:266): the first
+    // part of an implicitly concatenated message argument changed. It is an
+    // argument, not a docstring, so it must not be dropped as a no-op.
+    let source = concat!(
+        "def load(payload):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load the payload\"\n",
+        "        \" because of an error.\",\n",
+        "    )\n",
+    );
+    let file = Path::new("src/serializer.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_serializer.py"),
+        "from src.serializer import load\n\n\ndef test_load():\n    load(b\"x\")\n",
+    );
+    let context = |in_brackets: bool| PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: in_brackets,
+            old_in: in_brackets,
+            span: in_brackets.then_some((2, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let new = "        \"XXCould not load the payloadXX\"";
+    let old = Some("        \"Could not load the payload\"");
+    let inside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(true),
+        Some(source),
+    );
+    assert!(
+        inside.is_some(),
+        "a changed argument string must carry a probe"
+    );
+    // Control: the same text as a standalone string statement stays a no-op.
+    let outside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(false),
+        Some(source),
+    );
+    assert!(
+        outside.is_none(),
+        "a standalone string statement is still a no-op"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
+    // #13875 fallback: an unlexable new file counts every line as inside
+    // brackets with no statement span, and an unlexable old file does the
+    // same for the old line. With nothing to shape it by, a string-to-string
+    // edit keeps the earlier no-op reading on both sides.
+    let source = "def f():\n    \"Sum the items.\"\n    return 1\n";
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\n\n\ndef test_f():\n    assert f() == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: None,
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    \"Sum the items.\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(finding.is_none(), "{finding:?}");
+    // Control: the old line was real code, so the edit keeps its probe.
+    let from_code = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    total = 2"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(
+        from_code.is_some(),
+        "replacing code with a string is behavior"
+    );
+}
+
+#[test]
+fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(), String> {
+    // #13875: the message takes the raise's error-path family, so the
+    // related assertions are selected for an error path and a strong return
+    // assertion behind a guard the activation gate cannot resolve does not
+    // observe it.
+    let source = concat!(
+        "def f(item):\n",
+        "    if item.is_bad():\n",
+        "        raise ValueError(\n",
+        "            \"bad item\"\n",
+        "        )\n",
+        "    return 1\n",
+    );
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\nfrom tests.helpers import make_item\n\n\ndef test_f():\n    assert f(make_item()) == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXbad itemXX\"",
+        Some("            \"bad item\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result<(), String> {
+    // #13875: `"msg",` inside `raise E(` is the same bare string argument as
+    // `"msg"`, so it takes the raise statement's shape. Before, it was read as
+    // a predicate and reported `exposed` by a test that never raises.
+    let source = concat!(
+        "def check(n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            \"negative\",\n",
+        "        )\n",
+        "    return n\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_check.py"),
+        "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXnegativeXX\",",
+        Some("            \"negative\","),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_message_argument_with_a_trailing_comment_is_an_error_path() -> Result<(), String> {
+    // #13875 review: a trailing `# comment` after `"msg",` must not hide the
+    // bare string argument, or the line falls back to a predicate shape and a
+    // test that never raises is credited with exposing the message. A `#`
+    // inside the string itself stays part of the string.
+    let source = concat!(
+        "def check(n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            \"negative #1\",  # must be positive\n",
+        "        )\n",
+        "    return n\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_check.py"),
+        "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXnegative #1XX\",  # must be positive",
+        Some("            \"negative #1\",  # must be positive"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 
