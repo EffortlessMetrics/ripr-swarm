@@ -337,7 +337,8 @@ impl OraclePolicy {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LspConfig {
     /// Whether to publish saved-workspace seam diagnostics in addition to
-    /// diff findings. `None` means the file did not set it.
+    /// diff findings. `None` means the file did not set it, and seam
+    /// diagnostics are on.
     pub seam_diagnostics: Option<bool>,
     /// Which diagnostics the editor shows. `None` means the file did not set
     /// it, and [`LspDiagnosticProfile::Actionable`] applies.
