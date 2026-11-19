@@ -1394,7 +1394,15 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
    variable. Reject ambient `CARGO_SOURCE_*`, `CARGO_REGISTRIES_*` and
    `CARGO_REGISTRY_*` variables; never print their values. This intentionally
-   refuses even unused alternate-source settings. The metadata command has no
+   refuses even unused alternate-source settings. A resolving metadata query
+   runs `rustc` for target information, so a config found from the query
+   directory through its ancestors (every file except the canonical effective
+   home's own) also refuses when it sets `build.rustc`, `build.rustc-wrapper`,
+   `build.rustc-workspace-wrapper`, `build.rustflags`, any `target.*.rustflags`,
+   `include`, `unstable` or `host`, or an `[env]` key other than `TEMP`, `TMP`,
+   `TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or
+   `RUST_TEST_THREADS` (ASCII case-insensitive): the analyzed tree must not
+   choose a program, flag or environment the query runs (#15247). The metadata command has no
    `--config` arguments; an analysis requiring unobservable consumer CLI config
    overrides is outside this slice. Cargo's executable and ordinary registry
    cache integrity remain stated instrument assumptions, not simulated proof.
