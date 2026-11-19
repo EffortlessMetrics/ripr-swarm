@@ -1444,3 +1444,595 @@ mod candidate_actionable_predicate_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod decision_helper_tests {
+    use super::{
+        ARM_UNSELECTED_REASON_PREFIX, ActivationEvidence, AnalysisScope, DeltaKind,
+        DiscriminatorShape, Finding, GUARD_UNENTERED_REASON_PREFIX, MissingDiscriminatorFact,
+        Probe, ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestRole, SourceCurrentness,
+        StopReason, boundary_input_observed_with_weak_oracle, exact_assertion_fact,
+        input_boundary_fact, is_unselected_input_reason, row_exact_discriminator_fact,
+    };
+    use crate::domain::language_capability::{AnalysisMode, REPO_SCOPE_EVIDENCE_LINE};
+    use crate::domain::{
+        BOUNDARY_INPUT_OBSERVED_SUMMARY, BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP, Confidence,
+        ExposureClass, OracleKind, OracleStrength, ProbeId, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind,
+    };
+    use std::path::PathBuf;
+
+    const ALL_FAMILIES: [(ProbeFamily, &str); 8] = [
+        (ProbeFamily::Predicate, "predicate"),
+        (ProbeFamily::ReturnValue, "return_value"),
+        (ProbeFamily::ErrorPath, "error_path"),
+        (ProbeFamily::CallDeletion, "call_deletion"),
+        (ProbeFamily::FieldConstruction, "field_construction"),
+        (ProbeFamily::SideEffect, "side_effect"),
+        (ProbeFamily::MatchArm, "match_arm"),
+        (ProbeFamily::StaticUnknown, "static_unknown"),
+    ];
+
+    fn stage(state: StageState, summary: &str) -> StageEvidence {
+        StageEvidence::new(state, Confidence::Medium, summary)
+    }
+
+    fn fact(value: &str, reason: &str, shape: DiscriminatorShape) -> MissingDiscriminatorFact {
+        MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: reason.to_string(),
+            flow_sink: None,
+            drafted_boundary: None,
+            shape,
+        }
+    }
+
+    fn related(name: &str, strength: OracleStrength) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/limits.rs"),
+            line: 7,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            role: RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    /// A weak predicate finding whose one related test reaches the boundary
+    /// input and carries the boundary-observed Next step: every condition of
+    /// the weak-oracle advisory holds.
+    fn boundary_weak_finding() -> Finding {
+        Finding {
+            analysis_scope: AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "finding:limit".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:limit".to_string()),
+                location: SourceLocation::new("src/lib.rs", 4, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "n >= limit".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes, "Related test at_limit calls over_limit"),
+                infect: stage(StageState::Yes, BOUNDARY_INPUT_OBSERVED_SUMMARY),
+                propagate: stage(StageState::Yes, "value is returned"),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes, "assertion observes the result"),
+                    discriminate: stage(StageState::Weak, "Only weak oracle found"),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: vec![related("at_limit", OracleStrength::Weak)],
+            recommended_next_step: Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string()),
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn edited(edit: impl FnOnce(&mut Finding)) -> Finding {
+        let mut finding = boundary_weak_finding();
+        edit(&mut finding);
+        finding
+    }
+
+    #[test]
+    fn every_probe_family_token_round_trips_and_unknown_tokens_are_refused() {
+        for (family, token) in ALL_FAMILIES {
+            assert_eq!(family.as_str(), token);
+            assert_eq!(ProbeFamily::from_wire(token), Some(family));
+        }
+        for token in ["", "Predicate", "predicate ", "return-value"] {
+            assert_eq!(ProbeFamily::from_wire(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn delta_role_and_miss_tokens_are_the_wire_vocabulary() {
+        for (delta, token) in [
+            (DeltaKind::Value, "value"),
+            (DeltaKind::Control, "control"),
+            (DeltaKind::Effect, "effect"),
+            (DeltaKind::Unknown, "unknown"),
+        ] {
+            assert_eq!(delta.as_str(), token);
+        }
+        assert_eq!(RelatedTestRole::Contributing.as_str(), "contributing");
+        assert_eq!(RelatedTestRole::ExaminedOnly.as_str(), "examined_only");
+        for (miss, token, refusal) in [
+            (RelatedTestMiss::NoCallPath, "no_call_path", false),
+            (RelatedTestMiss::NoAssertion, "no_assertion", false),
+            (
+                RelatedTestMiss::AssertionNotObserving,
+                "assertion_not_observing",
+                false,
+            ),
+            (
+                RelatedTestMiss::AssertionNotCredited,
+                "assertion_not_credited",
+                true,
+            ),
+            (RelatedTestMiss::AssertionInert, "assertion_inert", true),
+            (
+                RelatedTestMiss::AssertionAdmissionUnproven,
+                "assertion_admission_unproven",
+                true,
+            ),
+            (RelatedTestMiss::WeakAssertion, "weak_assertion", false),
+            (RelatedTestMiss::MissingInput, "missing_input", false),
+            (
+                RelatedTestMiss::MissingExactAssertion,
+                "missing_exact_assertion",
+                false,
+            ),
+            (
+                RelatedTestMiss::ObservationUnconfirmed,
+                "observation_unconfirmed",
+                false,
+            ),
+        ] {
+            assert_eq!(miss.as_str(), token);
+            assert_eq!(miss.is_assertion_refusal_miss(), refusal, "{token}");
+        }
+    }
+
+    #[test]
+    fn stop_reason_glosses_say_something_distinct_for_every_reason() {
+        let reasons = [
+            StopReason::MaxDepthReached,
+            StopReason::ExternalCrateBoundary,
+            StopReason::DynamicDispatchUnresolved,
+            StopReason::ProcMacroOpaque,
+            StopReason::FixtureOpaque,
+            StopReason::FeatureUnknown,
+            StopReason::AsyncBoundaryOpaque,
+            StopReason::NoChangedRustLine,
+            StopReason::InfectionEvidenceUnknown,
+            StopReason::PropagationEvidenceUnknown,
+            StopReason::StaticProbeUnknown,
+            StopReason::TransitiveReachUnresolved,
+            StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
+            StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
+        ];
+        let glosses: std::collections::BTreeSet<&str> =
+            reasons.iter().map(StopReason::describe).collect();
+        assert_eq!(glosses.len(), reasons.len());
+        for gloss in glosses {
+            assert!(gloss.split(' ').count() >= 6, "{gloss}");
+        }
+        assert_eq!(
+            StopReason::ExternalCrateBoundary.describe(),
+            "the path crosses into another crate, which ripr does not analyze"
+        );
+    }
+
+    #[test]
+    fn each_unknown_class_has_its_own_fallback_stop_reason() {
+        for (class, reason) in [
+            (
+                ExposureClass::InfectionUnknown,
+                Some(StopReason::InfectionEvidenceUnknown),
+            ),
+            (
+                ExposureClass::PropagationUnknown,
+                Some(StopReason::PropagationEvidenceUnknown),
+            ),
+            (
+                ExposureClass::StaticUnknown,
+                Some(StopReason::StaticProbeUnknown),
+            ),
+            (ExposureClass::WeaklyExposed, None),
+            (ExposureClass::NoStaticPath, None),
+        ] {
+            assert_eq!(StopReason::for_unknown_class(&class), reason, "{class:?}");
+        }
+    }
+
+    #[test]
+    fn only_arm_and_guard_reasons_name_an_unselected_input() {
+        assert!(is_unselected_input_reason(&format!(
+            "{ARM_UNSELECTED_REASON_PREFIX} `Mode::Fast`"
+        )));
+        assert!(is_unselected_input_reason(&format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `n > 10`"
+        )));
+        assert!(!is_unselected_input_reason(
+            "No related test asserts the variant"
+        ));
+        assert!(!is_unselected_input_reason(&format!(
+            "note: {ARM_UNSELECTED_REASON_PREFIX}"
+        )));
+    }
+
+    #[test]
+    fn the_input_boundary_fact_is_chosen_by_family() {
+        let arm = format!("{ARM_UNSELECTED_REASON_PREFIX} `Mode::Fast`");
+        let guard_reason = format!("{GUARD_UNENTERED_REASON_PREFIX} `n > 10`");
+        let facts = [
+            fact("exact", "No test pins the value", DiscriminatorShape::Other),
+            fact("domain", "guard domain", DiscriminatorShape::GuardDomain),
+            fact("n == 10", "boundary", DiscriminatorShape::Boundary),
+            fact("arm", &arm, DiscriminatorShape::Other),
+            fact("guard", &guard_reason, DiscriminatorShape::Other),
+        ];
+        let chosen = |family: ProbeFamily| {
+            input_boundary_fact(&facts, &family).map(|fact| fact.value.as_str())
+        };
+        // The equality boundary wins over the guard domain even when listed later.
+        assert_eq!(chosen(ProbeFamily::Predicate), Some("n == 10"));
+        assert_eq!(chosen(ProbeFamily::ReturnValue), Some("n == 10"));
+        assert_eq!(chosen(ProbeFamily::MatchArm), Some("arm"));
+        assert_eq!(chosen(ProbeFamily::SideEffect), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::CallDeletion), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::ErrorPath), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::FieldConstruction), None);
+        assert_eq!(chosen(ProbeFamily::StaticUnknown), None);
+
+        // Without an equality boundary, predicate and return-value read the guard domain.
+        let without_boundary = &facts[..2];
+        for family in [ProbeFamily::Predicate, ProbeFamily::ReturnValue] {
+            assert_eq!(
+                input_boundary_fact(without_boundary, &family).map(|fact| fact.value.as_str()),
+                Some("domain"),
+                "{family:?}"
+            );
+        }
+        // A reason prefix alone is not a boundary for a predicate.
+        assert_eq!(
+            input_boundary_fact(&facts[3..], &ProbeFamily::Predicate),
+            None
+        );
+        assert_eq!(
+            input_boundary_fact(&facts[..1], &ProbeFamily::MatchArm),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_facts_skip_the_input_boundary_and_row_facts_also_skip_unselected_inputs() {
+        let guard_reason = format!("{GUARD_UNENTERED_REASON_PREFIX} `n > 10`");
+        let facts = [
+            fact("n == 10", "boundary", DiscriminatorShape::Boundary),
+            fact("guard", &guard_reason, DiscriminatorShape::Other),
+            fact(
+                "Error::Full",
+                "No test pins the variant",
+                DiscriminatorShape::Other,
+            ),
+        ];
+        let value = |fact: Option<&MissingDiscriminatorFact>| fact.map(|fact| fact.value.clone());
+
+        // Predicate: the boundary is the input fact, so the exact assertion is
+        // the next fact, and the row fact also steps over the unentered guard.
+        assert_eq!(
+            value(exact_assertion_fact(&facts, &ProbeFamily::Predicate)).as_deref(),
+            Some("guard")
+        );
+        assert_eq!(
+            value(row_exact_discriminator_fact(
+                &facts,
+                &ProbeFamily::Predicate
+            ))
+            .as_deref(),
+            Some("Error::Full")
+        );
+        // Field construction has no input boundary, so the first fact is exact.
+        assert_eq!(
+            value(exact_assertion_fact(
+                &facts,
+                &ProbeFamily::FieldConstruction
+            ))
+            .as_deref(),
+            Some("n == 10")
+        );
+        assert_eq!(
+            value(row_exact_discriminator_fact(
+                &facts,
+                &ProbeFamily::FieldConstruction
+            ))
+            .as_deref(),
+            Some("n == 10")
+        );
+        // Only input facts: nothing exact remains.
+        assert_eq!(
+            exact_assertion_fact(&facts[..1], &ProbeFamily::Predicate),
+            None
+        );
+        assert_eq!(
+            row_exact_discriminator_fact(&facts[..2], &ProbeFamily::Predicate),
+            None
+        );
+        // Identity, not equality, excludes the boundary: an equal twin is still exact.
+        let twins = [facts[0].clone(), facts[0].clone()];
+        let second = exact_assertion_fact(&twins, &ProbeFamily::Predicate);
+        assert!(second.is_some_and(|fact| std::ptr::eq(fact, &twins[1])));
+    }
+
+    #[test]
+    fn related_test_roles_split_decision_rows_from_examined_only_rows() {
+        let contributing = related("at_limit", OracleStrength::Weak);
+        let mut examined = related("elsewhere", OracleStrength::None);
+        examined.role = RelatedTestRole::ExaminedOnly;
+        // The role decides, never the miss.
+        examined.miss = None;
+        let mut contributing_with_miss = contributing.clone();
+        contributing_with_miss.miss = Some(RelatedTestMiss::NoAssertion);
+
+        assert!(RelatedTestRole::Contributing.is_contributing());
+        assert!(!RelatedTestRole::ExaminedOnly.is_contributing());
+        assert!(contributing.is_contributing() && !contributing.is_examined_only());
+        assert!(!examined.is_contributing() && examined.is_examined_only());
+        assert!(contributing_with_miss.is_contributing());
+
+        let finding = edited(|finding| {
+            finding.related_tests = vec![examined.clone(), contributing.clone()];
+        });
+        let names: Vec<&str> = finding
+            .oracle_related_tests()
+            .map(|test| test.name.as_str())
+            .collect();
+        assert_eq!(names, ["at_limit"]);
+    }
+
+    #[test]
+    fn the_related_test_total_never_reads_below_the_retained_rows() {
+        let with_total = |total: Option<usize>, rows: usize| {
+            edited(|finding| {
+                finding.related_tests_matched_total = total;
+                finding.related_tests = (0..rows)
+                    .map(|index| related(&format!("t{index}"), OracleStrength::Weak))
+                    .collect();
+            })
+            .related_tests_total()
+        };
+        assert_eq!(with_total(None, 0), 0);
+        assert_eq!(with_total(None, 3), 3);
+        assert_eq!(with_total(Some(9), 3), 9);
+        assert_eq!(with_total(Some(2), 3), 3);
+    }
+
+    #[test]
+    fn an_unknown_class_without_a_stop_reason_reports_its_fallback() {
+        let weak = boundary_weak_finding();
+        assert!(weak.unknown_has_stop_reason());
+        assert_eq!(weak.effective_stop_reasons(), Vec::new());
+
+        let bare_unknown = edited(|finding| finding.class = ExposureClass::StaticUnknown);
+        assert!(!bare_unknown.unknown_has_stop_reason());
+        assert_eq!(
+            bare_unknown.effective_stop_reasons(),
+            [StopReason::StaticProbeUnknown]
+        );
+
+        let explained = edited(|finding| {
+            finding.class = ExposureClass::StaticUnknown;
+            finding.stop_reasons = vec![StopReason::ProcMacroOpaque, StopReason::FeatureUnknown];
+        });
+        assert!(explained.unknown_has_stop_reason());
+        assert_eq!(
+            explained.effective_stop_reasons(),
+            [StopReason::ProcMacroOpaque, StopReason::FeatureUnknown]
+        );
+    }
+
+    #[test]
+    fn only_a_candidate_current_finding_is_actionable_and_others_disclose_why() {
+        let with = |currentness: SourceCurrentness| {
+            edited(|finding| finding.source_currentness = currentness)
+        };
+        let current = with(SourceCurrentness::CandidateCurrent);
+        assert!(current.is_candidate_actionable());
+        assert_eq!(current.source_currentness_disclosure(), None);
+
+        for (currentness, base_side, disclosure) in [
+            (
+                SourceCurrentness::BaseDeleted,
+                true,
+                "base_deleted \u{2014} base-side evidence, not a candidate edit target",
+            ),
+            (
+                SourceCurrentness::MovedOrRenamed,
+                true,
+                "moved_or_renamed \u{2014} base-side evidence, not a candidate edit target",
+            ),
+            (
+                SourceCurrentness::UnresolvedSubject,
+                false,
+                "unresolved_subject \u{2014} source currentness not established, not a candidate edit target",
+            ),
+        ] {
+            let finding = with(currentness);
+            assert!(!finding.is_candidate_actionable(), "{currentness:?}");
+            assert_eq!(currentness.is_base_side(), base_side, "{currentness:?}");
+            assert_eq!(
+                finding.source_currentness_disclosure().as_deref(),
+                Some(disclosure)
+            );
+        }
+        assert!(!SourceCurrentness::CandidateCurrent.is_base_side());
+    }
+
+    #[test]
+    fn proof_harness_only_needs_both_the_class_and_the_limit_kind() {
+        let harness = |class: ExposureClass, kind: Option<StaticLimitKind>| {
+            edited(|finding| {
+                finding.class = class;
+                finding.static_limit_kind = kind;
+            })
+            .is_proof_harness_only()
+        };
+        let proof = Some(StaticLimitKind::ProofHarnessNotEvaluated);
+        assert!(harness(ExposureClass::NoStaticPath, proof));
+        assert!(!harness(ExposureClass::StaticUnknown, proof));
+        assert!(!harness(ExposureClass::NoStaticPath, None));
+        assert!(!harness(
+            ExposureClass::NoStaticPath,
+            Some(StaticLimitKind::DynamicDispatch)
+        ));
+    }
+
+    #[test]
+    fn marking_repo_scope_sets_the_scope_and_one_evidence_line() {
+        let mut finding = boundary_weak_finding();
+        assert!(finding.analysis_scope.is_diff());
+        assert_eq!(finding.analysis_mode(), Some(AnalysisMode::Diff));
+
+        finding.mark_repo_scoped();
+        finding.mark_repo_scoped();
+        assert_eq!(finding.analysis_scope, AnalysisScope::Repo);
+        assert!(!finding.analysis_scope.is_diff());
+        assert_eq!(finding.evidence, [REPO_SCOPE_EVIDENCE_LINE]);
+        assert_eq!(finding.analysis_mode(), Some(AnalysisMode::Repo));
+
+        // A diff-scoped finding that carries the repo evidence line is
+        // contradictory, so no capability mode is borrowed.
+        let contradictory = edited(|finding| {
+            finding.evidence = vec![REPO_SCOPE_EVIDENCE_LINE.to_string()];
+        });
+        assert_eq!(contradictory.analysis_mode(), None);
+    }
+
+    #[test]
+    fn the_weak_oracle_advisory_holds_only_when_every_condition_does() {
+        assert!(boundary_weak_finding().boundary_input_observed_with_weak_oracle());
+
+        let refused: [(&str, Finding); 12] = [
+            (
+                "class",
+                edited(|finding| finding.class = ExposureClass::ReachableUnrevealed),
+            ),
+            (
+                "family",
+                edited(|finding| finding.probe.family = ProbeFamily::ReturnValue),
+            ),
+            (
+                "infection state",
+                edited(|finding| finding.ripr.infect.state = StageState::Weak),
+            ),
+            (
+                "infection summary",
+                edited(|finding| finding.ripr.infect.summary = "input reaches the change".into()),
+            ),
+            (
+                "discriminator state",
+                edited(|finding| finding.ripr.reveal.discriminate.state = StageState::No),
+            ),
+            (
+                "discriminator summary opening",
+                edited(|finding| {
+                    finding.ripr.reveal.discriminate.summary = "A weak oracle found".into();
+                }),
+            ),
+            (
+                "discriminator summary limitation",
+                edited(|finding| {
+                    finding.ripr.reveal.discriminate.summary = "Only unpaired assertions".into();
+                }),
+            ),
+            (
+                "stop reason",
+                edited(|finding| finding.stop_reasons = vec![StopReason::FixtureOpaque]),
+            ),
+            (
+                "no weak row",
+                edited(|finding| {
+                    finding.related_tests = vec![related("smoke", OracleStrength::Smoke)];
+                }),
+            ),
+            (
+                "strong row",
+                edited(|finding| {
+                    finding
+                        .related_tests
+                        .push(related("exact", OracleStrength::Strong));
+                }),
+            ),
+            (
+                "medium row",
+                edited(|finding| {
+                    finding
+                        .related_tests
+                        .push(related("medium", OracleStrength::Medium));
+                }),
+            ),
+            (
+                "next step",
+                edited(|finding| finding.recommended_next_step = Some("Add a test".into())),
+            ),
+        ];
+        for (condition, finding) in &refused {
+            assert!(
+                !finding.boundary_input_observed_with_weak_oracle(),
+                "{condition}"
+            );
+        }
+
+        // The shared gate ignores the Next step; the finding-level reading adds it.
+        let other_step = &refused[11].1;
+        assert!(boundary_input_observed_with_weak_oracle(
+            &other_step.class,
+            &other_step.probe.family,
+            &other_step.ripr.infect,
+            &other_step.ripr.reveal.discriminate,
+            &other_step.related_tests,
+            &other_step.stop_reasons,
+        ));
+        // A weak row beside a smoke row still qualifies.
+        assert!(
+            edited(|finding| {
+                finding
+                    .related_tests
+                    .push(related("smoke", OracleStrength::Smoke));
+            })
+            .boundary_input_observed_with_weak_oracle()
+        );
+    }
+}
