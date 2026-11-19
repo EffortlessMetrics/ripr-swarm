@@ -5729,7 +5729,11 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             let entry = archive
                 .by_name(name)
                 .map_err(|err| format!("locate {name} entry: {err}"))?;
-            assert_eq!(entry.unix_mode().map(|mode| mode & 0o777), Some(expected), "{name}");
+            assert_eq!(
+                entry.unix_mode().map(|mode| mode & 0o777),
+                Some(expected),
+                "{name}"
+            );
         }
         Ok(())
     })
