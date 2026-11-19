@@ -115,6 +115,11 @@ fn a_debug_assert_eq_owner_pin_reads_as_a_profile_limit() -> Result<(), String> 
         "debug_assert_eq!(one(), 1, \"x(y\");",
         // A binding that only reads the owner does not rebind it.
         "let v = one(); debug_assert_eq!(one(), 1); assert!(v > 0);",
+        // #8637: a `std`/`core` root the file leaves unrebound.
+        "std::debug_assert_eq!(one(), 1);",
+        "core::debug_assert_eq!(one(), 1);",
+        "::std::debug_assert_eq!(one(), 1);",
+        "::core :: debug_assert_eq!(1, one());",
     ] {
         let finding = return_finding("", body)?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
@@ -158,6 +163,11 @@ const TWIN_BODIES: &[(&str, &str)] = &[
     ("", "ASSERT![one(), 1];"),
     ("", "ASSERT!(format!(\"{}\", one()), \"1\");"),
     ("", "ASSERT!(vec![one()][0], 1);"),
+    // #8637: rooted spellings, and a root the file rebinds.
+    ("", "std::ASSERT!(one(), 1);"),
+    ("", "::core::ASSERT!(1, one());"),
+    ("", "use super as std; std::ASSERT!(one(), 1);"),
+    ("", "crate::ASSERT!(one(), 1);"),
     ("#[should_panic]", "ASSERT!(one(), 2);"),
     ("#[ignore]", "ASSERT!(one(), 1);"),
 ];
@@ -222,6 +232,27 @@ fn other_debug_checks_keep_their_gap() -> Result<(), String> {
             "{body}: {finding:?}"
         );
         assert_eq!(finding.static_limit_kind, None, "{body}");
+    }
+    Ok(())
+}
+
+/// #8637: a qualified `debug_assert_eq!` is read only under a `std`/`core`
+/// root the file leaves unrebound. Another root, or a rebound one, is never
+/// the standard macro and never reads as a debug-profile limit.
+#[test]
+fn a_debug_assert_eq_under_an_unproved_root_is_not_a_profile_limit() -> Result<(), String> {
+    for body in [
+        "use super as std; std::debug_assert_eq!(one(), 1);",
+        "crate::debug_assert_eq!(one(), 1);",
+        "self::core::debug_assert_eq!(one(), 1);",
+    ] {
+        let finding = return_finding("", body)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+        assert_ne!(
+            finding.static_limit_kind.map(|kind| kind.as_str()),
+            Some("rust_debug_assertion_profile_unresolved"),
+            "{body}: {finding:?}"
+        );
     }
     Ok(())
 }

@@ -726,6 +726,11 @@ fn no_worktree_merge_base_error(
     git_timeout: Option<Duration>,
 ) -> CoreError {
     let stderr = String::from_utf8_lossy(&merge_base.stderr);
+    if git_stderr_names_promisor_fetch_failure(&stderr) {
+        return CoreError::message(format!(
+            "the working-tree diff from `{base}` cannot start: {PROMISOR_FETCH_REPAIR}"
+        ));
+    }
     if git_stderr_names_object_damage(&stderr) {
         return worktree_damage_error(base, &merge_base.stderr);
     }
@@ -1010,6 +1015,18 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
     )
 }
 
+/// The refusal for a bare repository: it is a repository, but it has no
+/// checked-out source for the analysis to read, so the next action is a
+/// work tree, not "run inside a repository" (#14104).
+pub(crate) fn bare_repository_message(root: &Path) -> String {
+    format!(
+        "This root is a bare Git repository with no work tree (the analysis did not run). \
+         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
+         `--root <path>` to that work tree. Root: `{}`",
+        root.display(),
+    )
+}
+
 fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String> {
     match probe {
         GitRootProbe::GitNotFoundOnPath => {
@@ -1033,6 +1050,31 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
 /// (#7076) so both name one repair.
 const OBJECT_DAMAGE_REPAIR: &str = "Git reports a damaged object store; run `git fsck`, restore \
     the missing objects (for example `git fetch`), then re-run.";
+
+/// The cause and repair when a partial clone (`--filter=blob:none` and
+/// similar) needs objects it never downloaded and Git could not fetch them
+/// from the promisor remote, usually because the machine is offline or the
+/// remote is unreachable. ripr makes no network requests itself; this is
+/// Git's own on-demand fetch. Checked before [`git_stderr_names_object_damage`]:
+/// Git's transport text ("Could not read from remote repository") otherwise
+/// reads as local object damage, whose `git fsck` repair cannot help.
+const PROMISOR_FETCH_REPAIR: &str = "This is a partial clone (for example \
+    `--filter=blob:none`): the file contents for this range were never downloaded, and Git \
+    could not fetch them from the clone's remote, which is unreachable (offline), refused access, \
+    or no longer has them (the analysis did not run; ripr itself makes no network requests). \
+    Re-run where Git can reach and authenticate to that remote, or analyze a full clone (in \
+    GitHub Actions, remove `filter:` from actions/checkout).";
+
+/// Whether Git's stderr reports a failed on-demand fetch from a partial
+/// clone's promisor remote. Git words it `could not fetch <oid> from promisor
+/// remote`; anchored to `fatal:`/`error:` lines like the damage markers.
+fn git_stderr_names_promisor_fetch_failure(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .any(|line| line.contains("from promisor remote"))
+}
 
 /// The generic repair when Git failed for a reason that names repository
 /// state the user must correct, shared by the ref-probe failure text and the
@@ -1193,6 +1235,8 @@ fn unreadable_repository_message_with_ref_repair(
         // reading any repository file.
         "Git rejected configuration from the environment (`GIT_CONFIG_*`); correct or unset \
          it, then re-run."
+    } else if git_stderr_names_promisor_fetch_failure(&stderr) {
+        PROMISOR_FETCH_REPAIR
     } else if git_stderr_names_object_damage(&stderr) {
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
@@ -1452,12 +1496,32 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         HeadRefState::Unknown => return String::new(),
         HeadRefState::Resolved => {}
     }
+    let single_branch = origin_tracks_a_single_branch(root, git_timeout);
     if is_shallow_repository(root, git_timeout) {
+        if single_branch {
+            // `git clone --depth N` is single-branch: `--unshallow` deepens
+            // the one tracked branch and fetches no base branch at all.
+            return format!(
+                " This is a shallow clone that tracks a single branch, so it never fetched a \
+                 base branch; widen it with `{WIDEN_ORIGIN_COMMAND}`, then fetch with \
+                 `git fetch --unshallow origin`."
+            );
+        }
         return " This is a shallow clone that did not fetch a base branch; fetch it with \
                 `git fetch --unshallow origin` (in GitHub Actions, set `fetch-depth: 0` on \
                 actions/checkout)."
             .to_string();
     }
+    // A full single-branch clone has the same hole: the base branch was
+    // never fetched, and the branches listed below are only this one.
+    let single_branch_note = if single_branch {
+        format!(
+            " This clone tracks a single branch; fetch the others with \
+             `{WIDEN_ORIGIN_COMMAND}` and `git fetch origin`."
+        )
+    } else {
+        String::new()
+    };
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1523,7 +1587,7 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             .collect::<Vec<_>>()
             .join(", ")
     };
-    match (related.first(), unrelated.is_empty(), current.first()) {
+    let branch_context = match (related.first(), unrelated.is_empty(), current.first()) {
         (Some(first), _, _) => format!(
             " Other branches here: {}; for example `--base {first}`.",
             listed(&related)
@@ -1555,7 +1619,36 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             }
         }
         (None, false, _) | (None, true, None) => String::new(),
-    }
+    };
+    format!("{single_branch_note}{branch_context}")
+}
+
+/// Widens a single-branch clone so a fetch brings every branch of `origin`.
+/// Double quotes keep the `*` literal in Bash, PowerShell and cmd alike.
+const WIDEN_ORIGIN_COMMAND: &str = "git remote set-branches origin \"*\"";
+
+/// True when `origin` is configured to fetch named branches only, which is
+/// what `git clone --single-branch` (implied by `--depth`) writes. A fetch
+/// or `--unshallow` there never creates another branch's `origin/<name>`,
+/// so advice to "fetch the base" needs the widening step first. False when
+/// there is no `origin`, when any refspec carries a wildcard, or when Git
+/// cannot answer: the note is added only on an established single-branch
+/// configuration.
+fn origin_tracks_a_single_branch(root: &Path, git_timeout: Option<Duration>) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["config", "--get-all", "remote.origin.fetch"],
+        git_timeout,
+    )
+    .is_ok_and(|output| {
+        let refspecs = String::from_utf8_lossy(&output.stdout);
+        let mut lines = refspecs
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .peekable();
+        output.status.success() && lines.peek().is_some() && lines.all(|line| !line.contains('*'))
+    })
 }
 
 /// Resolve the diff loader's default base for `root` together with the
@@ -1644,6 +1737,65 @@ pub fn resolve_base_commit(
     }
     let commit = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!commit.is_empty()).then_some(commit)
+}
+
+/// #13644 / #14423: the one git-identity rule for "this empty range is the
+/// checked-out base branch compared with itself, and `--base HEAD~1` names
+/// the last commit". True when HEAD is on a branch, `base` resolves to HEAD's
+/// own commit, `HEAD~1` resolves, and `base` names that branch, either as
+/// `<branch>` or, in a clone, as `origin/<branch>` when the branch is a
+/// conventional default or no other base candidate exists (#7644: a
+/// feature-branch clone whose `origin/HEAD` tracks the feature branch has its
+/// real base elsewhere). The bare human check's last-commit rescope and the
+/// machine formats' last-commit route both read this decision.
+pub fn base_is_checked_out_head_with_parent(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    let git = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            args,
+            // `--git-timeout` bounds these probes like any other git call.
+            Some(git_timeout.unwrap_or(Duration::from_secs(5))),
+        )
+        .ok()
+        .filter(|out| out.status.success())
+    };
+    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    else {
+        return false;
+    };
+    let commit = |rev: &str| {
+        git(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    // Both spellings below require the base to name HEAD's own commit: an
+    // empty range by construction, not a branch that is merely behind.
+    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
+    if !same_commit || commit("HEAD~1").is_none() {
+        return false;
+    }
+    if base == branch {
+        return true;
+    }
+    // A clone resolves the default base to `origin/<branch>` while HEAD is
+    // `<branch>`. That is also the shape of a feature-branch clone whose
+    // `origin/HEAD` tracks the feature branch, where the real base is
+    // elsewhere and the existing hedge names it (#7644); only narrow to the
+    // last commit when the branch is a conventional default or no other base
+    // candidate exists (a full clone of `main` usually carries other remote
+    // branches, which must not disable the fallback).
+    base.strip_prefix("origin/") == Some(branch.as_str())
+        && (matches!(branch.as_str(), "main" | "master")
+            || another_base_candidate(root, git_timeout).is_none())
 }
 
 /// Whether some branch other than the current one could serve as a
@@ -2056,6 +2208,23 @@ fn missing_ref_repair(
             .to_string();
     }
     if is_shallow_repository(root, git_timeout) {
+        // An ancestor offset of a present commit (`HEAD~5`) needs depth
+        // only. A branch, or an offset of one that is absent
+        // (`origin/main~1`), needs its ref fetched, which `--unshallow`
+        // alone never does in a single-branch clone.
+        let needs_a_branch = ancestor_anchor(missing_ref).is_none_or(|anchor| {
+            !git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+                .is_some_and(|output| output.status.success())
+        });
+        if needs_a_branch && origin_tracks_a_single_branch(root, git_timeout) {
+            // The widened remote is `origin`, so the fetch names it: an
+            // unqualified fetch follows the current branch's remote.
+            return format!(
+                "This is a shallow clone that tracks a single branch: widen it with \
+                 `{WIDEN_ORIGIN_COMMAND}`, then fetch the missing history with `git fetch \
+                 --unshallow origin`"
+            );
+        }
         return "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
@@ -2765,11 +2934,20 @@ fn run_git_diff_bytes(
     // reading orderfile `''` — while /dev/null holds no patterns on any
     // platform git runs (verified on git-for-Windows 2.47.1, which maps it
     // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    // `diff.renames=true` pins git's own default (#14193). With an ambient
+    // `diff.renames=false` a renamed and edited file arrives as a deletion
+    // plus a whole new file, so every line of it is read as added and probed
+    // and the rename disclosure is lost; with `copies` a new file can arrive
+    // as a copy section that carries only its difference from another file.
+    // It is a config pin, not a flag, so a caller extra such as
+    // `--no-renames` still decides for its own invocation.
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
         "-c",
         "diff.orderFile=/dev/null",
+        "-c",
+        "diff.renames=true",
         "diff",
     ];
     args.extend_from_slice(extra_args);
@@ -2836,6 +3014,8 @@ fn run_git_diff_bytes(
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
+        } else if git_stderr_names_promisor_fetch_failure(raw_stderr) {
+            format!(" {PROMISOR_FETCH_REPAIR}")
         } else if git_stderr_names_object_damage(raw_stderr) {
             format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
@@ -4714,6 +4894,85 @@ mod tests {
         Ok(())
     }
 
+    /// `git clone --depth 1` is single-branch: `--unshallow` alone deepens
+    /// the tracked branch and never creates `origin/main`. The advice must
+    /// name the widening step, and following it must make the default base
+    /// resolve. A wildcard clone at the same depth is the control.
+    #[test]
+    fn single_branch_shallow_clone_advice_widens_before_unshallow() -> std::io::Result<()> {
+        let origin = unique_fixture_root("single-branch-origin")?;
+        init_git_repo(&origin, "main")?;
+        run_git_checked(&origin, &["checkout", "-b", "feat"])?;
+        fs::write(origin.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&origin, &["add", "."])?;
+        run_git_checked(&origin, &["commit", "-m", "feat"])?;
+        // The remote's default branch stays `main`, as on a hosted remote.
+        run_git_checked(&origin, &["checkout", "main"])?;
+        let origin_url = format!("file://{}", origin.display());
+        let clone = |label: &str, extra: &[&str]| -> std::io::Result<PathBuf> {
+            let dir = unique_fixture_path(label);
+            let dir_arg = dir.to_string_lossy().to_string();
+            let mut args = vec!["clone", "-q", "--depth", "1", "--branch", "feat"];
+            args.extend_from_slice(extra);
+            args.push(&origin_url);
+            args.push(&dir_arg);
+            run_git_checked(dir.parent().unwrap_or(Path::new(".")), &args)?;
+            Ok(dir)
+        };
+
+        let single = clone("single-branch-shallow", &[])?;
+        assert!(origin_tracks_a_single_branch(&single, None));
+        let err = resolve_default_base(&single, None).expect_err("the base was never fetched");
+        assert!(
+            err.contains("tracks a single branch")
+                && err.contains(WIDEN_ORIGIN_COMMAND)
+                && err.contains("git fetch --unshallow origin"),
+            "a single-branch shallow clone must name the widening step, got: {err}"
+        );
+        for base in ["origin/main", "origin/main~1"] {
+            let err = load_diff(&single, Some(base), None, None)
+                .expect_err("origin/main was never fetched");
+            assert!(
+                err.contains(WIDEN_ORIGIN_COMMAND) && err.contains("git fetch --unshallow origin"),
+                "an explicit base on an absent branch must name the widening step, got: {err}"
+            );
+        }
+        // An ancestor offset needs depth only, not another branch.
+        let err = load_diff(&single, Some("HEAD~1"), None, None)
+            .expect_err("a depth-1 clone has no parent commit");
+        assert!(
+            err.contains("git fetch --unshallow") && !err.contains(WIDEN_ORIGIN_COMMAND),
+            "an ancestor base needs only the unshallow repair, got: {err}"
+        );
+
+        // The old advice alone does not repair it, and the full clone it
+        // leaves still names the widening step.
+        run_git_checked(&single, &["fetch", "-q", "--unshallow", "origin"])?;
+        let err = resolve_default_base(&single, None).expect_err("unshallow fetched no base");
+        assert!(
+            err.contains("tracks a single branch") && err.contains(WIDEN_ORIGIN_COMMAND),
+            "a full single-branch clone must still name the widening step, got: {err}"
+        );
+        // Following the advice does.
+        run_git_checked(&single, &["remote", "set-branches", "origin", "*"])?;
+        run_git_checked(&single, &["fetch", "-q", "origin"])?;
+        assert_eq!(
+            resolve_default_base(&single, None).as_deref(),
+            Ok("origin/main")
+        );
+
+        // Control: Git only honours `--no-single-branch` for a shallow
+        // clone, and that clone keeps the wildcard refspec.
+        let wide = clone("wide-shallow", &["--no-single-branch"])?;
+        assert!(!origin_tracks_a_single_branch(&wide, None));
+        assert!(!origin_tracks_a_single_branch(&origin, None), "no origin");
+
+        for dir in [&origin, &single, &wide] {
+            ignore_remove_dir_all(dir);
+        }
+        Ok(())
+    }
+
     #[test]
     fn missing_merge_base_names_shallow_clone_or_unrelated_history() -> std::io::Result<()> {
         // `actions/checkout` clones one commit deep by default. Fetching the
@@ -5950,6 +6209,23 @@ mod tests {
         ] {
             assert!(!git_reason_means_no_repository(reason), "{reason}");
         }
+    }
+
+    #[test]
+    fn offline_partial_clone_fetch_is_not_object_damage() {
+        // Git 2.43's exact text for an unreachable promisor remote. Its
+        // transport line also matches the damage marker "Could not read", so
+        // the order of the two checks is load-bearing.
+        let offline = "fatal: unable to access 'https://example.invalid/r.git/': Could not resolve host: example.invalid\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\nfatal: could not fetch 2992d22562e72cc4b0de14ee1ba01e94999add3a from promisor remote\n";
+        assert!(git_stderr_names_promisor_fetch_failure(offline));
+        assert!(git_stderr_names_object_damage(offline));
+        // A local read failure in a full clone stays object damage.
+        let damaged = "error: Could not read 0123abc\nfatal: bad object HEAD\n";
+        assert!(!git_stderr_names_promisor_fetch_failure(damaged));
+        // The phrase outside a Git diagnostic line is not a fetch failure.
+        assert!(!git_stderr_names_promisor_fetch_failure(
+            "warning: branch from promisor remote cleanup\n"
+        ));
     }
 
     #[test]

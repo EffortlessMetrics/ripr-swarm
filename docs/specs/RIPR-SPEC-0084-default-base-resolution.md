@@ -124,7 +124,12 @@ clone is shallow and never fetched a base branch (name `git fetch
 --unshallow` and `fetch-depth: 0`); other branches exist (name up to five,
 never the current branch, with a `--base` example); the current branch is
 the only one. A Git probe that fails to run adds no context rather than a
-guessed cause.
+guessed cause. When `remote.origin.fetch` holds only named-branch refspecs
+(a single-branch clone, which `git clone --depth N` creates), the context
+names `git remote set-branches origin "*"` before the fetch: in a shallow
+clone it replaces the plain unshallow advice, and in a full clone it
+precedes the branch list, because no fetch there ever creates another
+branch's `origin/<name>` (#14104).
 
 A damaged repository is not a missing base. When the `HEAD` probe itself
 fails with a Git `fatal:` line (exit 128, for example a corrupt
@@ -158,7 +163,11 @@ base, the Git failure text is kept and followed by its cause: a shallow
 clone (repair: `git fetch --unshallow`, or `fetch-depth: 0` on
 `actions/checkout`) or unrelated histories (repair: a `--base` on HEAD's
 history). An explicit base that does not resolve in a shallow clone names
-the unshallow repair; otherwise the repair follows the repo's own remote
+the unshallow repair; in a single-branch shallow clone, a base that needs a
+branch (a branch name, or an ancestor offset whose anchor is absent such as
+`origin/main~1`) names the widening step first and fetches `origin`
+explicitly, while an offset of a present commit (`HEAD~1`) keeps the
+depth-only repair (#14104); otherwise the repair follows the repo's own remote
 configuration (a remote-qualified ref names its configured remote, a
 remote-less repo gets the add-remote step) instead of prescribing `origin`
 (#5252 item 8).
@@ -284,6 +293,42 @@ without Git history) and trails the root path. The LSP shows it as a
 root is the part shortened, never the remedy. A short failure message is
 shown unchanged.
 
+### Offline partial clone is not object damage (#14799)
+
+ripr makes no network requests. A blob-filtered (partial) clone stores only
+the contents it checked out, so a diff against an older base makes Git fetch
+the missing contents on demand from the clone's promisor remote. When that
+fetch is refused (`could not fetch <oid> from promisor remote` on a Git
+`fatal:`/`error:` line), the refusal names the partial clone and the
+unreachable, refusing, or object-less remote, and offers re-running where
+Git can reach that remote or analyzing a full clone. It is classified before
+the object-damage repair, because Git's transport line ("Could not read from
+remote repository") would otherwise match a damage marker and send the user
+to `git fsck` for a healthy store. Every ripr Git invocation sets
+`GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, so Git neither prompts
+on the terminal nor opens a Git Credential Manager window; a user-configured
+`GIT_ASKPASS`/`core.askPass` helper is left in place (CI token helpers rely
+on it) and is outside this guarantee. Everyday commands (`doctor`, `check`,
+`pilot`, `first-pr`, `cache status`, `help --json`, `init --ci github`)
+complete with the network sealed.
+
+### Repository-defined git helpers do not run (#14242)
+
+A `.git/config` that arrives with an extracted archive or a nested
+repository can name programs for Git to run. Every ripr Git invocation
+resets each `filter.<driver>.clean`, `.smudge`, `.process` and `.required`
+key that the repository or worktree configuration defines to the value the
+user's own system or global configuration gives it, or to nothing, and sets
+`log.showSignature=false` so `gpg.program` is not run on `git log`. A driver
+the user installed globally keeps working, including a `required` key
+written with no value, which stays true. The listing is read before each
+call and is not cached, runs inside the caller's deadline (a zero deadline
+starts no process), and an inherited `GIT_CONFIG` is removed so the listing
+reads the same configuration the call does. When the filter listing cannot be
+read, is ended by a signal, is truncated, or names a driver that cannot be reset on the command
+line, ripr does not run Git in that repository. A populated submodule's own
+repository configuration is outside this guarantee (Unix proof).
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -387,6 +432,22 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice`
 - `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
+- `crates/ripr/src/analysis/diff/load.rs::tests::offline_partial_clone_fetch_is_not_object_damage`
+- `crates/ripr/src/git.rs::tests::git_commands_disable_terminal_and_gcm_credential_prompts`
+- `crates/ripr/src/git_helper_pin_tests.rs::repository_clean_filter_program_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_planted_after_the_first_call_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_with_an_unspellable_driver_name_is_refused`
+- `crates/ripr/src/git_helper_pin_tests.rs::repository_gpg_program_does_not_run_on_log`
+- `crates/ripr/src/git_helper_pin_tests.rs::user_scope_filter_definitions_survive_and_repository_ones_are_reset`
+- `crates/ripr/src/git_helper_pin_tests.rs::listing_edge_shapes_fail_closed`
+- `crates/ripr/src/git_helper_pin_tests.rs::probe_exit_states_fail_closed_when_the_listing_is_unknown`
+- `crates/ripr/src/git_helper_pin_tests.rs::trusted_valueless_required_stays_required`
+- `crates/ripr/src/git_helper_pin_tests.rs::trusted_valueless_required_filter_still_refuses_raw_content`
+- `crates/ripr/src/git_helper_pin_tests.rs::inherited_git_config_selector_is_removed_from_every_call`
+- `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_added_to_an_included_file_does_not_run`
+- `crates/ripr/src/git_helper_pin_tests.rs::filter_listing_runs_inside_the_callers_deadline`
+- `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
+- `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 
 ## Implementation Mapping
 

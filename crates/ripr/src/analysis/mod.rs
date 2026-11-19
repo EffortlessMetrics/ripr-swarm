@@ -32,6 +32,7 @@ pub(crate) mod new_test_target;
 pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) mod python_env;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
@@ -68,6 +69,7 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
+pub(crate) mod stale_raised_type_pin;
 pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
@@ -91,6 +93,7 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// analysis tree and name the type through inference.
 #[cfg(test)]
 pub(crate) use diff::LoadedDiff;
+pub(crate) use diff::bare_repository_message;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -104,8 +107,8 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, default_base_unresolved_message,
-    is_shallow_repository, load_diff, load_diff_core,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head_with_parent,
+    default_base_unresolved_message, is_shallow_repository, load_diff, load_diff_core,
     load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
@@ -142,11 +145,12 @@ pub(crate) use language::{
     python_module_fstring_reader_finding, python_module_reader_assertion_parses,
     python_module_string_reader_finding, python_module_value_without_import_identity,
 };
+#[cfg(feature = "lang-typescript")]
+pub(crate) use probes::normalize_expression;
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
-    normalize_rust_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
+pub(crate) use rust_index::{DeclinedRustFile, IndexDisclosureRun, RustIndex};
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
@@ -168,6 +172,8 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::evaluation_probe;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::hold_seam_limit_mutators;
@@ -179,7 +185,7 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    SeamLimitInfo, SeamLimitSource, SecondStageScope, TargetedTestInventoryError,
     announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
     diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
@@ -188,17 +194,19 @@ pub(crate) use seam_inventory::{
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_seams_at_with_config, prepare_diff_scoped_classified_workspace,
-    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
-    workspace_cache_key_at_with_config,
+    inventory_seams_at_with_config, locate_seam_file_at_with_config,
+    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
+    scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
+#[cfg(test)]
+pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
-pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
 };
@@ -278,8 +286,21 @@ pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
 
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
+///
+/// An unreadable subdirectory or file is skipped, not turned into an empty
+/// set: use [`workspace_has_rust_source`] for a "no Rust here" verdict.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
-    workspace::discover_rust_files(root).unwrap_or_default()
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .map(|(files, _)| files)
+        .unwrap_or_default()
+}
+
+/// Whether the root holds any Rust source, counting a path the walk could not
+/// read: an unreadable directory may hold Rust, so it never reads as "no Rust
+/// files" (an unreadable root still does, as before).
+pub(crate) fn workspace_has_rust_source(root: &Path) -> bool {
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .is_ok_and(|(files, unreadable)| !files.is_empty() || !unreadable.is_empty())
 }
 
 /// Why a ledger-supplied rerun anchor is not strictly root-relative, or `None`
@@ -610,7 +631,9 @@ fn top_typescript_readiness_blocker(
 use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+#[cfg(feature = "lang-typescript")]
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 /// #11398: whether `seam` is a field write in a method (`self.count += 1`)
@@ -1147,6 +1170,10 @@ pub struct AnalysisResult {
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// The diff's changed new-side lines per file (#15039), for the
+    /// location-miss diagnosis. `None` for repo-scope runs, which have no
+    /// diff. Never serialized.
+    pub(crate) changed_lines: Option<crate::analysis_outcome::ChangedLineIndex>,
     /// Per-language persistent fact-cache admissions for this run (#10725),
     /// collected from each adapter's `LanguageDiffResult`. Rendered into the
     /// verbose disclosure line by `app::check`; empty when no adapter did
@@ -1275,11 +1302,16 @@ pub(crate) fn owner_symbols_for_lines(
 /// every function whose span contains a changed line, so a consumer can tell
 /// whether an outer owner's span overlaps the diff even when attribution named
 /// a nested function. A line outside every function span has no entry in
-/// either list.
+/// either list. `edited_function_headers` holds the `(file, start_line)` of
+/// each of those enclosing functions and of each indexed test (including a
+/// macro-generated one, pinned to its invocation) whose span contains a
+/// changed line, sorted and deduplicated, so a consumer can tell whether a
+/// test, identified by its header line, was edited.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedLineOwnership {
     pub(crate) owners: Vec<ChangedLineOwner>,
     pub(crate) enclosing_owners: Vec<ChangedLineOwner>,
+    pub(crate) edited_function_headers: Vec<(PathBuf, usize)>,
 }
 
 pub(crate) fn changed_line_ownership_for_lines(
@@ -1316,10 +1348,210 @@ pub(crate) fn changed_line_ownership_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    // A test produced by a `macro_rules!` expansion is pinned to its
+    // invocation span and has no function fact, so read test spans too.
+    let edited_function_headers = lines
+        .iter()
+        .flat_map(|(file, line)| {
+            let functions = rust_index::find_enclosing_functions(&index, file, *line)
+                .map(|function| (file.clone(), function.start_line));
+            let tests = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.file == *file && test.start_line <= *line && *line <= test.end_line
+                })
+                .map(|test| (file.clone(), test.start_line))
+                .collect::<Vec<_>>();
+            functions
+                .chain(tests)
+                .chain(attribute_edited_headers(&index, file, *line))
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(ChangedLineOwnership {
         owners: sorted_owners(owners),
         enclosing_owners: sorted_owners(enclosing_owners),
+        edited_function_headers,
     })
+}
+
+/// Longest attribute/comment prefix above a `fn` token that is walked before
+/// the edit is treated as unattributable.
+const MAX_ATTRIBUTE_PREFIX_LINES: usize = 256;
+
+/// Headers of functions and tests whose attribute prefix holds `line`: an
+/// indexed start line is the `fn` token, so editing `#[test]` (or any
+/// attribute, including an argument line of a multi-line attribute) above an
+/// existing function edits that test without touching its span (#12940
+/// review). The prefix is walked upward from the next item's `fn` line,
+/// tracking `[`/`]` depth, across blank lines, comments, and attributes.
+///
+/// When the walk cannot decide (unbalanced brackets, a raw string, or a prefix longer
+/// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), or the edit is an inner attribute
+/// or an attribute of a `mod` item, every test header in the file is
+/// returned, so an unattributable edit reads as "possibly edited" rather
+/// than "not edited" and second-stage pruning stays conservative.
+fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
+    let Some(facts) = rust_index::find_file_facts(index, file) else {
+        return Vec::new();
+    };
+    let starts = facts
+        .functions
+        .iter()
+        .map(|function| function.start_line)
+        .chain(facts.tests.iter().map(|test| test.start_line))
+        .collect::<BTreeSet<_>>();
+    let Some(next_start) = starts.range(line + 1..).next().copied() else {
+        return Vec::new();
+    };
+    let source_lines = facts.source.lines().collect::<Vec<_>>();
+    let every_test_header = || {
+        facts
+            .tests
+            .iter()
+            .map(|test| (file.to_path_buf(), test.start_line))
+            .collect::<Vec<_>>()
+    };
+    if gates_a_module(&source_lines, line) {
+        return every_test_header();
+    }
+    if next_start - line > MAX_ATTRIBUTE_PREFIX_LINES {
+        // Walk only the bounded prefix; still inside it at the cap means the
+        // edit cannot be placed, so stay conservative.
+        let mut depth: i64 = 0;
+        for number in (next_start - MAX_ATTRIBUTE_PREFIX_LINES..next_start).rev() {
+            let trimmed = source_lines.get(number - 1).map_or("", |text| text.trim());
+            if depth == 0 && !attribute_prefix_line(trimmed) {
+                return Vec::new();
+            }
+            let Some(balance) = bracket_balance(trimmed) else {
+                return every_test_header();
+            };
+            depth += balance;
+        }
+        return every_test_header();
+    }
+    let mut depth: i64 = 0;
+    for number in (line..next_start).rev() {
+        let Some(text) = number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+        else {
+            return every_test_header();
+        };
+        let trimmed = text.trim();
+        if depth == 0 && !attribute_prefix_line(trimmed) {
+            // `line` sits above the item's attribute prefix.
+            return Vec::new();
+        }
+        let Some(balance) = bracket_balance(trimmed) else {
+            return every_test_header();
+        };
+        depth += balance;
+        if depth < 0 {
+            return every_test_header();
+        }
+    }
+    if depth != 0 {
+        // `line` is inside an attribute whose opening line lies above it.
+        let mut probe_depth = depth;
+        for number in (1..line).rev().take(MAX_ATTRIBUTE_PREFIX_LINES) {
+            let Some(text) = source_lines.get(number - 1) else {
+                break;
+            };
+            let trimmed = text.trim();
+            let Some(balance) = bracket_balance(trimmed) else {
+                break;
+            };
+            probe_depth += balance;
+            if probe_depth == 0 && trimmed.starts_with("#[") {
+                return vec![(file.to_path_buf(), next_start)];
+            }
+            if probe_depth < 0 {
+                break;
+            }
+        }
+        return every_test_header();
+    }
+    vec![(file.to_path_buf(), next_start)]
+}
+
+/// A line that can sit, at bracket depth zero, in an item's attribute
+/// prefix: blank, a line or block comment, an attribute opener, or a line
+/// closing a bracket (an attribute closer, possibly with a trailing comment).
+/// Reading a non-attribute line with `]` as prefix only over-credits a test
+/// as edited, which keeps pruning conservative.
+fn attribute_prefix_line(trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.ends_with("*/")
+        || trimmed.starts_with("#[")
+        || trimmed.contains(']')
+}
+
+/// `]` minus `[` on one line, read upward. Brackets inside a string literal
+/// or after a `//` comment marker do not count, so `doc = "see [docs"` or a
+/// trailing `// see [1` cannot close an attribute early. `None` when the line
+/// opens a raw string (`r"`, `r#"`), whose end this line scan cannot find.
+fn bracket_balance(trimmed: &str) -> Option<i64> {
+    let mut balance: i64 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous = ' ';
+    for character in trimmed.chars() {
+        if in_string {
+            match (escaped, character) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match character {
+            '/' if previous == '/' => break,
+            '"' if previous == 'r' || previous == '#' => return None,
+            '"' => in_string = true,
+            ']' => balance += 1,
+            '[' => balance -= 1,
+            _ => {}
+        }
+        previous = character;
+    }
+    Some(balance)
+}
+
+/// True when `line` is an inner attribute (`#![...]`) or an attribute of a
+/// `mod` item: such an edit can gate every test in the file (for example
+/// `#[cfg(test)]` above `mod tests {`), so it is not placed on one test.
+fn gates_a_module(source_lines: &[&str], line: usize) -> bool {
+    let text_at = |number: usize| {
+        number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+            .map_or("", |text| text.trim())
+    };
+    let changed = text_at(line);
+    if changed.starts_with("#![") {
+        return true;
+    }
+    if !changed.starts_with("#[") {
+        return false;
+    }
+    (line + 1..=line + MAX_ATTRIBUTE_PREFIX_LINES)
+        .map(text_at)
+        .find(|text| !text.is_empty() && !text.starts_with("#[") && !text.starts_with("//"))
+        .is_some_and(|text| {
+            text.trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub(super) ")
+                .trim_start_matches("pub ")
+                .starts_with("mod ")
+        })
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -2046,6 +2278,195 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_test_whose_attribute_line_was_added() -> Result<(), String> {
+        // #12940 review (Devin): adding `#[test]` above an existing function
+        // edits that test although its indexed span starts at `fn`. An
+        // attribute above a different, untouched test stays unattributed.
+        let root = temp_dir("edited_attribute_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    // registers the check\n    fn checks_one() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is the added `#[test]`; `fn checks_one` is on line 11.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 9)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert_eq!(
+            ownership.edited_function_headers,
+            vec![(PathBuf::from("src/lib.rs"), 11)],
+            "only the test under the added attribute is edited"
+        );
+        Ok(())
+    }
+
+    fn edited_headers_for(
+        label: &str,
+        source: &str,
+        line: usize,
+    ) -> Result<Vec<(PathBuf, usize)>, String> {
+        let root = temp_dir(label);
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), line)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        Ok(ownership?.edited_function_headers)
+    }
+
+    const MULTILINE_ATTRIBUTE_TESTS: &str = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[cfg(all(\n        unix,\n        feature = \"x\"\n    ))] // gated\n    #[test]\n    fn gated() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+
+    #[test]
+    fn edited_headers_name_a_test_whose_multiline_attribute_argument_changed() -> Result<(), String>
+    {
+        // #12940 review: editing only `feature = "x"` inside a multi-line
+        // `#[cfg(all(...))]` above `#[test] fn gated` (line 14) edits that
+        // test; the untouched neighbor (line 19) stays unattributed.
+        for line in [9, 11, 12, 13] {
+            let headers = edited_headers_for(
+                "edited_multiline_attribute",
+                MULTILINE_ATTRIBUTE_TESTS,
+                line,
+            )?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 14)],
+                "line {line} of the attribute prefix edits only `gated`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_follow_an_attribute_prefix_longer_than_sixteen_lines() -> Result<(), String> {
+        let mut source = String::from("pub fn one() -> i32 {\n    1\n}\n\n");
+        // Lines 5..=24: twenty attribute lines, then `#[test]` on 25 and the
+        // `fn` token on 26.
+        for index in 0..20 {
+            source.push_str(&format!("#[doc = \"line {index}\"]\n"));
+        }
+        source.push_str("#[test]\nfn long_prefix() {\n    assert_eq!(one(), 1);\n}\n");
+        let headers = edited_headers_for("edited_long_attribute_prefix", &source, 5)?;
+        assert_eq!(headers, vec![(PathBuf::from("src/lib.rs"), 26)]);
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_when_the_attribute_cannot_be_placed() -> Result<(), String>
+    {
+        // An edited, unbalanced `]]` (line 10) above `#[test] fn second`
+        // (line 12) cannot be matched to an opener, so the edit stays
+        // "possibly any test in this file" instead of "none".
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[test]\nfn first() {\n    assert_eq!(one(), 1);\n}\n\n]]\n#[test]\nfn second() {\n    assert_eq!(one(), 1);\n}\n";
+        let headers = edited_headers_for("edited_unplaceable_attribute", source, 10)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 6),
+                (PathBuf::from("src/lib.rs"), 12)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_ignore_brackets_in_strings_and_cross_block_comments() -> Result<(), String> {
+        // #12940 review: an unbalanced `[` inside a string or a trailing
+        // comment must not close a multi-line attribute early, and a block
+        // comment sits in the prefix like a line comment.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg_attr(\n    feature = \"x\", // see [1\n    doc = \"see [docs\"\n)]\n#[test]\n/* reason */\nfn t() {\n    assert_eq!(one(), 1);\n}\n";
+        // `fn t` is on line 11.
+        for line in [5, 6, 7, 8, 9, 10] {
+            let headers = edited_headers_for("edited_string_bracket_attribute", source, line)?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 11)],
+                "line {line} of the prefix edits `t`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_across_a_raw_string_attribute() -> Result<(), String> {
+        // A raw string can hold `"` and `[`, which a line scan cannot place,
+        // so an edit in its prefix stays "possibly any test in this file".
+        let source = "#[test]\nfn first() {\n    assert!(true);\n}\n\n#[doc = r#\"a \" [ b\"#]\n#[test]\nfn second() {\n    assert!(true);\n}\n";
+        let headers = edited_headers_for("edited_raw_string_attribute", source, 6)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 2),
+                (PathBuf::from("src/lib.rs"), 8)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_for_a_module_gate_edit() -> Result<(), String> {
+        // Editing `#[cfg(test)]` above `mod tests {` can gate every test in
+        // it, so the edit is not placed on one test.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(all(test, feature = \"slow\"))]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn b() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        let headers = edited_headers_for("edited_module_gate", source, 5)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 10),
+                (PathBuf::from("src/lib.rs"), 15)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_do_not_credit_a_test_below_module_code() -> Result<(), String> {
+        // A changed `const` above `#[test] fn` is module code, not the test's
+        // attribute prefix.
+        let source =
+            "pub const LIMIT: usize = 3;\n#[test]\nfn below() {\n    assert_eq!(LIMIT, 3);\n}\n";
+        let headers = edited_headers_for("edited_module_code_above_test", source, 1)?;
+        assert!(headers.is_empty(), "module code edits no test: {headers:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_macro_generated_test_edited_past_its_header() -> Result<(), String> {
+        // #12940 review: a `macro_rules!` test has no function fact; it is
+        // pinned to its invocation span, so an edit deep inside that span
+        // must still mark it edited (by the invocation's start line).
+        let root = temp_dir("edited_macro_test_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\nmacro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\nsuite! {\n    #[test]\n    fn made() {\n        let v0 = 0;\n        let v1 = 1;\n        let v2 = 2;\n        let v3 = 3;\n        let v4 = 4;\n        let v5 = 5;\n        let v6 = 6;\n        let v7 = 7;\n        let v8 = 8;\n        let v9 = 9;\n        let v10 = 10;\n        let v11 = 11;\n        let v12 = 12;\n        let v13 = 13;\n        assert_eq!(one(), 1);\n    }\n}\n".to_string();
+        fs::write(root.join("src/lib.rs"), &source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is `suite! {`; line 25 is past the 12-line window.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 25)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert!(
+            ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 9)),
+            "macro test edited past its header must be named: {:?}",
+            ownership.edited_function_headers
+        );
+        assert!(
+            !ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 1)),
+            "an untouched function is not edited: {:?}",
+            ownership.edited_function_headers
+        );
         Ok(())
     }
 

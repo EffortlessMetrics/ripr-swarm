@@ -1,0 +1,47 @@
+{
+  "schema": "ripr.native-proof-run.v1",
+  "run_id": "example-only-not-executed",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "revision": "0000000000000000000000000000000000000000",
+  "tree": "0000000000000000000000000000000000000000",
+  "worktree_digest": null,
+  "source_closure_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "claim_registry_generation": "example-only",
+  "provider": {
+    "family": "bounded_model_check",
+    "name": "kani",
+    "version": "0.68.0",
+    "solver_version": null
+  },
+  "toolchain": {
+    "language": "rust-1.95.0",
+    "target": "x86_64-unknown-linux-gnu"
+  },
+  "runner": {
+    "generation": "example-only",
+    "command_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "deadline_policy": {
+      "preflight_seconds": 10,
+      "whole_run_seconds": 300,
+      "per_subject_seconds": 60
+    }
+  },
+  "inventory": {
+    "expected_claim_ids": [
+      "ripr.classification.actionable-only-with-evidence.v1"
+    ],
+    "discovered_subjects": [],
+    "complete": false,
+    "rejection_reasons": [
+      "Illustrative schema input only: no native process or source capture was executed; zero IDs and hashes are placeholders."
+    ]
+  },
+  "process": {
+    "state": "not_started",
+    "exit_code": null,
+    "timed_out": false,
+    "raw_output_digest": null,
+    "cleanup_state": "not_applicable"
+  },
+  "results": []
+}

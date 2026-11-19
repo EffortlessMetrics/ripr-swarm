@@ -42,7 +42,7 @@
   },
   "reasoning": "Cargo declares this target with harness=true, so the custom-harness registration is refused rather than granting custom evidence. Declared-test evidence still keeps the helper silent. Typed refusal is inspected in the real CLI output and remains directly tested by cargo_targets/harness_registry; a silent row alone does not prove the refusal.",
   "spec_examples": [
-    "RIPR-SPEC-0153#7"
+    "RIPR-SPEC-0153#11"
   ],
   "labeling_observation": {
     "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",

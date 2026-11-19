@@ -203,7 +203,14 @@ A policy-eligible candidate must satisfy all of these conditions:
 5. The candidate includes concrete focused-test guidance such as a missing
    discriminator, assertion shape, candidate value, related test, or
    recommended test target.
-6. No nearby focused test changed in the same PR.
+6. The PR did not change a test that reaches the candidate's owner. Only
+   per-candidate evidence counts: the PR guidance card's
+   `changed_reaching_tests` names a test function the diff touched that is a
+   related test tied to the owner by a reach-establishing relation (direct
+   owner call, helper owner call, or a verified re-export chain). File or
+   module proximity, name similarity, a test edit whose function could not be
+   attributed, and the PR-wide `summary.unchanged_tests` flag never keep a
+   candidate advisory, and a card without the field gets no waiver (#13893).
 
 Unknown-stage and opaque classes may remain visible as advisory decisions, but
 they must not block in the initial policy.
@@ -302,7 +309,11 @@ Top-level decision values are:
 
 - `pass` - a non-advisory mode evaluated successfully and found no visible
   advisory, acknowledged, blocking, suppressed, or unknown-confidence decision.
-- `advisory` - evidence is visible but not blocking.
+- `advisory` - evidence is visible but not blocking, or the mode is
+  `visible-only`. Visible-only never blocks on findings, so every completed
+  visible-only evaluation that is not `blocked` or `config_error` reads
+  `advisory`, including one that recorded nothing; there the token describes
+  the mode, not a finding (#7445).
 - `acknowledged` - at least one policy-eligible candidate was acknowledged by a
   configured label and no candidate blocked.
 - `blocked` - at least one policy-eligible candidate blocks under the explicit
@@ -330,6 +341,14 @@ Top-level decision derivation order:
 
 The evaluator may return a non-zero exit code only for `blocked` or
 `config_error`.
+
+The Markdown report discloses the one case where `advisory` says nothing about
+findings (#7445): when the mode is `visible-only`, the status is `advisory`,
+no advisory, suppressed or unknown-confidence candidate and no warning was
+recorded, and no exception-policy violation exists, it adds one paragraph
+under the counts saying the status reflects the mode and naming the enforcing
+modes. The JSON report and the status vocabulary are unchanged; machine
+consumers read `mode`, the `summary` counts and `warnings`.
 
 ## JSON Shape
 

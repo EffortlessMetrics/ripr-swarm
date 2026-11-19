@@ -61,6 +61,18 @@ pub(crate) struct MacroArm {
     pub transcriber: String,
 }
 
+/// [`local_macro_calls`] for many file sources, memoized per run (#12947):
+/// each overlapping index of one diff run credits the same test files, and
+/// this full-file parse was repeated for every one of them. Misses run on
+/// the rayon pool.
+pub(crate) fn local_macro_calls_many(sources: &[&str]) -> Vec<Vec<LocalMacroCall>> {
+    super::run_memo::memoize_many(
+        super::run_memo::Product::LocalMacroCalls,
+        sources,
+        local_macro_calls,
+    )
+}
+
 /// Every attributable statement-level call of a same-file macro.
 pub(crate) fn local_macro_calls(source: &str) -> Vec<LocalMacroCall> {
     if !source.contains("macro_rules") {

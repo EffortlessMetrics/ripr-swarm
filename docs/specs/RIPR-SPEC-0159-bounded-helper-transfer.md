@@ -54,6 +54,19 @@ can only hint that a caller "may lead here" without changing anything.
   argument is a literal or the caller's own parameter (resolved
   through that caller's rows), at most **3 hops**, **acyclic**, with a
   single caller and a single call site per hop.
+- Multi-site reach (#14918): a caller that calls the helper at more than one
+  direct site (separate lines, or two calls on one line such as
+  `Ok((number(a)?, number(b)?))`) still resolves the hop, marked
+  `multi_site`. Reach transfers, since a test that runs the caller runs the
+  helper, but the hop is reach-only like a local-macro argument hop: no
+  site's arguments stand for the others, so it binds no input rows, forwards
+  no result, and admits no wrapper or entry pin. The finding's class then
+  comes from the ordinary stages (a computed-argument chain reads
+  `infection_unknown`), never from a single site's values. Only the hop
+  directly above the owner, with a production caller, may be multi-site: a
+  multi-site caller higher up keeps the chain stopped below it, so the
+  single-site wrapper hops there still bind, and a test caller keeps relating
+  directly.
 - On resolution, a test that calls any resolved hop's caller relates
   to the helper-owned probe (`RelationReason::HelperOwnerCall`): the
   reach, observation, and oracle stages see the same related tests a
@@ -441,6 +454,24 @@ can only hint that a caller "may lead here" without changing anything.
   `pub mod foreign { pub use std::cmp::max; }`), an aliased tail, or an entry
   whose definition path is unknown refuses.
 
+  A lone root glob delivers a crate-root entry the same way (#15073). An
+  integration test under `tests/` whose file holds exactly one glob import,
+  spelled `<lib>::*` with no alias, as a top-level item of the file, and
+  whose test is a top-level function of that file, reaches a bare-called entry that is
+  defined in `src/lib.rs` or re-exported there by the single plain root
+  `pub use` described above. The library must bind the entry's module path as
+  below. A second glob anywhere in the test file or body (`use std::cmp::*;`
+  could bring another binding of the name), a glob out of scope at the test
+  (in a sibling module, a nested block or the test's own body), a test inside
+  a module, a second `fn` of the test's name anywhere in the file (it
+  could be the matched test), a glob of a library module
+  (`use <lib>::m::*;`), a glob in a unit test under `src/`, an entry the root
+  does not re-export, and every other refusal in this section keep the bare
+  call unrelated. Any item the test file declares under the entry's name, at
+  any depth (a `fn`, a tuple `struct`, a `const`, a module, a macro), beats the
+  glob and keeps the call unrelated, as does a test file that does not parse
+  cleanly.
+
   The library must also bind that module path to the entry's file: every
   file-module segment is declared once by an unconditional, un-remapped
   out-of-line `mod <segment>;` at the top level of the previous file, with no
@@ -616,6 +647,24 @@ close that gap, both reach-only and both fail-closed:
   carries reach only), the test must be in the owner's package, and the test
   must not rebind the type (a same-named type in its module scope or an
   out-of-line parent module, or a `use .. as Type` rename).
+
+- **Own-library hop from an integration-test helper (#8387).** A same-file
+  helper of an integration test (`fn t(p: &str) -> Hir {
+  pkg::hir::translate(p).unwrap() }`) binds as a hop when its call is spelled
+  exactly `<crate>::<module path of the callee>::<callee>(..)` with `<crate>`
+  the root manifest's library identifier. The callee is the one function of
+  its name, a body-carrying free function of the root package's library; the
+  caller is a free function, not a registered test, in a test-crate root of
+  the root package (`tests/<name>.rs` or `tests/<name>/main.rs`); the caller
+  mentions the callee name exactly once and invokes no unestablished macro;
+  and nothing in the caller's file or body can rebind the crate name (the
+  same authority that reads a test's own crate-qualified entry call). Another
+  crate name, a shorter, longer or `::`-led path, a second mention, a
+  workspace member, and a package name that `[lib] name` replaces keep the
+  "not statically splittable" stop. The hop is reach only: it carries the
+  module-qualified provenance, so it forwards no result and a finding cannot
+  become `exposed` through it. A callee that a second reached caller also
+  enters keeps the multi-caller stop.
 
 The receiver name must resolve through the shared call-identity authority to
 one nongeneric declared struct, enum or union in the method impl's own module. The
@@ -831,6 +880,11 @@ method entry through a module-qualified hop: typed-receiver positives, and the
 untyped/constructor-factory, `str::matches`, second-method, foreign/renamed
 imports, foreign UFCS, sibling namesakes, crate/type aliases and Unicode
 qualifier refusals; the class stays below `exposed`);
+`crates/ripr/tests/own_crate_test_helper_hop.rs` (#8387 own-library hop from an
+integration-test helper: the imported baseline, the qualified,
+public-wrapper and unrelated-import positives, the below-`exposed` bound, and
+the other-crate, wrong-path, rebound-name, second-mention, opaque-macro and
+`[lib] name` refusals);
 `analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
 resolution and each decline); corpus cases `spec-b-0159-path-qualified-call-site` (accept shape of
 example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).
@@ -863,6 +917,8 @@ narrow/generic type, non-literal input, two-call and macro refusals) and
 - `analysis/classify/helper_transfer/qualified_hop.rs` — the module-qualified
   hop (#8999); `analysis/classify/related_tests.rs` `method_entry_hops` and
   `calls_helper_method_entry` — the inherent method entry (#8999).
+- `analysis/classify/helper_transfer/own_crate_test_hop.rs` — the own-library
+  hop from an integration-test helper (#8387).
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop
