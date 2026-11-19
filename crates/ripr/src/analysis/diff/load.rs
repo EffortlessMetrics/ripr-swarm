@@ -1621,8 +1621,8 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         (None, false, _) | (None, true, None) => String::new(),
     };
     let set_head_note = if origin_lacks_head_pointer(root, git_timeout) {
-        " `git remote set-head origin --auto` records the remote's default branch as \
-         `origin/HEAD`, which a bare check then uses."
+        " `git fetch origin` followed by `git remote set-head origin --auto` records the \
+         remote's default branch as `origin/HEAD`, which a bare check then uses."
     } else {
         ""
     };
@@ -1633,8 +1633,9 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
 /// not: a repository set up with `git remote add` + `git fetch` never gets the
 /// pointer `git clone` writes, so a default branch like `trunk` stays
 /// unresolved for a hook that cannot pass `--base`. `git remote set-head
-/// origin --auto` creates it. False when there is no `origin` or Git cannot
-/// answer, so the advice is only given where it can apply.
+/// origin --auto` creates it once the default branch's tracking ref exists,
+/// hence the `git fetch origin` before it. False when there is no `origin` or
+/// Git cannot answer, so the advice is only given where it can apply.
 fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
     let succeeds = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
@@ -4828,9 +4829,11 @@ mod tests {
     #[test]
     fn default_base_failure_names_set_head_only_when_origin_lacks_a_head_pointer()
     -> std::io::Result<()> {
-        // `git remote add` + `git fetch` creates `origin/trunk` but never
+        // `git remote add` (and, before Git 2.48 or with
+        // `followRemoteHEAD=never`, a later `git fetch`) leaves no
         // `origin/HEAD`, so a bare check (a pre-commit hook) cannot resolve a
-        // base. The literal fix is `git remote set-head origin --auto`.
+        // base. The literal fix is `git fetch origin` then
+        // `git remote set-head origin --auto`.
         let dir = unique_fixture_root("resolve-base-origin-no-head")?;
         init_git_repo(&dir, "trunk")?;
         // Control: no `origin` remote, so the advice cannot apply.
@@ -4847,23 +4850,32 @@ mod tests {
         let remote = remote_dir.to_string_lossy().to_string();
         run_git_checked(&dir, &["clone", "-q", "--bare", ".", remote.as_str()])?;
         run_git_checked(&dir, &["remote", "add", "origin", remote.as_str()])?;
-        run_git_checked(&dir, &["fetch", "-q", "origin"])?;
+        // Git 2.48+ defaults to creating `origin/HEAD` on fetch; pin the
+        // older behavior so the fixture keeps the missing pointer on every
+        // host Git (older Git ignores the key).
+        run_git_checked(&dir, &["config", "remote.origin.followRemoteHEAD", "never"])?;
         run_git_checked(&dir, &["checkout", "-q", "-b", "feature/discount"])?;
+        // Not yet fetched: `set-head --auto` alone would be refused because
+        // `origin/trunk` does not exist, so the fetch must be named first.
         let err = resolve_default_base(&dir, None).expect_err("origin/HEAD is absent");
         assert!(
-            err.contains("git remote set-head origin --auto"),
+            err.contains("`git fetch origin` followed by `git remote set-head origin --auto`"),
             "an origin without origin/HEAD must name the literal fix, got: {err}"
         );
         assert!(
-            err.contains("`--base trunk`") || err.contains("`--base origin/trunk`"),
+            err.contains("`--base trunk`"),
             "the --base example must remain, got: {err}"
         );
 
+        // Following the named steps in order makes the default base resolve.
+        run_git_checked(&dir, &["fetch", "-q", "origin"])?;
+        let err = resolve_default_base(&dir, None).expect_err("fetch alone writes no pointer");
+        assert!(err.contains("git remote set-head origin --auto"), "{err}");
         run_git_checked(&dir, &["remote", "set-head", "origin", "--auto"])?;
         assert_eq!(
             resolve_default_base(&dir, None).as_deref(),
             Ok("origin/trunk"),
-            "the named command must make the default base resolve"
+            "the named commands must make the default base resolve"
         );
         ignore_remove_dir_all(&dir);
         ignore_remove_dir_all(&remote_dir);
