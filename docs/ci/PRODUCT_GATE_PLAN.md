@@ -10,14 +10,14 @@ changing required-check routing.
 
 The current producer is `.github/workflows/rust-gates.yml`, called by the
 CX43, CPX42, CX53, and GitHub-hosted routes in `routed-rust.yml`. The required
-commands have separate named steps with stable IDs; they are not copied into
-each runner route. Runner identity and matrix shape are route details, not
-product meaning.
+predicates are shared across routes. `ci-policy` owns dependency, process and
+network policy once; standalone leaves remain available for local reruns.
+Runner identity and matrix shape do not change product obligations.
 
-| Canonical gate | Current command | Role | Surface |
+| Canonical gate | Canonical command | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
-| `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
+| `product.rust.all_features_check` | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
@@ -29,6 +29,10 @@ product meaning.
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
+
+Only `cargo xtask goldens check-with-fixtures` satisfies both rows in one run.
+It writes both reports, fails if either obligation fails, and reports one
+`goldens_fixtures` outcome. Standalone commands remain available locally.
 
 `product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
 --workspace --all-targets` and `cargo check --workspace --all-targets` build the
@@ -45,7 +49,7 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| `lang-perl` and other non-default-feature tests | compiled (not run) by `cargo check -p ripr --all-targets --all-features`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+| `lang-perl` and other non-default-feature tests | compiled and linted (not run) by `cargo clippy -p ripr --all-targets --all-features -- -D warnings`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`
@@ -66,10 +70,10 @@ changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
 Hosted sharded form (#10507, hash layout #12777). On the GitHub-hosted route the same row runs as
-four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs in
-`rust-test-shards.yml`, started by `routed-rust.yml` only after the hosted
-`rust-gates.yml` job (every other gate, doctests and PR evidence) passed; that
-job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, the
+two `cargo nextest run --workspace --profile ci --partition hash:N/2` jobs in
+`rust-test-shards.yml`, started by `routed-rust.yml` in parallel with the hosted
+`rust-gates.yml` job (every other gate, doctests and PR evidence). The gates
+job is called with `test-shards: 2`, so its own `rust-tests` step is skipped, the
 single `if: inputs.test-shards == 1` condition `product_gate_plan.rs` allows on
 that row. The self-hosted routes keep the unpartitioned step in their gates job.
 A partitioned run selects exactly the tests of the unpartitioned command because
@@ -93,8 +97,8 @@ the unsharded `<artifact>-nextest-<attempt>` name, so consumers of that
 evidence, including the Contabo product contract, read the same files. The
 Contabo importer accepts the one `if: inputs.test-shards == 1` condition on the
 nextest row (it rehearses the unpartitioned form) and refuses any other. The
-parallel form that runs the gates and shards at once would save more time but
-removes the gates-first ordering, so it is not the required shape.
+required Result waits for both the gates and the verified shards; neither
+parallel producer can substitute for the other.
 
 Focused tests in `product_gate_plan.rs` read the real workflow, nextest
 config, and this table. Each of these fails `cargo nextest run`:
@@ -137,13 +141,9 @@ release-specific evidence until a separate contract promotes them.
 ## Execution order and diagnostics
 
 Formatting remains before CI-tool installation and hosted-cache restoration.
-After setup, repository precommit, promotion honesty, agent-skill, dependency,
-process, and network checks run before the later workspace check, Clippy, and
-nextest stages. The first xtask invocation still builds xtask and its normal
-dependencies; this is not a zero-build preflight. Every command in the inventory
-runs once at the workflow level, without suppressing failures. A failing policy
-step prevents the later stages from starting rather than spending those stages
-before discovering the same policy error.
+After setup, preflight, `ci-policy` and promotion honesty run first in gates.
+Policy predicates run once and propagate failures before later gate steps.
+The first xtask call compiles the driver; hosted shards run independently.
 
 The required nextest step retains #3852's `rust-tests` ID, explicit `ci` profile,
 fresh JUnit/context generation, original exit status, and two-file upload
@@ -153,10 +153,10 @@ schedule another test suite.
 Each named step exposes its own timing and outcome in the Actions job view and
 workflow-jobs API. `Write gate summary` runs with `always()` and records the
 workflow commit, subject head, run/attempt, route, and the actual outcomes for
-all twelve product gates plus PR evidence. A push skips PR evidence by design;
-`skipped`, `cancelled`, and missing (`not_reported`) outcomes are never promoted
-to success. A terminated or unavailable runner can still prevent any summary
-from being written; the summary is not independent execution proof.
+the executed producers plus PR evidence. Dependency, process and network share
+`precommit`'s outcome; leaf reports retain diagnostics. Non-PR evidence skips.
+Skipped, cancelled and missing outcomes never count as success. A lost runner
+can prevent a summary; the summary is not independent execution proof.
 
 `Ripr Rust Small Result` remains the required check. Runner routing,
 scratch-tempfail fallback, advisory reporting, artifact selection, and job
@@ -237,13 +237,13 @@ outside its scope, and writes `ci-policy.{json,md}` without replacing the local
 | Workflow and agent skills | `cargo policy preflight` | shared policy receipt verifier; `agent_skills` outcome |
 | 41 policy predicates and three whitespace checks | shared aggregate plus existing nine-scan producer | `precommit` step outcome; existing leaf reports and CI composition report |
 | Evidence promotion honesty | standalone existing command (absent from the table) | `promotion_honesty` outcome |
-| Formatting, dependencies, process and network | existing aggregate and retained standalone steps | existing step outcomes and summary |
+| Dependencies, process and network | existing aggregate only; original leaf predicates and reports | `precommit` outcome and leaf diagnostics, not separate step outcomes |
+| Formatting | existing aggregate and retained standalone step | existing step outcome and summary |
 | Full default-feature workspace/all-target strict Clippy | explicit unchanged `cargo clippy --workspace --all-targets -- -D warnings` | `clippy` outcome |
 
-The four later standalone policy steps were audited: dependency/process/network
-are already in the table; evidence-promotion honesty is separate. No standalone
-policy execution is removed here, and no duplicate-policy savings is claimed.
-The only removed lint phase is the convenience route's impact-selected Clippy.
+#8198 removes #7826's repeated dependency/process/network launches, retaining
+their mandatory predicates, diagnostics and failure propagation. Formatting
+deduplication and local impact-selected Clippy remain outside this change.
 Tests, doctests, all-features checks, platform routes, event admission, stable
 required-check identity, runner configuration, diagnostics and owned process
 draining are unchanged. A bounded trace can establish argv/count composition;

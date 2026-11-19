@@ -1,6 +1,6 @@
 mod context_packet;
 mod finding_alignment;
-mod findings_priority;
+pub(crate) mod findings_priority;
 mod formatter;
 mod report;
 mod terse;
@@ -21,6 +21,8 @@ pub(crate) use report::{
     render_with_config,
 };
 pub(crate) use terse::render_terse;
+#[cfg(test)]
+pub(crate) use terse::restore_related_test_rows;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
@@ -56,11 +58,12 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
-        FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, StaticLimitKind, Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId,
+        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
@@ -76,7 +79,8 @@ mod tests {
             )?,
         )
         .with_path("src/lib.rs")?
-        .with_affected_items(1)?;
+        .with_affected_items(1)?
+        .with_detail("the merge diff has three-way hunks.")?;
         let outcome = AnalysisOutcome::new(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisIdentity {
@@ -127,6 +131,93 @@ mod tests {
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
         assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
+        // #14398: the producer's bounded cause reaches the human line, as it
+        // does the JSON limitation, ahead of the recovery.
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"],
+            "the merge diff has three-way hunks."
+        );
+        assert!(
+            human.contains("affected items: 1; the merge diff has three-way hunks; recovery: "),
+            "{human}"
+        );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0429: the staged-evidence row form sits beside the `ripr`
+    /// object — five rows in Evidence order with the stage tokens and wire
+    /// values the typed stages hold. No row references a related test: the
+    /// general decision-set role is not stage provenance (#13453).
+    #[test]
+    fn finding_json_emits_structured_stage_rows_without_test_attribution() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        finding.ripr = RiprEvidence {
+            reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "reached"),
+            infect: StageEvidence::new(StageState::Weak, Confidence::Low, "weak infection"),
+            propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "unknown flow"),
+            reveal: RevealEvidence {
+                observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "observed"),
+                discriminate: StageEvidence::new(StageState::No, Confidence::High, "no oracle"),
+            },
+        };
+        finding.related_tests.push(RelatedTest {
+            name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 4,
+            oracle: Some("assert_eq!(discounted_total(50, 100), 50);".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        finding.related_tests.push(RelatedTest {
+            name: "examined_but_matched_nothing".to_string(),
+            file: PathBuf::from("tests/other.rs"),
+            line: 9,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(RelatedTestMiss::NoAssertion),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::ExaminedOnly,
+        });
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::ObservationNotConfirmed,
+            ConfidenceCap::BoundaryInputNotMatched,
+        ];
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+
+        let stages_block = out
+            .split("\"evidence_stages\": [\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  ]").next())
+            .ok_or("evidence_stages block missing")?;
+        let expected = [
+            "    {\"stage\":\"reach\",\"state\":\"yes\",\"confidence\":\"medium\"},",
+            "    {\"stage\":\"infect\",\"state\":\"weak\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"propagate\",\"state\":\"unknown\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"observe\",\"state\":\"yes\",\"confidence\":\"medium\",\"basis\":[{\"code\":\"observation_not_confirmed\",\"summary\":\"the assertion is not confirmed to observe the changed value\"}]},",
+            "    {\"stage\":\"discriminate\",\"state\":\"no\",\"confidence\":\"high\"}",
+        ];
+        let actual = stages_block.lines().collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{stages_block}");
+        // The finding-level and oracle-level caps claim no row, and the
+        // contributing related test is never attributed to a stage.
+        assert!(
+            !stages_block.contains("preview_stages_not_modeled")
+                && !stages_block.contains("boundary_input_not_matched")
+                && !stages_block.contains("\"tests\"")
+                && !stages_block.contains("below_threshold_has_no_discount"),
+            "{stages_block}"
+        );
         Ok(())
     }
 
@@ -341,6 +432,8 @@ mod tests {
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "b".repeat(64),
         }
     }
@@ -1129,9 +1222,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1262,9 +1358,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1441,9 +1540,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2387,9 +2489,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2527,9 +2632,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2644,9 +2752,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2674,9 +2785,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2740,9 +2854,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2782,9 +2899,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 

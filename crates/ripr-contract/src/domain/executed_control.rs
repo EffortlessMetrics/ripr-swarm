@@ -1083,6 +1083,19 @@ mod kani_proofs;
 pub mod tests {
     use super::*;
 
+    #[cfg(test)]
+    #[test]
+    fn every_substitute_outcome_has_its_contract_execution_partition() {
+        use crate::domain::proof_domains::{OUTCOMES, expected_unexecuted};
+        for &outcome in OUTCOMES {
+            assert_eq!(
+                substitute_outcome_is_unexecuted(outcome),
+                expected_unexecuted(outcome),
+                "{outcome:?}"
+            );
+        }
+    }
+
     pub const HEAD_AFTER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     pub const HEAD_BEFORE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     pub const HEAD_OTHER: &str = "cccccccccccccccccccccccccccccccccccccccc";
@@ -1568,5 +1581,513 @@ pub mod tests {
         reversed.canonicalize();
         ordered.canonicalize();
         assert_eq!(reversed, ordered);
+    }
+}
+
+#[cfg(test)]
+mod shape_and_binding_refusal_tests {
+    use super::tests::{
+        ARTIFACT_DIGEST, HEAD_AFTER, OBLIGATION_ID, failed_before_result, packet, passing_result,
+        require_invalid, require_valid, sample_obligation,
+    };
+    use super::*;
+
+    type Refusal = ExecutedControlValidationError;
+
+    fn obligation_with(edit: impl FnOnce(&mut ExecutedControlObligationV1)) -> Result<(), Refusal> {
+        let mut obligation = sample_obligation();
+        edit(&mut obligation);
+        obligation.validate()
+    }
+
+    fn result_with(edit: impl FnOnce(&mut ExecutedControlResultV1)) -> Result<(), Refusal> {
+        let mut result = passing_result(&sample_obligation());
+        edit(&mut result);
+        result.validate_shape()
+    }
+
+    /// Validates a packet of the sample obligation and one edited passing result.
+    fn packet_with(
+        edit: impl FnOnce(&mut ExecutedControlResultV1),
+    ) -> Result<PacketEvaluation, Refusal> {
+        let obligation = sample_obligation();
+        let mut result = passing_result(&obligation);
+        edit(&mut result);
+        packet(vec![obligation], vec![result]).validate()
+    }
+
+    fn substitute() -> PermittedSubstitute {
+        PermittedSubstitute {
+            substitute_id: "substitute:manual-replay".to_string(),
+            instrument_id: "instrument:manual-replay".to_string(),
+            evidence_form: EvidenceForm::DeclaredSubstitute,
+        }
+    }
+
+    #[test]
+    fn every_wire_token_is_the_snake_case_name_of_its_variant() {
+        assert_eq!(
+            [
+                ControlClass::RemovedGuard.as_str(),
+                ControlClass::WrongImplementation.as_str(),
+                ControlClass::NamedMutation.as_str(),
+            ],
+            ["removed_guard", "wrong_implementation", "named_mutation"]
+        );
+        assert_eq!(
+            [
+                Requiredness::Required.as_str(),
+                Requiredness::Advisory.as_str()
+            ],
+            ["required", "advisory"]
+        );
+        assert_eq!(
+            [
+                DiscriminatingOutcome::FailsBeforePassesAfter.as_str(),
+                DiscriminatingOutcome::RejectsWrongImplementation.as_str(),
+            ],
+            ["fails_before_passes_after", "rejects_wrong_implementation"]
+        );
+        assert_eq!(
+            [
+                EvidenceForm::RetainedArtifact.as_str(),
+                EvidenceForm::BoundedLogCommitment.as_str(),
+                EvidenceForm::DeclaredSubstitute.as_str(),
+            ],
+            [
+                "retained_artifact",
+                "bounded_log_commitment",
+                "declared_substitute"
+            ]
+        );
+        assert_eq!(
+            [
+                OfferedEvidenceKind::ExecutedDiscriminatingControl.as_str(),
+                OfferedEvidenceKind::OrdinaryPositiveTest.as_str(),
+                OfferedEvidenceKind::ReviewProse.as_str(),
+                OfferedEvidenceKind::StructuralDiscriminationClaim.as_str(),
+                OfferedEvidenceKind::DeclaredSubstitute.as_str(),
+            ],
+            [
+                "executed_discriminating_control",
+                "ordinary_positive_test",
+                "review_prose",
+                "structural_discrimination_claim",
+                "declared_substitute",
+            ]
+        );
+        assert_eq!(
+            [
+                ResultState::Passed.as_str(),
+                ResultState::Failed.as_str(),
+                ResultState::NotRun.as_str(),
+                ResultState::NotProven.as_str(),
+                ResultState::Substituted.as_str(),
+                ResultState::InstrumentFailure.as_str(),
+            ],
+            [
+                "passed",
+                "failed",
+                "not_run",
+                "not_proven",
+                "substituted",
+                "instrument_failure",
+            ]
+        );
+        assert_eq!(
+            [
+                ObservedOutcome::FailedBeforePassedAfter.as_str(),
+                ObservedOutcome::RejectedWrongImplementation.as_str(),
+                ObservedOutcome::CommandSucceededWithoutExercisingSubject.as_str(),
+                ObservedOutcome::OrdinaryPositiveTestsPassed.as_str(),
+                ObservedOutcome::ReviewArgumentOnly.as_str(),
+                ObservedOutcome::StructuralDiscriminationOnly.as_str(),
+                ObservedOutcome::InstrumentUnavailable.as_str(),
+                ObservedOutcome::NotExecuted.as_str(),
+            ],
+            [
+                "failed_before_passed_after",
+                "rejected_wrong_implementation",
+                "command_succeeded_without_exercising_subject",
+                "ordinary_positive_tests_passed",
+                "review_argument_only",
+                "structural_discrimination_only",
+                "instrument_unavailable",
+                "not_executed",
+            ]
+        );
+        assert_eq!(
+            [
+                Invalidator::SourceHeadMoved.as_str(),
+                Invalidator::ControlContractChanged.as_str(),
+                Invalidator::ArtifactMissing.as_str(),
+                Invalidator::CommandIdentityChanged.as_str(),
+            ],
+            [
+                "source_head_moved",
+                "control_contract_changed",
+                "artifact_missing",
+                "command_identity_changed",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_obligation_names_the_first_field_that_is_malformed() {
+        assert_eq!(obligation_with(|_| {}), Ok(()));
+        assert_eq!(
+            obligation_with(|obligation| obligation.schema_version = "2".into()),
+            Err(Refusal::InvalidSchemaVersion {
+                kind: "obligation",
+                value: "2".into()
+            })
+        );
+        assert_eq!(
+            obligation_with(|obligation| obligation.kind = EXECUTED_CONTROL_RESULT_KIND.into()),
+            Err(Refusal::InvalidKind {
+                expected: EXECUTED_CONTROL_OBLIGATION_KIND,
+                actual: EXECUTED_CONTROL_RESULT_KIND.into()
+            })
+        );
+
+        type Edit = fn(&mut ExecutedControlObligationV1);
+        let blank_fields: [(&str, Edit); 9] = [
+            ("obligation_id", |o| o.obligation_id = " ".into()),
+            ("owning_claim", |o| o.owning_claim.clear()),
+            ("intended_wrong_implementation", |o| {
+                o.intended_wrong_implementation = "\t".into();
+            }),
+            ("required_execution_subject.command_or_instrument_id", |o| {
+                o.required_execution_subject
+                    .command_or_instrument_id
+                    .clear();
+            }),
+            (
+                "required_execution_subject.named_wrong_implementation",
+                |o| {
+                    o.required_execution_subject
+                        .named_wrong_implementation
+                        .clear();
+                },
+            ),
+            ("acceptable_evidence_forms", |o| {
+                o.acceptable_evidence_forms.clear();
+            }),
+            ("invalidators", |o| o.invalidators.clear()),
+            ("permitted_substitute.substitute_id", |o| {
+                o.acceptable_evidence_forms
+                    .push(EvidenceForm::DeclaredSubstitute);
+                o.permitted_substitute = Some(PermittedSubstitute {
+                    substitute_id: String::new(),
+                    ..substitute()
+                });
+            }),
+            ("permitted_substitute.instrument_id", |o| {
+                o.acceptable_evidence_forms
+                    .push(EvidenceForm::DeclaredSubstitute);
+                o.permitted_substitute = Some(PermittedSubstitute {
+                    instrument_id: " ".into(),
+                    ..substitute()
+                });
+            }),
+        ];
+        for (field, edit) in blank_fields {
+            assert_eq!(obligation_with(edit), Err(Refusal::EmptyField(field)));
+        }
+
+        // A permitted substitute needs the declared-substitute evidence form.
+        assert_eq!(
+            obligation_with(|o| o.permitted_substitute = Some(substitute())),
+            Err(Refusal::EmptyField(
+                "acceptable_evidence_forms.declared_substitute"
+            ))
+        );
+        assert_eq!(
+            obligation_with(|o| {
+                o.acceptable_evidence_forms
+                    .push(EvidenceForm::DeclaredSubstitute);
+                o.permitted_substitute = Some(substitute());
+            }),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_required_head_must_be_a_full_sha1_object_id() {
+        let sha256_shaped = "a".repeat(64);
+        for head in ["", "abc1234", "main", sha256_shaped.as_str()] {
+            assert_eq!(
+                obligation_with(|o| o.required_execution_subject.required_head = head.into()),
+                Err(Refusal::InvalidHead {
+                    field: "required_execution_subject.required_head",
+                    value: head.into()
+                }),
+                "{head:?}"
+            );
+            assert_eq!(
+                result_with(|result| result.head = head.into()),
+                Err(Refusal::InvalidHead {
+                    field: "head",
+                    value: head.into()
+                }),
+                "{head:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_result_names_the_first_field_that_is_malformed() {
+        assert_eq!(result_with(|_| {}), Ok(()));
+        assert_eq!(
+            result_with(|result| result.schema_version.clear()),
+            Err(Refusal::InvalidSchemaVersion {
+                kind: "result",
+                value: String::new()
+            })
+        );
+        assert_eq!(
+            result_with(|result| result.kind = EXECUTED_CONTROL_PACKET_KIND.into()),
+            Err(Refusal::InvalidKind {
+                expected: EXECUTED_CONTROL_RESULT_KIND,
+                actual: EXECUTED_CONTROL_PACKET_KIND.into()
+            })
+        );
+
+        type Edit = fn(&mut ExecutedControlResultV1);
+        let blank_fields: [(&str, Edit); 7] = [
+            ("obligation_id", |r| r.obligation_id.clear()),
+            ("source_identity", |r| r.source_identity = " ".into()),
+            ("command_or_instrument_id", |r| {
+                r.command_or_instrument_id.clear();
+            }),
+            ("candidate_id", |r| r.candidate_id = Some(String::new())),
+            ("limitation", |r| r.limitation = Some(" ".into())),
+            ("substitute_id", |r| r.substitute_id = Some(String::new())),
+            ("artifact.logical_id", |r| {
+                r.artifact = Some(ArtifactIdentity {
+                    logical_id: String::new(),
+                    digest: ARTIFACT_DIGEST.into(),
+                });
+            }),
+        ];
+        for (field, edit) in blank_fields {
+            assert_eq!(result_with(edit), Err(Refusal::EmptyField(field)));
+        }
+
+        // Optional fields may be absent.
+        assert_eq!(
+            result_with(|result| {
+                result.candidate_id = None;
+                result.artifact = None;
+                result.obligation_digest = None;
+            }),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn digests_must_be_a_sha256_prefix_and_64_lowercase_hex_characters() {
+        let hex = "a".repeat(64);
+        let malformed = [
+            hex.clone(),
+            format!("sha1:{hex}"),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}g", "a".repeat(63)),
+            format!("sha256:{}A", "a".repeat(63)),
+            "sha256:".to_string(),
+        ];
+        for digest in malformed {
+            assert_eq!(
+                result_with(|result| result.obligation_digest = Some(digest.clone())),
+                Err(Refusal::InvalidDigest {
+                    field: "obligation_digest",
+                    value: digest.clone()
+                })
+            );
+            assert_eq!(
+                result_with(|result| {
+                    result.artifact = Some(ArtifactIdentity {
+                        logical_id: "artifact:log".into(),
+                        digest: digest.clone(),
+                    });
+                }),
+                Err(Refusal::InvalidDigest {
+                    field: "artifact.digest",
+                    value: digest.clone()
+                })
+            );
+        }
+        assert_eq!(
+            result_with(|result| {
+                result.obligation_digest = Some(format!("sha256:{}", "0123456789abcdef".repeat(4)));
+            }),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_packet_refuses_its_own_malformed_envelope_and_members() {
+        let obligation = sample_obligation();
+        let valid = || packet(vec![obligation.clone()], vec![passing_result(&obligation)]);
+        let refused = |edit: fn(&mut ExecutedControlPacketV1)| {
+            let mut packet = valid();
+            edit(&mut packet);
+            packet.validate()
+        };
+        assert_eq!(
+            refused(|packet| packet.schema_version = "0".into()),
+            Err(Refusal::InvalidSchemaVersion {
+                kind: "packet",
+                value: "0".into()
+            })
+        );
+        assert_eq!(
+            refused(|packet| packet.kind = "packet".into()),
+            Err(Refusal::InvalidKind {
+                expected: EXECUTED_CONTROL_PACKET_KIND,
+                actual: "packet".into()
+            })
+        );
+        assert_eq!(
+            refused(|packet| packet.source_identity = " ".into()),
+            Err(Refusal::EmptyField("source_identity"))
+        );
+        // A malformed member is refused through the packet, not skipped.
+        assert_eq!(
+            refused(|packet| packet.obligations[0].owning_claim.clear()),
+            Err(Refusal::EmptyField("owning_claim"))
+        );
+        assert_eq!(
+            refused(|packet| packet.results[0].head = "main".into()),
+            Err(Refusal::InvalidHead {
+                field: "head",
+                value: "main".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_satisfying_or_executed_failed_result_must_retain_its_artifact() {
+        assert_eq!(
+            packet_with(|result| result.artifact = None),
+            Err(Refusal::MissingArtifact {
+                obligation_id: OBLIGATION_ID.into(),
+                state: ResultState::Passed
+            })
+        );
+
+        let obligation = sample_obligation();
+        let failed_without_artifact = |kind: OfferedEvidenceKind| {
+            let mut result = failed_before_result(&obligation);
+            result.artifact = None;
+            result.offered_evidence_kind = kind;
+            packet(vec![obligation.clone()], vec![result]).validate()
+        };
+        assert_eq!(
+            failed_without_artifact(OfferedEvidenceKind::ExecutedDiscriminatingControl),
+            Err(Refusal::MissingArtifact {
+                obligation_id: OBLIGATION_ID.into(),
+                state: ResultState::Failed
+            })
+        );
+        // A failed result that never ran the control has no artifact to retain.
+        let evaluation = failed_without_artifact(OfferedEvidenceKind::OrdinaryPositiveTest);
+        assert_eq!(
+            evaluation.map(|evaluation| evaluation.satisfactions[0].satisfies),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn non_executed_evidence_is_accepted_only_when_it_claims_nothing() -> Result<(), String> {
+        for kind in [
+            OfferedEvidenceKind::OrdinaryPositiveTest,
+            OfferedEvidenceKind::ReviewProse,
+            OfferedEvidenceKind::StructuralDiscriminationClaim,
+        ] {
+            let obligation = sample_obligation();
+            let mut result = passing_result(&obligation);
+            result.offered_evidence_kind = kind;
+            result.state = ResultState::NotProven;
+            let evaluation = require_valid(packet(vec![obligation], vec![result]))?;
+            assert_eq!(evaluation.satisfactions.len(), 1, "{kind:?}");
+            assert!(!evaluation.satisfactions[0].satisfies, "{kind:?}");
+            assert_eq!(
+                evaluation.satisfactions[0].state,
+                Some(ResultState::NotProven),
+                "{kind:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn two_satisfying_results_for_one_obligation_are_refused() -> Result<(), String> {
+        let obligation = sample_obligation();
+        let twice = packet(
+            vec![obligation.clone()],
+            vec![passing_result(&obligation), passing_result(&obligation)],
+        );
+        assert_eq!(
+            require_invalid(twice)?,
+            Refusal::ConflictingSatisfyingResults(OBLIGATION_ID.into())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refusals_read_as_one_sentence_naming_the_subject() {
+        for (refusal, message) in [
+            (
+                Refusal::EmptyField("owning_claim"),
+                "owning_claim must not be empty".to_string(),
+            ),
+            (
+                Refusal::InvalidSchemaVersion {
+                    kind: "packet",
+                    value: "0".into(),
+                },
+                "unsupported packet schema version \"0\"; expected 1".to_string(),
+            ),
+            (
+                Refusal::InvalidHead {
+                    field: "head",
+                    value: "main".into(),
+                },
+                "head must be a full 40-character Git SHA, got \"main\"".to_string(),
+            ),
+            (
+                Refusal::InvalidDigest {
+                    field: "artifact.digest",
+                    value: "sha256:".into(),
+                },
+                "artifact.digest must be sha256:<64 lowercase hex>, got \"sha256:\"".to_string(),
+            ),
+            (
+                Refusal::MissingArtifact {
+                    obligation_id: "claim:a".into(),
+                    state: ResultState::Passed,
+                },
+                "Passed result for \"claim:a\" is missing retained artifact identity".to_string(),
+            ),
+            (
+                Refusal::HeadMismatch {
+                    obligation_id: "claim:a".into(),
+                    expected: HEAD_AFTER.into(),
+                    actual: "b".repeat(40),
+                },
+                format!(
+                    "result for \"claim:a\" binds head {}, expected {HEAD_AFTER}",
+                    "b".repeat(40)
+                ),
+            ),
+            (
+                Refusal::ConflictingSatisfyingResults("claim:a".into()),
+                "obligation \"claim:a\" has more than one satisfying result".to_string(),
+            ),
+        ] {
+            assert_eq!(refusal.to_string(), message);
+        }
     }
 }

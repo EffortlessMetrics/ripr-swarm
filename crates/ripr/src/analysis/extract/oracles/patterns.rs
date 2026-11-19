@@ -396,12 +396,7 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
     // `receiver_keeps_call_error` already refuses those for the uncompared
     // case. Outer grouping is looked through.
     let is_error_read = |operand: &str| {
-        let mut operand = operand.trim();
-        while operand.starts_with('(')
-            && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
-        {
-            operand = operand[1..operand.len() - 1].trim();
-        }
+        let operand = peel_grouping(operand);
         let masked = mask_comments_and_strings(operand);
         let synthetic = format!(r#"assert_eq!({operand}, E::V);"#);
         if synthetic.contains("Err(") && err_constructor_is_not_directly_credited(&synthetic) {
@@ -420,6 +415,46 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
             && expression_pins_specific_error(&comparable_expression(expected))
     };
     pins_against(left, right) || pins_against(right, left)
+}
+
+/// Looks through outer grouping parentheses around an assertion operand.
+fn peel_grouping(operand: &str) -> &str {
+    let mut operand = operand.trim();
+    while operand.starts_with('(') && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
+    {
+        operand = operand[1..operand.len() - 1].trim();
+    }
+    operand
+}
+
+/// True when an equality assertion compares an outcome the test wrote itself:
+/// an `Err(..)` constructor handed to a value-supplying adapter, or an error
+/// read (`.unwrap_err()` / `.expect_err(..)`, method or `Result::` UFCS
+/// spelling) taken through an adapter that replaces the owner's error. Only the
+/// compared operands are read: diagnostic arguments after them cannot replace
+/// the compared value. Such an assertion can pass whatever the owner
+/// returns, so the oracle classifier reads it as a relational check, never an
+/// exact kind, on every seam (#12359, #12610). This is the one owner for that
+/// reading; diff-scoped and repo seam evidence both take the classifier's kind.
+pub(super) fn asserted_outcome_independent_of_owner(line: &str) -> bool {
+    const ERROR_READS: &[&str] = &[
+        ".unwrap_err(",
+        "::unwrap_err(",
+        ".expect_err(",
+        "::expect_err(",
+    ];
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    if err_constructor_feeds_value_adapter(line) {
+        return true;
+    }
+    let Some(args) = equality_assertion_arguments(line) else {
+        return false;
+    };
+    args.iter().any(|operand| {
+        let masked = strip_turbofish(&mask_comments_and_strings(peel_grouping(operand)));
+        ERROR_READS.iter().any(|read| masked.contains(read)) && has_error_replacing_adapter(&masked)
+    })
 }
 
 /// Whether the error read goes through an adapter that can replace the error
@@ -1660,7 +1695,9 @@ fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
     let mut path_start = type_name_start;
     while path_start > 0 {
         let before = path_start.saturating_sub(2);
-        if before + 2 <= masked.len() && &masked[before..path_start] == "::" {
+        // #14089: compare bytes; `path_start - 2` can fall inside a
+        // three- or four-byte char directly before the type name.
+        if bytes.get(before..path_start) == Some(b"::".as_slice()) {
             let seg_end = before;
             let seg_start = bytes[..seg_end]
                 .iter()
@@ -2849,6 +2886,38 @@ mod expect_err_open_tests {
                 start: 0,
                 open: 11,
                 form: ExpectErrForm::Method,
+            })
+        );
+    }
+
+    /// #14089: a three-byte identifier char right before `Result` put the
+    /// two-byte `::` probe inside that char.
+    #[test]
+    fn ufcs_result_after_a_wide_identifier_char_does_not_slice_inside_it() {
+        // The UFCS anchor starts at `Result`; the wide char is not `::`.
+        assert_eq!(
+            next_expect_err_open("日本Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 6,
+                open: 24,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        assert_eq!(
+            next_expect_err_open("値Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 3,
+                open: 21,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        // ASCII control: a full path still anchors at its first segment.
+        assert_eq!(
+            next_expect_err_open("x(std::result::Result::expect_err(r, \"m\"))", 0),
+            Some(ExpectErrOpen {
+                start: 2,
+                open: 33,
+                form: ExpectErrForm::ResultUfcs,
             })
         );
     }

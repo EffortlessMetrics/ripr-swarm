@@ -105,6 +105,9 @@ where
     });
     let worker_token = token.clone();
     let worker_slot = input_facts.map(std::sync::Arc::clone);
+    // #14700: the worker shares the caller's disclosure run, so a limitation
+    // family it prints is not printed again by the caller, or vice versa.
+    let disclosure_run = crate::analysis::IndexDisclosureRun::current();
     let (tx, rx) = mpsc::channel();
     #[cfg(test)]
     let rx = ObservedReceiver(rx);
@@ -121,13 +124,17 @@ where
             // out of the closure and the thread-local dies with the thread —
             // and the inline `None`-budget path above exits before any
             // sibling run can reuse this thread.
-            let result = match worker_slot {
+            let run_work = move || match worker_slot {
                 Some(slot) => {
                     crate::analysis::with_input_facts_capture(slot, Some(deadline), move || {
                         with_token(&worker_token, work)
                     })
                 }
                 None => with_token(&worker_token, work),
+            };
+            let result = match disclosure_run {
+                Some(run) => run.scope(run_work),
+                None => run_work(),
             };
             let _ignored = tx.send(result);
         });
@@ -280,6 +287,39 @@ mod tests {
         assert_eq!(error.check_failure_kind(), None);
         assert_eq!(error.to_string(), "boom");
         Ok(())
+    }
+
+    #[test]
+    fn budget_worker_shares_the_callers_disclosure_run() {
+        // #14700: the analysis runs on the budget worker thread, so the
+        // caller's disclosure run must be installed there too, or a family
+        // printed by the worker would be printed again by the caller.
+        let run = crate::analysis::IndexDisclosureRun::default();
+        let caller = std::thread::current().id();
+        let worker_run = run.clone();
+        let result = run.scope(|| {
+            run_with_budget(
+                Some(Duration::from_secs(30)),
+                None,
+                || {},
+                move || {
+                    let on_worker = std::thread::current().id() != caller;
+                    let shared = crate::analysis::IndexDisclosureRun::current()
+                        .is_some_and(|current| current.is_same_run(&worker_run));
+                    Ok((on_worker, shared))
+                },
+            )
+        });
+        assert_eq!(result, Ok((true, true)));
+
+        // Without a caller run, the worker has none either.
+        let result = run_with_budget(
+            Some(Duration::from_secs(30)),
+            None,
+            || {},
+            || Ok(crate::analysis::IndexDisclosureRun::current().is_none()),
+        );
+        assert_eq!(result, Ok(true));
     }
 
     #[test]

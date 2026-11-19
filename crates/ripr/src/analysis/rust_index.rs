@@ -15,7 +15,8 @@ pub(crate) use super::extract::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     has_oracle_text_shape, is_inequality_assertion, is_inline_unwrap_err_error_assertion,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_unwrap_err_bound_error_assertion, placeholder_bound_variables, unwrap_err_bound_variables,
+    without_unfilled_expected, without_unfilled_expected_parts,
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::SecondaryPassGuard;
@@ -28,7 +29,8 @@ pub(crate) use super::facts::validated_file_wide_harness_targets;
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
 pub use super::facts::{
     FileFactsView, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, ProbeShapeKind,
-    RustIndex, SourceText, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
+    RustIndex, SharedFactSlice, SourceText, TestFact, TestSummary, build_index,
+    build_index_with_test_harnesses,
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
@@ -267,6 +269,101 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
     ))
 }
 
+/// Index-level analysis-limit families that one command run prints at most
+/// once (#14700).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum IndexLimitFamily {
+    IncludeBoundary,
+    ModuleComposition,
+}
+
+type DisclosedFamilies = std::sync::Arc<std::sync::Mutex<BTreeSet<IndexLimitFamily>>>;
+
+thread_local! {
+    static INDEX_DISCLOSURE_RUN: std::cell::RefCell<Option<IndexDisclosureRun>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run-scoped record of which index-level analysis-limit families a command
+/// already printed (#14700).
+///
+/// One `ripr check` can index the workspace more than once: the diff
+/// analysis builds its index, and on a cold run the scoped seam inventory
+/// builds another over a different file set. Each used to print its own
+/// include-boundary and module-composition notes, so a cold run printed both
+/// families twice with different counts while a warm run (inventory reused)
+/// printed them once. Inside a run, the first index to disclose a family
+/// owns it and later indexes stay silent. Outside a run (LSP, MCP, `rerun`
+/// and other commands that do not open one) every index keeps printing, so
+/// those surfaces are unchanged.
+#[derive(Clone, Default)]
+pub(crate) struct IndexDisclosureRun(DisclosedFamilies);
+
+impl IndexDisclosureRun {
+    /// The run installed on this thread, so a worker thread can share it.
+    pub(crate) fn current() -> Option<Self> {
+        INDEX_DISCLOSURE_RUN.with(|run| run.borrow().clone())
+    }
+
+    /// Runs `work` with this run installed on the current thread, restoring
+    /// whatever was installed before, also when `work` unwinds.
+    pub(crate) fn scope<T>(&self, work: impl FnOnce() -> T) -> T {
+        struct Restore(Option<IndexDisclosureRun>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let previous = self.0.take();
+                INDEX_DISCLOSURE_RUN.with(|run| *run.borrow_mut() = previous);
+            }
+        }
+        let previous = INDEX_DISCLOSURE_RUN.with(|run| run.borrow_mut().replace(self.clone()));
+        let _restore = Restore(previous);
+        work()
+    }
+
+    /// Whether `self` and `other` are the same run, for tests that check a
+    /// run crosses a thread boundary.
+    #[cfg(test)]
+    pub(crate) fn is_same_run(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    fn admit(&self, family: IndexLimitFamily) -> bool {
+        match self.0.lock() {
+            Ok(mut disclosed) => disclosed.insert(family),
+            Err(poisoned) => poisoned.into_inner().insert(family),
+        }
+    }
+}
+
+fn admit_index_limit_family(family: IndexLimitFamily) -> bool {
+    IndexDisclosureRun::current().is_none_or(|run| run.admit(family))
+}
+
+/// The include-boundary and module-composition notes for `index` that the
+/// current run has not printed yet, in print order. Outside a run this is
+/// every note the index carries.
+pub(crate) fn index_limit_disclosures(index: &RustIndex) -> Vec<String> {
+    let mut disclosures = Vec::new();
+    if let Some(disclosure) = include_resolution_disclosure(index)
+        && admit_index_limit_family(IndexLimitFamily::IncludeBoundary)
+    {
+        disclosures.push(disclosure);
+    }
+    if let Some(disclosure) = module_composition_disclosure(index)
+        && admit_index_limit_family(IndexLimitFamily::ModuleComposition)
+    {
+        disclosures.push(disclosure);
+    }
+    disclosures
+}
+
+/// Prints [`index_limit_disclosures`] on stderr.
+pub(crate) fn eprint_index_limit_disclosures(index: &RustIndex) {
+    for disclosure in index_limit_disclosures(index) {
+        eprintln!("{disclosure}");
+    }
+}
+
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
     if !policy.has_overlays() {
         index.for_each_test_mut(|test| {
@@ -368,12 +465,12 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         let (Some((_, outer)), Some((_, inner))) = (outers.first(), inners.first()) else {
             continue;
         };
-        let Some(prefix) = source.get(outer.start_byte..inner.start_byte) else {
+        let Some(prefix) = source.get(outer.start_byte()..inner.start_byte()) else {
             continue;
         };
         let inner_is_err = wraps_err.get(at).copied().unwrap_or(false)
             || source
-                .get(inner.start_byte..)
+                .get(inner.start_byte()..)
                 .is_some_and(err_call_opening_at_start);
         if is_return_prefix(prefix) {
             mark_returns(outers, inners, inner_is_err, source, &mut twins);
@@ -413,7 +510,7 @@ fn mark_wrappers(
         return false;
     };
     let whole_argument = source
-        .get(inner.end_byte..call.end_byte)
+        .get(inner.end_byte()..call.end_byte())
         .is_some_and(|suffix| suffix.trim_start().starts_with([',', ')']));
     if !whole_argument {
         return false;
@@ -539,7 +636,7 @@ fn mark_returns(
             continue;
         };
         let closes = source
-            .get(inner.end_byte..outer.end_byte)
+            .get(inner.end_byte()..outer.end_byte())
             .is_some_and(|suffix| {
                 let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
                 // `..` after the constructor is a range, not a method chain.
@@ -642,7 +739,7 @@ fn mark_payloads(
         });
         for (_, outer) in outers.get(first..).unwrap_or_default() {
             twin_work!();
-            let Some(suffix) = source.get(inner.end_byte..outer.end_byte) else {
+            let Some(suffix) = source.get(inner.end_byte()..outer.end_byte()) else {
                 break;
             };
             match err_call_closing(suffix, opening) {
@@ -766,6 +863,31 @@ impl<'a> FileOwnerLookup<'a> {
             .take_while(|&i| self.reach[i] >= line)
             .map(|i| self.by_start[i])
             .find(|function| line <= function.end_line)
+    }
+
+    /// Whether `owner` is the only indexed function that starts or ends on
+    /// a line of `first..=last` (#14139). Ownership is resolved by line, so
+    /// when another function begins or ends on one of those lines (two
+    /// functions written on one line, say) the line cannot say which of them
+    /// holds the shape, and a per-owner decision must not be attached.
+    /// A function that merely encloses the whole span (an outer function
+    /// around a nested one) does not make the owner ambiguous.
+    pub(crate) fn owns_lines_alone(
+        &self,
+        owner: &FunctionSummary,
+        first: usize,
+        last: usize,
+    ) -> bool {
+        let after = self
+            .by_start
+            .partition_point(|function| function.start_line <= last);
+        let bounded = |line: usize| first <= line && line <= last;
+        !(0..after)
+            .rev()
+            .take_while(|&i| self.reach[i] >= first)
+            .map(|i| self.by_start[i])
+            .filter(|function| !std::ptr::eq(*function, owner))
+            .any(|function| bounded(function.start_line) || bounded(function.end_line))
     }
 }
 
@@ -929,6 +1051,52 @@ mod tests {
         assert_eq!(lookup.owner(31), None);
         assert_eq!(lookup.owner(45).map(|f| f.name.as_str()), Some("tie_30"));
         assert!(owned > 30, "only {owned} lines had an owner");
+        Ok(())
+    }
+
+    /// #14139: a per-owner decision attaches only when no other function
+    /// starts or ends on the shape's lines; an enclosing function does not
+    /// make a nested owner ambiguous.
+    #[test]
+    fn owns_lines_alone_refuses_lines_shared_with_another_function() -> Result<(), String> {
+        let template = summarize_file(PathBuf::from("src/lib.rs"), "fn t() {}\n".to_string())
+            .functions
+            .into_iter()
+            .next()
+            .ok_or("template function not parsed")?;
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionSummary {
+            name: name.to_string(),
+            start_line,
+            end_line,
+            ..template.clone()
+        };
+        let functions = vec![
+            function("outer", 2, 30),
+            function("child_a", 3, 5),
+            function("child_b", 7, 9),
+            function("grandchild", 8, 8),
+            function("same_line_first", 12, 12),
+            function("same_line_second", 12, 12),
+            function("same_start_wide", 14, 20),
+            function("same_start_narrow", 14, 15),
+        ];
+        let lookup = FileOwnerLookup::new(&functions);
+        let alone = |first: usize, last: usize| -> Result<bool, String> {
+            let owner = lookup
+                .owner(first)
+                .ok_or_else(|| format!("no owner on line {first}"))?;
+            Ok(lookup.owns_lines_alone(owner, first, last))
+        };
+        // Nested owners inside an enclosing function stay unambiguous.
+        assert!(alone(4, 4)?);
+        assert!(alone(8, 8)?);
+        assert!(alone(25, 25)?);
+        assert!(alone(16, 17)?);
+        // Two functions on one line, or another function starting or ending
+        // on one of the shape's lines, leave the owner ambiguous.
+        assert!(!alone(12, 12)?);
+        assert!(!alone(14, 14)?);
+        assert!(!alone(5, 7)?);
         Ok(())
     }
 
@@ -1811,6 +1979,97 @@ fn feature_gated_test() {}
                 "ripr: 1 Rust include boundary limitation(s): src/lib.rs:7:rust_include_dynamic_expression; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing."
             )
         );
+    }
+
+    /// An index carrying one include-boundary limitation and `modules`
+    /// module-composition limitations.
+    fn limited_index(modules: usize) -> RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            include_limitations: vec![RustIncludeLimitation {
+                parent: PathBuf::from("src/lib.rs"),
+                line: 7,
+                expression: "include!(concat!(...))".to_string(),
+                reason_code: "rust_include_dynamic_expression".to_string(),
+            }],
+            ..Default::default()
+        });
+        for n in 0..modules {
+            index.insert_file_only(
+                PathBuf::from(format!("src/m{n}.rs")),
+                FileFacts {
+                    role_provenance: crate::analysis::facts::SourceRoleProvenance {
+                        edges: Vec::new(),
+                        earliest_unresolved_reason: Some(
+                            "rust_module_ambiguous_parent".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    ..FileFacts::default()
+                },
+            );
+        }
+        index
+    }
+
+    #[test]
+    fn index_limit_disclosures_print_each_family_once_per_run() {
+        // The diff index and a cold scoped-inventory index disagree on the
+        // module count (#14700); the run keeps only the first index's notes.
+        let diff_index = limited_index(2);
+        let inventory_index = limited_index(5);
+        let expected = vec![
+            include_resolution_disclosure(&diff_index).unwrap_or_default(),
+            module_composition_disclosure(&diff_index).unwrap_or_default(),
+        ];
+        assert!(
+            expected[1].contains("2 Rust module composition"),
+            "{expected:?}"
+        );
+
+        let run = IndexDisclosureRun::default();
+        let (first, second) = run.scope(|| {
+            (
+                index_limit_disclosures(&diff_index),
+                index_limit_disclosures(&inventory_index),
+            )
+        });
+        assert_eq!(first, expected, "the first index prints both families");
+        assert_eq!(second, Vec::<String>::new(), "a later index prints neither");
+
+        // A worker thread sharing the run stays silent too.
+        let worker_run = run.clone();
+        let worker_index = limited_index(3);
+        let from_worker =
+            std::thread::spawn(move || worker_run.scope(|| index_limit_disclosures(&worker_index)))
+                .join()
+                .unwrap_or_else(|_| vec!["worker panicked".to_string()]);
+        assert_eq!(from_worker, Vec::<String>::new());
+
+        // The scope is restored after the run, and a fresh run prints again.
+        assert!(IndexDisclosureRun::current().is_none());
+        assert_eq!(index_limit_disclosures(&inventory_index).len(), 2);
+        assert_eq!(
+            IndexDisclosureRun::default().scope(|| index_limit_disclosures(&inventory_index)),
+            vec![
+                include_resolution_disclosure(&inventory_index).unwrap_or_default(),
+                module_composition_disclosure(&inventory_index).unwrap_or_default(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_family_absent_from_the_first_index_is_printed_by_a_later_one() {
+        // A run admits a family only when an index actually discloses it.
+        let clean = RustIndex::default();
+        let limited = limited_index(1);
+        let (first, second) = IndexDisclosureRun::default().scope(|| {
+            (
+                index_limit_disclosures(&clean),
+                index_limit_disclosures(&limited),
+            )
+        });
+        assert_eq!(first, Vec::<String>::new());
+        assert_eq!(second.len(), 2, "{second:?}");
     }
 
     #[test]

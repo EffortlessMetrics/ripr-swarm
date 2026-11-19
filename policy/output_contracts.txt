@@ -120,6 +120,7 @@ stage_state|opaque|RIPR stage state value.
 stage_state|unknown|RIPR stage state value.
 stage_state|weak|RIPR stage state value.
 stage_state|yes|RIPR stage state value.
+static_limit_kind|activation_boundary_input_unresolved|Typed static limitation value.
 static_limit_kind|cross_language_oracle_visibility_unresolved|Typed static limitation value.
 static_limit_kind|decorator_indirection|Typed static limitation value.
 static_limit_kind|dynamic_dispatch|Typed static limitation value.
@@ -143,6 +144,7 @@ static_limit_kind|proof_harness_not_evaluated|Typed static limitation value.
 static_limit_kind|rust_inherent_receiver_unestablished|Typed static limitation value.
 static_limit_kind|typescript_workspace_discovery_truncated|Typed static limitation value.
 static_limit_kind|typescript_workspace_read_limited|Typed static limitation value.
+static_limit_kind|rust_future_never_polled|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.

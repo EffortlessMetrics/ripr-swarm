@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_drops_gap_id_and_stage_rows_only_when_they_restate_their_owner",
+]

@@ -82,7 +82,7 @@ export async function pauseRemovedWorkspaceRootOnce(
 }
 
 const NO_ANALYZABLE_PROJECT_LOG =
-  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, or a Python project file); staying idle.';
+  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, a Python project file, or tsconfig.json/jsconfig.json); staying idle.';
 
 /** Activation-only gate (#5315): skip server download/start when nothing is analyzable. */
 export async function startServerOnActivationIfAnalyzable(
@@ -142,7 +142,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     // No matching `onCommand:ripr.selectWorkspaceRoot` entry in package.json
     // `activationEvents`: since VS Code 1.74 a contributed command activates
-    // its extension automatically, and engines.vscode is ^1.90.0. The
+    // its extension automatically, and engines.vscode is ^1.91.0. The
     // manifest's legacy onCommand list predates that guarantee and is not
     // extended for new commands. (#2077)
     vscode.commands.registerCommand('ripr.selectWorkspaceRoot', async () =>

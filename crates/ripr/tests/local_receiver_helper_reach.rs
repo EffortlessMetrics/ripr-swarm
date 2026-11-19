@@ -143,6 +143,46 @@ fn control_direct_call_in_the_test_body_is_related() -> Result<(), String> {
     Ok(())
 }
 
+/// #13525: a constructor spelled with a name that `use` binds to another
+/// crate's type is not the owner's constructor, even in the test body.
+#[test]
+fn direct_call_on_a_foreign_imported_same_named_type_stays_unrelated() -> Result<(), String> {
+    let suite = "use local_receiver::Cache;\nuse other_crate::Regex;\n#[test]\nfn direct_imported() {\n    let re = Regex::new(\"ab\");\n    let mut cache = Cache;\n    let want = true;\n    assert_eq!(want, re.is_match_with(&mut cache, \"xaby\"));\n}\n";
+    let f = finding(&library(""), suite)?;
+    assert_not_credited(&f, "direct_imported");
+    assert_never_exposed(&f);
+    Ok(())
+}
+
+/// Control for the decline above: other imports in the file, including a
+/// std type, leave the owner's own imported type credited.
+#[test]
+fn direct_call_with_other_imports_stays_related() -> Result<(), String> {
+    let suite = "use local_receiver::{Cache, Regex};\nuse std::collections::HashMap;\n#[test]\nfn direct_other_imports() {\n    let _unused: HashMap<u8, u8> = HashMap::new();\n    let re = Regex::new(\"ab\");\n    let mut cache = Cache;\n    let want = true;\n    assert_eq!(want, re.is_match_with(&mut cache, \"xaby\"));\n}\n";
+    let f = finding(&library(""), suite)?;
+    assert_eq!(
+        relation_of(&f, "direct_other_imports"),
+        Some("direct_owner_call"),
+        "{f}"
+    );
+    Ok(())
+}
+
+/// A `use` rooted at a module declared in the test file (2018 uniform paths)
+/// is local, not a foreign crate, so the owner's re-exported type is still
+/// credited.
+#[test]
+fn direct_call_through_a_local_module_reexport_stays_related() -> Result<(), String> {
+    let suite = "use local_receiver::Cache;\nmod support {\n    pub use local_receiver::Regex;\n}\nuse support::Regex;\n#[test]\nfn direct_reexport() {\n    let re = Regex::new(\"ab\");\n    let mut cache = Cache;\n    let want = true;\n    assert_eq!(want, re.is_match_with(&mut cache, \"xaby\"));\n}\n";
+    let f = finding(&library(""), suite)?;
+    assert_eq!(
+        relation_of(&f, "direct_reexport"),
+        Some("direct_owner_call"),
+        "{f}"
+    );
+    Ok(())
+}
+
 /// Pinned current limit (#13411): a helper that takes the receiver as a typed
 /// parameter (`re: &Regex`) is not credited either. Only a receiver the helper
 /// builds itself is resolved; a parameter's type comes from the caller and is a
@@ -167,10 +207,10 @@ fn helper_building_its_own_receiver_is_credited_as_a_direct_owner_call() -> Resu
         Some("direct_owner_call"),
         "{f}"
     );
-    // The classification is not pinned here: a credited helper's strong
-    // `assert_eq!` is not subject to the mixed-oracle confirmation that holds a
-    // call written in the test body at `weakly_exposed`. That disparity already
-    // exists for free-function helpers and is tracked separately (#13533).
+    // The classification is not pinned here: a helper-borne assertion
+    // confirms through the same token match as one written in the test body
+    // (#13533, pinned in `helper_oracle_confirmation.rs`), and this fixture's
+    // `want` / `hay` spelling decides that, not the harness.
     Ok(())
 }
 

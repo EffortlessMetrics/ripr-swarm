@@ -1,0 +1,23 @@
+{
+  "id": "typescript_cross_module_reach_shadowed_refused",
+  "language": "typescript",
+  "tier": "pure",
+  "source_fixture": "fixtures/ts_cross_module_reach_shadowed",
+  "vector": "shadowed_import_name_records_no_cross_module_edge",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "no_static_path"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

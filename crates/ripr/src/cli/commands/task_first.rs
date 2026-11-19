@@ -25,7 +25,7 @@ use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
 
-Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]
+Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -35,6 +35,14 @@ Options:
                    `ripr check --base`. Without it, repair infers the base
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
+  --json           Print the repair packet JSON, including
+                   `repair_attempt.attempt_id`, instead of the summary and
+                   card. A repeated start prints the existing attempt's
+                   status JSON. A refusal keeps its stderr prose and exit
+                   code and prints the `cli_refusal` JSON document on
+                   stdout with its reason `code` and `disposition`. An
+                   unknown flag prints that document beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
@@ -68,39 +76,67 @@ This is the ordinary route into the repair transaction. The advanced
 spelling `ripr agent repair --seam-id ID --phase before` runs the same
 before phase with explicit phase vocabulary."#;
 
-pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
+pub(in crate::cli) const CONTINUE_HELP: &str = r#"After the test edit, check whether it closed the gap.
 
-Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]
+Run this after `ripr repair` has named a gap (changed behavior no current test
+appears to check) and you have edited the focused test it pointed at. ripr
+re-reads your tests, compares the evidence with what it recorded when the
+repair started, and writes a receipt: a JSON record of the before and after
+result. ripr does not run your tests and never edits your source or test files.
+
+Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
-  --attempt ID     Select one repair attempt by ID.
+  --attempt ID     Continue this repair attempt. Without it, continue runs
+                   only when exactly one current attempt exists under the
+                   root; with several it lists them with a retry command
+                   and picks none.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --quiet          Drop the after phase's progress narration and `wrote
-                   <path>` lines from stderr. Refusal prose and the result
-                   stay. `RIPR_QUIET` does the same.
+  --json           Print the result as JSON, or the attempt's status JSON
+                   when it is already complete. A refusal or failure inside
+                   the check also prints its JSON document on stdout
+                   (`repair_after_refusal`, `repair_after_failure`, or the
+                   verify document) beside the stderr prose and the same
+                   exit code. Refusals that stop before the check (no
+                   current attempt, several attempts, an ended attempt, a
+                   blocked baseline, an unanchored root) print the
+                   `cli_refusal` JSON document with their reason `code`
+                   and `disposition`; operational errors before the verify
+                   step keep stdout empty. An unknown flag or stray
+                   argument prints the `cli_refusal` JSON document on
+                   stdout beside its exit 2 stderr prose.
+  --quiet          Drop progress lines and `wrote <path>` lines from stderr.
+                   Refusals and the result stay. `RIPR_QUIET` does the same.
 
-Without an ID, continue runs only when exactly one current attempt is
-eligible under the selected root. Several current attempts print a bounded
-selection list with a retry command instead of selecting one implicitly;
-no current attempt reports that honestly. An explicitly selected attempt
-whose status confirms a compliant receipt reports its already-complete
-status instead of running again; one that ended without a receipt (stale,
-failed, or incomparable), and one whose finished state no compliant
-receipt confirms (unissued, unavailable, or compatibility-only), reports
-its state and refuses with exit 3 instead of claiming completion.
+What it checks, in order:
+  1. Nothing moved underneath: HEAD and the analysis inputs still match the
+     start of the attempt.
+  2. Only the test file (or inline test module) the repair allowed changed.
+  3. Whether the static evidence now shows a test that would notice the
+     changed behavior being wrong. The receipt records the answer.
+A moved HEAD, changed analysis input, or refused verification stops with a
+named refusal and the command to restart or recover.
 
-Continue runs the accepted after path: currentness admission, the edit
-cage, verification composition, and the receipt. A stale head, drifted
-analysis input, or refused verification ends in the canonical typed
-refusal with its restart or recovery route.
+An attempt that is already confirmed complete prints its status and exits 0
+without running again. One that ended without a receipt (stale, failed, or
+incomparable), or finished without a receipt that confirms it (unissued,
+unavailable, or compatibility-only), prints its state and exits 3; no
+completion is claimed.
 
-This is the ordinary route through the repair transaction. The advanced
-spelling `ripr agent repair --attempt ID --phase after` runs the same
-after phase with explicit phase vocabulary."#;
+Exit status:
+  0  the check ran and wrote its result, or the attempt was already complete
+  2  usage or operational error, or the edit check rejected the attempt:
+     files outside the allowed test changed, HEAD moved, or the files could
+     not be compared (that attempt is over; start again with `ripr repair`)
+  3  a named refusal, such as no edit yet (make it and rerun); for a coded
+     refusal, stderr ends with `ripr: refusal code=<code> disposition=<disposition>`
 
-pub(in crate::cli) const STATUS_HELP: &str = r#"Report the current repair state and the one next action.
+The advanced spelling `ripr agent repair --attempt ID --phase after` runs the
+same step."#;
+
+pub(in crate::cli) const STATUS_HELP: &str = r#"Show where the current repair stands and what to run next.
 
 Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]
 
@@ -133,6 +169,9 @@ pub(super) struct RepairFacadeOptions {
     /// `--base`: the diff base for scoping an automatic start, as in
     /// `ripr check --base` (#11246). `None` infers it the way check does.
     pub(super) base: Option<String>,
+    /// `--json` (#11584): print the packet JSON (or the resumed attempt's
+    /// status JSON) instead of the summary and card.
+    pub(super) json: bool,
     /// `--quiet` (#11598): drop the start's progress narration and `wrote`
     /// lines; refusal prose and the result lines stay.
     pub(super) quiet: bool,
@@ -144,6 +183,8 @@ pub(super) struct ContinueFacadeOptions {
     /// `--root` was typed, so the root is used as given (#8767).
     pub(super) root_explicit: bool,
     pub(super) attempt_id: Option<String>,
+    /// `--json` (#11584), as for `repair`.
+    pub(super) json: bool,
     /// `--quiet` (#11598), as for `repair`.
     pub(super) quiet: bool,
 }
@@ -183,6 +224,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
     let mut root_explicit = false;
     let mut item: Option<String> = None;
     let mut base: Option<String> = None;
+    let mut json = false;
     let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
@@ -198,15 +240,16 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 root = reconciled;
                 root_explicit = true;
             }
+            "--json" => json = true,
             "--quiet" => quiet = true,
             "--base" => {
                 index += 1;
                 let value = expect_value(args, index, "--base")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "repair requires a non-empty --base; pass a git ref right after --base"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--base",
+                        "repair requires a non-empty --base; pass a git ref right after --base",
+                    ));
                 }
                 base = Some(value.to_string());
             }
@@ -242,6 +285,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         root_explicit,
         item,
         base,
+        json,
         quiet,
     }))
 }
@@ -253,6 +297,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut attempt_id: Option<String> = None;
+    let mut json = false;
     let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
@@ -268,12 +313,16 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 root = reconciled;
                 root_explicit = true;
             }
+            "--json" => json = true,
             "--quiet" => quiet = true,
             "--attempt" => {
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("continue --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "continue --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -285,6 +334,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         root,
         root_explicit,
         attempt_id,
+        json,
         quiet,
     }))
 }
@@ -315,7 +365,10 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("status --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--attempt",
+                        "status --attempt requires a non-empty ID; pass a value right after --attempt",
+                    ));
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -369,7 +422,28 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 /// A façade decision (exit 3) carrying its typed reason code: the code line
 /// follows the unchanged prose, so the first line stays plain words (#11597,
 /// #12193).
+///
+/// Under `--json` the same refusal is also the `cli_refusal` document on
+/// stdout, with the code and its disposition as fields (#14931); the
+/// boundary writes it only when this decision is the error that escaped.
 fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal(code, message.trim_end());
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
+/// [`typed_decision`] for a selection refusal: the document also carries the
+/// choice commands the caller composed from the typed ids it just listed on
+/// stderr (#14980).
+fn typed_choice_decision(
+    code: RepairRefusalCode,
+    message: String,
+    choices: crate::output::refusal::RefusalChoices,
+) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal_with_choices(
+        code,
+        message.trim_end(),
+        Some(choices),
+    );
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
@@ -383,6 +457,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     )
     .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "repair")?;
+    let mut unscoped: Option<UnscopedSelection> = None;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
             let item =
@@ -394,75 +469,106 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 }
             }
         }
-        None => match resolve_repair_start(&options.root, options.base.as_deref())
-            .map_err(CommandError::from)?
-        {
-            RepairStartDecision::Start { seam_id } => seam_id,
-            RepairStartDecision::NoEligible {
-                total_seams,
-                change,
-                reasons,
-                reasons_total,
-            } => {
-                // A deliberate named outcome, not a failure: the honest
-                // setup/limitation message on stderr, stdout empty.
-                return Err(typed_decision(
-                    RepairRefusalCode::NoEligibleSeam,
-                    no_eligible_seam_message(
-                        &options.root,
-                        options.base.as_deref(),
-                        change,
-                        total_seams,
-                        &reasons,
-                        reasons_total,
-                    ),
-                ));
-            }
-            RepairStartDecision::Action(action, candidates) => {
-                // A deliberate named outcome, not a failure: stderr, stdout
-                // empty (`cmd:repair` declares an empty-stdout refusal),
-                // decision exit code.
-                let bound =
-                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
-                let selection_total = match action.stop() {
-                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
-                    _ => None,
-                };
-                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
-                    // #10978 / #11111: a selection is told in plain words:
-                    // where each change is, what a test must check for it,
-                    // and the exact command that starts it. The typed stop
-                    // ids and count are carried by those commands and the
-                    // stated total, so the internal block is not repeated.
+        None => {
+            let resolved = resolve_repair_start(&options.root, options.base.as_deref())
+                .map_err(CommandError::from)?;
+            // #13701: a start or menu chosen with no readable change says it is
+            // not narrowed to the change and names the `--base` rerun.
+            let bound = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+            unscoped = resolved.unscoped_note.map(|note| UnscopedSelection {
+                note,
+                base_command: crate::app::task_first::unscoped_base_command(&bound),
+            });
+            match resolved.decision {
+                RepairStartDecision::Start { seam_id } => {
+                    if let Some(unscoped) = &unscoped {
+                        eprintln!("{}", unscoped.human_line());
+                    }
+                    seam_id
+                }
+                RepairStartDecision::NoEligible {
+                    total_seams,
+                    change,
+                    reasons,
+                    reasons_total,
+                } => {
+                    // A deliberate named outcome, not a failure: the honest
+                    // setup/limitation message on stderr, stdout empty.
+                    return Err(typed_decision(
+                        RepairRefusalCode::NoEligibleSeam,
+                        no_eligible_seam_message(
+                            &options.root,
+                            options.base.as_deref(),
+                            change,
+                            total_seams,
+                            &reasons,
+                            reasons_total,
+                        ),
+                    ));
+                }
+                RepairStartDecision::Action(action, candidates) => {
+                    // A deliberate named outcome, not a failure: stderr, stdout
+                    // empty (`cmd:repair` declares an empty-stdout refusal),
+                    // decision exit code.
+                    let selection_total = match action.stop() {
+                        Some(crate::domain::NextActionStop::SelectItem { total, .. }) => {
+                            Some(*total)
+                        }
+                        _ => None,
+                    };
+                    // #13701: the human menu leads with the unscoped note; under
+                    // `--json` the `cli_refusal` message carries it instead, the
+                    // way a no-eligible refusal's message carries it, and the
+                    // boundary echoes that message on stderr, so it is said once.
+                    let json_note = match (&unscoped, options.json) {
+                        (Some(unscoped), true) => format!("; {}", unscoped.human_line()),
+                        (Some(unscoped), false) => {
+                            eprintln!("{}", unscoped.human_line());
+                            String::new()
+                        }
+                        (None, _) => String::new(),
+                    };
+                    if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                        // #10978 / #11111: a selection is told in plain words:
+                        // where each change is, what a test must check for it,
+                        // and the exact command that starts it. The typed stop
+                        // ids and count are carried by those commands and the
+                        // stated total, so the internal block is not repeated.
+                        eprint!(
+                            "{}",
+                            crate::app::task_first::render_repair_choice(
+                                &candidates,
+                                total,
+                                &bound
+                            )
+                        );
+                        return Err(typed_choice_decision(
+                            RepairRefusalCode::SeveralEligibleSeams,
+                            format!("no repair started; run one of the commands above{json_note}"),
+                            crate::app::task_first::repair_choice_items(&candidates, total),
+                        ));
+                    }
                     eprint!(
                         "{}",
-                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                        crate::output::next_action::render_next_action_human_at_root(
+                            &action,
+                            &options.root
+                        )
                     );
+                    if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                        print_retry_line(&format!(
+                            "ripr repair {} --root {}",
+                            crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
+                            crate::agent::loop_commands::shell_arg(&bound)
+                        ));
+                    }
                     return Err(typed_decision(
-                        RepairRefusalCode::SeveralEligibleSeams,
-                        "no repair started; run one of the commands above".to_string(),
+                        RepairRefusalCode::RepairNeedsItem,
+                        format!("repair selected no seam; rerun with an explicit item{json_note}"),
                     ));
                 }
-                eprint!(
-                    "{}",
-                    crate::output::next_action::render_next_action_human_at_root(
-                        &action,
-                        &options.root
-                    )
-                );
-                if action.action_class() == crate::domain::NextActionClass::ChooseItem {
-                    print_retry_line(&format!(
-                        "ripr repair {} --root {}",
-                        crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
-                        crate::agent::loop_commands::shell_arg(&bound)
-                    ));
-                }
-                return Err(typed_decision(
-                    RepairRefusalCode::RepairNeedsItem,
-                    "repair selected no seam; rerun with an explicit item".to_string(),
-                ));
             }
-        },
+        }
     };
     // A repeated start (a retried or context-lost agent re-running the
     // printed command) resumes the attempt already awaiting its edit at
@@ -471,27 +577,58 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     if let Some(existing) =
         crate::app::task_first::reusable_awaiting_attempt(&options.root, &seam_id)
     {
-        return resume_awaiting_attempt(&options.root, &seam_id, &existing);
+        return resume_awaiting_attempt(
+            &options.root,
+            &seam_id,
+            &existing,
+            options.json,
+            unscoped.as_ref(),
+        );
     }
-    // The start's stdout is held until the handoff card renders too:
-    // `cmd:repair` declares `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so a card
-    // failure after publication must leave stdout empty — a refusal
+    // The start's stdout is held until the handoff card renders too: a
+    // card failure after publication is an untyped decision that writes no
+    // `cli_refusal` document, so it must leave stdout empty — a refusal
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
     let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-        facade_before_options(&options.root, &seam_id, options.quiet),
+        facade_before_options(&options.root, &seam_id, options.json, options.quiet),
     )?;
+    // `--json` (#11584): the packet envelope with `repair_attempt` is the
+    // whole document; the human card is not appended to it.
+    if options.json {
+        let document = with_repair_start_scope(before_stdout, unscoped.as_ref()).map_err(
+            |error| {
+                // The attempt is already published: name it and its recovery,
+                // and leave stdout empty (#7032).
+                CommandError::Decision(format!(
+                    "repair started attempt `{attempt_id}` for gap `{seam_id}`, but its JSON document could not be completed: {error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root} --json`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root}`",
+                    root = crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy())
+                    ),
+                ))
+            },
+        )?;
+        print!("{document}");
+        return Ok(());
+    }
     // The compact handoff renders through the same card service the
     // advanced route serves. The attempt is already published here, so a
     // card failure must name the started attempt and its recovery
     // instead of implying no attempt exists.
-    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
-        root: options.root.clone(),
-        root_explicit: true,
-        seam_id: seam_id.clone(),
-        json: false,
-    })
+    let card_stdout = super::agent_card::agent_card_stdout_after_start(
+        AgentCardOptions {
+            root: options.root.clone(),
+            root_explicit: true,
+            seam_id: seam_id.clone(),
+            json: false,
+        },
+        &before_stdout,
+    )
     .map_err(|error| {
+        // The held start summary is the only copy of the edit target, cage
+        // and next command on this route (#13803 dropped the stderr copies),
+        // so a card failure moves it to stderr; stdout stays empty (#7032).
+        eprint!("{before_stdout}");
         CommandError::Decision(crate::app::task_first::card_after_publish_message(
             &attempt_id,
             &seam_id,
@@ -506,6 +643,37 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     Ok(())
 }
 
+/// Why a bare `ripr repair` start or menu is not narrowed to the change
+/// (#13701), and the `--base` rerun that would narrow it.
+struct UnscopedSelection {
+    note: String,
+    base_command: String,
+}
+
+impl UnscopedSelection {
+    /// The note, which already says to pass `--base <ref>` (or to check the
+    /// named one), with the rerun given once as its example.
+    fn human_line(&self) -> String {
+        format!("{} (for example `{}`)", self.note, self.base_command)
+    }
+}
+
+/// A `--json` start or resume document, with the additive
+/// `repair_start_scope` block when the selection was not narrowed (#13701).
+fn with_repair_start_scope(
+    document: String,
+    unscoped: Option<&UnscopedSelection>,
+) -> Result<String, String> {
+    match unscoped {
+        Some(unscoped) => crate::output::agent_seam_packets::render_repair_start_scope_stdout(
+            &document,
+            &unscoped.note,
+            &unscoped.base_command,
+        ),
+        None => Ok(document),
+    }
+}
+
 /// Report the attempt a repeated `ripr repair` resumed (#8742): the same
 /// narration the before phase ends with, naming the existing attempt, then
 /// the same handoff card. Nothing is written.
@@ -513,7 +681,31 @@ fn resume_awaiting_attempt(
     root: &std::path::Path,
     seam_id: &str,
     existing: &crate::app::task_first::ReusableAttempt,
+    json: bool,
+    unscoped: Option<&UnscopedSelection>,
 ) -> Result<(), CommandError> {
+    if json {
+        // The existing attempt's typed status document, from the same
+        // projection `ripr status --attempt <id> --json` prints (#11584).
+        let attempt_id =
+            crate::app::repair_attempt::RepairAttemptId::parse(existing.attempt_id.clone())
+                .map_err(|error| CommandError::Decision(format!("repair attempt id: {error}")))?;
+        let report =
+            crate::app::agent_status::build_agent_attempt_status(root, root, None, &attempt_id)
+                .map_err(CommandError::Decision)?;
+        let rendered = crate::app::agent_status::render_agent_attempt_status_json(&report)
+            .map_err(CommandError::Decision)?;
+        // #13701: the resumed start is the same unscoped selection, so its
+        // document carries the same block the first start's did.
+        let rendered =
+            with_repair_start_scope(rendered, unscoped).map_err(CommandError::Decision)?;
+        eprintln!(
+            "ripr: repair attempt {} for gap `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
+            existing.attempt_id
+        );
+        print!("{rendered}");
+        return Ok(());
+    }
     let follow_up = crate::agent::human_after_phase_follow_up(&existing.next_command);
     let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
         root: root.to_path_buf(),
@@ -540,7 +732,12 @@ fn resume_awaiting_attempt(
     Ok(())
 }
 
-fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> AgentRepairOptions {
+fn facade_before_options(
+    root: &std::path::Path,
+    seam_id: &str,
+    json: bool,
+    quiet: bool,
+) -> AgentRepairOptions {
     AgentRepairOptions {
         root: root.to_path_buf(),
         root_explicit: true,
@@ -561,8 +758,9 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> 
         verify_rollback: false,
         test_result: None,
         store: None,
-        json: false,
+        json,
         quiet,
+        facade_start: true,
     }
 }
 
@@ -604,16 +802,23 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 verify_rollback: false,
                 test_result: None,
                 store: None,
-                json: false,
+                json: options.json,
                 quiet: options.quiet,
+                facade_start: false,
             },
             None,
         ),
         ContinueSelection::AlreadyComplete { report } => {
-            print!(
-                "{}",
-                crate::app::agent_status::render_agent_attempt_status_markdown(&report)
-            );
+            if options.json {
+                let rendered = crate::app::agent_status::render_agent_attempt_status_json(&report)
+                    .map_err(CommandError::Failure)?;
+                print!("{rendered}");
+            } else {
+                print!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                );
+            }
             eprintln!(
                 "ripr: repair attempt `{}` is already complete ({}); no new attempt was created",
                 report.attempt.attempt_id, report.attempt.status_class
@@ -622,9 +827,10 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
         }
         ContinueSelection::EndedUnsuccessfully { report } => {
             // The facts print like status but on stderr: this arm is a
-            // typed refusal, and `cmd:continue` declares
-            // `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so stdout stays empty
-            // while stderr carries both the state and the refusal.
+            // typed refusal: under `--json` stdout carries only the
+            // `cli_refusal` document (#14931; `cmd:continue` declares
+            // `EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT`), while stderr
+            // carries both the state and the refusal.
             // A stale, failed, or incomparable attempt ended without a
             // receipt, so exit 3 and no completion claim.
             eprint!(
@@ -655,8 +861,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             // fail-closed projection cannot confirm a compliant receipt
             // (unissued, unbound, unavailable, or compatibility-only).
             // Like the unsuccessful arm, the facts print on stderr while
-            // `cmd:continue` keeps stdout empty
-            // (`EXIT_TYPED_REFUSAL_EMPTY_STDOUT`), exit 3, no completion
+            // this selection-arm refusal's stdout is only the `cli_refusal`
+            // document under `--json` (#14931), exit 3, no completion
             // claim: a `ready_to_finish` manifest alone is not one.
             eprint!(
                 "{}",
@@ -729,6 +935,22 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             const MAX_LISTED: usize = 8;
+            let choices = crate::output::refusal::RefusalChoices {
+                total: candidates.len(),
+                items: candidates
+                    .iter()
+                    .take(MAX_LISTED)
+                    .map(|id| {
+                        crate::output::refusal::RefusalChoice::new(
+                            format!("repair attempt {id}"),
+                            format!(
+                                "ripr continue --attempt {} --root {root}",
+                                crate::agent::loop_commands::shell_arg(id.as_str())
+                            ),
+                        )
+                    })
+                    .collect(),
+            };
             let mut rendered = format!(
                 "ripr: {} current attempts under {root}; select one explicitly:\n",
                 candidates.len()
@@ -743,9 +965,10 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             print_retry_line(&format!(
                 "ripr continue --attempt <attempt-id> --root {root}"
             ));
-            Err(typed_decision(
+            Err(typed_choice_decision(
                 RepairRefusalCode::AmbiguousAttempts,
                 "continue selected no attempt; rerun with --attempt".to_string(),
+                choices,
             ))
         }
     }
@@ -779,7 +1002,7 @@ fn start_fresh_clause(
 /// consults the same auto selector `ripr repair` runs, so a start the build
 /// would refuse is not offered.
 fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
-    match resolve_repair_start(root, None) {
+    match resolve_repair_start(root, None).map(|resolved| resolved.decision) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
             change,
@@ -813,6 +1036,26 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
     }
 }
 
+/// The selected root as a shell-quoted `--root` argument relative to the
+/// working directory (`.` for the working directory itself), or `None` when
+/// the root lies outside it or the working directory cannot be read, so the
+/// caller keeps the absolute spelling (#13790).
+fn cwd_relative_root_arg(root: &std::path::Path) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd_relative_root_arg_from(root, &cwd)
+}
+
+fn cwd_relative_root_arg_from(root: &std::path::Path, cwd: &std::path::Path) -> Option<String> {
+    use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+    let root = bound_root_path(root);
+    let cwd = bound_root_path(cwd);
+    let rest = root.strip_prefix(&cwd).ok()?;
+    if rest.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+    Some(shell_arg(&root_path_display(rest)))
+}
+
 fn no_eligible_seam_message(
     root: &std::path::Path,
     base: Option<&str>,
@@ -826,6 +1069,7 @@ fn no_eligible_seam_message(
     } else {
         Vec::new()
     };
+    let root_path = root;
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
@@ -844,7 +1088,15 @@ fn no_eligible_seam_message(
     );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
-            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+            // #13790: the reader runs the printed `ripr check` from here, so
+            // name the root relative to the working directory when it is
+            // inside it.
+            let relative = cwd_relative_root_arg(root_path).unwrap_or_else(|| root.clone());
+            return crate::app::task_first::non_rust_repair_guidance(
+                root_path,
+                &relative,
+                &changed_non_rust,
+            );
         }
         // A readable change on lines with no repairable code (#11111
         // burn-down): the lead already says so; close with the hand-written
@@ -1034,6 +1286,35 @@ mod tests {
         words.iter().map(|word| word.to_string()).collect()
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn cwd_relative_root_arg_is_relative_inside_and_absent_outside() {
+        // #13790: the working directory itself is `.`, a child is its
+        // relative path, and a root outside the working directory keeps the
+        // caller's absolute spelling.
+        let cwd = Path::new("/work/repo");
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo"), cwd),
+            Some(".".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/svc/shop"), cwd),
+            Some("svc/shop".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/my shop"), cwd),
+            Some("'my shop'".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/elsewhere"), cwd),
+            None
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repository"), cwd),
+            None
+        );
+    }
+
     fn parsed_repair(words: &[&str]) -> Result<RepairFacadeOptions, String> {
         match parse_repair_args(&args(words))? {
             RepairFacadeCommand::Repair(options) => Ok(options),
@@ -1193,7 +1474,23 @@ mod tests {
             StatusFacadeCommand::Status(options) if options.json => {}
             other => return Err(format!("status --quiet lost: {other:?}")),
         }
-        for bad in ["--quite", "--quiet=1"] {
+        match parse_repair_args(&args(&["--json", "seam-a"]))? {
+            RepairFacadeCommand::Repair(options) if options.json => {}
+            other => return Err(format!("repair --json lost: {other:?}")),
+        }
+        match parse_repair_args(&args(&["seam-a"]))? {
+            RepairFacadeCommand::Repair(options) if !options.json => {}
+            other => return Err(format!("repair must default to human: {other:?}")),
+        }
+        match parse_continue_args(&args(&["--json"]))? {
+            ContinueFacadeCommand::Continue(options) if options.json => {}
+            other => return Err(format!("continue --json lost: {other:?}")),
+        }
+        match parse_continue_args(&args(&[]))? {
+            ContinueFacadeCommand::Continue(options) if !options.json => {}
+            other => return Err(format!("continue must default to human: {other:?}")),
+        }
+        for bad in ["--quite", "--quiet=1", "--json=1"] {
             if parse_continue_args(&args(&[bad])).is_ok()
                 || parse_repair_args(&args(&[bad])).is_ok()
                 || parse_status_args(&args(&[bad])).is_ok()
@@ -1257,7 +1554,7 @@ mod tests {
             args(&["positional"]),
             args(&["--attempt"]),
             args(&["--attempt", "  "]),
-            args(&["--json"]),
+            args(&["--json=1"]),
         ] {
             if parse_continue_args(&argv).is_ok() {
                 return Err(format!("continue accepted {argv:?}"));
@@ -1298,13 +1595,13 @@ mod tests {
         for (body, usage, flags) in [
             (
                 REPAIR_HELP,
-                "Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]",
-                &["--root", "--base", "--quiet"][..],
+                "Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]",
+                &["--root", "--base", "--json", "--quiet"][..],
             ),
             (
                 CONTINUE_HELP,
-                "Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]",
-                &["--attempt", "--root", "--quiet"][..],
+                "Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]",
+                &["--attempt", "--root", "--json", "--quiet"][..],
             ),
             (
                 STATUS_HELP,
@@ -1751,7 +2048,7 @@ mod tests {
         // The start holds its document: it comes back as a value, so
         // nothing reaches stdout before the card has rendered.
         let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-            facade_before_options(&root, FIXTURE_SEAM, false),
+            facade_before_options(&root, FIXTURE_SEAM, false, false),
         )
         .map_err(|error| error.to_string())?;
         if before_stdout.trim().is_empty() {
@@ -1811,7 +2108,15 @@ mod tests {
 
 #[cfg(test)]
 mod facade_status_message_tests {
-    use super::facade_status_message;
+    use super::{
+        ContinueFacadeCommand, RepairFacadeCommand, StatusFacadeCommand, facade_status_message,
+        parse_continue_args, parse_repair_args, parse_status_args,
+    };
+    use std::path::Path;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
 
     #[test]
     fn status_facade_errors_name_the_status_command() {
@@ -1841,5 +2146,84 @@ mod facade_status_message_tests {
             facade_status_message("could not read store".to_string()),
             "could not read store"
         );
+    }
+
+    /// A second, different `--root` is refused with the owning command's name;
+    /// an identical repeat is absorbed. Each facade command names itself.
+    #[test]
+    fn conflicting_roots_are_refused_naming_the_command() -> Result<(), String> {
+        let conflict = |parse: Result<(), String>, command: &str| match parse {
+            Err(message) if message.contains(&format!("{command} takes --root once")) => Ok(()),
+            other => Err(format!(
+                "{command}: expected a --root conflict, got {other:?}"
+            )),
+        };
+        let argv = args(&["--root", "a", "--root", "b"]);
+        conflict(parse_repair_args(&argv).map(|_| ()), "repair")?;
+        conflict(parse_continue_args(&argv).map(|_| ()), "continue")?;
+        conflict(parse_status_args(&argv).map(|_| ()), "status")?;
+        let same = args(&["--root", "a", "--root", "a"]);
+        match parse_status_args(&same)? {
+            StatusFacadeCommand::Status(options) => {
+                assert_eq!(options.root, Path::new("a"));
+                assert!(options.root_explicit);
+            }
+            StatusFacadeCommand::Help => return Err("roots must not print help".to_string()),
+        }
+        Ok(())
+    }
+
+    /// Refusal prose names the offending input so the caller can correct it.
+    #[test]
+    fn repair_refusals_name_the_offending_input() {
+        let second = parse_repair_args(&args(&["one", "two"]));
+        assert!(
+            matches!(&second, Err(m) if m.contains("already selected `one`")),
+            "{second:?}"
+        );
+        let blank = parse_repair_args(&args(&["  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("non-empty item")),
+            "{blank:?}"
+        );
+        let blank_base = parse_repair_args(&args(&["--base", ""]));
+        assert!(
+            matches!(&blank_base, Err(m) if m.contains("non-empty --base")),
+            "{blank_base:?}"
+        );
+        let missing = parse_repair_args(&args(&["--root"]));
+        assert!(
+            matches!(&missing, Err(m) if m.contains("missing value for --root")),
+            "{missing:?}"
+        );
+        // Negative control: a single, well-formed item parses.
+        assert!(matches!(
+            parse_repair_args(&args(&["one"])),
+            Ok(RepairFacadeCommand::Repair(options)) if options.item.as_deref() == Some("one")
+        ));
+    }
+
+    /// A blank `--attempt` is refused with the owning command's name, and
+    /// `root_explicit` stays false until `--root` is typed.
+    #[test]
+    fn blank_attempt_and_default_root_flags() {
+        let blank = parse_status_args(&args(&["--attempt", "  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("status --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        let blank = parse_continue_args(&args(&["--attempt", ""]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("continue --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        assert!(matches!(
+            parse_status_args(&args(&[])),
+            Ok(StatusFacadeCommand::Status(o)) if !o.root_explicit && !o.json && o.attempt_id.is_none()
+        ));
+        assert!(matches!(
+            parse_continue_args(&args(&["--root", "."])),
+            Ok(ContinueFacadeCommand::Continue(o)) if o.root_explicit && !o.quiet
+        ));
     }
 }

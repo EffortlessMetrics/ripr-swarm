@@ -30,13 +30,13 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
-use crate::cli::commands::agent_card::agent_card_plain_lines;
 use crate::domain::{
     Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
     DiscriminatorShape, MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence,
     StageState,
 };
+use crate::output::agent_card::agent_card_plain_lines;
 use crate::output::json::render_pretty_with_newline;
 
 use super::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};
@@ -168,6 +168,7 @@ fn measurement_attempt(
         limitations: Vec::new(),
         non_claims: Vec::new(),
         after: None,
+        focused_receipt_evaluation: None,
         last_after_refusal: None,
         after_refusal_count: 0,
         after_refusal_history: Vec::new(),
@@ -247,7 +248,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
     // Measure the default brief a person reads, not the `--verbose` ledger
     // card (#10693). The measurement has no checkout to bind, so the closing
     // packet line carries the typed command's portable display.
-    let human_lines = agent_card_plain_lines(&card, &next_command_display, None, None);
+    let human_lines = agent_card_plain_lines(&card, &next_command_display, None, None, None);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
         let envelope: Value = serde_json::from_str(&packet_json)

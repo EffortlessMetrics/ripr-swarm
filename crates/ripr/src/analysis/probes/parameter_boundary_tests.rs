@@ -173,7 +173,7 @@ fn unsafe_parameter_retains_both_declaration_and_boundary_identity() -> Result<(
         .find(|shape| shape.unsafe_boundary)
         .ok_or_else(|| "declaration fix erased the unsafe obligation".to_string())?;
     assert_eq!(retained.family, ProbeFamily::StaticUnknown);
-    assert_eq!(retained.start_byte, boundary.start_byte);
+    assert_eq!(retained.start_byte, boundary.start_byte());
     assert_eq!(retained.text, boundary.text);
     assert_eq!(retained.start_line, 3);
     let probes = probes_at(source, 3)?;

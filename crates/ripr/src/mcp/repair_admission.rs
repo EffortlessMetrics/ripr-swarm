@@ -288,6 +288,29 @@ pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) 
         return SeamVerdict::Admitted;
     };
     let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
+    // The producer-owned new-test proposal, through the one shared projection
+    // (#13204), is read first (#13538): an InlineUnit proposal's file is the
+    // seam's own production file, which also carries the owner's governed
+    // inline region, so the inline check below would otherwise report the
+    // proposal-only target as a plain inline module and the proposal fix site
+    // (module-confined, and distinct from an existing inline test) would be
+    // unreachable. Only a shared-gate `Proposed` target qualifies.
+    let proposed = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(crate::analysis::new_test_target::SelectedProposal::from_admission)
+        .filter(|selected| {
+            matches!(
+                crate::analysis::repair_route::repair_packet_eligibility(entry)
+                    .readiness
+                    .target_selection,
+                crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+            ) && selected.file == recommended.file
+        });
+    if let Some(selected) = proposed {
+        return SeamVerdict::AdmittedProposed(selected);
+    }
     if let Some(module) =
         crate::output::agent_seam_packets::recommended_inline_test_module(entry, &recommended.file)
     {
@@ -305,25 +328,7 @@ pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) 
             file: recommended.file,
         };
     }
-    // The producer-owned new-test proposal, through the one shared
-    // projection (#13204); it is a disclosure and decides nothing.
-    let proposed = entry
-        .evidence
-        .new_test_target
-        .as_ref()
-        .and_then(crate::analysis::new_test_target::SelectedProposal::from_admission)
-        .filter(|selected| {
-            matches!(
-                crate::analysis::repair_route::repair_packet_eligibility(entry)
-                    .readiness
-                    .target_selection,
-                crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
-            ) && selected.file == recommended.file
-        });
-    match proposed {
-        Some(selected) => SeamVerdict::AdmittedProposed(selected),
-        None => SeamVerdict::Admitted,
-    }
+    SeamVerdict::Admitted
 }
 
 fn verdict_for(

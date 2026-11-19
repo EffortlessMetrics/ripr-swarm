@@ -8,12 +8,17 @@ use ra_ap_syntax::{
 mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
+mod owner_scopes;
 mod probe_shapes;
 mod property_macros;
 pub(crate) use closure_callbacks::{
-    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    ForwardedCallbackParam, InvokedCallbackParam, call_making_closure_positions,
+    closure_argument_positions, closure_argument_positions_many, forwarded_callback_params,
+    invoked_callback_params, invoked_callback_params_many, macro_call_columns,
+    param_never_mentioned, passes_call_making_closure, passes_call_making_closure_many,
+    unconditionally_invoked_param_positions,
 };
+pub(crate) use owner_scopes::{EnclosingScopeKind, enclosing_scopes};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -40,13 +45,15 @@ use super::{
     NameScope, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, UseBinding,
     name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
+use crate::analysis::facts::probe_shape_position;
 use crate::analysis::rust_index::{
-    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SharedFactSlice,
+    SourceText, TestFact, classify_assertion_with, err_return_guard_oracles, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    placeholder_bound_variables, unwrap_err_bound_variables, without_unfilled_expected,
+    without_unfilled_expected_parts,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,71 +144,134 @@ pub(crate) struct RustEmbedResourceDirective {
     pub(crate) expression: String,
     pub(crate) literal_path: Option<PathBuf>,
     pub(crate) macro_kind: RustEmbedResourceMacro,
+    /// The call is spelled without a path (`include_str!`, not
+    /// `std::include_str!`), so a visible definition or import can shadow it.
+    unqualified: bool,
+    /// An unqualified spelling that a visible `macro_rules!`, macro 2.0
+    /// definition or `use` import may shadow; it is not the std embed macro.
+    /// Set by [`EmbedFileScan::directives`] for the scope it is asked about.
+    pub(crate) shadowed: bool,
 }
 
-/// Crate-wide `macro_rules!` shadow facts for the embed-resource macros,
-/// computed by the resource-dependency producer from the indexed workspace
-/// sources (#13046): `true` when any indexed Rust source defines a
-/// `macro_rules!` of that name, wherever in the crate it lives.
+/// Which std embed macros some definition or import in a scope may shadow.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct EmbedResourceMacroShadowFacts {
-    /// Some indexed Rust source defines `macro_rules! include_str`.
-    pub(crate) include_str: bool,
-    /// Some indexed Rust source defines `macro_rules! include_bytes`.
-    pub(crate) include_bytes: bool,
+pub(crate) struct EmbedMacroShadows {
+    include_str: bool,
+    include_bytes: bool,
 }
 
-impl EmbedResourceMacroShadowFacts {
-    pub(crate) fn has(&self, kind: RustEmbedResourceMacro) -> bool {
+impl EmbedMacroShadows {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.include_str |= other.include_str;
+        self.include_bytes |= other.include_bytes;
+    }
+
+    fn shadows(self, kind: RustEmbedResourceMacro) -> bool {
         match kind {
             RustEmbedResourceMacro::IncludeStr => self.include_str,
             RustEmbedResourceMacro::IncludeBytes => self.include_bytes,
         }
     }
+
+    fn mark(&mut self, name: &str) {
+        match name {
+            "include_str" => self.include_str = true,
+            "include_bytes" => self.include_bytes = true,
+            _ => {}
+        }
+    }
 }
 
-/// Extract `include_str!` / `include_bytes!` macro nodes from parser-backed
-/// syntax. Comments and string contents never produce directives.
-pub(crate) fn rust_embed_resource_directives(
-    _path: &Path,
-    text: &str,
-    max_directives: usize,
-    crate_shadows: &EmbedResourceMacroShadowFacts,
-) -> Result<Vec<RustEmbedResourceDirective>, String> {
+/// One parse of a file's embed-macro facts: the shadowing definitions and
+/// imports it contains, and the `include_str!` / `include_bytes!` calls it
+/// makes. The package pass and the directive pass both read this, so a file
+/// is parsed once however many scopes ask about it (#13570).
+#[derive(Clone, Debug)]
+pub(crate) struct EmbedFileScan {
+    shadows: EmbedMacroShadows,
+    directives: Result<Vec<RustEmbedResourceDirective>, String>,
+}
+
+impl EmbedFileScan {
+    /// Shadows this file defines or imports: `macro_rules!`, `macro` (2.0)
+    /// items and `use` imports or renames that bind the name (std/core/alloc
+    /// re-imports bind the same macro and are ignored). A file that does not
+    /// parse fails closed: a name it mentions at all counts as shadowed.
+    pub(crate) fn shadows(&self) -> EmbedMacroShadows {
+        self.shadows
+    }
+
+    /// The file's embed calls with `shadowed` resolved against this file's own
+    /// shadows joined with `scope_shadows` (the rest of its package). A
+    /// path-qualified call (`std::include_str!`) is never shadowed.
+    pub(crate) fn directives(
+        &self,
+        scope_shadows: EmbedMacroShadows,
+    ) -> Result<Vec<RustEmbedResourceDirective>, String> {
+        let mut shadows = self.shadows;
+        shadows.merge(scope_shadows);
+        let mut directives = self.directives.clone()?;
+        for directive in &mut directives {
+            directive.shadowed = directive.unqualified && shadows.shadows(directive.macro_kind);
+        }
+        Ok(directives)
+    }
+}
+
+/// Parse `text` once and extract its embed-macro shadows and
+/// `include_str!` / `include_bytes!` calls. Comments and string contents
+/// never produce directives.
+pub(crate) fn rust_embed_file_scan(text: &str, max_directives: usize) -> EmbedFileScan {
+    let mut shadows = EmbedMacroShadows::default();
     let Some(parse) = parse_clean_source_file(text) else {
-        return Err("rust_embed_resource_parent_parse_unavailable".to_string());
+        for name in ["include_str", "include_bytes"] {
+            if text.contains(name) {
+                shadows.mark(name);
+            }
+        }
+        return EmbedFileScan {
+            shadows,
+            directives: Err("rust_embed_resource_parent_parse_unavailable".to_string()),
+        };
     };
     let line_index = LineIndex::new(text);
     let mut directives = Vec::new();
-    for macro_call in parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::MacroCall::cast)
-    {
-        let call_range = macro_call.syntax().text_range();
-        let call_start = macro_call
-            .path()
-            .map(|path| path.syntax().text_range().start())
-            .unwrap_or(call_range.start());
-        let Some(path) = macro_call.path() else {
-            continue;
-        };
-        let Some(macro_kind) = embed_resource_macro_callee(&path) else {
-            continue;
-        };
-        if embed_resource_call_may_be_shadowed(parse.tree().syntax(), &path, crate_shadows) {
-            continue;
-        }
-        let expression = slice_text(text, call_start, call_range.end());
-        directives.push(RustEmbedResourceDirective {
-            line: line_index.line(call_start),
-            literal_path: include_literal_path_from_macro_call(&macro_call),
-            macro_kind,
-            expression,
-        });
-        if directives.len() > max_directives {
-            break;
+    for node in parse.tree().syntax().descendants() {
+        if let Some(definition) = ast::MacroRules::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(definition) = ast::MacroDef::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            if tree.use_tree_list().is_none()
+                && tree.star_token().is_none()
+                && !use_tree_is_std_rooted(&tree)
+                && let Some(bound) = use_tree_bound_name(&tree)
+            {
+                shadows.mark(&bound);
+            }
+        } else if let Some(macro_call) = ast::MacroCall::cast(node)
+            && directives.len() <= max_directives
+        {
+            let Some(path) = macro_call.path() else {
+                continue;
+            };
+            let Some(macro_kind) = embed_resource_macro_callee(&path) else {
+                continue;
+            };
+            let call_range = macro_call.syntax().text_range();
+            let call_start = path.syntax().text_range().start();
+            directives.push(RustEmbedResourceDirective {
+                line: line_index.line(call_start),
+                literal_path: include_literal_path_from_macro_call(&macro_call),
+                macro_kind,
+                expression: slice_text(text, call_start, call_range.end()),
+                unqualified: path.segments().count() == 1,
+                shadowed: false,
+            });
         }
     }
     directives.sort_by(|left, right| {
@@ -209,7 +279,50 @@ pub(crate) fn rust_embed_resource_directives(
             .cmp(&right.line)
             .then(left.expression.cmp(&right.expression))
     });
-    Ok(directives)
+    EmbedFileScan {
+        shadows,
+        directives: Ok(directives),
+    }
+}
+
+/// The name a leaf `use` tree binds: its `as` rename, or the last path
+/// segment. `as _` binds nothing.
+fn use_tree_bound_name(tree: &ast::UseTree) -> Option<String> {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .map(|name| name.text().trim_start_matches("r#").to_string());
+    }
+    let segment = tree.path()?.segment()?;
+    Some(
+        segment
+            .name_ref()?
+            .text()
+            .trim_start_matches("r#")
+            .to_string(),
+    )
+}
+
+/// Whether the full path of a leaf `use` tree starts at `std`, `core` or
+/// `alloc`, joining the paths of enclosing nested trees.
+fn use_tree_is_std_rooted(tree: &ast::UseTree) -> bool {
+    let root = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|ancestor| ancestor.path())
+        .last()
+        .and_then(|path| {
+            let mut first = path.clone();
+            while let Some(qualifier) = first.qualifier() {
+                first = qualifier;
+            }
+            first
+                .segment()?
+                .name_ref()
+                .map(|name| name.text().to_string())
+        });
+    matches!(root.as_deref(), Some("std" | "core" | "alloc"))
 }
 
 /// Re-extract oracles from a promoted function with the parser-backed rules
@@ -227,6 +340,27 @@ pub(crate) fn parser_oracles_for_function(
         function_start_line,
         function_text,
         || parser_oracles_for_function_uncached(function_text, function_start_line),
+    )
+}
+
+/// [`parser_oracles_for_function`] for many `(function_text, start_line)`
+/// queries under the same memo key, the scope's misses computed on the rayon
+/// pool (#12947).
+pub(crate) fn parser_oracles_for_functions_many(
+    functions: &[(&str, usize)],
+) -> Vec<Option<Vec<OracleFact>>> {
+    let queries = functions
+        .iter()
+        .map(|(source, start_line)| super::run_memo::MemoQuery {
+            discriminator: *start_line,
+            extra: "",
+            source,
+        })
+        .collect::<Vec<_>>();
+    super::run_memo::memoize_many_with(
+        super::run_memo::Product::FunctionOracles,
+        &queries,
+        |query| parser_oracles_for_function_uncached(query.source, query.discriminator),
     )
 }
 
@@ -616,55 +750,6 @@ fn embed_resource_macro_callee(path: &ast::Path) -> Option<RustEmbedResourceMacr
     }
 }
 
-/// Whether an unqualified `include_str!` / `include_bytes!` call may resolve
-/// to a same-crate `macro_rules!` of that name instead of the builtin, in
-/// which case the call is skipped rather than given a false exact resource
-/// edge.
-///
-/// Detection is parser-backed for the file being scanned and crate-wide
-/// through `crate_shadows`: the resource producer sets a flag when any
-/// indexed Rust source in the crate defines `macro_rules! include_str` (or
-/// `include_bytes`), so a shadowing macro defined in another module or
-/// brought in by `#[macro_use]` is now seen. The crate-wide scan is lexical
-/// and deliberately conservative: a `macro_rules!` mention inside a comment
-/// or string of another file can only over-skip (fail closed), never
-/// under-skip.
-///
-/// Known limits: a shadowing macro imported with `use` when no crate source
-/// defines a local `macro_rules!` of that name, a `#[macro_use] extern
-/// crate` macro without a local `macro_rules!`, and macros injected by
-/// build scripts are not detected. `std::`/`core::`/`::`-qualified paths
-/// are always trusted.
-fn embed_resource_call_may_be_shadowed(
-    root: &SyntaxNode,
-    path: &ast::Path,
-    crate_shadows: &EmbedResourceMacroShadowFacts,
-) -> bool {
-    if path.segments().count() > 1 {
-        return false;
-    }
-    let Some(kind) = embed_resource_macro_callee(path) else {
-        return false;
-    };
-    if crate_shadows.has(kind) {
-        return true;
-    }
-    let name = match kind {
-        RustEmbedResourceMacro::IncludeStr => "include_str",
-        RustEmbedResourceMacro::IncludeBytes => "include_bytes",
-    };
-    root.descendants()
-        .any(|node| macro_definition_name(&node).is_some_and(|def| def == name))
-}
-
-/// Name of a `macro_rules!` / `macro` definition item, if `node` is one.
-fn macro_definition_name(node: &SyntaxNode) -> Option<String> {
-    ast::MacroRules::cast(node.clone())
-        .and_then(|item| item.name())
-        .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
-        .map(|name| name.text().to_string())
-}
-
 pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
     let tree = call.token_tree()?;
     let tokens: Vec<_> = tree
@@ -860,21 +945,29 @@ fn summarize_file_with_collectors(
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
 
+        let shared_calls = SharedFactSlice::from_vec(calls);
+        let shared_literals = SharedFactSlice::from_vec(literals);
+        let shared_attrs = SharedFactSlice::from_vec(attrs.clone());
+        let shared_nested_fn_names = SharedFactSlice::from_vec(nested_fn_names.clone());
+        let shared_let_bindings = SharedFactSlice::from_vec(let_bindings.clone());
+        let shared_body =
+            SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body);
+
         let function_fact = FunctionFact {
             id: parser_symbol_id(path, &function, &name),
             name: name.clone(),
             file: path_buf.clone(),
             start_line,
             end_line,
-            body: SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body),
-            calls: calls.clone(),
+            body: shared_body.clone(),
+            calls: shared_calls.clone(),
             returns: returns.clone(),
-            literals: literals.clone(),
+            literals: shared_literals.clone(),
             source_role,
-            attrs: attrs.clone(),
+            attrs: shared_attrs.clone(),
             impl_attrs: collect_impl_attr_syntax(&function),
-            nested_fn_names: nested_fn_names.clone(),
-            let_bindings: let_bindings.clone(),
+            nested_fn_names: shared_nested_fn_names.clone(),
+            let_bindings: shared_let_bindings.clone(),
             item: function_item_fact(&function),
             impl_context: function_impl_context(&function),
         };
@@ -885,12 +978,8 @@ fn summarize_file_with_collectors(
                 file: path_buf.clone(),
                 start_line,
                 end_line,
-                body: SourceText::shared_or_owned(
-                    &shared_source,
-                    u32::from(fn_start) as usize,
-                    &body,
-                ),
-                calls,
+                body: shared_body,
+                calls: shared_calls,
                 assertions: {
                     let mut assertions = extract_parser_oracles(
                         &function,
@@ -902,10 +991,10 @@ fn summarize_file_with_collectors(
                     assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
                     assertions
                 },
-                literals,
-                attrs,
-                nested_fn_names,
-                let_bindings,
+                literals: shared_literals,
+                attrs: shared_attrs,
+                nested_fn_names: shared_nested_fn_names,
+                let_bindings: shared_let_bindings,
                 generated: None,
             });
         }
@@ -932,6 +1021,7 @@ fn summarize_file_with_collectors(
             && a.kind == b.kind
             && a.text == b.text
     });
+    retain_probe_shapes_outside_test_bodies(&mut file_probe_shapes, &functions);
 
     let mut item_scopes = collect_scopes(&source, &line_index);
     let keep: std::collections::BTreeSet<&str> = functions
@@ -963,6 +1053,10 @@ fn summarize_file_with_collectors(
         macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
             &source,
         ))),
+        external_docs: Some(super::external_docs::parsed_source_includes_external_docs(
+            text, &source,
+        )),
+        constant_syntax: Some(super::constant_items::constant_syntax(text, &source)),
     })
 }
 
@@ -1241,6 +1335,20 @@ pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBin
     collect_body_shadow_facts(&function, &|offset| line_index.line(offset), 1)
 }
 
+/// The `#[path]` target shapes of `source`'s top-level out-of-line
+/// `mod name;` declarations, through the producer the index uses. `None`
+/// when the source is not parser-valid.
+pub(crate) fn module_path_targets(source: &str) -> Option<Vec<ModulePathTarget>> {
+    let parse = parse_clean_source_file(source)?;
+    let line_index = LineIndex::new(source);
+    Some(
+        module_declaration_facts(&parse.tree(), &line_index)
+            .into_iter()
+            .map(|declaration| declaration.path_target)
+            .collect(),
+    )
+}
+
 /// Classifies the `#[path]` attributes of one declaration into the bounded
 /// target shape. Exactly one plain string-literal attribute resolves; absence
 /// falls back to default name resolution; anything else (multiple `path`
@@ -1466,11 +1574,22 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 }
 
 /// Whether a function carries a test-framework attribute (`#[test]`,
-/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// `#[tokio::test]`, `#[async_std::test]`, `#[actix_rt::test]`,
+/// `#[actix_web::test]`, `#[test_log::test]`, `#[rstest]`). Parser-backed, so
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+            return true;
+        }
+        if let Some(path) = attribute_harness_path(&attr)
+            && (names_exact_harness_path(&path, "test")
+                || names_exact_harness_path(&path, "tokio::test")
+                || names_exact_harness_path(&path, "async_std::test")
+                || names_exact_harness_path(&path, "actix_rt::test")
+                || names_exact_harness_path(&path, "actix_web::test")
+                || names_exact_harness_path(&path, "test_log::test"))
+        {
             return true;
         }
         let compact = attr
@@ -1480,12 +1599,23 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
             .chars()
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
-        compact == "#[test]"
-            || compact.starts_with("#[tokio::test")
-            || compact.starts_with("#[async_std::test")
-            || compact == "#[rstest]"
-            || compact.starts_with("#[rstest(")
+        compact == "#[rstest]" || compact.starts_with("#[rstest(")
     })
+}
+
+fn attribute_harness_path(attr: &ast::Attr) -> Option<String> {
+    attr.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    })
+}
+
+fn names_exact_harness_path(path: &str, harness: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == harness
 }
 
 /// Returns whether a function is nested in a module gated by a test-only cfg.
@@ -1797,7 +1927,14 @@ fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
     scope
         .descendants()
         .filter_map(ast::IdentPat::cast)
-        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+        .any(|pattern| {
+            // `name` is a plain path segment; a raw-spelled binding
+            // (`r#name`) is the same name.
+            pattern.name().is_some_and(|bound| {
+                let bound = bound.text();
+                bound.strip_prefix("r#").unwrap_or(bound) == name
+            })
+        })
 }
 
 /// The item scopes around `node`, innermost first: enclosing statement lists
@@ -2058,6 +2195,61 @@ fn push_probe_shape(
     push_probe_shape_with_text(shapes, line_index, kind, start, end, text, None);
 }
 
+/// Drop probe shapes that sit strictly inside a plain `#[test]` function body
+/// and inside no other function (#13703). Tests are the instrument, not the
+/// surface under test: diff probes treat those lines as test evidence, and
+/// repo probes, seam inventory and constant readers skip evidence-role
+/// owners, so the shapes only cost memory and cache bytes.
+///
+/// The rule stays narrow so the parser-time decision cannot disagree with
+/// the roles consumers read after test-style normalization:
+/// - only a bare `#[test]` attribute qualifies (argument-bearing harness
+///   attributes are re-read by normalization and may resolve differently);
+/// - a shape on the test's opening line stays (shared-line rule, #9076);
+/// - a shape inside any other function, such as a nested helper (#9177),
+///   stays whatever that function's role;
+/// - `error_path` shapes always stay, because error-path twin pairing reads
+///   them across the whole file by byte order.
+fn retain_probe_shapes_outside_test_bodies(
+    shapes: &mut Vec<ProbeShapeFact>,
+    functions: &[FunctionFact],
+) {
+    let is_plain_test = |function: &&FunctionFact| {
+        function.source_role == FunctionSourceRole::TestAttribute
+            && function.attrs.iter().any(|attr| {
+                attr.chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .eq("#[test]".chars())
+            })
+    };
+    let test_bodies: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(is_plain_test)
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    if test_bodies.is_empty() {
+        return;
+    }
+    let other_functions: Vec<(usize, usize)> = functions
+        .iter()
+        .filter(|function| !is_plain_test(function))
+        .map(|function| (function.start_line, function.end_line))
+        .collect();
+    shapes.retain(|shape| {
+        if shape.kind == ProbeShapeKind::ErrorPath {
+            return true;
+        }
+        let (start, end) = (shape.start_line(), shape.end_line());
+        let inside_test_body = test_bodies
+            .iter()
+            .any(|&(fn_start, fn_end)| fn_start < start && end <= fn_end);
+        !inside_test_body
+            || other_functions
+                .iter()
+                .any(|&(fn_start, fn_end)| fn_start <= start && end <= fn_end)
+    });
+}
+
 fn push_probe_shape_with_text(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
@@ -2071,14 +2263,15 @@ fn push_probe_shape_with_text(
         return;
     }
     shapes.push(ProbeShapeFact {
-        start_line: line_index.line(start),
-        end_line: line_index.line_for_range_end(end),
-        start_byte: u32::from(start) as usize,
-        end_byte: u32::from(end) as usize,
+        start_line: probe_shape_position(line_index.line(start)),
+        end_line: probe_shape_position(line_index.line_for_range_end(end)),
+        start_byte: u32::from(start),
+        end_byte: u32::from(end),
         kind,
         text,
         value_consumed: false,
-        source_lines,
+        source_lines: source_lines
+            .map(|(first, last)| (probe_shape_position(first), probe_shape_position(last))),
     });
 }
 
@@ -2772,6 +2965,10 @@ fn extract_parser_oracles(
         &original_function_text,
     );
     let bound_error_vars = unwrap_err_bound_variables(&function_text);
+    // #14810: a local the body binds only to an unfilled placeholder macro
+    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
+    // assertion compared with it earns no strong credit.
+    let placeholder_vars = placeholder_bound_variables(&function_text);
 
     let mut assertions = Vec::new();
     for macro_call in function
@@ -2806,6 +3003,8 @@ fn extract_parser_oracles(
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
         }
+        let classification =
+            without_unfilled_expected(classification, &assertion_text, &placeholder_vars);
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
             kind: classification.kind,
@@ -2931,6 +3130,10 @@ fn extract_parser_oracles(
         } else {
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
+        // #14882: lower after the ceiling, or its fallback would turn an
+        // unfilled `todo!()` compared value back into a medium snapshot.
+        let (kind, strength) =
+            without_unfilled_expected_parts(kind, strength, &assertion_text, &placeholder_vars);
         let line = line_index.line(range.start());
         expect_test_comparisons.push((
             line..=line_index.line_for_range_end(range.end()),
@@ -2949,7 +3152,7 @@ fn extract_parser_oracles(
     let function_start = line_index.line(function.syntax().text_range().start());
     // #3284: terminal Err-return guards credit as their assertion twins
     // on the parser path too, so both adapters agree.
-    for oracle in err_return_guard_oracles(&function_text, function_start) {
+    for oracle in err_return_guard_oracles(&function_text, function_start, &placeholder_vars) {
         assertions.push(oracle);
     }
     // #3727 Slice A: parser-backed shadow facts over the scanned text. The
@@ -2981,7 +3184,7 @@ fn extract_parser_oracles(
             let_bindings: &let_bindings,
         },
     );
-    for oracle in extract_line_scanned_oracles(&function_text, function_start)
+    for mut oracle in extract_line_scanned_oracles(&function_text, function_start)
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
@@ -2991,6 +3194,18 @@ fn extract_parser_oracles(
             })
         })
     {
+        // #14810 round 3: the line-scanned path must lower an assertion that
+        // names an unfilled placeholder local, exactly as the parser path
+        // does. Without this an `ensure!`-style helper keeps strong credit
+        // while the same assertion through the parser reads unknown.
+        let (kind, strength) = without_unfilled_expected_parts(
+            oracle.kind,
+            oracle.strength,
+            &oracle.text,
+            &placeholder_vars,
+        );
+        oracle.kind = kind;
+        oracle.strength = strength;
         assertions.push(oracle);
     }
     for oracle in guarded_matches.oracles {
@@ -3444,10 +3659,181 @@ fn function_span(function: &FunctionFact) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_body_probe_shapes_are_not_stored_but_production_and_nested_shapes_are()
+    -> Result<(), String> {
+        let source = "\
+pub fn price(amount: i32) -> i32 {
+    if amount > 10 { return amount - 1; }
+    amount
+}
+
+#[test]
+fn prices_discount() {
+    if price(11) > 9 { panic!(\"x\"); }
+    fn helper(v: i32) -> bool {
+        v > 3
+    }
+    assert!(helper(price(4)));
+}
+
+#[tokio::test]
+async fn async_price() {
+    if price(12) > 9 { panic!(\"y\"); }
+}
+
+#[test]
+fn early_error() -> Result<(), String> {
+    if price(1) > 0 { return Err(String::new()); }
+    Ok(())
+}
+";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let lines: Vec<usize> = facts
+            .probe_shapes
+            .iter()
+            .map(ProbeShapeFact::start_line)
+            .collect();
+        // Production body shapes stay.
+        assert!(
+            lines.contains(&2),
+            "production predicate missing: {lines:?}"
+        );
+        // The nested production-role helper inside the test keeps its shape.
+        assert!(
+            lines.contains(&10),
+            "nested helper shape missing: {lines:?}"
+        );
+        // Shapes on the test's own body lines (predicate, call deletion,
+        // assertion) are dropped.
+        assert!(
+            !lines.iter().any(|line| matches!(line, 8 | 12)),
+            "test-body shapes were stored: {lines:?}"
+        );
+        // Only a bare `#[test]` qualifies: the tokio test's body keeps its
+        // predicate, because normalization re-reads harness attributes.
+        assert!(lines.contains(&17), "tokio test shape missing: {lines:?}");
+        // Error-path shapes stay even inside a plain test (twin pairing reads
+        // them file-wide); the plain test's predicate on that line is gone.
+        let line_22: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.start_line() == 22)
+            .map(|shape| shape.kind.as_str())
+            .collect();
+        assert!(
+            line_22.contains(&"error_path"),
+            "error path dropped: {line_22:?}"
+        );
+        assert!(
+            !line_22.contains(&"predicate"),
+            "test predicate kept: {line_22:?}"
+        );
+        // The test functions are still indexed as tests.
+        assert_eq!(facts.tests.len(), 3);
+        Ok(())
+    }
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #14882 review: the expect-test comparison's snapshot ceiling must not
+    /// restore credit to a compared value that is still an unfilled
+    /// `todo!()`. The control, a computed value, keeps the medium snapshot,
+    /// which also shows the parser recognized the comparison.
+    #[test]
+    fn an_expect_test_comparison_of_a_placeholder_lowers() -> Result<(), String> {
+        let readings = |initializer: &str| -> Result<Vec<_>, String> {
+            let source = format!(
+                "#[test]\nfn t() {{\n    let expected: String = {initializer};\n    \
+                 expect_test::expect![[\"value\"]].assert_eq(&expected);\n}}\n"
+            );
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            Ok(facts
+                .tests
+                .iter()
+                .flat_map(|test| test.assertions.iter())
+                .filter(|fact| fact.text.contains("assert_eq"))
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect())
+        };
+        let control = readings("render()")?;
+        if !control.contains(&(
+            crate::domain::OracleKind::Snapshot,
+            crate::domain::OracleStrength::Medium,
+        )) {
+            return Err(format!(
+                "premise: a computed value reads snapshot: {control:?}"
+            ));
+        }
+        let lowered = readings("todo!(\"x\")")?;
+        if lowered.is_empty()
+            || lowered
+                .iter()
+                .any(|(_, strength)| *strength != crate::domain::OracleStrength::Unknown)
+        {
+            return Err(format!(
+                "a placeholder compared value must lower: {lowered:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #14810 round 3: the line-scanned path must lower an assertion that
+    /// names an unfilled placeholder local, exactly as the parser path does.
+    /// Without the filter an `ensure!`-style helper keeps strong credit while
+    /// the same assertion through the parser reads unknown.
+    #[test]
+    fn a_line_scanned_assertion_naming_a_placeholder_lowers() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = todo!(\"x\");\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Unknown {
+            return Err(format!(
+                "a line-scanned assertion naming a placeholder must lower: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The control: the same line-scanned shape with a real expected value
+    /// keeps its strong credit.
+    #[test]
+    fn a_line_scanned_assertion_with_a_real_expected_value_keeps_strong() -> Result<(), String> {
+        let source = concat!(
+            "#[test]\n",
+            "fn t() {\n",
+            "    let expected: i32 = 7;\n",
+            "    ensure!(price(10) == expected, \"price\");\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let fact = facts
+            .tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .find(|fact| fact.text.contains("ensure!"))
+            .ok_or_else(|| "expected a line-scanned ensure oracle".to_string())?;
+        if fact.strength != crate::domain::OracleStrength::Strong {
+            return Err(format!(
+                "a real expected value must keep strong credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
 
     /// #10363: the declaration table is built once per file, not once per
     /// function or assertion, so a large test file stays linear.
@@ -3544,10 +3930,10 @@ pub fn fee() -> u64 { 5 }
                 .find(|function| function.name == name)
         };
         let charge = function("charge").ok_or("charge not summarized")?;
-        assert_eq!(charge.attrs, vec!["#[getter]".to_string()]);
+        assert_eq!(charge.attrs.to_vec(), vec!["#[getter]".to_string()]);
         assert_eq!(charge.impl_attrs, vec!["#[pymethods]".to_string()]);
         let fee = function("fee").ok_or("fee not summarized")?;
-        assert_eq!(fee.attrs, vec!["#[pyfunction]".to_string()]);
+        assert_eq!(fee.attrs.to_vec(), vec!["#[pyfunction]".to_string()]);
         assert!(
             fee.impl_attrs.is_empty(),
             "a free function has no impl attributes"
@@ -4155,11 +4541,13 @@ static SHADOW: () = {
             .map(|offset| decoy.saturating_add(1).saturating_add(offset))
             .ok_or("producer missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
         );
         assert!(
-            predicates.iter().all(|shape| shape.start_byte != decoy),
+            predicates.iter().all(|shape| shape.start_byte() != decoy),
             "string decoy was credited as a predicate origin: {predicates:?}"
         );
         Ok(())
@@ -4186,7 +4574,9 @@ static SHADOW: () = {
             .find("montant_é > discount_threshold")
             .ok_or("predicate missing")?;
         assert!(
-            predicates.iter().any(|shape| shape.start_byte == producer),
+            predicates
+                .iter()
+                .any(|shape| shape.start_byte() == producer),
             "producer={producer} shapes={predicates:?}"
         );
         Ok(())
@@ -4268,6 +4658,152 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         Ok(())
     }
 
+    /// #14385: a tail `if`/`else` returns each branch block's tail value, so
+    /// each one on its own line is a `return_value` shape; a value on its
+    /// `if`'s condition line, a statement `if`, a tail `if` without `else`, and
+    /// a nested `match` value get none.
+    #[test]
+    fn tail_if_branch_values_are_return_value_shapes() -> Result<(), Box<dyn Error>> {
+        let text = r#"
+pub fn discount(total: u32) -> u32 {
+    if total >= 100 {
+        total / 10
+    } else if total >= 50 {
+        total / 20
+    } else {
+        0
+    }
+}
+
+pub fn inline(total: u32) -> u32 {
+    if total >= 100 { total / 10 } else { 0 }
+}
+
+pub fn nested(total: u32, vip: bool) -> u32 {
+    if vip {
+        if total > 10 { 3 } else { 2 }
+    } else {
+        match total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn statement(total: u32) -> u32 {
+    if total > 1 {
+        log(total / 2)
+    }
+    7
+}
+
+pub fn no_else(total: u32) {
+    if total > 1 {
+        log(total / 3)
+    }
+}
+
+pub fn split_condition(total: u32, vip: bool) -> u32 {
+    if vip
+        && total > 1 { 4 } else { 5 }
+}
+
+pub fn newline_keyword(total: u32, vip: bool) -> u32 {
+    if vip {
+        if
+            total > 10 { 3 } else { 2 }
+    } else {
+        match
+            total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn fallible(total: u32) -> Result<u32, Error> {
+    if total > 1 {
+        Ok(total)
+    } else {
+        Err(Error::Small)
+    }
+}
+
+pub fn early(total: u32) -> u32 {
+    if total > 1 {
+        total
+    } else {
+        return 5
+    }
+}
+
+pub fn wide(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        input.len() > 3
+    } else {
+        depth > 1 && input.is_empty()
+    }
+}
+
+pub fn wrapped(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        (input.len() > 3)
+    } else {
+        !(depth > 1)
+    }
+}
+"#;
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
+        let all_return_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        // `early`: a `return` branch tail already has its return-expression
+        // shape, so the branch walk adds no second one over the same line.
+        let early = all_return_shapes
+            .iter()
+            .filter(|(line, _)| (60..66).contains(line))
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        if early != [62, 64] {
+            return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
+        }
+        // `wide`, `wrapped`: a comparison or boolean branch value, bare,
+        // parenthesized or negated, is the predicate probe's subject, so it
+        // gets no second return-value row.
+        if all_return_shapes.iter().any(|(line, _)| *line >= 66) {
+            return Err(format!(
+                "predicate branch value got a return shape: {all_return_shapes:?}"
+            )
+            .into());
+        }
+        let return_shapes = all_return_shapes
+            .into_iter()
+            .filter(|(line, _)| *line < 60)
+            .collect::<Vec<_>>();
+        // `newline_keyword`: a nested `if`/`match` branch tail whose keyword
+        // ends its line is still control flow, so it gets no shape (Devin
+        // review on #14392); its inner values sit on condition lines.
+        let expected = [
+            (4, "total / 10"),
+            (6, "total / 20"),
+            (8, "0"),
+            (28, "7"),
+            (54, "Ok(total)"),
+            (56, "Err(Error::Small)"),
+        ];
+        if return_shapes != expected {
+            return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        // An own-line error branch value also carries its error-path shape.
+        let error_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        if error_shapes != [(56, "Err(Error::Small)")] {
+            return Err(format!("unexpected error probe shapes: {error_shapes:?}").into());
+        }
+        Ok(())
+    }
+
     #[test]
     fn ra_adapter_handles_parser_errors() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_parser_error")?;
@@ -4295,7 +4831,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             functions: vec![],
             tests: vec![],
             returns: vec![],
-            literals: vec![],
+            literals: Vec::new(),
             probe_shapes: vec![],
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
@@ -4305,6 +4841,8 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             source: String::new().into(),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),
@@ -4838,8 +5376,9 @@ mod guard_pipeline_debug_tests {
 
 #[cfg(test)]
 mod embed_resource_directive_tests {
+    use super::EmbedMacroShadows;
     use super::RustEmbedResourceMacro;
-    use super::rust_embed_resource_directives;
+    use super::rust_embed_file_scan;
     use std::path::Path;
 
     #[test]
@@ -4852,12 +5391,7 @@ fn read() {
     let _ = include_bytes!(concat!(env!("OUT_DIR"), "/x.bin"));
 }
 "#;
-        let directives = rust_embed_resource_directives(
-            Path::new("src/lib.rs"),
-            source,
-            16,
-            &super::EmbedResourceMacroShadowFacts::default(),
-        )?;
+        let directives = directives(source, EmbedMacroShadows::default())?;
         assert_eq!(directives.len(), 2);
         assert_eq!(
             directives[0].literal_path.as_deref(),
@@ -4872,8 +5406,19 @@ fn read() {
         Ok(())
     }
 
+    fn directives(
+        source: &str,
+        scope: EmbedMacroShadows,
+    ) -> Result<Vec<super::RustEmbedResourceDirective>, String> {
+        rust_embed_file_scan(source, 16).directives(scope)
+    }
+
+    fn shadows_of(source: &str) -> EmbedMacroShadows {
+        rust_embed_file_scan(source, 16).shadows()
+    }
+
     #[test]
-    fn shadowed_include_str_macro_is_not_a_resource_directive() -> Result<(), String> {
+    fn same_file_macro_rules_flags_only_the_unqualified_call() -> Result<(), String> {
         let source = r#"
 macro_rules! include_str {
     ($path:literal) => { "fixed" };
@@ -4881,35 +5426,118 @@ macro_rules! include_str {
 const DATA: &str = include_str!("data.json");
 const TRUSTED: &str = std::include_str!("data.json");
 "#;
-        let directives = rust_embed_resource_directives(
-            Path::new("src/lib.rs"),
-            source,
-            16,
-            &super::EmbedResourceMacroShadowFacts::default(),
-        )?;
-        assert_eq!(directives.len(), 1);
-        assert_eq!(
-            directives[0].literal_path.as_deref(),
-            Some(Path::new("data.json"))
-        );
+        let found = directives(source, EmbedMacroShadows::default())?;
+        assert_eq!(found.len(), 2);
+        assert!(found[0].shadowed, "unqualified call is shadowed");
+        assert!(!found[1].shadowed, "std-qualified call is the real macro");
         Ok(())
     }
 
     #[test]
-    fn crate_wide_shadow_fact_skips_unqualified_call() -> Result<(), String> {
+    fn shadow_scan_sees_definitions_and_imports_in_any_position() {
+        let flags = |source: &str| {
+            let shadows = shadows_of(source);
+            (
+                shadows.shadows(RustEmbedResourceMacro::IncludeStr),
+                shadows.shadows(RustEmbedResourceMacro::IncludeBytes),
+            )
+        };
+        // Module-scoped macro_rules!, #[macro_use] module, macro 2.0.
+        assert_eq!(
+            flags("mod m { macro_rules! include_str { () => {}; } }"),
+            (true, false)
+        );
+        assert_eq!(
+            flags("#[macro_use] mod macros { macro_rules! include_bytes { () => {}; } }"),
+            (false, true)
+        );
+        assert_eq!(flags("pub macro include_str() {}"), (true, false));
+        // Imports and renames that bind the name, flat or nested.
+        assert_eq!(flags("use crate::macros::include_str;"), (true, false));
+        assert_eq!(
+            flags("use crate::macros::{include_bytes, other};"),
+            (false, true)
+        );
+        assert_eq!(
+            flags("use crate::macros::mine as include_str;"),
+            (true, false)
+        );
+        // Controls: std re-imports, unrelated names, `as _`, mentions in strings and comments.
+        assert_eq!(flags("use std::include_str;"), (false, false));
+        assert_eq!(
+            flags("use std::{include_bytes, include_str};"),
+            (false, false)
+        );
+        assert_eq!(
+            flags("use crate::macros::include_str as _;"),
+            (false, false)
+        );
+        assert_eq!(flags("use crate::macros::include_string;"), (false, false));
+        assert_eq!(
+            flags("// macro_rules! include_str\nconst S: &str = \"macro_rules! include_str\";"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn scope_shadows_from_another_file_flag_the_call() -> Result<(), String> {
         let source = r#"const DATA: &str = include_str!("data.json");"#;
-        let directives = rust_embed_resource_directives(
-            Path::new("src/lib.rs"),
-            source,
-            16,
-            &super::EmbedResourceMacroShadowFacts {
-                include_str: true,
-                include_bytes: false,
-            },
-        )?;
+        assert!(!directives(source, EmbedMacroShadows::default())?[0].shadowed);
+        let other = shadows_of("macro_rules! include_str { () => {}; }");
+        let flagged = directives(source, other)?;
+        assert!(flagged[0].shadowed);
+        // A shadowed include_bytes does not flag include_str.
+        let bytes_only = shadows_of("macro_rules! include_bytes { () => {}; }");
+        assert!(!directives(source, bytes_only)?[0].shadowed);
+        Ok(())
+    }
+
+    #[test]
+    fn unparseable_file_fails_closed_on_every_embed_name_it_mentions() {
+        // Not a Rust file: the parser reports it unreadable, so nothing can be
+        // established about a macro it might define. Each name it mentions counts
+        // as shadowed; a name it does not mention stays trusted.
+        let source = "fn ( ??? include_str ???";
         assert!(
-            directives.is_empty(),
-            "crate-wide macro_rules! include_str must suppress the unqualified call: {directives:?}"
+            super::parse_clean_source_file(source).is_none(),
+            "control: the fixture must be unparseable"
+        );
+        let scan = rust_embed_file_scan(source, 16);
+        let shadows = scan.shadows();
+        assert!(shadows.shadows(RustEmbedResourceMacro::IncludeStr));
+        assert!(!shadows.shadows(RustEmbedResourceMacro::IncludeBytes));
+        // The file's own directives are unavailable, with the named reason.
+        assert_eq!(
+            scan.directives(EmbedMacroShadows::default())
+                .err()
+                .as_deref(),
+            Some("rust_embed_resource_parent_parse_unavailable")
+        );
+        // A parseable control that mentions neither name shadows nothing.
+        assert_eq!(shadows_of("fn ok() {}"), EmbedMacroShadows::default());
+    }
+
+    #[test]
+    fn one_scan_serves_every_scope_without_reparsing() -> Result<(), String> {
+        // The same scan answers for different package scopes: only the scope
+        // decides `shadowed`, so the producer parses each file once.
+        use crate::analysis::syntax::nesting::CLEAN_PARSE_CALLS;
+        let before = CLEAN_PARSE_CALLS.with(|calls| calls.get());
+        let scan = rust_embed_file_scan(r#"const D: &str = include_str!("d.json");"#, 16);
+        assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
+        assert!(scan.directives(shadows_of("macro_rules! include_str { () => {}; }"))?[0].shadowed);
+        assert!(
+            !scan.directives(shadows_of("macro_rules! include_bytes { () => {}; }"))?[0].shadowed
+        );
+        // The scan itself is not changed by a scope query.
+        assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
+        // The discriminator: scanning and four scope queries parse exactly once.
+        // `shadows_of` parses its own scope source, so count those separately.
+        let after = CLEAN_PARSE_CALLS.with(|calls| calls.get());
+        assert_eq!(
+            after - before,
+            3,
+            "one parse for the scan plus one per scope source, none per query"
         );
         Ok(())
     }

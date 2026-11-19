@@ -966,3 +966,125 @@ fn cloned_callback_binding_chains_keep_the_existing_depth_limit() {
         assert_eq!(passes_call_making_closure(&text, "run"), expected, "{text}");
     }
 }
+
+#[test]
+fn memoized_callback_reads_match_uncached_and_key_on_text_and_helper() {
+    let test = "fn t() { run(1, || greet()); other(|| greet()); }";
+    let changed = "fn t() { run(1, 2); other(|| greet()); }";
+    let helper = "fn h(f: impl Fn() -> bool) { let g = f(); assert!(g); }";
+    let changed_helper = "fn h(f: impl Fn(), g: impl Fn()) { g(); }";
+    let params = |text: &str| {
+        invoked_callback_params(text).map(|params| {
+            params
+                .into_iter()
+                .map(|p| (p.position, p.name))
+                .collect::<Vec<_>>()
+        })
+    };
+    let params_uncached = |text: &str| {
+        invoked_callback_params_uncached(text).map(|params| {
+            params
+                .into_iter()
+                .map(|p| (p.position, p.name))
+                .collect::<Vec<_>>()
+        })
+    };
+    // Premise: the inputs give distinct answers, so a key that ignored text or helper name
+    // would return a stale value below.
+    assert_ne!(
+        closure_argument_positions_uncached(test, "run"),
+        closure_argument_positions_uncached(test, "other")
+    );
+    assert_ne!(
+        passes_call_making_closure_uncached(test, "run"),
+        passes_call_making_closure_uncached(changed, "run")
+    );
+    assert_ne!(params_uncached(helper), params_uncached(changed_helper));
+
+    for _scope in 0..2 {
+        let _memo = crate::analysis::syntax::run_memo::enter();
+        for _repeat in 0..2 {
+            for (text, name) in [(test, "run"), (test, "other"), (changed, "run")] {
+                assert_eq!(
+                    closure_argument_positions(text, name),
+                    closure_argument_positions_uncached(text, name),
+                    "{name}: {text}"
+                );
+                assert_eq!(
+                    passes_call_making_closure(text, name),
+                    passes_call_making_closure_uncached(text, name),
+                    "{name}: {text}"
+                );
+            }
+            for text in [helper, changed_helper] {
+                assert_eq!(params(text), params_uncached(text), "{text}");
+            }
+        }
+    }
+}
+
+/// #13577: the helper-credit pass asks this once per (test, helper call) in
+/// every overlapping index of a diff run, and each ask parsed the test body.
+/// Inside a run scope each distinct (body, helper) pair parses once and the
+/// answers equal the unmemoized ones.
+#[test]
+fn call_making_closure_answers_parse_once_per_pair_inside_a_run_scope() {
+    let with_closure = "fn t() { run(|| work()); other(|| 1); }";
+    let plain = "fn t() { run(work); }";
+    let pairs = [
+        (with_closure, "run", true),
+        (with_closure, "other", false),
+        (plain, "run", false),
+        (with_closure, "run", true),
+        (plain, "run", false),
+    ];
+    let _ = take_call_making_closure_scans();
+    for (text, helper, want) in pairs {
+        assert_eq!(passes_call_making_closure(text, helper), want, "{text}");
+    }
+    assert_eq!(
+        take_call_making_closure_scans(),
+        pairs.len(),
+        "without a scope every ask parses"
+    );
+    let _scope = crate::analysis::syntax::run_memo::enter();
+    for _ in 0..3 {
+        for (text, helper, want) in pairs {
+            assert_eq!(passes_call_making_closure(text, helper), want, "{text}");
+        }
+    }
+    assert_eq!(
+        take_call_making_closure_scans(),
+        3,
+        "three distinct (body, helper) pairs parse once across three index passes"
+    );
+}
+
+#[test]
+fn forwarding_positions_count_closures_whose_body_holds_a_macro() -> Result<(), String> {
+    // #9981: a macro in a closure body may expand to the owner call, so the
+    // forwarding-credit position check counts it; the call-free closure and a
+    // plain value do not count.
+    let count = |test: &str| {
+        call_making_closure_positions(test, "run_test")
+            .map(|set| set.into_iter().collect::<Vec<_>>())
+            .ok_or_else(|| format!("premise: parses: {test}"))
+    };
+    assert_eq!(
+        count("fn t() { run_test(|| my_macro!(greet(\"bob\")), || noop()); }")?,
+        vec![0, 1]
+    );
+    assert_eq!(
+        count("fn t() { let c = || my_macro!(greet()); run_test(c, || noop()); }")?,
+        vec![0, 1]
+    );
+    assert_eq!(count("fn t() { run_test(|| 5, || noop()); }")?, vec![1]);
+    assert_eq!(count("fn t() { run_test(span, || noop()); }")?, vec![1]);
+    // The #9997 withholding reading is unchanged: a macro-only closure alone
+    // does not withhold a plain helper.
+    assert!(!passes_call_making_closure(
+        "fn t() { run_test(|| my_macro!(x)); }",
+        "run_test"
+    ));
+    Ok(())
+}

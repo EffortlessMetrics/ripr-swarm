@@ -341,6 +341,18 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             )
         })?;
 
+    if uses_path_default(&options)
+        && let Ok(manifest) = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("Cargo.toml"),
+        )
+        && let Ok(workspace) = crate::policy::workspace_package_version(&manifest)
+        && let Some(note) = path_version_note(&version, &workspace)
+    {
+        eprintln!("{note}");
+    }
+
     setup_steps.push(fetch_sources(&out)?);
     let mut cases = Vec::new();
     for case in &CASES {
@@ -455,6 +467,30 @@ fn prepare_out_dir(out: &Path) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|err| format!("failed to create {}: {err}", out.display()))?;
     fs::write(out.join(OUT_MARKER), "first-run output; safe to replace\n")
         .map_err(|err| format!("failed to mark {}: {err}", out.display()))
+}
+
+/// True when the walk uses whatever `ripr` the PATH resolves, not a build or
+/// install this command chose.
+fn uses_path_default(options: &Options) -> bool {
+    options.ripr == "ripr" && !options.install_published && options.install_archive.is_none()
+}
+
+/// Warning for a PATH `ripr` that is not this checkout's version: its friction
+/// flags would describe another release, not the code being changed.
+fn path_version_note(reported: &str, workspace: &str) -> Option<String> {
+    let mut words = reported.split_whitespace();
+    if words.next() != Some("ripr") {
+        return None;
+    }
+    let found = words.next()?;
+    if found == workspace {
+        return None;
+    }
+    Some(format!(
+        "first-run: WARNING: the `ripr` on PATH reports {found}, but this checkout is {workspace}. \
+         The walk below describes {found}, not the code in this checkout. \
+         Build it and pass `--ripr target/debug/ripr` (or use --install-published / --install-archive) to walk this checkout."
+    ))
 }
 
 /// A bare name is a PATH lookup. A path is resolved against the invoking
@@ -1572,6 +1608,37 @@ mod tests {
             "the reason must precede the table, not split its header from its rows: {markdown}"
         );
         let _ = fs::remove_dir_all(&out);
+        Ok(())
+    }
+
+    #[test]
+    fn path_ripr_of_another_version_is_warned_about() {
+        let note = path_version_note("ripr 0.10.0", "0.11.0");
+        assert!(
+            note.as_deref().is_some_and(|n| n.contains("0.10.0")
+                && n.contains("0.11.0")
+                && n.contains("--ripr")),
+            "{note:?}"
+        );
+        assert_eq!(path_version_note("ripr 0.11.0", "0.11.0"), None);
+        assert_eq!(path_version_note("ripr 0.11.0 (2a461d81)", "0.11.0"), None);
+        assert_eq!(
+            path_version_note("ripr 0.11.0 (2a461d81-dirty)", "0.11.0"),
+            None
+        );
+        assert!(path_version_note("ripr 0.11.0-dev", "0.11.0").is_some());
+        assert_eq!(path_version_note("", "0.11.0"), None);
+        assert_eq!(path_version_note("shim 0.10.0", "0.11.0"), None);
+    }
+
+    #[test]
+    fn only_the_bare_default_route_is_a_path_lookup() -> Result<(), String> {
+        assert!(uses_path_default(&parse_options(&[])?));
+        let given = ["--ripr".to_string(), "target/debug/ripr".to_string()];
+        assert!(!uses_path_default(&parse_options(&given)?));
+        assert!(!uses_path_default(&parse_options(&[
+            "--install-published".to_string()
+        ])?));
         Ok(())
     }
 

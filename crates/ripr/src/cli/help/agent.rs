@@ -148,7 +148,7 @@ complete canonical packet stays behind the card's explicit packet route
 path. It remains advisory and static; it does not run mutation testing,
 generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 
-Refusal contract (#5007): a deliberate named refusal — seam id not found,
+Refusal contract: a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
 stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
@@ -205,8 +205,11 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
+fills a boundary input when the changed comparison names one, builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
@@ -252,7 +255,7 @@ artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
 . Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
-Movement vocabulary (#2648): the JSON output uses two related fields:
+Movement vocabulary: the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
@@ -421,19 +424,20 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
-  --gap-id ID          Start a repair for one canonical TypeScript preview gap
-                       (`gap:typescript:typescript_preview:...`) printed by
-                       `ripr check`; exclusive with `--seam-id` and requires
-                       `--base`. The before phase re-runs the diff-scoped
-                       check, refuses unless the finding's repair packet is
-                       ready, and records the check-findings snapshot. Run
+  --gap-id ID          Start a repair for one canonical Python or TypeScript
+                       preview gap printed by `ripr check`; exclusive with
+                       `--seam-id` and requires `--base`. The before phase
+                       re-runs the diff-scoped check, refuses unless the
+                       finding's repair packet is ready, and records the
+                       check-findings snapshot. Run
                        `--attempt ID --phase after` after committing the
                        focused test: it re-runs the check against the recorded
                        base commit, reports the gap closed only when it reads
                        exposed (otherwise it refuses and the attempt stays
-                       retryable), then enforces the edit cage. It issues no
-                       receipt; the closure rides the verify result. Python
-                       gaps are not repairable here.
+                       retryable), then enforces the edit cage. It records
+                       advisory static movement and an attempt receipt without
+                       running the focused test. Run the suggested test command
+                       and keep the repair only if that test passes.
   --base REF           The Git base the diff-scoped check compares against;
                        required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
@@ -468,12 +472,19 @@ Options:
                        checks that the result is bound to this attempt and the
                        current HEAD, names the selected test file, and has at
                        least one test that ran in that file or module, and that
-                       no failure falls outside it, then records the normalized
-                       result with the attempt as a caller-reported claim. It
-                       does not check stream completeness yet.
-                       Optional; it does not gate finish yet. Anything else is
+                       no failure falls outside it and that the events it reports
+                       close (every started test ends, every announced suite
+                       finishes), then records the normalized result with the
+                       attempt as a caller-reported claim.
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
-                       only; save the file outside the checkout.
+                       only; save the file outside the checkout. A finish that
+                       stops after the receipt evaluation began shows as
+                       limited in status; start a new attempt.
 
 The ordinary repair path is:
 
@@ -521,11 +532,14 @@ or declare the repository safe to merge.
 
 Repair scope: the edit target must match the test-surface path
 convention (`tests`/`test` paths, `*_test`/`*_tests`, `test_*`, and
-TypeScript test-file conventions), and the cage authorizes it whole-file.
+TypeScript test-file conventions). For external Rust test files, the cage
+permits only insertion of new test functions and preserves existing test
+bytes; an existing selected file must be committed before the start.
+Other languages retain the whole-file path cage.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
-untouched, and the file must be committed before the start (#5210, #9033).
+untouched, and the file must be committed before the start.
 Seams with no test-surface file and no such single inline module are out
 of repair scope; the before phase refuses them before creating anything.
 

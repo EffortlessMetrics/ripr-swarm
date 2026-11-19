@@ -14,6 +14,10 @@ sys.argv = sys.argv[:1]
 ACTION = ".github/actions/pr-candidate-admission"
 FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py", "review_disposition.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
+# The pull_request anchor is the merge ref's first parent, resolved locally.
+# Replay it with a mocked git so the selector controls do not need a real repo.
+GIT_MOCK = ('git() { case "$1" in fetch) [ -n "$4" ] || return 1; return 0 ;; '
+            'rev-list) printf "%s\\n" "$PARENTS" ;; *) return 90 ;; esac; }\n')
 
 
 def bash():
@@ -60,6 +64,7 @@ head='a'*40; base='d'*40
 if '/git/ref/' in url: value=base
 elif '/git/commits/' in url:
     sha=url.rsplit('/',1)[1]
+    if sha==d.get('unresolved'): raise SystemExit('gh: Not Found (HTTP 404)')
     value={'sha':sha,'tree':{'sha':'c'*40 if sha=='b'*40 else 'e'*40},'parents':[] if sha=='b'*40 else [{'sha':'b'*40}]}
 elif '/files?' in url:
     value=[{'filename':d.get('filename','src/lib.rs'),'status':'modified','additions':d.get('lines',1),'deletions':0}]
@@ -70,9 +75,15 @@ elif '/issues/' in url and '/comments' in url:
 elif '/pulls/' in url:
     value={'number':10,'state':'open','draft':False,'head':{'sha':head,'repo':{'full_name':'o/r'}},'base':{'ref':'main','sha':base},'changed_files':1,'additions':d.get('lines',1),'deletions':0,'body':'Governing issue or accepted claim: #4986\nAcceptance delta (one sentence): trusted bundle controls'}
 elif '/contents/.gitattributes?' in url:
-    print(d.get('base_attributes',''));sys.exit(0)
+    ref=url.rsplit('ref=',1)[-1]
+    if ref==d.get('anchor'): print(d.get('anchor_attributes') or d.get('base_attributes',''))
+    else: print(d.get('base_attributes',''))
+    sys.exit(0)
 elif '/contents/policy/release-hard-cut-admission.json?' in url:
-    packet=d['packet'] if url.endswith(base) else d['inactive']
+    ref=url.rsplit('ref=',1)[-1]
+    if ref==d.get('anchor'): packet=d.get('anchor_packet') or d['inactive']
+    elif ref==base: packet=d['packet']
+    else: packet=d['inactive']
     value={'content':base64.b64encode(json.dumps(packet).encode()).decode()}
 else: raise SystemExit('unexpected read: '+url)
 if '--jq' in sys.argv:
@@ -86,7 +97,9 @@ print(value if isinstance(value,str) else json.dumps(value))
 
 class Bundle(unittest.TestCase):
     def run_case(self, *, damage="", poison="wrapper", lines=1, active=False,
-                 attributes="", filename="src/lib.rs", base_attributes="", mutant=False):
+                 attributes="", filename="src/lib.rs", base_attributes="", mutant=False,
+                 trusted_sha=None, anchor_active=False, anchor_attributes=None,
+                 unresolved_anchor=False):
         with tempfile.TemporaryDirectory(prefix="ripr-trusted-bundle-") as temporary:
             tmp = Path(temporary)
             workspace = tmp / "candidate"
@@ -144,13 +157,25 @@ class Bundle(unittest.TestCase):
                        ADMISSION_PR_NUMBER="10", ADMISSION_EXPECTED_HEAD="a" * 40,
                        ADMISSION_DOCS_ONLY="false", ADMISSION_MAX_CHANGED_FILES="160",
                        ADMISSION_MAX_CHANGED_LINES="3000", ADMISSION_MODE="admit")
+            # #14932: the caller always hands the anchor in, so the pinned source
+            # defaults to the harness live base tip ('d'*40). Passing "" exercises
+            # the missing-input refusal, which is now a hard error.
+            env["ADMISSION_TRUSTED_SHA"] = trusted_sha if trusted_sha is not None else "d" * 40
             packet = dict(inactive)
             if active:
                 packet.update(state="active", generation="cut-1", observed_main={"sha":"b"*40,"tree":"c"*40},
                               admitted=[{"pr":9,"head_sha":"9"*40,"admission":"admitted","disposition":"release_required_product","owner_issue":99,"release_effect":"landed before cut","proof_refs":["#99"]}])
+            anchor_packet = None
+            if anchor_active:
+                anchor_packet = dict(packet)
+                anchor_packet.update(state="active", generation="cut-1", observed_main={"sha":"b"*40,"tree":"c"*40},
+                                     admitted=[{"pr":9,"head_sha":"9"*40,"admission":"admitted","disposition":"release_required_product","owner_issue":99,"release_effect":"landed before cut","proof_refs":["#99"]}])
             case = tmp / "case.json"
             case.write_text(json.dumps(dict(lines=lines, packet=packet, inactive=inactive,
-                                           filename=filename, base_attributes=base_attributes)), encoding="utf-8")
+                                           filename=filename, base_attributes=base_attributes,
+                                           anchor=trusted_sha, anchor_packet=anchor_packet,
+                                           anchor_attributes=anchor_attributes,
+                                           unresolved=trusted_sha if unresolved_anchor else None)), encoding="utf-8")
             env["CONTROL_CASE"] = str(case)
             (tmp / "gh").write_bytes(GH.encode("utf-8"))  # LF: a CRLF shebang cannot run
             (tmp / "gh").chmod(0o755)
@@ -197,6 +222,50 @@ class Bundle(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("changed_lines=0", output)
 
+    def test_packet_and_declaration_come_from_the_pinned_commit(self):
+        """#14932: the bundle is checked out at the commit the workflow resolved,
+        so the enforcement packet and the generated-path declaration must be read
+        from that same commit. Hold the pinned packet active while the live tip's
+        is inactive: the run must refuse cut_frozen, which only a pinned read can
+        produce. The declaration half does the same with an exemption only the
+        pinned commit carries."""
+        anchor = "e" * 40
+        code, output, executed = self.run_case(trusted_sha=anchor, anchor_active=True)
+        self.assertFalse(executed)
+        self.assertEqual(code, 1, output)
+        self.assertIn("cut_frozen", output)
+        code, output, executed = self.run_case(trusted_sha=anchor)
+        self.assertFalse(executed)
+        self.assertEqual(code, 0, output)
+        self.assertIn("status=admitted", output)
+        declaration = "package-lock.json linguist-generated\n"
+        code, output, _ = self.run_case(trusted_sha=anchor, lines=3001,
+                                        filename="package-lock.json", anchor_attributes=declaration)
+        self.assertEqual(code, 0, output)
+        self.assertIn("changed_lines=0", output)
+        # The live tip carries no exemption, so the same case without the pinned
+        # declaration is oversized: the exemption came from the pinned commit.
+        code, output, _ = self.run_case(lines=3001, filename="package-lock.json")
+        self.assertEqual(code, 1, output)
+        self.assertIn("qualification_scope_oversized", output)
+
+    def test_trusted_sha_is_required_and_must_resolve(self):
+        """#14932: the pinned read has no live fallback, so a missing, malformed
+        or unreadable trusted source refuses instead of silently re-resolving the
+        live base ref."""
+        for value, reason in [("", "trusted_sha_missing"),
+                              ("not-a-sha", "trusted_sha_invalid"),
+                              ("e" * 39, "trusted_sha_invalid")]:
+            with self.subTest(value=value):
+                code, output, executed = self.run_case(trusted_sha=value)
+                self.assertFalse(executed)
+                self.assertEqual(code, 1, output)
+                self.assertIn(reason, output)
+        code, output, executed = self.run_case(trusted_sha="e" * 40, unresolved_anchor=True)
+        self.assertFalse(executed)
+        self.assertEqual(code, 1, output)
+        self.assertIn("trusted_sha_unresolved", output)
+
     def test_wrong_selector_mutant_exposes_candidate_execution(self):
         code, output, executed = self.run_case(mutant=True)
         self.assertTrue(executed, "mutant did not reach the poisoned candidate wrapper")
@@ -208,6 +277,10 @@ class Bundle(unittest.TestCase):
         self.assertIn("ref: " + PIN, admission)
         self.assertIn("TRUSTED_ADMISSION_SHA: " + PIN, admission)
         self.assertEqual(admission.count("uses: ./.admission-trusted/" + ACTION), 2)
+        # #14932: the commit the bundle was checked out at reaches the action on
+        # every arm, so the packet and declaration are read from the judged tree's
+        # base and there is exactly one identity per run.
+        self.assertIn("trusted-sha: " + PIN, admission)
         check = step(workflow, "Select trusted admission source")
         self.assertIsNotNone(check)
         with tempfile.TemporaryDirectory(prefix="ripr-admission-collision-") as temporary:
@@ -215,29 +288,63 @@ class Bundle(unittest.TestCase):
             for collision in (False, True):
                 if collision:
                     (workspace / ".admission-trusted").mkdir()
-                result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)], cwd=workspace,
+                result = subprocess.run([bash(), "-euo", "pipefail", "-c", GIT_MOCK + shell(check)], cwd=workspace,
                                         env=dict(os.environ, GITHUB_WORKSPACE=str(workspace),
                                                  GITHUB_OUTPUT=str(workspace / "outputs"), EVENT_NAME="pull_request",
-                                                 PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
+                                                 PARENTS=f'{"a"*40} {"b"*40} {"d"*40}',
+                                                 GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40), capture_output=True)
                 self.assertEqual(result.returncode, int(collision), result)
+
+    def assert_constituent_reads_are_pinned(self, constituent):
+        self.assertIsNotNone(constituent)
+        script = shell(constituent)
+        for read in ("git/commits/${GROUP_BASE_SHA}",
+                     "contents/${packet_path}?ref=${GROUP_BASE_SHA}",
+                     "contents/.gitattributes?ref=${GROUP_BASE_SHA}"):
+            self.assertIn(read, script)
+            self.assertNotIn(read.replace("${GROUP_BASE_SHA}", "${base_sha}"), script)
+
+    def test_constituent_reads_use_group_base_and_keep_live_checks(self):
+        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
+        constituent = step(workflow, "Admit additional merge-group constituents")
+        self.assert_constituent_reads_are_pinned(constituent)
+        script = shell(constituent)
+        # History-sync and the during-run movement check intentionally stay live.
+        self.assertIn('--base-sha "$base_sha"', script)
+        self.assertIn('if [ "$base_sha_after" != "$base_sha" ]; then', script)
+        self.assertIn('contents/${packet_path}?ref=${base_sha_after}', script)
+
+    def test_constituent_pin_removal_mutants_are_rejected(self):
+        workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
+        constituent = step(workflow, "Admit additional merge-group constituents")
+        self.assertIsNotNone(constituent)
+        for read in ("git/commits/${GROUP_BASE_SHA}",
+                     "contents/${packet_path}?ref=${GROUP_BASE_SHA}",
+                     "contents/.gitattributes?ref=${GROUP_BASE_SHA}"):
+            with self.subTest(read=read):
+                self.assertEqual(constituent.count(read), 1)
+                mutant = constituent.replace(read, read.replace("${GROUP_BASE_SHA}", "${base_sha}"))
+                with self.assertRaises(AssertionError):
+                    self.assert_constituent_reads_are_pinned(mutant)
 
     def test_event_identity_selection_has_no_candidate_fallback(self):
         check = step((ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8"), "Select trusted admission source")
         self.assertIsNotNone(check)
         with tempfile.TemporaryDirectory(prefix="ripr-admission-source-") as temporary:
             output = Path(temporary) / "outputs"
-            for event, field, expected in [("pull_request", "PR_BASE_SHA", "b"),
+            for event, field, expected in [("pull_request", "EVENT_SHA", "b"),
                                             ("merge_group", "GROUP_BASE_SHA", "c"),
                                             ("push", "EVENT_SHA", "a"),
                                             ("workflow_dispatch", "EVENT_SHA", "a")]:
                 for missing in (False, True):
                     with self.subTest(event=event, missing=missing):
                         env = dict(os.environ, GITHUB_WORKSPACE=temporary, GITHUB_OUTPUT=str(output),
-                                   EVENT_NAME=event, PR_BASE_SHA="b"*40, GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40)
+                                   EVENT_NAME=event, PARENTS=f'{"a"*40} {"b"*40} {"d"*40}',
+                                   GROUP_BASE_SHA="c"*40, EVENT_SHA="a"*40)
                         if missing:
                             env[field] = ""
                         output.write_text("", encoding="utf-8")
-                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", shell(check)],
+                        result = subprocess.run([bash(), "-euo", "pipefail", "-c", GIT_MOCK + shell(check)],
                                                 env=env, capture_output=True)
                         self.assertEqual(result.returncode, int(missing), result)
                         self.assertEqual(output.read_text(encoding="utf-8"), "" if missing else "sha="+expected*40+"\n")

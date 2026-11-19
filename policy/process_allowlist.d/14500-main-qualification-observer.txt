@@ -1,0 +1,2 @@
+xtask/tests/main_health_sentinel_contract.rs|Command::new|1|main-qualification-observer-proof|#14500: Linux-only GNU timeout bounds the production Python observer and extracted tracker Bash against fixture native GitHub facts; no live API, product build or issue mutation.
+xtask/tests/main_health_sentinel_contract.rs|use std::process::Command|1|main-qualification-observer-proof|#14500: import for the same bounded reader/tracker fixture controls.

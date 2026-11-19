@@ -99,14 +99,16 @@ protection or ruleset settings. Unknown or inaccessible evidence is not passed.
 The advisory packet starts the final inspection; it cannot finish it. Follow the
 applicable `review-pr` and `finish-pr` procedures for current published-head
 substantive review, required proof, conversation disposition and
-integration judgment before a normal protected expected-head squash merge.
+integration judgment before enqueueing the PR in the native merge queue
+([merge flow](MERGE_FLOW.md)).
 
-If a local detached or side worktree cannot merge a PR because the branch is
-checked out elsewhere, merge from the primary checkout or use an explicit
-GitHub-hosted merge path after re-reading the remote PR state. Do not move local
-branch refs to work around that limitation.
+Landing is a GitHub-hosted operation: `main` accepts only the merge queue, and a
+direct expected-head squash is refused (#14247), so a local merge from any
+worktree cannot land a PR. Re-read the remote PR state before enqueueing, and do
+not move local branch refs.
 
-Do not arm routine auto-merge or a merge queue. GitHub enforces the normal merge
+Do not enqueue or arm auto-merge before that final judgment: the queue squashes
+the PR as soon as its own run passes. GitHub enforces the normal merge
 requirements; report a concrete rejection without guessing its cause, bypassing
 it, or changing settings.
 

@@ -29,6 +29,16 @@ variant by rule — a repeated state is a true cycle, the fourth
 evaluation exceeds the explicit bound, a computed argument never
 binds, and a non-unique callee never resolves.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:326a2e10 -> infection_unknown
+probe:src_lib.rs:predicate:09d1d10a -> infection_unknown
+probe:src_lib.rs:predicate:35db27fb -> infection_unknown
+probe:src_lib.rs:predicate:6f663a44 -> infection_unknown
+```
+
 ## Must Not
 
 - Produce any `exposed` finding or any hop-provenance string on any
