@@ -622,3 +622,69 @@ fn python_long_line_regression_finishes_within_the_deadline() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// A one-line change beside a large test module (#15185): 4,000 tests in one
+/// `#[cfg(test)]` module, each calling the changed function. Each test's name
+/// scopes re-read the whole file, so the check took 38 seconds in a release
+/// build and several minutes in a debug build.
+///
+/// The case must finish in time with the answer the analysis exists to give:
+/// the changed predicate is `weakly_exposed` through the module's tests. A
+/// refusal, or a run that related no tests, would finish in time without that
+/// finding.
+#[test]
+fn large_test_module_regression_finishes_within_the_deadline() -> Result<(), String> {
+    const TESTS: usize = 4_000;
+    let mut source = String::from(
+        "pub fn price(amount: u64, years: u32) -> u64 {\n    if years > 3 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n",
+    );
+    for at in 0..TESTS {
+        source.push_str(&format!(
+            "    #[test]\n    fn t{at}() {{\n        assert_eq!(price({at}, 1), {at});\n    }}\n"
+        ));
+    }
+    source.push_str("}\n");
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if years > 2 { amount - 10 } else { amount }\n+    if years > 3 { amount - 10 } else { amount }\n";
+    let workspace = Workspace::create(&[
+        ("Cargo.toml", CARGO_TOML.as_bytes()),
+        ("src/lib.rs", source.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    workspace
+        .check_within(
+            REGRESSION_DEADLINE,
+            &[
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("large test module ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    // The artifact lists the first related tests by name; the class needs
+    // the tests' inputs and exact assertions, which only related tests give.
+    let related = findings.iter().any(|finding| {
+        finding["class"].as_str() == Some("weakly_exposed")
+            && finding["probe"]["location"]["line"].as_u64() == Some(2)
+            && finding["related_tests"].as_array().is_some_and(|tests| {
+                ["t0", "t1", "t10"]
+                    .iter()
+                    .all(|name| tests.iter().any(|test| test["name"].as_str() == Some(name)))
+            })
+    });
+    if !related {
+        return Err(format!(
+            "the changed line was not reported with its related tests ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}

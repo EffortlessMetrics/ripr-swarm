@@ -3,7 +3,10 @@
 //! Unknown parses and ambiguous declarations are cached as unknown, never sync.
 
 use super::{
-    NameScopes, name_scope::name_scopes_for_test_caller, parse_clean_source_file, ra::LineIndex,
+    NameScopes,
+    name_scope::{TreeScopeIndex, name_scopes_for_test_caller},
+    parse_clean_source_file,
+    ra::LineIndex,
 };
 use crate::analysis::facts::MacroGeneratedOrigin;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
@@ -207,6 +210,7 @@ pub(crate) struct SourceSnapshot {
     lines: LineIndex,
     declarations: Mutex<BTreeMap<FunctionKey, Option<bool>>>,
     scopes: Mutex<BTreeMap<CallerKey, Option<Arc<NameScopes>>>>,
+    scope_index: OnceLock<TreeScopeIndex>,
     nesting: Mutex<BTreeMap<(String, usize, bool), Option<ItemNesting>>>,
     lexical_items: OnceLock<Option<SourceScopes>>,
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
@@ -235,6 +239,7 @@ impl SourceSnapshot {
             lines: LineIndex::new(source),
             declarations: Mutex::default(),
             scopes: Mutex::default(),
+            scope_index: OnceLock::new(),
             nesting: Mutex::default(),
             lexical_items: OnceLock::new(),
             shadows: Mutex::default(),
@@ -500,9 +505,16 @@ impl SourceSnapshot {
             caller.generated,
         );
         let compute = || {
+            let tree = self.parse.as_ref()?.tree();
+            // One index per file: every test of the file reads the file's
+            // functions and module scopes from it (#15185).
+            let index = self
+                .scope_index
+                .get_or_init(|| TreeScopeIndex::new(&tree, &self.lines));
             name_scopes_for_test_caller(
-                &self.parse.as_ref()?.tree(),
+                &tree,
                 &self.lines,
+                Some(index),
                 caller.start_line,
                 &caller.name,
                 caller.generated,
