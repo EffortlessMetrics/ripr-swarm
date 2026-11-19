@@ -457,9 +457,10 @@ const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
 /// causes, so a typo, an unchanged line and a finding one line up were
 /// indistinguishable.
 ///
-/// The run output carries counts, not the per-file changed-line set, so this
-/// never says whether the named line itself changed. Finding ids, seam ids
-/// and malformed locations return `None`: they keep their own wording.
+/// For a file without findings a complete run also says whether the named
+/// line changed (#15039), from the outcome's run-local changed-line index.
+/// Finding ids, seam ids and malformed locations return `None`: they keep
+/// their own wording.
 fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
     location_miss_cause_text(selector, output)
 }
@@ -650,11 +651,82 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
         });
     }
     let counts = &outcome.counts;
+    // #15039: a complete run knows which lines its diff changed, so say
+    // which of the three reasons applies to the named line. The index holds
+    // the producer's own parsed diff; an outcome without one (an older
+    // carrier) keeps the general sentence.
+    let reason = match outcome.changed_lines.as_ref() {
+        Some(index) => changed_line_reason(index, &wanted_file, wanted_line),
+        None => "ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none".to_string(),
+    };
     cause.push_str(&format!(
-        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        ". {reason}. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
         counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
     ));
     Some(LocationMissCause::plain(cause))
+}
+
+/// How many changed lines of the file a location miss names.
+const MAX_NEARBY_CHANGED_LINES: usize = 5;
+
+/// Which of the three reasons a file without findings has none at
+/// `wanted_line` (#15039): the diff changes no text line of the file, the
+/// line is not one the diff changed, or the line changed and has no finding.
+/// `index` is the complete run's own changed-line set. It holds added text
+/// lines only, so a binary or mode-only change is absent from it and the
+/// first sentence claims no more than that. Nor does a changed line without
+/// a finding establish why: a complete run can leave a file out by
+/// configuration, so that sentence lists the possible reasons.
+fn changed_line_reason(
+    index: &crate::analysis_outcome::ChangedLineIndex,
+    wanted_file: &str,
+    wanted_line: usize,
+) -> String {
+    // The index is keyed by the producer's stable path text, which escapes
+    // reserved bytes the selector spells literally. The diff parser builds
+    // its paths from normal components, so `a/./b` and `a//b` are respelled
+    // the same way here.
+    let respelled: std::path::PathBuf = Path::new(wanted_file)
+        .components()
+        .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        .collect();
+    let key = crate::analysis::stable_path_text(&respelled);
+    let Some(lines) = index.lines_of(&key) else {
+        return "This run's diff changes no text line of that file, and ripr reports a finding only on a changed line".to_string();
+    };
+    if lines.contains(&wanted_line) {
+        return format!(
+            "Line {wanted_line} changed, but this run has no finding on it: a comment, blank line, test code, a file the configuration leaves out or a kind of change ripr does not model has none"
+        );
+    }
+    if lines.is_empty() {
+        return format!(
+            "The diff only removes lines from that file, so line {wanted_line} is not a changed line, and ripr reports a finding only on a changed line"
+        );
+    }
+    let mut nearest: Vec<usize> = lines.iter().copied().collect();
+    nearest.sort_by_key(|line| (line.abs_diff(wanted_line), *line));
+    nearest.truncate(MAX_NEARBY_CHANGED_LINES);
+    nearest.sort_unstable();
+    let listed = nearest
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let scope = if lines.len() > nearest.len() {
+        format!(
+            "the {} nearest of its {} changed lines are",
+            nearest.len(),
+            lines.len()
+        )
+    } else if lines.len() == 1 {
+        "its one changed line is".to_string()
+    } else {
+        "its changed lines are".to_string()
+    };
+    format!(
+        "Line {wanted_line} is not a line this run's diff changed ({scope} {listed}), and ripr reports a finding only on a changed line"
+    )
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.

@@ -152,6 +152,11 @@ pub(crate) struct ParsedDiff {
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
+    /// #15121: destinations of `copy from`/`copy to` sections, pure or
+    /// edited. A copy leaves its source in place, so every line of the
+    /// destination is new code the patch does not carry; the diff intake
+    /// reads these files as added (`expand_copy_destinations`).
+    pub(crate) copy_destination_paths: Vec<PathBuf>,
     /// File sections (#4375) that opened with a registered textual `+++ `
     /// header, are not submodule gitlink or binary-sentinel sections, and
     /// closed without a validated hunk body line. Positive means the
@@ -336,8 +341,11 @@ mod parser_state {
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path, source_line_text,
     };
+    use crate::analysis::diff::side_prefix::MnemonicSides;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    use crate::analysis::diff::path::{parse_copy_from_path, parse_copy_to_path};
 
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
@@ -371,6 +379,24 @@ mod parser_state {
         rest.is_empty() || rest.starts_with(' ')
     }
 
+    /// A line that ends the patch text of one `git format-patch` message: the
+    /// mail signature separator (`-- `, RFC 3676) or the mbox separator git
+    /// writes before the next message (`From <object id> <date>`). Only
+    /// consulted once a hunk's declared counts are complete, where neither
+    /// could be a body line the header still owes.
+    fn is_mail_patch_boundary(raw: &str) -> bool {
+        if raw == "-- " {
+            return true;
+        }
+        raw.strip_prefix("From ")
+            .and_then(|rest| rest.split_once(' '))
+            .is_some_and(|(object_id, date)| {
+                matches!(object_id.len(), 40 | 64)
+                    && object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && !date.is_empty()
+            })
+    }
+
     #[derive(Default)]
     pub(super) struct ParserState {
         /// Ordinary added/removed `ChangedLine` payloads recorded so far
@@ -390,6 +416,9 @@ mod parser_state {
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
+        /// #15103: this section's sides use git's mnemonic prefixes; its
+        /// header and path markers are read respelled as `a/` and `b/`.
+        section_mnemonic_sides: Option<MnemonicSides>,
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
@@ -417,6 +446,8 @@ mod parser_state {
         pure_rename_counted: bool,
         pure_rename_file_count: usize,
         pure_rename_paths: Vec<PathBuf>,
+        copy_from_path: Option<PathBuf>,
+        copy_destination_paths: Vec<PathBuf>,
         /// Set while an n-way (`@@@`) hunk body is being skipped. Cleared at the
         /// next file boundary or the next ordinary `@@` header.
         combined_quarantine: bool,
@@ -511,6 +542,10 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        pub(super) fn copy_destination_paths(&self) -> Vec<PathBuf> {
+            self.copy_destination_paths.clone()
         }
 
         /// Ordinary changed-line payloads recorded so far (#2398).
@@ -636,6 +671,16 @@ mod parser_state {
             if self.in_hunk || self.combined_quarantine {
                 return false;
             }
+            // #15103: rename or copy metadata means the header's two tokens
+            // are two real paths, not one path under mnemonic prefixes.
+            if ["similarity index ", "rename from ", "copy from "]
+                .iter()
+                .any(|prefix| raw.starts_with(prefix))
+                && let Some(sides) = self.section_mnemonic_sides.take()
+            {
+                self.section_old_path = parse_git_old_path(sides.raw_header());
+                self.section_git_header = Some(sides.raw_header().to_owned());
+            }
             if let Some(percent) = raw.strip_prefix("similarity index ") {
                 let value = percent
                     .trim()
@@ -678,7 +723,42 @@ mod parser_state {
                 });
                 return true;
             }
-            false
+            self.handle_copy_metadata(raw, files)
+        }
+
+        /// #15121: `copy from`/`copy to` under a `similarity index` line. The
+        /// destination is registered as a changed file even when the section
+        /// carries no hunk, and recorded as a copy destination only when the
+        /// header and both lines name the same pair of paths.
+        fn handle_copy_metadata(
+            &mut self,
+            raw: &str,
+            files: &mut BTreeMap<PathBuf, ChangedFile>,
+        ) -> bool {
+            if raw.starts_with("copy from ") {
+                self.copy_from_path = parse_copy_from_path(raw);
+                return true;
+            }
+            let Some(path) = parse_copy_to_path(raw) else {
+                return false;
+            };
+            let valid_copy_pair = self.rename_section
+                && self
+                    .section_git_header
+                    .as_deref()
+                    .zip(self.copy_from_path.as_deref())
+                    .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
+            if valid_copy_pair {
+                if !self.copy_destination_paths.contains(&path) {
+                    self.copy_destination_paths.push(path.clone());
+                }
+                self.current_path = Some(path.clone());
+                files.entry(path.clone()).or_insert_with(|| ChangedFile {
+                    path,
+                    ..ChangedFile::default()
+                });
+            }
+            true
         }
 
         pub(super) fn handle_submodule_mode(&mut self, raw: &str) -> bool {
@@ -860,6 +940,16 @@ mod parser_state {
                 return true;
             }
 
+            let respelled = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map(|sides| sides.canonical_marker(raw).into_owned());
+            let raw = respelled.as_deref().unwrap_or(raw);
+            // The section's new-path marker ends its marker pair: a later
+            // plain section in the same stream names its own paths.
+            if raw.starts_with("+++ ") {
+                self.section_mnemonic_sides = None;
+            }
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);
@@ -967,8 +1057,13 @@ mod parser_state {
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
-            self.section_old_path = parse_git_old_path(raw);
-            self.section_git_header = raw.starts_with("diff --git ").then(|| raw.to_owned());
+            self.section_mnemonic_sides = MnemonicSides::of_header(raw);
+            let header = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map_or(raw, MnemonicSides::canonical_header);
+            self.section_old_path = parse_git_old_path(header);
+            self.section_git_header = header.starts_with("diff --git ").then(|| header.to_owned());
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
@@ -984,6 +1079,7 @@ mod parser_state {
             self.pure_rename_counted = false;
             self.combined_quarantine = false;
             self.conflict_region = None;
+            self.copy_from_path = None;
             true
         }
 
@@ -1086,6 +1182,23 @@ mod parser_state {
             if !self.in_hunk {
                 self.saw_old_path_marker = false;
                 return;
+            }
+            // A hunk whose declared counts are delivered owes no more body
+            // (#14072). An empty line here is padding after the patch, not a
+            // context line with its space stripped, and git's mail separators
+            // end the patch text: `git format-patch` closes each message with
+            // a `-- ` signature and opens the next with an mbox `From ` line.
+            // Charging those as body refused a valid diff as malformed and
+            // recorded mail text as changed source. Any other `+`/`-`/context
+            // line past the counts is still excess and stays malformed.
+            if self.remaining_hunk_lines == Some((0, 0)) {
+                if raw.is_empty() {
+                    return;
+                }
+                if is_mail_patch_boundary(raw) {
+                    self.close_hunk();
+                    return;
+                }
             }
             self.account_hunk_line(raw);
             if raw.starts_with("\\ No newline at end of file") {

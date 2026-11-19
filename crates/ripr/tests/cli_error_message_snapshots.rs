@@ -186,6 +186,48 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: evidence-health root /ripr-missing-root does not exist or is not a directory; pass `--root <dir>` naming the workspace directory\n",
     },
+    // An option typed before the command. The `ripr check` example may only
+    // name a spelling `check` accepts: `ripr -q check` used to be told to run
+    // `ripr check -q ...`, which `check` rejects.
+    Case {
+        args: &["--base", "main", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`\n",
+    },
+    // `--name=value` is an accepted spelling after the command, so the
+    // assignment keeps its example and is judged by its flag name.
+    Case {
+        args: &["--root=.", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--root=.\"; options go after the command, e.g. `ripr check --root=. ...`\n",
+    },
+    Case {
+        args: &["--bogus=1", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--bogus=1\"; options go after the command, and `ripr check` has no `--bogus` option. Run `ripr --help`.\n",
+    },
+    Case {
+        args: &["-q", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"-q\"; options go after the command. Did you mean `ripr check --quiet`? Run `ripr --help`.\n",
+    },
+    Case {
+        args: &["--quite", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--quite\"; options go after the command. Did you mean `ripr check --quiet`? Run `ripr --help`.\n",
+    },
+    // `--all` only modifies `--help`; `ripr check --all` is rejected, so a
+    // near miss on it gets no `ripr check --all` example.
+    Case {
+        args: &["--al"],
+        exit: 2,
+        stderr: "ripr: unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`.\n",
+    },
+    Case {
+        args: &["-x", "check"],
+        exit: 2,
+        stderr: "ripr: unknown command \"-x\"; options go after the command, and `ripr check` has no `-x` option. Run `ripr --help`.\n",
+    },
 ];
 
 #[test]

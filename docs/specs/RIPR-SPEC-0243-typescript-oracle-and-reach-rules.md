@@ -34,7 +34,9 @@ Linked issues:
   regex)
 - #9181 (CommonJS function export reached through `require()`)
 - #9182 (`var`/`let` CommonJS runner bindings)
+- #14241 (class exported as default by a later statement)
 - #14088 (class imported by a named `require()`; re-declared `var` import)
+- #15092 (class as a CommonJS module's whole export)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1056,6 +1058,19 @@ default binding is an unrelated import that shadows the owner name, for the
 direct-call arm and for the shadowing check alike. A namespace binding is
 never an anchor for a bare call.
 
+Amended 2026-11-11 (#14241): a class declared first and exported as the default
+by a later statement (`class Cart {}` then `export default Cart;` or
+`export { Cart as default };`) is the module's default class like
+`export default class Cart {}`, so a default import under any local name
+constructs it and its methods and constructor relate through the receiver. The
+class is read as the default only when the name provably still holds it: one
+file-level declaration of the name, no write to it anywhere in the file (a
+class binding is assignable and `export { Cart as default }` is live), and no
+named export of the same class. A class with a named export as well keeps its
+named-import reading; its default import is not credited. A type-only
+`export type { Cart as default }` exports no value and marks nothing, for a
+class and for a function owner alike.
+
 Amended 2026-10-19 (decision 15): a default import is also the receiver of
 `local.name(...)` when the owner module's one `export default { ... }`
 object holds the top-level function (or `const` arrow function; a `let` or
@@ -1463,6 +1478,27 @@ require(...)`, `k.triple`) is a property of the function, not the owner.
 The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
+
+Amended 2026-11-18 (#15092): `module.exports = Name;` of one top-level class
+declaration makes the class the module's whole export in the same way. A
+literal whole-module `require` (`const`, `let` or `var`, any local name) of
+the owner module then binds the class, so `new Local()` constructs it and its
+instance methods and constructor relate through the receiver (rule 5's
+receiver reading). The class is read as the whole export only when the file
+gate above holds and the name provably still holds the class: exactly one
+file-level declaration of the name, no write to it anywhere in the file, and
+no named export beside it (`module.exports.Name = ...`, `exports.Name = ...`,
+any `exports.` or `exports[` spelling) and no property added to the class
+binding (`Name.Name = Name`, `Name['x'] = ...`, `Object.assign(Name, ...)`,
+`Object.defineProperty(Name, ...)`), which a named `require` would read. A
+class exported both ways keeps its named-`require` reading. A named `require` of a whole-export class
+(`const { Name } = require(...)`) reads a property the class does not have and
+is not related. A default-named binding (`const { default: Name } =
+require(...)`, ES `import Name from` of the CommonJS module) is refused as for
+a function export, and a `require()` of an ES default class stays a namespace
+object. A `let`/`var` local the test file writes again, a re-declared `var`,
+and a binding of the local in a `describe` body, a hook or the test body
+(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -2449,6 +2485,14 @@ keys); do not take the next number.
   `default_exported_class_credits_the_return_edit_under_any_local_name` (an
   `export default class` imported under any local name), beside the existing
   shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
+
+- #14241 (rule 5, class exported as default by a later statement):
+  `crates/ripr/src/analysis/language/typescript/tests/default_class_declaration_tests.rs`
+  pins both separate-statement spellings and any import local name as related,
+  beside the controls that stay unrelated: another module's default, a named
+  import of a default-only class, a class that is not the default, a rewritten
+  class binding, and a type-only default export. A class with a named export as
+  well keeps its named-import relation.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

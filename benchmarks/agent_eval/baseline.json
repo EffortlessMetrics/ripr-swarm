@@ -1,14 +1,14 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (b713299dfa7ead3127bf2c403fedd1cf0826ad77)",
+  "ripr_version": "ripr 0.11.0 (2541dfab34b66c1215ae66da22daa3bd19ad6a27)",
   "routes": [
-    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3195,"total_tokens":6800},
-    {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2006,"total_tokens":2171},
-    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9776,"total_tokens":10886},
-    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34921,"total_tokens":34921},
-    {"answered":7,"route":"agent-brief","scenarios":10,"tokens_to_answer":9275,"total_tokens":10991},
-    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":82254,"total_tokens":89690},
-    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":56168,"total_tokens":58127}
+    {"answered":10,"route":"cli-agent-loop","scenarios":10,"tokens_to_answer":3424,"total_tokens":7029},
+    {"answered":9,"route":"cli-agent-find","scenarios":10,"tokens_to_answer":2006,"total_tokens":2221},
+    {"answered":9,"route":"cli-human","scenarios":10,"tokens_to_answer":9708,"total_tokens":10812},
+    {"answered":10,"route":"cli-json-terse","scenarios":10,"tokens_to_answer":34808,"total_tokens":34808},
+    {"answered":8,"route":"agent-brief","scenarios":10,"tokens_to_answer":10589,"total_tokens":11711},
+    {"answered":10,"route":"mcp","scenarios":10,"tokens_to_answer":84596,"total_tokens":92032},
+    {"answered":10,"route":"mcp-brief","scenarios":10,"tokens_to_answer":58573,"total_tokens":60532}
   ],
   "scenarios": [
     {
@@ -55,11 +55,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3325,"exit":0,"step":"check","tokens":1011}
+            {"bytes":3305,"exit":0,"step":"check","tokens":1005}
           ],
-          "tokens_to_answer": 1011,
-          "total_bytes": 3325,
-          "total_tokens": 1011
+          "tokens_to_answer": 1005,
+          "total_bytes": 3305,
+          "total_tokens": 1005
         },
         {
           "answer_reached": true,
@@ -89,15 +89,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4224,"exit":0,"step":"ripr_list_gaps","tokens":790},
             {"bytes":8681,"exit":0,"step":"ripr_get_gap#1","tokens":1654}
           ],
-          "tokens_to_answer": 8755,
-          "total_bytes": 35112,
-          "total_tokens": 8755
+          "tokens_to_answer": 8995,
+          "total_bytes": 35734,
+          "total_tokens": 8995
         },
         {
           "answer_reached": true,
@@ -105,15 +105,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2664,"exit":0,"step":"ripr_list_gaps","tokens":186},
             {"bytes":5531,"exit":0,"step":"ripr_get_gap#1","tokens":416}
           ],
-          "tokens_to_answer": 5733,
-          "total_bytes": 27310,
-          "total_tokens": 5733
+          "tokens_to_answer": 5973,
+          "total_bytes": 27932,
+          "total_tokens": 5973
         }
       ],
       "summary": "`>` becomes `>=` on a named threshold; tests use inputs far from it"
@@ -162,11 +162,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3472,"exit":0,"step":"check","tokens":1065}
+            {"bytes":3452,"exit":0,"step":"check","tokens":1059}
           ],
-          "tokens_to_answer": 1065,
-          "total_bytes": 3472,
-          "total_tokens": 1065
+          "tokens_to_answer": 1059,
+          "total_bytes": 3452,
+          "total_tokens": 1059
         },
         {
           "answer_reached": true,
@@ -196,16 +196,16 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4694,"exit":0,"step":"ripr_list_gaps","tokens":890},
             {"bytes":8841,"exit":0,"step":"ripr_get_gap#1","tokens":1747},
             {"bytes":8731,"exit":0,"step":"ripr_get_gap#2","tokens":1715}
           ],
-          "tokens_to_answer": 8948,
-          "total_bytes": 44473,
-          "total_tokens": 10663
+          "tokens_to_answer": 9188,
+          "total_bytes": 45095,
+          "total_tokens": 10903
         },
         {
           "answer_reached": true,
@@ -213,16 +213,16 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":3014,"exit":0,"step":"ripr_list_gaps","tokens":232},
             {"bytes":5551,"exit":0,"step":"ripr_get_gap#1","tokens":434},
             {"bytes":5446,"exit":0,"step":"ripr_get_gap#2","tokens":405}
           ],
-          "tokens_to_answer": 5797,
-          "total_bytes": 33126,
-          "total_tokens": 6202
+          "tokens_to_answer": 6037,
+          "total_bytes": 33748,
+          "total_tokens": 6442
         }
       ],
       "summary": "a too-long input now returns a new error variant; tests only check is_err"
@@ -273,11 +273,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3213,"exit":0,"step":"check","tokens":963}
+            {"bytes":3193,"exit":0,"step":"check","tokens":957}
           ],
-          "tokens_to_answer": 963,
-          "total_bytes": 3213,
-          "total_tokens": 963
+          "tokens_to_answer": 957,
+          "total_bytes": 3193,
+          "total_tokens": 957
         },
         {
           "answer_reached": true,
@@ -307,15 +307,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4218,"exit":0,"step":"ripr_list_gaps","tokens":788},
             {"bytes":6381,"exit":0,"step":"ripr_get_gap#1","tokens":1160}
           ],
-          "tokens_to_answer": 7099,
-          "total_bytes": 32806,
-          "total_tokens": 8259
+          "tokens_to_answer": 7339,
+          "total_bytes": 33428,
+          "total_tokens": 8499
         },
         {
           "answer_reached": true,
@@ -323,15 +323,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2659,"exit":0,"step":"ripr_list_gaps","tokens":184},
             {"bytes":4185,"exit":0,"step":"ripr_get_gap#1","tokens":330}
           ],
-          "tokens_to_answer": 5315,
-          "total_bytes": 25959,
-          "total_tokens": 5645
+          "tokens_to_answer": 5555,
+          "total_bytes": 26581,
+          "total_tokens": 5885
         }
       ],
       "summary": "a default timeout changes value; the only test checks it is positive"
@@ -380,11 +380,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":4103,"exit":0,"step":"check","tokens":1266}
+            {"bytes":4083,"exit":0,"step":"check","tokens":1260}
           ],
-          "tokens_to_answer": 1266,
-          "total_bytes": 4103,
-          "total_tokens": 1266
+          "tokens_to_answer": 1260,
+          "total_bytes": 4083,
+          "total_tokens": 1260
         },
         {
           "answer_reached": true,
@@ -414,16 +414,16 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4884,"exit":0,"step":"ripr_list_gaps","tokens":924},
             {"bytes":8839,"exit":0,"step":"ripr_get_gap#1","tokens":1729},
             {"bytes":8511,"exit":0,"step":"ripr_get_gap#2","tokens":1639}
           ],
-          "tokens_to_answer": 8964,
-          "total_bytes": 44441,
-          "total_tokens": 10603
+          "tokens_to_answer": 9204,
+          "total_bytes": 45063,
+          "total_tokens": 10843
         },
         {
           "answer_reached": true,
@@ -431,16 +431,16 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":3205,"exit":0,"step":"ripr_list_gaps","tokens":266},
             {"bytes":5595,"exit":0,"step":"ripr_get_gap#1","tokens":441},
             {"bytes":5298,"exit":0,"step":"ripr_get_gap#2","tokens":387}
           ],
-          "tokens_to_answer": 5838,
-          "total_bytes": 33213,
-          "total_tokens": 6225
+          "tokens_to_answer": 6078,
+          "total_bytes": 33835,
+          "total_tokens": 6465
         }
       ],
       "summary": "a constructor gains a long-flag spelling; tests assert another field"
@@ -523,14 +523,14 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":3914,"exit":0,"step":"ripr_list_gaps","tokens":721}
           ],
-          "tokens_to_answer": 7032,
-          "total_bytes": 26121,
-          "total_tokens": 7032
+          "tokens_to_answer": 7272,
+          "total_bytes": 26743,
+          "total_tokens": 7272
         },
         {
           "answer_reached": true,
@@ -538,14 +538,14 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2488,"exit":0,"step":"ripr_list_gaps","tokens":168}
           ],
-          "tokens_to_answer": 5299,
-          "total_bytes": 21603,
-          "total_tokens": 5299
+          "tokens_to_answer": 5539,
+          "total_bytes": 22225,
+          "total_tokens": 5539
         }
       ],
       "summary": "a boundary change whose existing tests already pin below, equal and above"
@@ -594,11 +594,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3599,"exit":0,"step":"check","tokens":1110}
+            {"bytes":3579,"exit":0,"step":"check","tokens":1104}
           ],
           "tokens_to_answer": null,
-          "total_bytes": 3599,
-          "total_tokens": 1110
+          "total_bytes": 3579,
+          "total_tokens": 1104
         },
         {
           "answer_reached": true,
@@ -628,16 +628,16 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4874,"exit":0,"step":"ripr_list_gaps","tokens":926},
             {"bytes":7205,"exit":0,"step":"ripr_get_gap#1","tokens":1389},
             {"bytes":6665,"exit":0,"step":"ripr_get_gap#2","tokens":1233}
           ],
-          "tokens_to_answer": 9859,
-          "total_bytes": 40951,
-          "total_tokens": 9859
+          "tokens_to_answer": 10099,
+          "total_bytes": 41573,
+          "total_tokens": 10099
         },
         {
           "answer_reached": true,
@@ -645,16 +645,16 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":3208,"exit":0,"step":"ripr_list_gaps","tokens":266},
             {"bytes":4575,"exit":0,"step":"ripr_get_gap#1","tokens":342},
             {"bytes":4301,"exit":0,"step":"ripr_get_gap#2","tokens":328}
           ],
-          "tokens_to_answer": 6067,
-          "total_bytes": 31199,
-          "total_tokens": 6067
+          "tokens_to_answer": 6307,
+          "total_bytes": 31821,
+          "total_tokens": 6307
         }
       ],
       "summary": "three changed functions: two gaps and one change the tests already pin"
@@ -703,11 +703,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3607,"exit":0,"step":"check","tokens":1112}
+            {"bytes":3395,"exit":0,"step":"check","tokens":1048}
           ],
-          "tokens_to_answer": 1112,
-          "total_bytes": 3607,
-          "total_tokens": 1112
+          "tokens_to_answer": 1048,
+          "total_bytes": 3395,
+          "total_tokens": 1048
         },
         {
           "answer_reached": true,
@@ -721,15 +721,15 @@
           "total_tokens": 2813
         },
         {
-          "answer_reached": false,
+          "answer_reached": true,
           "failed_steps": 0,
           "route": "agent-brief",
           "steps": [
-            {"bytes":1580,"exit":0,"step":"brief","tokens":594}
+            {"bytes":3862,"exit":0,"step":"brief","tokens":1314}
           ],
-          "tokens_to_answer": null,
-          "total_bytes": 1580,
-          "total_tokens": 594
+          "tokens_to_answer": 1314,
+          "total_bytes": 3862,
+          "total_tokens": 1314
         },
         {
           "answer_reached": true,
@@ -737,15 +737,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4200,"exit":0,"step":"ripr_list_gaps","tokens":787},
-            {"bytes":8845,"exit":0,"step":"ripr_get_gap#1","tokens":1757}
+            {"bytes":4194,"exit":0,"step":"ripr_list_gaps","tokens":787},
+            {"bytes":8683,"exit":0,"step":"ripr_get_gap#1","tokens":1733}
           ],
-          "tokens_to_answer": 8855,
-          "total_bytes": 35252,
-          "total_tokens": 8855
+          "tokens_to_answer": 9071,
+          "total_bytes": 35706,
+          "total_tokens": 9071
         },
         {
           "answer_reached": true,
@@ -753,15 +753,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
-            {"bytes":2641,"exit":0,"step":"ripr_list_gaps","tokens":183},
-            {"bytes":5617,"exit":0,"step":"ripr_get_gap#1","tokens":447}
+            {"bytes":2635,"exit":0,"step":"ripr_list_gaps","tokens":183},
+            {"bytes":5478,"exit":0,"step":"ripr_get_gap#1","tokens":428}
           ],
-          "tokens_to_answer": 5761,
-          "total_bytes": 27373,
-          "total_tokens": 5761
+          "tokens_to_answer": 5982,
+          "total_bytes": 27850,
+          "total_tokens": 5982
         }
       ],
       "summary": "one match arm's value changes; tests only cover the other arms"
@@ -773,14 +773,14 @@
         "expected_gap_lines": [2],
         "extra_gaps": 0,
         "find_exit": 0,
-        "gaps_header": 0,
-        "missed_gaps": 1,
+        "gaps_header": 1,
+        "missed_gaps": 0,
         "reference_key_valid": true,
-        "reference_test_closes_loop": false,
-        "reported_gap_lines": [],
+        "reference_test_closes_loop": true,
+        "reported_gap_lines": [2],
         "silent_on_control": null,
         "weak_key_valid": true,
-        "weak_test_still_flagged": false
+        "weak_test_still_flagged": true
       },
       "routes": [
         {
@@ -788,46 +788,46 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":504,"exit":0,"step":"find","tokens":165},
-            {"bytes":584,"exit":0,"step":"detail:explain","tokens":203},
-            {"bytes":2338,"exit":0,"step":"detail:context","tokens":821}
+            {"bytes":553,"exit":0,"step":"find","tokens":215},
+            {"bytes":541,"exit":0,"step":"detail:explain","tokens":203},
+            {"bytes":2788,"exit":0,"step":"detail:context","tokens":1000}
           ],
-          "tokens_to_answer": 1189,
-          "total_bytes": 3426,
-          "total_tokens": 1189
+          "tokens_to_answer": 1418,
+          "total_bytes": 3882,
+          "total_tokens": 1418
         },
         {
           "answer_reached": false,
           "failed_steps": 0,
           "route": "cli-agent-find",
           "steps": [
-            {"bytes":504,"exit":0,"step":"find","tokens":165}
+            {"bytes":553,"exit":0,"step":"find","tokens":215}
           ],
           "tokens_to_answer": null,
-          "total_bytes": 504,
-          "total_tokens": 165
+          "total_bytes": 553,
+          "total_tokens": 215
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3759,"exit":0,"step":"check","tokens":1129}
+            {"bytes":3823,"exit":0,"step":"check","tokens":1155}
           ],
-          "tokens_to_answer": 1129,
-          "total_bytes": 3759,
-          "total_tokens": 1129
+          "tokens_to_answer": 1155,
+          "total_bytes": 3823,
+          "total_tokens": 1155
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-json-terse",
           "steps": [
-            {"bytes":6185,"exit":0,"step":"check","tokens":2495}
+            {"bytes":5633,"exit":0,"step":"check","tokens":2382}
           ],
-          "tokens_to_answer": 2495,
-          "total_bytes": 6185,
-          "total_tokens": 2495
+          "tokens_to_answer": 2382,
+          "total_bytes": 5633,
+          "total_tokens": 2382
         },
         {
           "answer_reached": false,
@@ -846,15 +846,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4148,"exit":0,"step":"ripr_list_gaps","tokens":776},
-            {"bytes":8139,"exit":0,"step":"ripr_get_gap#1","tokens":1410}
+            {"bytes":4218,"exit":0,"step":"ripr_list_gaps","tokens":793},
+            {"bytes":7319,"exit":0,"step":"ripr_get_gap#1","tokens":1359}
           ],
-          "tokens_to_answer": 8497,
-          "total_bytes": 34494,
-          "total_tokens": 8497
+          "tokens_to_answer": 8703,
+          "total_bytes": 34366,
+          "total_tokens": 8703
         },
         {
           "answer_reached": true,
@@ -862,15 +862,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
-            {"bytes":2589,"exit":0,"step":"ripr_list_gaps","tokens":172},
-            {"bytes":5248,"exit":0,"step":"ripr_get_gap#1","tokens":380}
+            {"bytes":2659,"exit":0,"step":"ripr_list_gaps","tokens":189},
+            {"bytes":4785,"exit":0,"step":"ripr_get_gap#1","tokens":387}
           ],
-          "tokens_to_answer": 5683,
-          "total_bytes": 26952,
-          "total_tokens": 5683
+          "tokens_to_answer": 5947,
+          "total_bytes": 27181,
+          "total_tokens": 5947
         }
       ],
       "summary": "a private helper's rounding changes; only the public caller is tested, far from the edge"
@@ -921,11 +921,11 @@
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3792,"exit":0,"step":"check","tokens":1149}
+            {"bytes":3772,"exit":0,"step":"check","tokens":1143}
           ],
-          "tokens_to_answer": 1149,
-          "total_bytes": 3792,
-          "total_tokens": 1149
+          "tokens_to_answer": 1143,
+          "total_bytes": 3772,
+          "total_tokens": 1143
         },
         {
           "answer_reached": true,
@@ -955,15 +955,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4198,"exit":0,"step":"ripr_list_gaps","tokens":790},
             {"bytes":7183,"exit":0,"step":"ripr_get_gap#1","tokens":1379}
           ],
-          "tokens_to_answer": 7101,
-          "total_bytes": 33588,
-          "total_tokens": 8480
+          "tokens_to_answer": 7341,
+          "total_bytes": 34210,
+          "total_tokens": 8720
         },
         {
           "answer_reached": true,
@@ -971,15 +971,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2639,"exit":0,"step":"ripr_list_gaps","tokens":186},
             {"bytes":4667,"exit":0,"step":"ripr_get_gap#1","tokens":385}
           ],
-          "tokens_to_answer": 5317,
-          "total_bytes": 26421,
-          "total_tokens": 5702
+          "tokens_to_answer": 5557,
+          "total_bytes": 27043,
+          "total_tokens": 5942
         }
       ],
       "summary": "an exclusive range becomes inclusive in a sum; tests only use n = 0"
@@ -1064,15 +1064,15 @@
           "route": "mcp",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
             {"bytes":4432,"exit":0,"step":"ripr_list_gaps","tokens":833},
             {"bytes":8105,"exit":0,"step":"ripr_get_gap#1","tokens":1543}
           ],
-          "tokens_to_answer": 7144,
-          "total_bytes": 34744,
-          "total_tokens": 8687
+          "tokens_to_answer": 7384,
+          "total_bytes": 35366,
+          "total_tokens": 8927
         },
         {
           "answer_reached": true,
@@ -1080,15 +1080,15 @@
           "route": "mcp-brief",
           "steps": [
             {"bytes":1643,"exit":0,"step":"initialize","tokens":491},
-            {"bytes":11452,"exit":0,"step":"tools/list","tokens":4189},
+            {"bytes":12074,"exit":0,"step":"tools/list","tokens":4429},
             {"bytes":3533,"exit":0,"step":"ripr_workspace_status","tokens":207},
             {"bytes":2487,"exit":0,"step":"ripr_refresh","tokens":244},
             {"bytes":2887,"exit":0,"step":"ripr_list_gaps","tokens":227},
             {"bytes":5382,"exit":0,"step":"ripr_get_gap#1","tokens":452}
           ],
-          "tokens_to_answer": 5358,
-          "total_bytes": 27384,
-          "total_tokens": 5810
+          "tokens_to_answer": 5598,
+          "total_bytes": 28006,
+          "total_tokens": 6050
         }
       ],
       "summary": "a behavior-preserving refactor (extracted local); the useful answer is silence"

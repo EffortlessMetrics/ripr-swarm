@@ -122,6 +122,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+// Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
+#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -2284,8 +2286,9 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
 
 /// #9346: the issue's diff shape end to end — the actual two-probe
 /// shape from the live witness. The signature line of the production
-/// function changes (seeding a whole-function `static_unknown` probe at
-/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// function gains an attribute (seeding a whole-function `static_unknown`
+/// probe at `src/lib.rs:1`; a trailing comment no longer does, #14175),
+/// the predicate line below it flips its boundary and
 /// reaches a decisive `exposed` verdict for the same function, and the
 /// discriminating test is added in `tests/` in the same working tree.
 /// Both production probes cover `discounted_total`, so Start here must
@@ -2301,7 +2304,7 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         let changed = source
             .replacen(
                 "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
-                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                "#[must_use] pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
                 1,
             )
             .replacen(">= discount_threshold", "> discount_threshold", 1);
@@ -37509,7 +37512,7 @@ fn review_comments_help_survives_invalid_admission_environment()
             let stdout = String::from_utf8(output.stdout)?;
             assert!(stdout.contains("Usage: ripr review-comments"));
             assert!(stdout.contains(variable));
-            assert!(stdout.contains("Default: 1200"));
+            assert!(stdout.contains("Default: 5000"));
         }
         let output = run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),
@@ -37760,6 +37763,44 @@ fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result
         ready_stdout.contains("to analyze your branch against its default branch")
             && !ready_stdout.contains("no commits yet"),
         "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// `init` in a root with nothing ripr can read (a brand-new repository with
+/// only a README) warns that `ripr check` has nothing to analyze, instead of
+/// writing a Rust configuration in silence. The warning is advisory (files
+/// are written, exit 0), and a root that has source stays quiet.
+#[test]
+fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-no-source-warning");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    // Fixture check: no manifest and no source file of any language.
+    assert!(!repo.join("Cargo.toml").exists());
+    let repo_arg = repo.display().to_string();
+
+    let empty = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&empty);
+    assert!(
+        repo.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {empty:?}"
+    );
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("has no Cargo.toml and no source file ripr reads yet"),
+        "init into a root without source must warn: {stderr}"
+    );
+
+    std::fs::write(repo.join("app.py"), "def f():\n    return 1\n").map_err(|e| e.to_string())?;
+    let with_source = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&with_source);
+    let quiet = String::from_utf8_lossy(&with_source.stderr);
+    assert!(
+        !quiet.contains("no source file ripr reads yet"),
+        "a root with source must stay quiet: {quiet}"
     );
     let _ = std::fs::remove_dir_all(&repo);
     Ok(())

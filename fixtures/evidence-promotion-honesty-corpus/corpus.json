@@ -204,7 +204,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json"
   ],
   "cases": [
     {
@@ -2457,6 +2458,54 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_guard_operand_dropped_agreement",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guard_operand_dropped_agreement",
+      "vector": "dropped_guard_operand_is_at_its_identity_value_on_every_pinned_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_guard_operand_added_deciding_row",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guard_operand_added_deciding_row",
+      "vector": "added_guard_operand_decides_on_a_pinned_table_row",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
         }
       ]
     },
@@ -12329,6 +12378,32 @@
       ]
     },
     {
+      "id": "rust_repo_exposure_unselected_match_arm_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/unselected-match-arm",
+      "vector": "repo_exposure_exact_assertions_on_other_arms_cannot_grip_an_arm_no_test_input_selects",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "test": "small_and_large_prices",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "rust_repo_exposure_wrapper_fed_error_not_promoted",
       "language": "rust",
       "tier": "pure",
@@ -13712,7 +13787,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         }
       ]
     },
@@ -13736,7 +13811,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "reachable_unrevealed"
         }
       ]
     },
@@ -20203,6 +20278,54 @@
       "source_fixture": "fixtures/rust_predicate_appended_char_arm",
       "vector": "an_input_equal_to_an_appended_char_arm_reaches_the_returned_change",
       "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_forwarding_wrapper_invisible_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_forwarding_wrapper_invisible_input",
+      "vector": "a_forwarding_wrapper_pinned_where_the_helper_change_is_invisible",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_forwarding_wrapper_discriminating_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_forwarding_wrapper_discriminating_input",
+      "vector": "a_forwarding_wrapper_pinned_where_the_helper_change_differs",
+      "probe_family": "return_value",
       "assertions": [
         {
           "type": "must_not_report_clean"

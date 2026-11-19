@@ -425,6 +425,13 @@ PR 13 reports          TypeScript limitation leaderboard + route-quality slice
   A findings-bounded input must disclose incomplete counts and rankings in
   both report formats, retain the supplied findings as its denominator, and
   name `RIPR_CHECK_FINDINGS_BYTES=0` as the full-document recovery route.
+  Both Markdown reports (`ts-limitations` and `ts-false-actionable`) render
+  imported text (paths, finding and case ids, limitation kinds, sources, risk
+  classes) through the shared Markdown helpers: `<` does not open raw HTML,
+  `@name` (a Next.js `app/@modal/...` path, for example) does not notify an
+  account, a `|` or line ending does not split a row, and a backtick does not
+  close a code span. The leaderboard's sample location is one code span, so a
+  `__tests__` directory keeps its underscores. JSON output is unaffected.
 - `language_adapter_typescript_false_actionable_audit` — the checked
   TypeScript-family preview false-actionable audit corpus and the dogfood/report
   projections track whether rows that must remain non-actionable accidentally

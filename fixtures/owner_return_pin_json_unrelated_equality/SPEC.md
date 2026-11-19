@@ -15,6 +15,8 @@ wrong callbacks under the locked registry dependency.
 ## Then
 
 The current return stays non-exposed and the wrong callback passes the test.
+The findings read `reachable_unrevealed`: `assert_eq!(2,2)` compares only
+literals and supplies no oracle (#14968; before, they read `weakly_exposed`).
 
 ## Must Not
 

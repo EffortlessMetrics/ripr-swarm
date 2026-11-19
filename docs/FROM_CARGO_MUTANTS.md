@@ -224,10 +224,10 @@ bare clone as `origin`:
   acknowledge a gap for one pull request. The gap stays visible in the report.
 - Large workspaces: `review-comments` refuses with `review_guidance_oversized`
   (exit `2`, so the gate also exits `2`) when its index input passes about
-  1,200 files (the workspace corpus plus changed files it reads for
+  5,000 files (the workspace corpus plus changed files it reads for
   attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
-  enough memory; the limit is an input cap, not a memory bound, and its memory
-  cost on large workspaces is not measured here. Separately, `ripr check`
+  enough memory; the limit is an input cap, not a memory bound. On a
+  2,646-file workspace it peaked under 2 GB. Separately, `ripr check`
   can return a partial result when the diff exceeds the 200-file or
   1,000-changed-line budget. Raise `RIPR_PARTIAL_DIFF_FILE_BUDGET` and/or
   `RIPR_PARTIAL_DIFF_LINE_BUDGET` as needed. The effective line budget is

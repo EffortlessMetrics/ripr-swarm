@@ -975,6 +975,28 @@ fn workspace_member_crates(root: &Path, index: &RustIndex) -> std::collections::
     names
 }
 
+/// The `[workspace] members` entries that can name a directory outside
+/// `root` (`../shared`, an absolute path), joined onto `root`. Workspace
+/// discovery walks only below the root, so nothing in these directories is
+/// part of the corpus content hash (#15040). The check is lexical: an entry
+/// such as `a/../b` is reported although it stays below the root, which only
+/// adds an input to the identity that covers these directories.
+pub(crate) fn out_of_root_member_dirs(root: &Path) -> Vec<PathBuf> {
+    workspace_member_directories(root)
+        .into_iter()
+        .filter(|directory| {
+            directory.has_root()
+                || directory.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                    )
+                })
+        })
+        .map(|directory| root.join(directory))
+        .collect()
+}
+
 /// [`workspace_member_directories`] joined onto `root`.
 fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
     workspace_member_directories(root)

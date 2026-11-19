@@ -28,6 +28,12 @@ The configuration layer should:
   (`load_for_root`, workspace-status presence, Python repair
   config-profile detection, first-pr preflight, and agent-receipt
   config fingerprinting share that presence rule);
+- refuse, before opening it, a `ripr.toml` entry that is a symbolic link
+  whose resolved target lies outside the enclosing repository (the nearest
+  directory with a `.git` entry, or the link's own directory when there is
+  none); the refusal is one fixed message naming the entry and the repair,
+  without the resolved path or any target content, and a link whose target
+  stays inside the repository still loads (#14310, Unix);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - derive misplaced or retired-key recovery hints from the complete parser
@@ -548,6 +554,19 @@ then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
 
+### A config link that leaves the repository is refused unread (#14310)
+
+```text
+Given a workspace whose ripr.toml is a symbolic link,
+and the link resolves to a path outside the enclosing repository,
+when check, diff, pilot or a structured-output route loads configuration,
+then the run stops with one fixed refusal naming the entry and the repair,
+and the target is not opened,
+and neither the resolved path nor any target content is printed.
+Given the same link resolving inside the repository,
+then the configuration loads as a regular file would.
+```
+
 ### Doctor checks the pytest the Python verify route runs (#13617)
 
 ```text
@@ -852,6 +871,14 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml`
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file`
 - `crates/ripr/src/config.rs::tests::closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file`
+- `crates/ripr/src/config/tests.rs::config_link_leaving_the_repository_is_refused_before_it_is_read`
+  pins the refusal for file, directory, named pipe, link chain and linked
+  directory targets at root, ancestor and member entries (#14310, Unix).
+- `crates/ripr/src/config/tests.rs::unresolvable_config_links_and_absent_entries_keep_their_contracts`
+- `crates/ripr/src/config/tests.rs::config_link_inside_the_repository_still_loads`
+- `crates/ripr/src/config/tests.rs::config_link_without_a_repository_marker_is_bounded_by_its_own_directory`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_to_an_outside_file_is_refused_on_every_route`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_inside_the_repository_still_loads_on_every_route`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe`
