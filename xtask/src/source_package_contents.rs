@@ -25,7 +25,7 @@ use std::io::Read as _;
 use std::path::Path;
 
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
-use ra_ap_syntax::{AstNode, Edition, SourceFile};
+use ra_ap_syntax::{AstNode, AstToken, Edition, SourceFile};
 
 /// The `ripr` package still carries the portable help harness compiled from
 /// the extracted package (`xtask/tests/common/ripr_help.rs`). #15216 item 5
@@ -100,6 +100,19 @@ pub(crate) fn check_source_package(
         }
     }
     let graph = module_graph(members)?;
+    let missing: Vec<&str> = graph
+        .required
+        .iter()
+        .filter(|files| !files.iter().any(|file| members.contains_key(file)))
+        .filter_map(|files| files.first().map(String::as_str))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "lacks {} file(s) its production modules declare or include; the manifest's include/exclude drops them (#15216): {}",
+            missing.len(),
+            missing.join(", ")
+        ));
+    }
     for path in members
         .keys()
         .filter(|path| path.starts_with("src/") && !path.ends_with(".rs"))
@@ -151,6 +164,9 @@ struct ModuleGraph {
     /// Files loaded through `#[path]`: like `mod.rs`, they own their
     /// directory, so their children sit beside them.
     path_loaded: BTreeSet<String>,
+    /// For each production `mod` declaration or include, the files of
+    /// which the package must carry at least one.
+    required: Vec<Vec<String>>,
 }
 
 impl ModuleGraph {
@@ -205,16 +221,17 @@ fn module_graph(members: &BTreeMap<String, Vec<u8>>) -> Result<ModuleGraph, Stri
         // file's own `mod` declarations are not followed, so a module it
         // declares reads as undeclared (refused).
         for included in production_includes(parse.tree().syntax())? {
-            graph
-                .compiled
-                .insert(normalize(&format!("{file_dir}{included}")));
+            let included = normalize(&format!("{file_dir}{included}"));
+            graph.required.push(vec![included.clone()]);
+            graph.compiled.insert(included);
         }
         let child_dir = if owns_directory {
             file_dir.clone()
         } else {
             format!(
                 "{file_dir}{}/",
-                file.trim_end_matches(".rs")
+                file.strip_suffix(".rs")
+                    .unwrap_or(&file)
                     .rsplit('/')
                     .next()
                     .unwrap_or_default()
@@ -300,6 +317,7 @@ fn walk_items(
             graph.test_only.extend(files);
             graph.test_only.insert(subtree);
         } else {
+            graph.required.push(files.clone());
             pending.extend(files);
         }
     }
@@ -328,11 +346,19 @@ fn production_includes(node: &ra_ap_syntax::SyntaxNode) -> Result<Vec<String>, S
                 Some("include" | "include_str" | "include_bytes")
             ) && let Some(tree) = call.token_tree()
             {
-                let text = tree.syntax().text().to_string();
-                if let Some(literal) = text.trim_start_matches('(').trim_start().strip_prefix('"')
-                    && let Some(end) = literal.find('"')
+                // The first token after `(`, past comments and whitespace,
+                // must be a (raw) string literal; any other argument, such
+                // as `concat!(..)`, is not read.
+                let first = tree
+                    .syntax()
+                    .children_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .nth(1);
+                if let Some(literal) = first.and_then(ast::String::cast)
+                    && let Ok(value) = literal.value()
                 {
-                    files.push(literal[..end].to_string());
+                    files.push(value.into_owned());
                 }
             }
         }
@@ -666,6 +692,27 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("schema.json"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_production_module_or_include_missing_from_the_package_is_refused() -> Result<(), String> {
+        let error = refusal(
+            "ripr",
+            &[
+                (
+                    "src/lib.rs",
+                    "mod present;\nmod dropped;\nconst DATA: &str = include_str!(/* data */\n    r\"data.txt\");\nconst GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.txt\"));\n#[cfg(test)]\nmod tests;\n",
+                ),
+                ("src/present/mod.rs", ""),
+            ],
+        )?;
+        assert!(error.contains("lacks 2 file(s)"), "{error}");
+        assert!(error.contains("src/dropped.rs"), "{error}");
+        assert!(error.contains("src/data.txt"), "{error}");
+        assert!(!error.contains("src/present"), "{error}");
+        assert!(!error.contains("src/tests"), "{error}");
+        assert!(!error.contains("gen.txt"), "{error}");
         Ok(())
     }
 
