@@ -179,9 +179,9 @@ arguments (`!x`, `a != b`) do not change this grade.
 
 A related-test row that would read `no_assertion` keeps that miss only when
 its test body invokes no assertion-like macro. When the body invokes one that
-ripr does not classify (the same `assert`/`assert_*` spelling rule the #7089
-witness uses, read from comment- and string-masked text; recognized std
-macros excluded), the row reads `assertion_admission_unproven`. The finding
+ripr does not classify (the `assert`/`assert_*` name predicate the #7089
+witness uses, without its import-alias spellings, read from comment- and
+string-masked text; recognized std macros excluded), the row reads `assertion_admission_unproven`. The finding
 gains one evidence line per such test. The line starts with "assertion-like
 macro not read:" and names the test and the macro. strsim's
 `assert_delta!(0.767, jaro("dixon", "dicksonx"), 0.001)`, whose body is
@@ -190,8 +190,8 @@ macro not read:" and names the test and the macro. strsim's
 Only the false absence claim is withdrawn. The rewrite runs after every
 limit and gap decision of the Rust post-classify pass, so the refusal miss
 never reads as an assertion ripr judged to the #7089 limit or a withhold gate.
-This grants no oracle, strength, class or static limit, and the observe and discriminate stage summaries keep
-their wording: unlike a #9981 forwarded callback or a returned QuickCheck
+This grants no oracle, strength, class or static limit, and the observe and
+discriminate stage summaries keep their wording: unlike a #9981 forwarded callback or a returned QuickCheck
 property, these rows never count toward replacing those summaries. A test with
 no macro, a non-assertion macro (`vec!`, `println!`), or the spelling only in
 a comment or string keeps `no_assertion`.
