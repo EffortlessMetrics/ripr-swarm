@@ -2354,8 +2354,12 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     // #15324: a source file git printed as binary (a `-diff` or `binary`
     // attribute, or a NUL byte) carried no hunk, so its change was not
-    // analyzed. The result must not read as complete over it.
-    let binary_sources = binary_rendered_source_paths(diff_text);
+    // analyzed. The result must not read as complete over it. A path outside
+    // the requested diff scope was not asked for, so it adds nothing.
+    let binary_sources = binary_rendered_source_paths(diff_text)
+        .into_iter()
+        .filter(|path| diff_scope.admits(std::path::Path::new(path)))
+        .collect::<Vec<_>>();
     if !binary_sources.is_empty() {
         limitations.push(
             AnalysisLimitation::new(

@@ -167,17 +167,19 @@ fn a_deleted_file_beside_another_change_is_named() -> TestResult {
 
 /// #15324: a source file git printed as binary (a `-diff` attribute) is not
 /// analyzed, so the outcome is incomplete with a typed limitation naming the
-/// file, the cause and the recovery. A binary asset changes nothing.
+/// file, the cause and the recovery. A binary asset, or a binary source
+/// outside the requested `--path` scope, changes nothing.
 #[test]
 fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult {
     let limitation_for = |name: &str, sections: &[&str]| -> TestResult<serde_json::Value> {
         let (root, diff) = intake_workspace(name, sections)?;
         let _cleanup = DeclaredHunkScratch(root.clone());
-        let output = run_command(
-            env!("CARGO_BIN_EXE_ripr"),
-            Some(&root),
-            &["check", "--diff", &diff, "--format", "json", "--quiet"],
-        )?;
+        let mut args = vec!["check", "--diff", &diff, "--format", "json", "--quiet"];
+        // The scope control asks only for lib.rs, so tax.rs was not requested.
+        if name.ends_with("scope-control") {
+            args.extend(["--path", "src/lib.rs"]);
+        }
+        let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         // Pin the stimulus: the text hunk on lib.rs parsed.
         assert_eq!(json["summary"]["changed_rust_files"], 1, "{json}");
@@ -217,6 +219,10 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
     for (name, sections) in [
         ("diff-binary-asset-control", &[LIB_COMMENT, BINARY_LOGO][..]),
         ("diff-text-only-control", &[LIB_COMMENT][..]),
+        (
+            "diff-binary-source-scope-control",
+            &[LIB_COMMENT, BINARY_TAX][..],
+        ),
     ] {
         let json = limitation_for(name, sections)?;
         assert_eq!(

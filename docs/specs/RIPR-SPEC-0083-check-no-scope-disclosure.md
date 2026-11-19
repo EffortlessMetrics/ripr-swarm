@@ -299,8 +299,9 @@ like that for a path in a language ripr routes carries a
 `language_scope_unsupported` limitation at the `diff_parse` stage that names
 the files, the likely cause and the recovery (remove the attribute for source
 files, or pass a `git diff --text` patch with `--diff`), so the outcome is
-never complete over the unread change. Binary assets and deleted files keep
-their existing handling. Paths in both lines are written terminal-safe.
+never complete over the unread change. A path outside the requested `--path`
+or `--exclude` scope adds nothing. Binary assets and deleted files keep their
+existing handling. Paths in both lines are written terminal-safe.
 
 ### Non-claims
 
@@ -386,7 +387,7 @@ their existing handling. Paths in both lines are written terminal-safe.
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead` (#14265: the contained-HEAD predicate and its refusals, including an unresolved base tip)
 - `crates/ripr/src/output/human.rs::tests::a_base_that_already_contains_head_names_that_cause_in_the_headline` (#14265: the contained-HEAD headline in both human forms, beside the same-commit, working-tree and changed-files controls)
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named` (#15324: a deleted file beside another changed file is named on stderr; a diff with no deletion prints no deletion line)
-- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section makes the outcome incomplete with a typed limitation; a binary asset and a text-only diff stay complete)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section makes the outcome incomplete with a typed limitation; a binary asset, a text-only diff and a binary source outside the `--path` scope stay complete)
 - `crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::binary_sentinels_on_analyzed_sources_are_named_and_others_are_not` (#15324: modified, added, renamed and spaced source paths are named; deleted, asset and malformed sentinels are not)
 - `crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause` (#14265: built binary on a branch behind `main`, both `HEAD~1` arms, explicit `--base`, and a feature-branch control)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
