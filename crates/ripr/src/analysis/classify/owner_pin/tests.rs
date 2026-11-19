@@ -9952,6 +9952,14 @@ fn an_associated_constructor_pins_its_whole_value_field() {
     ] {
         assert!(!admits(imports, &body), "{imports} {body}");
     }
+    // Another type's same-named associated function competes for the call
+    // name, so no field pin is established.
+    let decoy = format!(
+        "{lib}\npub struct Other;\nimpl Other {{\n    pub fn fresh(_n: u32) -> u32 {{\n        0\n    }}\n}}\n"
+    );
+    let tests =
+        format!("{direct}\n#[test]\nfn pins() {{\nassert_eq!(Config::fresh(3), {literal});\n}}\n");
+    assert!(whole_value_pin(&decoy, "fresh", &tests).1.is_none());
 }
 
 /// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
