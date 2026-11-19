@@ -14590,6 +14590,9 @@ fn check_architecture() -> Result<(), String> {
     // #2958: ratchet against new inline consumer evidence-state literals.
     violations.extend(policy::evidence_state_literals::violations(&files)?);
 
+    // #15193: ratchet against new inline test modules in the published crates.
+    violations.extend(policy::inline_test_modules::violations(&files)?);
+
     // RIPR-SPEC-0087 §8 (issue #2028): repair-packet authority coupling guard.
     for file in &files {
         if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
