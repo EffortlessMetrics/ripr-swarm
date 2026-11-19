@@ -1,0 +1,76 @@
+name: proof-14934
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 262a2277d6fa34c6b86425c646de1d3a7e577731
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Loaded 50x full fixture
+        run: |
+          set -uo pipefail
+          nproc
+          taskset -c 0 bash -c 'while :; do :; done' &
+          b1=$!
+          taskset -c 0 bash -c 'while :; do :; done' &
+          b2=$!
+          pass=0; fail=0
+          for i in $(seq 1 50); do
+            if taskset -c 0 node --test tools/provision-dev.test.cjs > "run-$i.log" 2>&1; then
+              pass=$((pass+1))
+            else
+              fail=$((fail+1))
+              echo "FAIL run $i"
+              grep -n "not ok" "run-$i.log" || true
+            fi
+          done
+          kill $b1 $b2 2>/dev/null || true
+          echo "loaded_pass=$pass loaded_fail=$fail"
+          echo "--- per-case across runs ---"
+          for n in 39 40 41; do
+            ok=$(grep -h "^ok $n " run-*.log | wc -l)
+            bad=$(grep -h "^not ok $n " run-*.log | wc -l)
+            echo "case_$n ok=$ok not_ok=$bad"
+          done
+          echo "--- raw TAP lines for 39/40/41 (first 6 of each) ---"
+          for n in 39 40 41; do
+            grep -h "^ok $n \|^not ok $n " run-*.log | head -6
+          done
+          [ "$fail" -eq 0 ]
+      - name: Negative control (descendant escapes the owned group)
+        run: |
+          set -uo pipefail
+          cp tools/provision-dev.test.cjs tools/provision-dev.leak.test.cjs
+          node -e '
+            const fs = require("node:fs");
+            const p = "tools/provision-dev.leak.test.cjs";
+            const s = fs.readFileSync(p, "utf8");
+            const before = "{ stdio: \x27ignore\x27 });";
+            const after = "{ stdio: \x27ignore\x27, detached: true });";
+            if (!s.includes(before)) { console.error("patch anchor missing"); process.exit(2); }
+            fs.writeFileSync(p, s.replace(before, after));
+          '
+          set +e
+          node --test --test-name-pattern "Given SIGTERM during a native command" tools/provision-dev.leak.test.cjs > leak.log 2>&1
+          status=$?
+          set -e
+          echo "negative_control_exit=$status"
+          grep -n "not ok\|remains live\|did not observe" leak.log | head -20 || true
+          if [ "$status" -eq 0 ]; then echo "NEGATIVE CONTROL DID NOT FAIL"; exit 1; fi
+          echo "negative_control=caught"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proof-14934-logs
+          path: |
+            run-*.log
+            leak.log
+          retention-days: 7
