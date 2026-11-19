@@ -709,6 +709,8 @@ test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SO
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
+PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
+test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr-contract)
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
 ```

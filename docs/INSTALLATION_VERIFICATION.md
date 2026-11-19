@@ -163,7 +163,7 @@ Run these before publishing:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run   # packages from the publish stage (docs/RELEASE.md, Crate tarball contents)
 ```
 
 The authoritative packaged-crate install proof is produced by
