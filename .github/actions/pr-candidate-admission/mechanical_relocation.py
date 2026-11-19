@@ -104,6 +104,8 @@ class Token:
     end: int
 
 
+# Rust's Pattern_White_Space; NBSP or U+3000 is not whitespace to rustc.
+_RUST_WS = frozenset("\t\n\x0b\x0c\r \x85\u200e\u200f\u2028\u2029")
 _RAW_STR = re.compile(r'(?:b|c)?r(#*)"')
 _STR = re.compile(r'(?:b|c)?"')
 _CHAR = re.compile(r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,6}\}|.)|[^\\'\n])'", re.S)
@@ -128,9 +130,9 @@ def lex(text: str) -> list[Token]:
     i, n = 0, len(text)
     while i < n:
         c = text[i]
-        if c.isspace():
+        if c in _RUST_WS:
             j = i
-            while j < n and text[j].isspace():
+            while j < n and text[j] in _RUST_WS:
                 j += 1
             tokens.append(Token("ws", i, j))
             i = j
@@ -452,18 +454,22 @@ def significant(text: str) -> list[str]:
     return normalize(raw_tokens(text))
 
 
-def comment_texts(text: str) -> list[tuple[int, str]]:
+def comment_texts(text: str) -> list[tuple[int, str, str]]:
     """Comments in order with their indentation-independent content, so a
     relocation cannot drop or edit one (line comments compared trimmed,
     block comments line by line trimmed). Each is anchored by the number of
     identifier, literal and lifetime tokens before it, which normalization
-    never adds or removes, so a comment cannot move to another item
-    (a `// covered-by:` marker above `fn a` cannot reattach to `fn b`)."""
+    never adds or removes, and by the next code token, so a comment cannot
+    move to another item: a `// covered-by:` marker above `#[test] fn b`
+    cannot reattach to `fn b`'s neighbour, even at the end of `fn a`'s body
+    (next token `}`, not `#`)."""
+    toks = lex(text)
     out = []
     words = 0
-    for t in lex(text):
+    for k, t in enumerate(toks):
         if t.kind == "comment":
-            out.append((words, "\n".join(line.strip() for line in text[t.start : t.end].split("\n"))))
+            nxt = next((text[u.start : u.end] for u in toks[k + 1 :] if u.kind not in ("ws", "comment")), "")
+            out.append((words, nxt, "\n".join(line.strip() for line in text[t.start : t.end].split("\n"))))
         elif t.kind in ("ident", "str", "lifetime"):
             words += 1
     return out
@@ -662,6 +668,8 @@ def expected_body_tokens(move: Move) -> list[str]:
                 j += 1
             if any(_bare(t) == "path" for t in raw[open_k:j]):
                 raise Refusal(f"{move.owner}: a `path` attribute inside `{move.name}` would resolve from a new base")
+        if tok in INCLUDE_MACROS and k + 2 < len(raw) and raw[k + 1] == "!" and raw[k + 2] in ("[", "{"):
+            raise Refusal(f"{move.owner}: `{tok}!` inside `{move.name}` uses a delimiter the transform does not re-base")
         if tok in INCLUDE_MACROS and k + 3 < len(raw) and raw[k + 1] == "!" and raw[k + 2] == "(":
             if raw[k + 3 : k + 10] == ["concat", "!", "(", "env", "!", "(", '"CARGO_MANIFEST_DIR"']:
                 continue  # anchored at the manifest, independent of the file's location
@@ -1249,6 +1257,19 @@ def self_test() -> None:
     )
     assert moved_comment != head_target, moved_comment
     refused({**good, target: (None, moved_comment)}, "comments")
+    # Across an item boundary with no identifier between: the end of one body
+    # and the attributes of the next item differ by the next code token.
+    tail = "fn a() {\n    x();\n}\n\n// covered-by: b\n#[test]\nfn b() {}\n"
+    into_a = "fn a() {\n    x();\n    // covered-by: b\n}\n\n#[test]\nfn b() {}\n"
+    assert significant(tail) == significant(into_a)
+    assert comment_texts(tail) != comment_texts(into_a)
+    # Only Rust's whitespace separates tokens: NBSP is not whitespace to rustc.
+    try:
+        lex("let x\u00a0= 1;")
+    except Refusal as why:
+        assert "non-ASCII" in str(why), why
+    else:
+        raise AssertionError("NBSP was lexed as whitespace")
     # A non-ASCII identifier is one token, so whitespace cannot split it into
     # tokens that compare equal; other non-ASCII outside strings refuses.
     assert raw_tokens("let mutéx = 1;") == ["let", "mutéx", "=", "1", ";"]
@@ -1414,6 +1435,8 @@ def self_test() -> None:
         ("let _ = stringify!(a + b);", "`stringify!`"),
         ('let _ = r#include_str!("x");', "does not re-base"),
         ("macro_rules! vec { () => {} }", "shadowing a macro"),
+        ('let _ = include_str!["x"];', "does not re-base"),
+        ('let _ = include_bytes!{"x"};', "does not re-base"),
     ):
         text = base_owner.replace("use super::*;", "use super::*;\n    " + construct)
         try:
