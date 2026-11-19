@@ -785,11 +785,11 @@ mod tests {
     #[test]
     fn nested_subcommand_at_top_level_suggests_full_path() {
         assert_eq!(
-            unknown_command_message("ci-summary"),
+            unknown_command_error("ci-summary"),
             "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
         );
         assert_eq!(
-            unknown_command_message("ci-packet"),
+            unknown_command_error("ci-packet"),
             "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
         );
     }

@@ -4840,7 +4840,12 @@ mod tests {
             "no origin remote must not get set-head advice, got: {err}"
         );
 
-        let remote = dir.to_string_lossy().to_string();
+        // A bare copy taken while on `trunk` keeps the remote's own HEAD on
+        // `trunk`; pointing `origin` at `dir` itself would make
+        // `set-head --auto` follow the later feature checkout.
+        let remote_dir = unique_fixture_path("resolve-base-origin-no-head-remote");
+        let remote = remote_dir.to_string_lossy().to_string();
+        run_git_checked(&dir, &["clone", "-q", "--bare", ".", remote.as_str()])?;
         run_git_checked(&dir, &["remote", "add", "origin", remote.as_str()])?;
         run_git_checked(&dir, &["fetch", "-q", "origin"])?;
         run_git_checked(&dir, &["checkout", "-q", "-b", "feature/discount"])?;
@@ -4861,6 +4866,7 @@ mod tests {
             "the named command must make the default base resolve"
         );
         ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&remote_dir);
         Ok(())
     }
 
