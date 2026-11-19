@@ -564,3 +564,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (47)
+
+Reason:
+RIPR-SPEC-0197: the overridden-default trap's test no longer reads as reaching Reader::next_word (#15273)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
