@@ -2069,7 +2069,7 @@ fn issue_14929_refusal_names_the_refusing_review_and_line() -> Result<(), String
         let details = detail_lines(&output);
         let named = details.iter().any(|line| {
             line.contains("author's review at 2026-10-15T01:00:01Z")
-                && line.contains("'withdrawn'")
+                && line.contains("phrase 'withdrawn'")
                 && line.contains("timing attribution")
         });
         if !named {
@@ -2126,10 +2126,33 @@ fn issue_14929_refusal_names_the_refusing_review_and_line() -> Result<(), String
     let details = detail_lines(&output);
     if details
         != [format!(
-            "::error::source review refusal detail: no trusted COMMENT or APPROVED review targets head {head}; 1 trusted review(s) target other commits"
+            "::error::source review refusal detail: no trusted review on head {head} carries an attestation; 1 trusted review(s) target other commits"
         )]
     {
         return Err(format!("missing-review detail wrong: {details:?}"));
+    }
+
+    // Review fields are untrusted log text: a login or timestamp carrying a line
+    // break cannot start a workflow command of its own.
+    let mut forged = review(
+        "u\r\n::warning::EVIL",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z\n::error::PWN",
+        "x\n\nThe earlier REVIEW_READY is withdrawn.",
+    );
+    forged["id"] = serde_json::json!(7);
+    let output = check_reviews(&serde_json::json!([forged]), &head)?;
+    expect_outcome(&output, false, "forged login and timestamp")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr
+        .lines()
+        .any(|line| line.starts_with("::warning::EVIL") || line.starts_with("::error::PWN"))
+        || detail_lines(&output).is_empty()
+    {
+        return Err(format!(
+            "review fields reached the log as commands: {stderr}"
+        ));
     }
     Ok(())
 }

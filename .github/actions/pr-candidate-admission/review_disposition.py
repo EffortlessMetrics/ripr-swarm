@@ -533,6 +533,10 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    # #14929: a ``| Verdict | Notes |`` header row above a delimiter row names a
+    # column, as the marker carrier already reads it; it states no disposition.
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
     if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
@@ -1007,11 +1011,23 @@ VERDICT_SHORT_SHA_LINE = re.compile(
     r"^VERDICT:[ \t]+APPROVE[ \t]+(?P<sha>[0-9a-f]{7,39})(?![0-9a-f])", re.IGNORECASE
 )
 VERDICT_OPEN = re.compile(r"^VERDICT:", re.IGNORECASE)
+VERDICT_LONG_SHA_LINE = re.compile(
+    r"^VERDICT:[ \t]+APPROVE[ \t]+[0-9a-f]{40}[0-9a-z_]", re.IGNORECASE
+)
+
+
+def _log_safe(text: str) -> str:
+    """One log line: control characters folded, workflow-command colons split and
+    ``%`` escaped, so untrusted review data cannot start or alter a command."""
+    flat = re.sub(r"[\x00-\x1f\x7f\u0085\u2028\u2029]+", " ", str(text)).strip()
+    while "::" in flat:
+        flat = flat.replace("::", ": :")
+    return flat.replace("%", "%25")
 
 
 def _snippet(text: str) -> str:
-    """One log-safe line: control characters folded, workflow-command colons split."""
-    flat = re.sub(r"[\x00-\x1f\x7f]+", " ", text).strip().replace("::", ": :")
+    """A short quotation of review text for a detail line."""
+    flat = re.sub(r"[\x00-\x1f\x7f\u0085\u2028\u2029]+", " ", text).strip()
     if len(flat) > DETAIL_SNIPPET_LIMIT:
         return flat[: DETAIL_SNIPPET_LIMIT - 3] + "..."
     return flat
@@ -1049,6 +1065,12 @@ def body_refusal_reason(body: str, head: str) -> str | None:
     if VERDICT_OPEN.match(first):
         verdict = _verdict_first_line(body)
         if verdict is None:
+            long_sha = VERDICT_LONG_SHA_LINE.match(first)
+            if long_sha is not None:
+                return (
+                    "its VERDICT SHA runs into more hex digits or prose; the carrier "
+                    f"needs the full 40-hex head {head} followed by a space or nothing"
+                )
             short = VERDICT_SHORT_SHA_LINE.match(first)
             if short is not None:
                 return (
@@ -1064,6 +1086,8 @@ def body_refusal_reason(body: str, head: str) -> str | None:
         if verdict[0] == "block":
             return f"its first line is a VERDICT: BLOCK statement: '{_snippet(first)}'"
         if verdict[1] != head:
+            if verdict[1].lower() == head:
+                return f"its VERDICT SHA is uppercase; write the head as {head}"
             return f"its VERDICT line names {verdict[1]}, not the head {head}"
         lines, verdict_carrier = substantive, True
     elif MARKER_OPEN.match(normalize_body(first)):
@@ -1091,16 +1115,73 @@ def body_refusal_reason(body: str, head: str) -> str | None:
             )
     refusing = _refusing_later_line(lines, verdict_carrier=verdict_carrier)
     if refusing is not None:
-        phrase = NEGATION.search(strip_negated_verdict_word(strip_negated_change(refusing)))
-        if phrase is not None and phrase.group(0).strip():
-            what = f"matches the blocker or retraction phrase '{_snippet(phrase.group(0))}'"
-        else:
-            what = "states a disposition"
+        phrase = _phrase(refusing)
+        what = f"matches a blocker or retraction phrase{phrase}" if phrase else "states a disposition"
         return (
-            f"a later line of its own body {what}, which both carriers refuse even "
+            f"a later line of its own body {what}, which refuses the carrier even "
             f"as narration; reword or drop it: '{_snippet(refusing)}'"
         )
     return "it does not carry a positive disposition for this head"
+
+
+def _phrase(line: str) -> str:
+    """The blocker or retraction phrase ``line`` matches, quoted, or empty."""
+    match = NEGATION.search(strip_negated_verdict_word(strip_negated_change(line)))
+    if match is None or not match.group(0).strip():
+        return ""
+    return f" (phrase '{_snippet(match.group(0))}')"
+
+
+def negative_reason(body: str, head: str) -> str:
+    """Why a body reads as a negative statement (the veto), not merely why it
+    does not attest. Mirrors ``comment_body_verdict_negative`` and
+    ``comment_body_negative``."""
+    if comment_body_verdict_negative(body):
+        parts = split_body(body)
+        first = next((line for line in parts[0] if line.strip()), "") if parts else ""
+        return f"its first line is a VERDICT: BLOCK statement: '{_snippet(first)}'"
+    parts = split_body(body)
+    if parts is None:
+        return "the body has an unclosed code fence or HTML comment, so it is ambiguous"
+    visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
+    substantive = [line for line in visible if line.strip()]
+    if substantive and (
+        positive_line(substantive[0]) or _verdict_first_line(body) == ("approve", head)
+    ):
+        # A well-formed carrier line reads negative only because the rest of the
+        # body refused it, so that refusal is the reason.
+        return body_refusal_reason(body, head) or "it states a negative"
+    neutral_first = bool(substantive) and marker_line_neutral(substantive[0])
+    for index, line in enumerate(substantive):
+        if neutral_first and index == 0:
+            continue
+        if verdict_disposition(line) is False or STATE_LINE.match(line):
+            return f"a line states a disposition: '{_snippet(line)}'"
+        if STATE_MENTION.search(line) and negation_hit(line):
+            return (
+                f"a line names a review state and retracts or blocks it{_phrase(line)}: "
+                f"'{_snippet(line)}'"
+            )
+    if neutral_first and len(substantive) > 1:
+        return (
+            "a mis-formatted marker line is followed by other prose, so the body keeps "
+            f"its negative reading: '{_snippet(substantive[1])}'"
+        )
+    for line in substantive:
+        if negation_hit(line):
+            return (
+                f"a line matches a blocker or retraction phrase{_phrase(line)}: "
+                f"'{_snippet(line)}'"
+            )
+    for line in fenced:
+        if STATE_TOKEN.search(line) or negation_hit(line):
+            return (
+                "a line inside a code fence states a disposition or a blocker or "
+                f"retraction phrase: '{_snippet(line)}'"
+            )
+    return body_refusal_reason(body, head) or "it states a negative"
 
 
 def _describe(review: dict[str, Any]) -> str:
@@ -1138,7 +1219,7 @@ def refusal_details(
         if _cleared_by_later_positive(negative, reviews, head):
             continue
         reported.add(id(negative))
-        reason = body_refusal_reason(_body(negative), head) or "it states a negative"
+        reason = negative_reason(_body(negative), head)
         details.append(
             f"{_describe(negative)} on this head vetoes admission: {reason}. A later "
             f"SOURCE_REVIEW_READY, `VERDICT: APPROVE {head}` or native APPROVED review "
@@ -1175,7 +1256,22 @@ def refusal_details(
     ):
         others = sum(1 for r in reviews if _trusted(r) and not _at_head(r, head))
         untrusted = sum(1 for r in reviews if _at_head(r, head) and not _trusted(r))
-        detail = f"no trusted COMMENT or APPROVED review targets head {head}"
+        inert = sum(
+            1 for r in reviews
+            if _at_head(r, head) and _trusted(r) and _state(r) == "COMMENTED"
+        )
+        other_states = sorted({
+            _state(r) for r in reviews
+            if _at_head(r, head) and _trusted(r) and _state(r) not in ("COMMENTED", "APPROVED")
+        })
+        detail = f"no trusted review on head {head} carries an attestation"
+        if inert:
+            detail += (
+                f"; {inert} trusted COMMENT review(s) on this head are empty, recognised "
+                "chatter or a marker with only a commit after it, which attest nothing"
+            )
+        if other_states:
+            detail += f"; trusted reviews on this head in state {', '.join(other_states)} attest nothing"
         if others:
             detail += f"; {others} trusted review(s) target other commits"
         if untrusted:
@@ -2296,7 +2392,7 @@ def self_test() -> None:
         f"{verdict_open}\n\n- The commit message still states the withdrawn attribution.",
         head,
     )
-    assert reason is not None and "'withdrawn'" in reason, reason
+    assert reason is not None and "phrase 'withdrawn'" in reason, reason
     assert "later line of its own body" in reason, reason
     short = body_refusal_reason(f"VERDICT: APPROVE {head[:10]} — no blocking findings.", head)
     assert short is not None and "short SHA" in short and head in short, short
@@ -2322,13 +2418,13 @@ def self_test() -> None:
     assert not reviews_allow_source_attestation(vetoed, head=head)
     details = refusal_details(vetoed, head=head)
     assert len(details) == 1 and "vetoes admission" in details[0], details
-    assert "'withdrawn'" in details[0] and "timing claim" in details[0], details
+    assert "phrase 'withdrawn'" in details[0] and "timing claim" in details[0], details
     # No review at the head says so, counting reviews that target other commits.
     details = refusal_details(
         [review(state="COMMENTED", commit_id=other, body="SOURCE_REVIEW_READY")], head=head
     )
     assert details == [
-        f"no trusted COMMENT or APPROVED review targets head {head}; "
+        f"no trusted review on head {head} carries an attestation; "
         "1 trusted review(s) target other commits"
     ], details
     # An attesting set produces no details, and review text cannot inject a
@@ -2336,7 +2432,26 @@ def self_test() -> None:
     assert refusal_details(
         [review(state="COMMENTED", commit_id=head, body="SOURCE_REVIEW_READY")], head=head
     ) == []
-    assert _snippet("a\n::error::x\r") == "a : :error: :x"
+    assert _log_safe("a\n::error::x\r%0A") == "a : :error: :x %250A"
+    assert _log_safe(":::") == ": : :" and "::" not in _log_safe("::::")
+    # #14929: a Verdict column header row is not a disposition for either carrier.
+    table = "\n\n| Verdict | Notes |\n|---|---|\n| x | y |"
+    assert comment_body_ready("SOURCE_REVIEW_READY" + table)
+    assert comment_body_verdict_ready(verdict_open + table, head)
+    assert not comment_body_verdict_ready(
+        verdict_open + "\n\n| Verdict | BLOCK |\n|---|---|\n| x | y |", head
+    )
+    # A veto from a later retraction line is explained by that line.
+    reason = negative_reason("Thanks\n\nThe earlier REVIEW_READY is withdrawn.", head)
+    assert "earlier REVIEW_READY is withdrawn" in reason, reason
+    # SHA shape messages.
+    assert "uppercase" in (body_refusal_reason(f"VERDICT: APPROVE {head.upper()}", head) or "")
+    assert "more hex digits" in (body_refusal_reason(f"VERDICT: APPROVE {head}a", head) or "")
+    # An inert review at the head is counted rather than reported as no review.
+    details = refusal_details(
+        [review(state="COMMENTED", commit_id=head, body="")], head=head
+    )
+    assert len(details) == 1 and "1 trusted COMMENT review(s) on this head are empty" in details[0], details
 
 
 def main() -> int:
@@ -2413,8 +2528,17 @@ def main() -> int:
         # #14929: name the evidence that refused, so a carrier refused by its own
         # later line, or a later body that superseded an attesting review at an
         # unchanged head, does not read as "no review at this head".
-        for detail in refusal_details(reviews, head=args.head, pull=pull):
-            print(f"::error::source review refusal detail: {detail}", file=sys.stderr)
+        # Diagnostic only: a malformed review field must not turn the clean
+        # refusal into a traceback, and review data is untrusted log text.
+        try:
+            details = refusal_details(reviews, head=args.head, pull=pull)
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            details = [f"the refusal could not be explained ({type(exc).__name__})"]
+        for detail in details:
+            print(
+                f"::error::source review refusal detail: {_log_safe(detail)}",
+                file=sys.stderr,
+            )
         return 1
     return 0
 
