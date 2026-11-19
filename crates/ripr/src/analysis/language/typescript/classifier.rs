@@ -8463,6 +8463,11 @@ pub(crate) fn classify_resolved_owner(
         } else {
             None
         };
+        let unused_default = if weak && untaken.is_none() {
+            ts_unused_default(&post_ladder_context)
+        } else {
+            None
+        };
         if let Some(guard) = untaken {
             verdict.class = ExposureClass::ReachableUnrevealed;
             verdict.discriminate_state = StageState::Unknown;
@@ -8476,6 +8481,18 @@ pub(crate) fn classify_resolved_owner(
                 summary: format!(
                     "No related test call enters `{}`: {}.",
                     guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(unused) = unused_default {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![ts_unused_default_missing(&owner.name, &unused)];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "default_not_applied",
+                summary: format!(
+                    "No related call lets the default of `{}` apply: {}.",
+                    unused.parameter, unused.observed
                 ),
             });
         } else if let Some(shape) =
@@ -9196,6 +9213,13 @@ fn ts_apply_post_ladder_rules(
         )];
         return;
     }
+    // #15393: a changed default parameter value no related call lets apply.
+    if let Some(unused) = ts_unused_default(context) {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![ts_unused_default_missing(&context.owner.name, &unused)];
+        return;
+    }
     // RIPR-SPEC-0246 rule 6: a changed line in a `catch` arm no related test
     // can make run.
     if ts_catch_arm_unreached(context) {
@@ -9555,6 +9579,174 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             .map(|condition| condition.display())
             .collect::<Vec<_>>()
             .join(" && "),
+        observed: format!(
+            "observed `{}` calls: {}",
+            owner.name,
+            observed
+                .iter()
+                .map(|call| format!("`{call}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    })
+}
+
+/// The finding line for a default no related call lets apply.
+fn ts_unused_default_missing(owner_name: &str, unused: &TsUnusedDefault) -> String {
+    format!(
+        "The change to `{owner_name}` only moves the default value of `{}`, and every related call passes that argument: {}. The default never applies under the tests, so no assertion can observe it. Add a call that omits the argument.",
+        unused.parameter, unused.observed
+    )
+}
+
+/// The default parameter no related call lets apply, and the calls seen.
+struct TsUnusedDefault {
+    parameter: String,
+    observed: String,
+}
+
+/// #15393: `Some` when the edit changes only one default parameter value of
+/// the owner, and every call that can reach the owner passes a value at that
+/// position that cannot be `undefined`, so the default never applies. Calls
+/// are read from the direct related tests and from the owner's own module;
+/// any other workspace file that names the owner, a non-direct relation, a
+/// shadowed or non-call owner reference, a spread, an identifier argument or
+/// an incomplete workspace scan returns `None`, keeping the verdict.
+fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefault> {
+    use super::unused_default_guard::{argument_is_definitely_defined, changed_default_parameter};
+    let owner = context.owner;
+    let source = owner.source_text.as_deref()?;
+    let root = context.workspace_root?;
+    if context.candidates.is_empty() || owner.name.is_empty() {
+        return None;
+    }
+    let changed = context.line.checked_sub(owner.start_line)?;
+    let change = changed_default_parameter(
+        &owner.file,
+        source,
+        changed,
+        context.line_text,
+        context.old_line_text?,
+    )?;
+    let fills = |arguments: &[String]| {
+        arguments
+            .iter()
+            .take(change.index + 1)
+            .all(|argument| !argument.trim_start().starts_with("..."))
+            && arguments
+                .get(change.index)
+                .is_some_and(|argument| argument_is_definitely_defined(argument))
+    };
+    let mut observed: Vec<String> = Vec::new();
+    let mut test_files: Vec<&Path> = Vec::new();
+    for candidate in context.candidates {
+        if !matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+        ) {
+            return None;
+        }
+        let test = candidate.test;
+        let names =
+            ts_owner_call_names(candidate, owner, context.alias_map, context.workspace_root);
+        let receivers = unshadowed_owner_namespace_receivers(
+            test,
+            owner,
+            context.alias_map,
+            context.workspace_root,
+        );
+        let file_names: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(receivers.iter().map(String::as_str))
+            .collect();
+        if !test_file_names_owner_only_in_test_bodies(test, context.all_tests, &file_names, root) {
+            return None;
+        }
+        let body = test.body_text.as_str();
+        let masked_body = ts_mask_literals_and_comments(body);
+        let mut calls = 0usize;
+        for name in names {
+            if local_identifier_declared_in_test_body(body, name)
+                || !every_owner_reference_is_a_call(&masked_body, name, &receivers)
+            {
+                return None;
+            }
+            for arguments in owner_call_arguments(body, name, &receivers) {
+                if !fills(&arguments) {
+                    return None;
+                }
+                calls += 1;
+                observed.push(format!("({})", arguments.join(", ")));
+            }
+        }
+        if calls == 0 {
+            return None;
+        }
+        test_files.push(test.file.as_path());
+    }
+    // Any other caller could omit the argument. The owner's own module may
+    // call it only with the position filled; any other source or test file
+    // that names the owner (outside a pure `export { .. } from` re-export)
+    // could be a caller this reader does not resolve.
+    let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
+    if scan.truncated {
+        return None;
+    }
+    let is_reexport = |line: &str| {
+        let line = line.trim_start();
+        line.starts_with("export {") && line.contains("} from ") || line.starts_with("export *")
+    };
+    for path in &scan.files {
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        if test_files.iter().any(|file| *file == relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return None;
+        };
+        if relative == owner.file.as_path() {
+            // Blank the owner's own declaration and re-export lines.
+            let rest: String = text
+                .lines()
+                .enumerate()
+                .map(|(index, line)| {
+                    let number = index + 1;
+                    if (owner.start_line..=owner.end_line).contains(&number) || is_reexport(line) {
+                        ""
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let masked = ts_mask_literals_and_comments(&rest);
+            if word_occurrences(&masked, &owner.name) == 0 {
+                continue;
+            }
+            if !every_owner_reference_is_a_call(&masked, &owner.name, &[])
+                || !owner_call_arguments(&rest, &owner.name, &[])
+                    .iter()
+                    .all(|arguments| fills(arguments))
+            {
+                return None;
+            }
+            continue;
+        }
+        let named = text
+            .lines()
+            .filter(|line| !is_reexport(line))
+            .any(|line| word_occurrences(line, &owner.name) > 0);
+        if named {
+            return None;
+        }
+    }
+    observed.sort();
+    observed.dedup();
+    Some(TsUnusedDefault {
+        parameter: change.name,
         observed: format!(
             "observed `{}` calls: {}",
             owner.name,

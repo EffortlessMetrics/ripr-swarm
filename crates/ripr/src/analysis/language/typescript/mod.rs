@@ -191,6 +191,7 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;

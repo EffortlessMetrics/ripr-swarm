@@ -2671,6 +2671,21 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15393: an edit that changes only one default parameter value of the owner
+  (on a one-line signature or its own parameter line) is not observed when
+  every call of every direct related test passes a value at that position
+  that cannot be `undefined` (a literal, object, array, function, template or
+  `new` expression), the owner's own module calls it only that way, and no
+  other workspace file names the owner outside a pure re-export. It reads
+  `reachable_unrevealed` with infection `no` (`default_not_applied`),
+  naming the parameter and the observed calls. An omitted argument,
+  `undefined`, an identifier or spread argument, a non-direct relation,
+  another caller, or a truncated workspace scan keeps the verdict.
+  `tests/unused_default_tests.rs` pins the reader
+  (`only_a_lone_default_value_edit_is_located`,
+  `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
+  production path (`a_default_every_call_fills_is_not_exposed`,
+  `a_call_that_may_use_the_default_keeps_the_verdict`).
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2784,6 +2799,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
+  locates the changed default and reads call arguments; `ts_unused_default`
+  in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
+  infection stage, withdrawing credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 
