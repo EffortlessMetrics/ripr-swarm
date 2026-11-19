@@ -438,7 +438,7 @@ jobs:
 
       # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
       # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
-      # `origin/$BASE_REF` for `goldens` so stale-base golden drift fails PR
+      # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
       # qualification instead of passing and ejecting in `merge_group` (#14999),
       # then restore the admitted checkout so downstream steps keep `HEAD`.
       - name: Prepare fresh base merge for goldens

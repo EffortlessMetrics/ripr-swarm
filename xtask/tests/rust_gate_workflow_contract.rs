@@ -49,6 +49,13 @@ fn step_id(block: &str) -> Option<&str> {
         .find_map(|line| line.strip_prefix("        id: "))
 }
 
+/// The step's single-line `run:` command, or `|` for a block scalar.
+fn step_run(block: &str) -> Option<&str> {
+    block
+        .lines()
+        .find_map(|line| line.strip_prefix("        run: "))
+}
+
 fn contract_violations(workflow: &str) -> Vec<String> {
     let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
     let mut findings = Vec::new();
@@ -1299,11 +1306,27 @@ fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
             .ok_or_else(|| format!("missing step id `{id}`"))
     };
     let prep_idx = idx("goldens_fresh_merge")?;
-    let goldens_idx = idx("goldens")?;
+    // Anchor on the gate's command, not its step id: the id is renamed as the
+    // gate grows (`goldens` -> `goldens_fixtures`), and a stale id here would
+    // fail on the PR merge ref while passing on the branch.
+    let goldens_matches: Vec<usize> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| {
+            step_run(block).is_some_and(|run| run.starts_with("cargo xtask goldens check"))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let [goldens_idx] = goldens_matches[..] else {
+        return Err(format!(
+            "expected one goldens gate step running `cargo xtask goldens check`, found {}",
+            goldens_matches.len()
+        ));
+    };
     let restore_idx = idx("goldens_restore_checkout")?;
     assert!(
         prep_idx < goldens_idx && goldens_idx < restore_idx,
-        "goldens_fresh_merge ({prep_idx}) < goldens ({goldens_idx}) < goldens_restore_checkout ({restore_idx})"
+        "goldens_fresh_merge ({prep_idx}) < goldens gate ({goldens_idx}) < goldens_restore_checkout ({restore_idx})"
     );
     let prep = blocks[prep_idx];
     assert!(
