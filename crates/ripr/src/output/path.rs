@@ -741,19 +741,8 @@ mod tests {
             CheckoutAnchor::discover(&top.join("missing")),
             CheckoutAnchor::unknown()
         );
-        let init = std::process::Command::new("git")
-            .args(["init", "-q", "repo"])
-            .current_dir(&top)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .output()
+        crate::git::run_git(&top, &["init", "-q", "repo"])
             .map_err(|err| format!("git init: {err}"))?;
-        if !init.status.success() {
-            return Err(format!(
-                "git init failed: {}",
-                String::from_utf8_lossy(&init.stderr)
-            ));
-        }
         let repo = top.join("repo");
         let repo_member = repo.join("crates").join("app");
         std::fs::create_dir_all(&repo_member).map_err(|err| format!("mkdir: {err}"))?;
