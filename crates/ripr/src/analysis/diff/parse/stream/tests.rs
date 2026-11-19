@@ -104,12 +104,17 @@ fn normalized_duplicates_and_edited_rename_share_one_file_slot() -> Result<(), S
     let input = format!(
         "{FIRST_FILE}diff --git a/src/a.rs b/src/a.rs\n--- a/./src/a.rs\n+++ b/./src/a.rs\n@@ -2 +2 @@\n-before\n+after\ndiff --git a/src/old.rs b/src/a.rs\nsimilarity index 80%\nrename from src/old.rs\nrename to src/a.rs\n--- a/src/old.rs\n+++ b/src/a.rs\n@@ -3 +3 @@\n-previous\n+current\n"
     );
+    // The three sections share one file slot, so the bound of one admits
+    // them. #15268: their hunks describe different versions of the file, so
+    // none of the path's lines are read and a located limitation names it.
     let parsed = parse_bounded_lines(input.lines(), 1)?;
-    assert_eq!(parsed.changed_files.len(), 1);
-    assert_eq!(parsed.changed_files[0].path, PathBuf::from("src/a.rs"));
-    assert_eq!(parsed.changed_files[0].added_lines.len(), 3);
-    assert_eq!(parsed.changed_files[0].removed_lines.len(), 3);
-    assert_eq!(parsed.changed_files[0].added_lines[2].text, "current");
+    assert!(parsed.changed_files.is_empty(), "{parsed:?}");
+    assert_eq!(parsed.limitations.len(), 1, "{parsed:?}");
+    assert_eq!(
+        parsed.limitations[0].kind,
+        AnalysisLimitationKind::MalformedDiff
+    );
+    assert_eq!(parsed.limitations[0].path.as_deref(), Some("src/a.rs"));
     assert_eq!(parsed.renamed_file_count, 1);
     assert_eq!(parsed.pure_rename_file_count, 0);
     assert_matches_unbounded(&input, &parsed);

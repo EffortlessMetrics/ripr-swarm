@@ -2561,7 +2561,12 @@ fn zero_findings_diff_hedge(
             causes.join("; ")
         ));
     }
-    if outcome.counts.changed_file_count > 0 {
+    if outcome.counts.changed_file_count > 0
+        || outcome
+            .limitations
+            .iter()
+            .any(crate::analysis::names_parsed_file_limitation)
+    {
         return None;
     }
     Some(generic.to_string())

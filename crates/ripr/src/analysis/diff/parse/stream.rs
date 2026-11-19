@@ -213,6 +213,17 @@ fn parse_lines<'a, E>(
     state.close_hunk();
     state.close_file_section_accounting();
     state.forget_limitations_outside(&keep);
+    // #15268: a path edited in more than one section has no single
+    // coordinate space, so none of its lines are read; the parser's typed
+    // limitation names it instead.
+    let repeated = state.repeated_section_paths();
+    files.retain(|path, _| !repeated.contains(path));
+    let unrepeated = |paths: Vec<PathBuf>| -> Vec<PathBuf> {
+        paths
+            .into_iter()
+            .filter(|path| !repeated.contains(path))
+            .collect()
+    };
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
@@ -224,8 +235,8 @@ fn parse_lines<'a, E>(
             .count(),
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
-        pure_rename_paths: state.pure_rename_paths(),
-        copy_destination_paths: state.copy_destination_paths(),
+        pure_rename_paths: unrepeated(state.pure_rename_paths()),
+        copy_destination_paths: unrepeated(state.copy_destination_paths()),
         truncated_file_sections: state.truncated_file_sections(),
         raw_line1_bom_paths: state.raw_line1_bom_paths(),
         limitations: state.limitations(),
@@ -262,3 +273,6 @@ mod path_admission_tests;
 
 #[cfg(test)]
 mod scope_tests;
+
+#[cfg(test)]
+mod repeated_section_tests;

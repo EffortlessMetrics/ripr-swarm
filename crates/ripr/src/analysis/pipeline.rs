@@ -2227,6 +2227,10 @@ fn run_pipeline_for_diff_text_with_language_config(
             .iter()
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
+        // A parser limitation that names a file (#15268: a path edited in
+        // two sections of a patch series) already says why nothing was read;
+        // the generic "verify the diff is valid" guess would contradict it.
+        && !limitations.iter().any(names_parsed_file_limitation)
     {
         eprintln!(
             "{}",
@@ -3645,6 +3649,12 @@ fn is_binary_sentinel(line: &str) -> bool {
     };
     rest.match_indices(" and ")
         .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
+}
+
+/// A diff-parse limitation located at a file: the parser read the input as
+/// a diff and refused named content, so the input is not garbage.
+pub(crate) fn names_parsed_file_limitation(limitation: &AnalysisLimitation) -> bool {
+    limitation.producer_stage == AnalysisStage::DiffParse && limitation.path.is_some()
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.

@@ -472,6 +472,12 @@ mod parser_state {
         /// unprefixed malformed line is not body evidence (#4375).
         current_section_has_body: bool,
         malformed_hunks: BTreeMap<Option<PathBuf>, u64>,
+        /// #15268: paths whose hunks arrive from more than one file section
+        /// (a `git format-patch` series or `git log -p` output that edits the
+        /// file in two commits). Each section's coordinates belong to a
+        /// different version of the file, so no line of the path can be
+        /// placed in the result; its lines are dropped and disclosed.
+        repeated_section_paths: std::collections::BTreeSet<PathBuf>,
         /// #4959: paths whose raw line-1 diff text carried a UTF-8 BOM on
         /// either side; see `ParsedDiff::raw_line1_bom_paths`.
         raw_line1_bom_paths: Vec<PathBuf>,
@@ -638,9 +644,26 @@ mod parser_state {
                 )
             });
 
+            let repeated_paths: Vec<Option<PathBuf>> = self
+                .repeated_section_paths
+                .iter()
+                .cloned()
+                .map(Some)
+                .collect();
+            let repeated = repeated_paths.iter().map(|path| {
+                (
+                    AnalysisLimitationKind::MalformedDiff,
+                    AnalysisRecoveryKind::UseTwoWayDiff,
+                    "This patch changes the file in more than one section (a `git format-patch` series or `git log -p` output), so its line numbers describe different versions of the file and none of its lines are read. Analyze one diff of the whole change instead: `git diff <base>...HEAD`, or `ripr check --base <base>`.",
+                    path,
+                    1_u64,
+                )
+            });
+
             combined
                 .chain(conflicts)
                 .chain(malformed)
+                .chain(repeated)
                 .filter_map(|(kind, recovery_kind, detail, path, count)| {
                     let Ok(recovery) = AnalysisRecovery::new(recovery_kind, detail) else {
                         return None;
@@ -702,6 +725,10 @@ mod parser_state {
                     .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
                 if self.rename_section && valid_rename_pair {
                     self.section_old_path = self.rename_from_path.clone();
+                    if let Some(old) = self.rename_from_path.clone() {
+                        self.note_repeated_section(&old, files);
+                    }
+                    self.note_repeated_section(&path, files);
                 }
                 if self.rename_section && !self.rename_counted && valid_rename_pair {
                     self.renamed_file_count = self.renamed_file_count.saturating_add(1);
@@ -749,6 +776,7 @@ mod parser_state {
                     .zip(self.copy_from_path.as_deref())
                     .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
             if valid_copy_pair {
+                self.note_repeated_section(&path, files);
                 if !self.copy_destination_paths.contains(&path) {
                     self.copy_destination_paths.push(path.clone());
                 }
@@ -895,6 +923,22 @@ mod parser_state {
             *count = count.saturating_add(1);
         }
 
+        /// #15268: a section that opens on a path an earlier section already
+        /// recorded hunk lines for describes a different version of that file.
+        fn note_repeated_section(&mut self, path: &Path, files: &BTreeMap<PathBuf, ChangedFile>) {
+            let has_lines = files
+                .get(path)
+                .is_some_and(|file| !file.added_lines.is_empty() || !file.removed_lines.is_empty());
+            if has_lines {
+                self.repeated_section_paths.insert(path.to_path_buf());
+            }
+        }
+
+        /// Paths whose lines came from more than one file section (#15268).
+        pub(super) fn repeated_section_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
+            &self.repeated_section_paths
+        }
+
         fn account_hunk_line(&mut self, raw: &str) {
             let Some((old, new)) = self.remaining_hunk_lines else {
                 return;
@@ -977,6 +1021,9 @@ mod parser_state {
                     }
                     self.deletion_section = true;
                     self.record_deleted_file_if_ready();
+                    if let Some(old) = self.section_old_path.clone() {
+                        self.note_repeated_section(&old, files);
+                    }
                 }
                 // A syntactically valid `+++` marker whose path was rejected
                 // by confinement (or `/dev/null`): consume the marker and
@@ -1007,6 +1054,7 @@ mod parser_state {
                 self.submodule_counted = true;
             }
             if self.current_path.is_none() || self.saw_old_path_marker {
+                self.note_repeated_section(&path, files);
                 self.current_path = Some(path.clone());
                 // #4375: this is the one registration site that proves a
                 // textual file section opened and a hunk body was expected
