@@ -262,11 +262,30 @@ list in `crates/ripr/Cargo.toml` therefore leaves out:
   check build the packaged crate and catch that);
 - every other file under `tests/`.
 
-With that list the packaged crate measured 10,285,280 bytes on the current
-candidate (200,480 bytes, about 1.9%, under the limit; 1,002 files,
-47,848,218 bytes uncompressed, via `cargo xtask publish-dry-run`). That is
-inside the 10% warning band, so the durable fix is still a raised crates.io
-limit or a smaller `ripr` crate; #14071 tracks it.
+That list alone was not enough. Packaged straight from the checkout, the
+crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
+2026-11-19 (main `5b9c56a4`, over the limit), because about a third of the
+remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
+test adds to them (#14198).
+
+So `ripr` is packaged from a **publish stage**, never straight from the
+checkout. `cargo xtask publish-dry-run` copies the tracked files of the
+workspace members (plus root-level files and `.cargo/`) into a stage and, in
+`crates/ripr/src` only, removes every inline module whose attributes include
+exactly `#[cfg(test)]`, with its attributes and doc comments
+(`xtask/src/publish_stage.rs`). A build without `cfg(test)` never compiles
+those modules, so the library, binary and feature builds are unchanged; the
+repository checkout keeps every test. The strip parses each file with the
+Rust parser before and after the edit and stops the rehearsal on any parse
+error, and the rehearsal then compiles the packaged crate. Out-of-line
+`#[cfg(test)] mod name;` declarations stay; their files are left out by the
+`include` list above. A passing rehearsal leaves the stage at
+`target/publish-stage`, and the real publish runs from there (see
+[Publish](#publish)).
+
+From the stage the crate measured STAGED_BYTES bytes on main `STAGED_SHA`
+(STAGED_HEADROOM bytes, about STAGED_PCT%, under the limit), via
+`cargo xtask publish-dry-run`.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
@@ -406,8 +425,14 @@ decision.
 
 ## Publish
 
+Publish from the stage the rehearsal just packaged and measured, not from the
+checkout: the checkout's `ripr` package is over the crates.io upload limit
+(see [Crate tarball contents](#crate-tarball-contents)).
+
 ```bash
 cargo login
+cargo xtask publish-dry-run        # leaves the rehearsed stage at target/publish-stage
+cd target/publish-stage
 cargo publish -p ripr
 ```
 

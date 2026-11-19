@@ -15,6 +15,13 @@
 //! 3. Compile the packaged `ripr` against the packaged `ripr-contract`
 //!    via a `[patch.crates-io]` path entry, after a fresh
 //!    `cargo generate-lockfile` (the unlocked-install resolution).
+//!
+//! `ripr` is packaged from the publish stage (`publish_stage`, #14198): a
+//! copy of the workspace whose `crates/ripr/src` has its inline
+//! `#[cfg(test)]` modules removed, so the archive fits the crates.io upload
+//! limit. A passing rehearsal leaves that stage at `target/publish-stage`;
+//! the real `cargo publish` runs from there, so the published bytes are the
+//! rehearsed ones.
 
 use std::fs;
 use std::io::Read as _;
@@ -41,7 +48,7 @@ pub(crate) fn run() -> Result<(), String> {
     }
     fs::create_dir_all(&scratch)
         .map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
-    let result = rehearse(&scratch, &version);
+    let result = rehearse(&scratch, &version).and_then(|()| keep_stage(&scratch));
     if result.is_ok() {
         let _ = fs::remove_dir_all(&scratch);
     } else {
@@ -50,14 +57,52 @@ pub(crate) fn run() -> Result<(), String> {
     result
 }
 
+/// Where a passing rehearsal leaves the stage it packaged, for the real
+/// publish to run from.
+pub(crate) const PUBLISH_STAGE_DIR: &str = "target/publish-stage";
+
+/// Move the rehearsed stage to [`PUBLISH_STAGE_DIR`], replacing an older one.
+fn keep_stage(scratch: &Path) -> Result<(), String> {
+    let kept = Path::new(PUBLISH_STAGE_DIR);
+    if kept.exists() {
+        fs::remove_dir_all(kept).map_err(|e| format!("cannot clear {}: {e}", kept.display()))?;
+    }
+    if let Some(parent) = kept.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let stage = scratch.join("stage");
+    fs::rename(&stage, kept).map_err(|e| {
+        format!(
+            "cannot move the publish stage {} to {}: {e}",
+            stage.display(),
+            kept.display()
+        )
+    })?;
+    println!(
+        "publish stage kept at {PUBLISH_STAGE_DIR}: run the real `cargo publish -p ripr-contract` and `cargo publish -p ripr` from there"
+    );
+    Ok(())
+}
+
 /// Package `ripr-contract` and then `ripr` against a vendored source tree
 /// holding the packaged contract. Returns the two `.crate` paths. This is
 /// the only local route that can produce the `ripr` package before
-/// `ripr-contract` exists on crates.io.
+/// `ripr-contract` exists on crates.io. Both crates are packaged from the
+/// publish stage under `scratch/stage`, whose `ripr` source has no inline
+/// test modules (#14198).
 pub(crate) fn vendored_ripr_crate(
     scratch: &Path,
     version: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
+    let workspace =
+        std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
+    let stage = scratch.join("stage");
+    let report = crate::publish_stage::stage_workspace(&workspace, &stage)?;
+    println!(
+        "publish stage: {} files staged; {} inline #[cfg(test)] modules ({} bytes) stripped from {} ripr source files",
+        report.copied_files, report.stripped_modules, report.stripped_bytes, report.stripped_files
+    );
     let target = scratch.join("target");
     let target_arg = target.to_string_lossy().into_owned();
 
@@ -71,13 +116,14 @@ pub(crate) fn vendored_ripr_crate(
         ],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
         None,
+        &stage,
     )?;
     let contract_crate = pick_crate_file(&target.join("package"), "ripr-contract", version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
 
     let vendor = scratch.join("vendor");
     let vendor_arg = vendor.to_string_lossy().into_owned();
-    run_cargo(&["vendor", vendor_arg.as_str()], &[], None)?;
+    run_cargo(&["vendor", vendor_arg.as_str()], &[], None, &stage)?;
     let vendored_contract = vendor.join(format!("ripr-contract-{version}"));
     extract_crate(
         &contract_crate,
@@ -90,8 +136,9 @@ pub(crate) fn vendored_ripr_crate(
     )
     .map_err(|e| format!("cannot write vendored checksum: {e}"))?;
 
-    // `cargo package` re-resolves and may rewrite Cargo.lock; restore it.
-    let lock_path = PathBuf::from("Cargo.lock");
+    // `cargo package` re-resolves and may rewrite Cargo.lock; restore it, so
+    // the kept stage carries the workspace lockfile.
+    let lock_path = stage.join("Cargo.lock");
     let lock_backup = fs::read(&lock_path).ok();
     let vendor_cfg = vendor.to_string_lossy().replace('\\', "/");
     let packaged = run_cargo(
@@ -101,6 +148,7 @@ pub(crate) fn vendored_ripr_crate(
             "source.crates-io.replace-with=\"vendored\"".to_string(),
             format!("source.vendored.directory=\"{vendor_cfg}\""),
         ]),
+        &stage,
     );
     if let Some(bytes) = lock_backup {
         let _ = fs::write(&lock_path, bytes);
@@ -124,6 +172,8 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
         fs::copy(krate, package_out.join(name))
             .map_err(|e| format!("cannot copy {}: {e}", krate.display()))?;
     }
+
+    upload_size_guard(&contract_crate, &ripr_crate)?;
 
     let extract = scratch.join("extract");
     let contract_dir = format!("ripr-contract-{version}");
@@ -163,12 +213,45 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Fail the rehearsal when a packaged crate is over the crates.io default
+/// upload limit, with the same rule `release-readiness` applies to these
+/// archives (`package-upload-size`), so every lane that rehearses the publish
+/// also refuses a crate the registry would refuse (#14198).
+fn upload_size_guard(contract_crate: &Path, ripr_crate: &Path) -> Result<(), String> {
+    let mut sizes = Vec::new();
+    for krate in [contract_crate, ripr_crate] {
+        let bytes = fs::metadata(krate)
+            .map_err(|e| format!("cannot measure {}: {e}", krate.display()))?
+            .len();
+        let name = krate
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("crate path has no file name: {}", krate.display()))?;
+        println!(
+            "packaged {name}: {bytes} bytes (crates.io default upload limit {})",
+            crate::reports::release::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES
+        );
+        sizes.push((name, bytes));
+    }
+    let problems = crate::reports::release::upload_size_problems(
+        &sizes,
+        crate::reports::release::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES,
+    );
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
 fn run_cargo(
     args: &[&str],
     envs: &[(&str, &str)],
     configs: Option<&[String]>,
+    cwd: &Path,
 ) -> Result<(), String> {
     let mut command = Command::new("cargo");
+    command.current_dir(cwd);
     if let Some(configs) = configs {
         for config in configs {
             command.args(["--config", config]);

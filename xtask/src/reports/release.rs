@@ -332,7 +332,7 @@ fn package_upload_size_check_in(
         "fail",
         true,
         command,
-        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest (#14071)",
+        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest or what the publish stage strips (#14071, #14198)",
         artifacts,
         details,
     )
