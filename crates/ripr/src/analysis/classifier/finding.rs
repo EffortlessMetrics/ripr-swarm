@@ -2,9 +2,9 @@ use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
     bool_owner_exact_result_next_step, ensure_unknown_stop_reason, exact_error_variant,
-    exact_oracle_gap_next_step,
-    is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
+    exact_oracle_gap_next_step, is_partial_eq_method, missing_evidence, oracle_crediting_relations,
+    recommended_next_step, recommended_next_step_with_boundary, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;

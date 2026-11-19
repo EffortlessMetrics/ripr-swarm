@@ -766,7 +766,10 @@ fn asserts_bool_owner_result(text: &str, owner: &str) -> bool {
     let Some(call_open) = condition.find('(') else {
         return false;
     };
-    let mut segments = condition[..call_open].trim_end().rsplit("::").map(str::trim);
+    let mut segments = condition[..call_open]
+        .trim_end()
+        .rsplit("::")
+        .map(str::trim);
     segments.next() == Some(owner)
         && segments.all(|segment| {
             !segment.is_empty()

@@ -458,8 +458,7 @@ const MERGED_TAIL: &str = "aasu8 == 0";
 const MERGED_LAYOUT_OLD: &str = "    n != 0 && aasu8==0";
 
 #[test]
-fn a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard() -> Result<(), String>
-{
+fn a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard() -> Result<(), String> {
     let test = direct_test(
         "short_circuit_or_tail",
         &["assert!(f(1, 0, 0));", "assert!(!f(1, 0, 5));"],
