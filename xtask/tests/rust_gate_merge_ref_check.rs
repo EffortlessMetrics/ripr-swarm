@@ -97,16 +97,21 @@ fn admitted_merge(
     Ok((work, head))
 }
 
-fn run_step(work: &Path, base_ref: &str) -> Result<Output, String> {
-    Command::new("bash")
-        .arg("-c")
-        .arg(run_block()?)
+fn run_bash(work: &Path, script: &str, envs: &[(&str, &str)]) -> Result<Output, String> {
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c")
+        .arg(script)
         .current_dir(work)
-        .env("BASE_REF", base_ref)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .map_err(|e| e.to_string())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+    for &(k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().map_err(|e| e.to_string())
+}
+
+fn run_step(work: &Path, base_ref: &str) -> Result<Output, String> {
+    run_bash(work, &run_block()?, &[("BASE_REF", base_ref)])
 }
 
 fn stdout(out: &Output) -> String {
@@ -407,5 +412,74 @@ fn reviewed_slice_carrier_readback_and_refusals() -> Result<(), String> {
         "carrier reference changed",
     )?;
     fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn step_run_block(step_id: &str) -> Result<String, String> {
+    let (_, after_id) = WORKFLOW
+        .split_once(step_id)
+        .ok_or_else(|| format!("rust-gates.yml keeps {step_id}"))?;
+    let (_, body) = after_id
+        .split_once("        run: |\n")
+        .or_else(|| after_id.split_once("        run: "))
+        .ok_or_else(|| format!("{step_id} keeps a run block"))?;
+    if after_id
+        .split_once("        run: ")
+        .is_some_and(|(between, _)| !between.contains("|\n"))
+    {
+        return Ok(body.lines().next().unwrap_or_default().trim().to_string());
+    }
+    Ok(body
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+#[test]
+fn goldens_fresh_merge_switches_to_clean_fresh_base_and_restores_orig_head() -> Result<(), String> {
+    let (work, _) = admitted_merge("goldens-fresh-move", |w| {
+        commit_file(w, "other.txt", "fresh-main\n", "base moved")
+    })?;
+    if !merge_tree_supported(&work) {
+        return Ok(());
+    }
+    let orig_head = git(&work, &["rev-parse", "HEAD"])?;
+    let pr_head = git(&work, &["rev-parse", "HEAD^2"])?;
+    let gh_out = work.join(".gh-output");
+    let prep = step_run_block("id: goldens_fresh_merge")?;
+    let gh_out_str = gh_out.to_string_lossy().to_string();
+    let out = run_bash(
+        &work,
+        &prep,
+        &[("BASE_REF", "main"), ("GITHUB_OUTPUT", &gh_out_str)],
+    )?;
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    let output_text = fs::read_to_string(&gh_out).map_err(|e| e.to_string())?;
+    assert!(
+        output_text.contains(&format!("orig_head={orig_head}")),
+        "{output_text}"
+    );
+    assert!(output_text.contains("switched=true"), "{output_text}");
+    assert_ne!(git(&work, &["rev-parse", "HEAD"])?, orig_head);
+    assert_eq!(
+        git(&work, &["rev-parse", "HEAD^1"])?,
+        git(&work, &["rev-parse", "origin/main"])?
+    );
+    assert_eq!(git(&work, &["rev-parse", "HEAD^2"])?, pr_head);
+    assert_eq!(
+        fs::read_to_string(work.join("other.txt")).map_err(|e| e.to_string())?,
+        "fresh-main\n"
+    );
+    let restore = step_run_block("id: goldens_restore_checkout")?;
+    let restore_out = run_bash(&work, &restore, &[("ORIG_HEAD", &orig_head)])?;
+    assert_eq!(
+        restore_out.status.code(),
+        Some(0),
+        "{}",
+        stdout(&restore_out)
+    );
+    assert_eq!(git(&work, &["rev-parse", "HEAD"])?, orig_head);
     Ok(())
 }
