@@ -3312,7 +3312,8 @@ impl RustAdapter {
                 ))
                 // #14852: every `mod` declaration the index holds, and every
                 // changed file's declarations on both sides, for the shared
-                // base-owner identity.
+                // base-owner identity. #14952: also every file that may hold
+                // a gated `use`, an `include!` or a module-emitting macro.
                 .with_module_declarations(crate::analysis::diff::ModuleDeclarations::read(
                     index
                         .files()
@@ -3320,13 +3321,18 @@ impl RustAdapter {
                         .filter(|(_, facts)| {
                             // The facts list every parsed declaration; the
                             // lexical test keeps a file the index could not
-                            // parse, which then reads as unreadable.
+                            // parse, which then reads as unreadable. A gate
+                            // outside a declaration has its own lexical
+                            // superset, owned beside the scanner.
                             !facts.module_declarations.is_empty()
                                 || facts.source.lines().any(|line| {
                                     line.contains("mod ") && line.trim_end().ends_with(';')
                                 })
+                                || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
+                                    &facts.source,
+                                )
                         })
-                        .map(|(_, facts)| facts.data().source.as_ref()),
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                     changed_files.iter().map(|changed| {
                         (
                             changed,

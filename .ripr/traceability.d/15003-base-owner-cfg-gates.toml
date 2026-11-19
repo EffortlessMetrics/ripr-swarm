@@ -1,0 +1,31 @@
+# Base-owner verification honors every cfg gate: a function-body inner
+# attribute (#15003) and gates outside `mod` declarations (#14952),
+# narrowed to crate-local paths, out-of-line module macros of the owner's
+# package and non-redundant test imports (#14952 review R1-R3).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_body_inner_cfg_gates_the_function",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::gates_outside_mod_declarations_are_reported",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::unrelated_gates_outside_mod_declarations_keep_credit",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_changed_gate_outside_mod_declarations_refuses",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::module_paths_follow_cargo_layout",
+  "crates/ripr/tests/unary_tail_return_pin.rs::a_cfg_gate_on_the_owner_reexport_is_not_exposed",
+  "crates/ripr/tests/unary_tail_return_pin.rs::an_owner_file_reached_only_through_include_is_not_exposed",
+  "crates/ripr/tests/unary_tail_return_pin.rs::ungated_or_unrelated_reexports_keep_their_credit",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::gated_shapes_outside_mod_declarations_read_propagation_unknown",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::ungated_controls_keep_their_credit_on_both_tail_paths",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::macro_bodies_emit_modules_only_out_of_line",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::package_scopes_and_normalized_paths_follow_the_layout",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::narrowed_outside_gates_keep_credit_and_local_ones_gate",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::the_outside_gate_prefilter_is_a_superset_of_the_scanner",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::macro_gates_need_an_out_of_line_module_in_the_owners_package",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::a_redundant_gated_test_import_is_not_a_gate",
+  "crates/ripr/tests/base_owner_cfg_gates.rs::gates_must_name_crate_local_paths",
+]
+code = [
+  "crates/ripr/src/analysis/diff/base_owner.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs",
+  "crates/ripr/src/analysis/classify/unary_tail.rs",
+]

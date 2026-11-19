@@ -24,9 +24,12 @@
 //!   declaration), so a diff that swaps two modules', impls', `cfg` twins'
 //!   or `#[path]` targets' functions never pairs one with the other;
 //! - a gate the shared owner reports: a `cfg` or `cfg_attr` on the
-//!   function, an enclosing item, the file, or a `mod` declaration on its
-//!   module chain, or any `#[path]` declaration (a gated function may be
-//!   compiled out for one a test runs instead);
+//!   function, an inner attribute of its body (#15003), an enclosing item,
+//!   the file, or a `mod` declaration on its module chain, any `#[path]`
+//!   declaration, or a gate outside `mod` declarations (a gated `use` naming
+//!   the owner, an owner file reached only through `include!`, a module-
+//!   emitting macro; #14952) (a gated function may be compiled out for one
+//!   a test runs instead);
 //! - any other difference inside the item (signature, comments,
 //!   attributes), or a first or last item line the diff touched;
 //! - constants that are not provably different values after folding
@@ -735,7 +738,11 @@ mod tests {
             .chain(other_changes)
             .collect();
         let modules = ModuleDeclarations::read(
-            std::iter::once(new).chain(others.iter().map(|(_, _, other_new)| *other_new)),
+            std::iter::once((Path::new(path), new)).chain(
+                others
+                    .iter()
+                    .map(|(other, _, other_new)| (Path::new(*other), *other_new)),
+            ),
             all_changes.iter().map(|file| {
                 let source =
                     find_file_facts(&index, &file.path).map(|facts| facts.data().source.as_ref());

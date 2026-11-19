@@ -164,11 +164,12 @@ that item must equal the current one with the tail line restored. A `cfg`
 on the function, an enclosing item, the file or a `mod` declaration on its
 chain, or any `#[path]` module declaration, refuses, so a swapped module,
 `#[cfg]` twin or `#[path]` target cannot supply another function's body.
-Because that identity does not see a `cfg` outside `mod` declarations
-(#14952), the reading also refuses when the index holds another function of
-the owner's name, or any indexed file renames an import to that name, calls
-`include!`, or defines a `macro_rules!` that may emit a module or such a
-function.
+The identity also reads the gates outside `mod` declarations and the
+function's own body attributes (see "Base-owner cfg gates" below). As a
+second layer, the reading also refuses when the index holds another function
+of the owner's name, or any indexed file renames an import to that name,
+calls `include!`, or defines a `macro_rules!` that may emit a module or such
+a function.
 The parameter and return types must be the same unshadowed primitive.
 `!` differs from its operand at every input, so the ordinary infection
 reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
@@ -222,6 +223,95 @@ tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
 in a function body does, not as the returned value. The lexical fallback
 that classifies such a line still reads its text the way it reads any
 function-body statement (a `?` reads `error_path`).
+
+### Base-owner cfg gates (#15003, #14952)
+
+A claim that compares a changed function's old and new body reads the
+base-side item through the shared base-owner identity, which reports whether
+a `cfg` or `cfg_attr` may compile the function out or swap it for a twin. A
+claim that sees that gate does not credit the function, so a test that runs a
+twin, or a function that no build compiles, never reads `exposed`,
+`weakly_exposed` or `reachable_unrevealed` with propagation credited from the
+changed body. The identity reports a gate when any of these holds:
+
+- a `cfg`/`cfg_attr` on the function, an enclosing item or the owner file, or
+  an inner attribute of the function's own body (`fn f() { #![cfg(..)] .. }`),
+  which Rust applies to the function itself (#15003);
+- a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
+  owner file's path, on an item enclosing one or on its declaring file, or any
+  `#[path]` declaration;
+- a `use` written as an item (not emitted by a macro) with its own
+  `cfg`/`cfg_attr`, or a `pub` one under a gated item or file, whose leaf or
+  rename is the owner's name or a name in the self type or trait of an
+  `impl` (or the name of a `trait`) enclosing the owner (`pub use
+  real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`), or which
+  may alias a module named like a component of the owner file's path: by its
+  last segment, since the leaf may itself be a module (`use a::imp;`), by a
+  rename or the segment it renames (`use real as imp;`, `use
+  crate::{real as imp};`), or by any segment of a glob or `self` import
+  (#14952, #15035). An intermediate segment of any other leaf only names the
+  module that leaf lives in, so `#[cfg(test)] use crate::real::Helper;` does
+  not gate `src/real.rs`. A test module's private import gated only by its
+  module's `#[cfg(test)]` is not a gate. Two gated imports are not gates
+  either. One rooted at a sysroot crate (`std`, `core`, `alloc`,
+  `proc_macro`, `test`) in a module whose items cannot shadow that root (no
+  item, `use`, `extern crate`, non-sysroot glob or macro call naming it)
+  names that crate, which
+  holds no workspace function, unless an `extern crate .. as` anywhere in the
+  workspace (an item, or macro tokens spelling one) renames a crate to a
+  sysroot name (`extern crate self as std;`): then it gates like any other
+  root. A private `use super::name;` directly inside a `#[cfg(test)]` module
+  in which nothing else can bind `name` (no other `use` binding it, no glob
+  but `super::*`, no item or `extern crate` naming it, and no module-level
+  macro call at all, since a macro may emit the import) binds `name` to the
+  parent's item or to nothing, so it cannot swap the function a test
+  reaches. Every other root (`crate`,
+  `self`, `super`, a module or any other crate name) counts as crate-local:
+  telling a third-party crate from a workspace package or local module would
+  need the manifests, so the fail-closed reading keeps those gates;
+- the owner file is not a crate root and no out-of-line `mod` declaration is
+  named like its module (or no module is named like a directory above it),
+  as for a file reached only through `include!`, however the macro is
+  spelled (#14952);
+- an `include!` whose literal path, resolved against the including file's
+  directory, is the owner file; a literal that cannot be resolved (absolute,
+  or climbing above the including path) gates the owner file's stem by name.
+  An `include!` whose argument is not one plain string literal
+  (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) gates, by name, the
+  stem of the path its trailing string literals spell, joined
+  (`"/src/re", "al.rs"` spells `/src/real.rs`), when that ends in a `.rs`
+  file name, and every owner otherwise: when the argument does not end in a
+  literal, a literal has escapes, or the run follows another token and
+  spells no `/` (#15035);
+- a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
+  followed by a name and no `{` body), an `include!` or a `#[path]`
+  (`path =`), and the owner file is not a crate root of the package that
+  defines the macro (the directories above its `src`, `tests`, `examples` or
+  `benches` anchor), or of any package when the macro is exported
+  (`#[macro_export]`, or a `macro` with a visibility). A macro emitting only
+  inline `mod name { .. }` modules is not a gate.
+
+A diff that adds or removes any of these refuses the identity. Names
+approximate the module chain, so among these checks a name can only gate more
+owners than the exact chain would, with these exceptions, which are
+name-coincidence limits: a module of the same name in another directory
+satisfies the declaration check for a file reached only through a renamed
+`include!`, or only through a `mod` inside a macro call the reading cannot
+expand (a `cfg_if::cfg_if!` block declaring `mod real;` beside an unrelated
+`mod real;` in another directory credits `src/real.rs`); and a package scope
+is read from the path layout, so a non-exported macro reaches every target of
+its package but no other package. Not read: a module or re-export emitted by
+a procedural macro; a private `use` gated only through its enclosing module;
+a gated `use` that a macro's tokens emit (a `cfg_if::cfg_if!` block holding
+only gated imports or a gated module alias, a `macro_rules!` emitting a gated
+`pub use` in another file, a macro emitting an import in the test module),
+since only `use` items are read; and a gated alias of a module that only
+re-exports the owner (`#[cfg(not(test))] use api as imp;` where `api` holds
+`pub use crate::real::ready;`), since only the owner's own module chain is
+matched (#15037). The unary-tail reading alone keeps its own refusals for
+these (its same-name, rename, `include!` and `macro_rules!` checks above); the
+constant-tail reading has no such second check, so on that path these limits
+can credit.
 
 ## Required Evidence
 
