@@ -710,35 +710,6 @@ pub fn is_iso_date(value: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
-/// Loads suppressions relative to the analyzed workspace root. Returns
-/// an empty list when the file does not exist (the normal case for
-/// projects with no accepted debt). Parse violations are returned via
-/// `Err` so the orchestrator can surface them through the existing
-/// badge-rendering error path.
-pub fn load_suppressions_for_root_at(
-    root: &Path,
-    relative_path: &Path,
-) -> Result<Vec<SuppressionEntry>, Vec<String>> {
-    let path = root.join(relative_path);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|err| vec![format!("failed to read {}: {err}", path.display())])?;
-    let (entries, violations) = parse_suppressions_manifest(&text);
-    if violations.is_empty() {
-        Ok(entries)
-    } else {
-        // Config may select another root-relative file. Rename only the
-        // parser's location prefix, preserving values and declaration lines.
-        let display = relative_path.display().to_string();
-        Err(violations
-            .into_iter()
-            .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
-            .collect())
-    }
-}
-
 /// Today's UTC date in `YYYY-MM-DD` form. Pure-time helper used at the
 /// boundary; tests pass synthetic values directly through
 /// [`apply_exposure_suppressions`] / [`apply_test_efficiency_suppressions`].
@@ -2629,21 +2600,30 @@ mod audit_controls {
             .ok_or("duplicate policy must fail closed")?;
         assert!(error.contains("custom-policy.toml:8 duplicate"), "{error}");
         assert!(!error.contains(SUPPRESSIONS_PATH), "{error}");
-        load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-            .err()
-            .ok_or("duplicate implicit policy must fail closed")?;
+        crate::output::suppressions::load_suppressions_for_root_at(
+            &root,
+            Path::new("custom-policy.toml"),
+        )
+        .err()
+        .ok_or("duplicate implicit policy must fail closed")?;
         std::fs::write(&path, VALID).map_err(|e| e.to_string())?;
         assert_eq!(load_check_suppression_policy(&path)?.len(), 1);
         assert_eq!(
-            load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-                .map_err(|e| e.join("\n"))?
-                .len(),
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("custom-policy.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .len(),
             1
         );
         assert!(
-            load_suppressions_for_root_at(&root, Path::new("missing.toml"))
-                .map_err(|e| e.join("\n"))?
-                .is_empty()
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("missing.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .is_empty()
         );
         load_check_suppression_policy(&root.join("missing.toml"))
             .err()
