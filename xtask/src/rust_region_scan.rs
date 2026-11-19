@@ -218,28 +218,21 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
         .children()
         .filter_map(ast::Module::cast)
     {
-        if module.item_list().is_some() {
-            continue;
-        }
         let Some(name) = module.name().map(|name| name.text().to_string()) else {
             continue;
         };
         let name = name.strip_prefix("r#").unwrap_or(&name).to_string();
-        let explicit_path = module.attrs().find_map(|attr| {
-            let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
-                return None;
-            };
-            if meta.path()?.syntax().text().to_string().trim() != "path" {
-                return None;
+        let explicit_path = module_path_attribute(&module);
+        if let Some(items) = module.item_list() {
+            // Production declarations inside an ungated inline module still
+            // reach files, so they feed the veto (never an exemption).
+            if !module_is_test_gated(&module) {
+                let mut dirs = vec![join(&base, &name)];
+                dirs.extend(explicit_path.map(|path| normalize_relative(&join(dir, &path))));
+                nested_ordinary_targets(&items, &dirs, &mut declared.ordinary);
             }
-            let ast::Expr::Literal(literal) = meta.expr()? else {
-                return None;
-            };
-            let ast::LiteralKind::String(text) = literal.kind() else {
-                return None;
-            };
-            text.value().ok().map(|value| value.to_string())
-        });
+            continue;
+        }
         let candidates: Vec<(String, Option<String>)> = match explicit_path {
             Some(path) => vec![(normalize_relative(&join(dir, &path)), None)],
             None => {
@@ -250,10 +243,7 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
                 ]
             }
         };
-        let gated = module
-            .attrs()
-            .any(|attr| attribute_text_requires_test(&attr.syntax().text().to_string()));
-        if gated {
+        if module_is_test_gated(&module) {
             declared.test_gated.extend(candidates);
         } else {
             declared
@@ -262,6 +252,69 @@ pub(crate) fn declared_module_files(file: &str, source: &str) -> DeclaredModuleF
         }
     }
     declared
+}
+
+fn module_path_attribute(module: &ast::Module) -> Option<String> {
+    module.attrs().find_map(|attr| {
+        let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
+            return None;
+        };
+        if meta.path()?.syntax().text().to_string().trim() != "path" {
+            return None;
+        }
+        let ast::Expr::Literal(literal) = meta.expr()? else {
+            return None;
+        };
+        let ast::LiteralKind::String(text) = literal.kind() else {
+            return None;
+        };
+        text.value().ok().map(|value| value.to_string())
+    })
+}
+
+fn module_is_test_gated(module: &ast::Module) -> bool {
+    module
+        .attrs()
+        .any(|attr| attribute_text_requires_test(&attr.syntax().text().to_string()))
+}
+
+/// Every file an ungated `mod name;` nested in inline modules may load, from
+/// each candidate directory of the enclosing inline module (over-reporting
+/// only widens the veto). Test-gated nested modules are skipped.
+fn nested_ordinary_targets(items: &ast::ItemList, dirs: &[String], out: &mut Vec<String>) {
+    for module in items.syntax().children().filter_map(ast::Module::cast) {
+        if module_is_test_gated(&module) {
+            continue;
+        }
+        let Some(name) = module.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let name = name.strip_prefix("r#").unwrap_or(&name).to_string();
+        let explicit_path = module_path_attribute(&module);
+        let mut inner_dirs = Vec::new();
+        for dir in dirs {
+            let children = normalize_relative(&format!("{dir}/{name}"));
+            match &explicit_path {
+                Some(path) => {
+                    let target = normalize_relative(&format!("{dir}/{path}"));
+                    if module.item_list().is_none() {
+                        out.push(target);
+                    } else {
+                        inner_dirs.push(target);
+                    }
+                }
+                None if module.item_list().is_none() => {
+                    out.push(format!("{children}.rs"));
+                    out.push(format!("{children}/mod.rs"));
+                }
+                None => {}
+            }
+            inner_dirs.push(children);
+        }
+        if let Some(inner) = module.item_list() {
+            nested_ordinary_targets(&inner, &inner_dirs, out);
+        }
+    }
 }
 
 /// Resolves `.`, `..` and `\\` separators of a repository-relative path so a
@@ -821,6 +874,31 @@ mod cfg_test_spelling_tests {
             // ...and a test file it reaches is production-reachable as well.
             assert!(!files.contains("src/d/tests.rs"), "{files:?}");
             assert!(dirs.is_empty(), "{dirs:?}");
+
+            // A production declaration nested in an inline module vetoes too.
+            let (files, _) = super::super::out_of_line_test_exemptions(
+                &tracked,
+                &[
+                    source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                    source(
+                        "src/b.rs",
+                        "mod inner {\n    #[path = \"../../a/tests.rs\"]\n    mod shared;\n}\n",
+                    ),
+                ],
+            );
+            assert!(!files.contains("src/a/tests.rs"), "{files:?}");
+            // ...but one inside a test-gated inline module does not.
+            let (files, _) = super::super::out_of_line_test_exemptions(
+                &tracked,
+                &[
+                    source("src/a.rs", "#[cfg(test)]\nmod tests;\n"),
+                    source(
+                        "src/b.rs",
+                        "#[cfg(test)]\nmod inner {\n    #[path = \"../../a/tests.rs\"]\n    mod shared;\n}\n",
+                    ),
+                ],
+            );
+            assert!(files.contains("src/a/tests.rs"), "{files:?}");
 
             // A `..` path is normalized before the veto compares it.
             let (files, dirs) = super::super::out_of_line_test_exemptions(
