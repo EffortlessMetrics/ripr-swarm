@@ -340,3 +340,62 @@ fn receipt_replacement_refuses_unowned_bytes_modes_shapes_and_policy() -> Result
     }
     Ok(())
 }
+
+/// #15060: only the unstaged derived scan bundle leaves the bound delta. A
+/// staged copy, a neighboring cache file, and a bundle under a tracked or
+/// authored rule all stay bound.
+#[test]
+fn only_the_unstaged_derived_scan_bundle_leaves_the_delta() -> Result<(), String> {
+    let bundle = crate::analysis::seam_cache::module_tree_scan_bundle_default_relative_path();
+    assert_eq!(
+        bundle,
+        "target/ripr/cache/repo-module-tree-scans/0.1/scans.json"
+    );
+    let neighbor = "target/ripr/cache/repo-module-tree-scans/0.1/other.json";
+    let mut staged = captured_change(&bundle, "staged");
+    if let Some(state) = staged.after_state.as_mut() {
+        state.index_entry = Some("100644 staged".to_string());
+    }
+    let base = baseline("target/ripr/repair-attempts")?;
+    assert_eq!(derived_cache_bundle_path(&base), Some(bundle.clone()));
+    let mut delta = captured_delta(vec![
+        captured_change(&bundle, "rewritten"),
+        captured_change(neighbor, "neighbor"),
+        captured_change("tests/focused.rs", "edit"),
+    ]);
+    omit_derived_cache_bundle(&mut delta, &base);
+    let paths: Vec<_> = delta
+        .changes
+        .iter()
+        .map(|change| change.path.clone())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![PathBuf::from(neighbor), PathBuf::from("tests/focused.rs")]
+    );
+
+    let mut delta = captured_delta(vec![staged.clone()]);
+    omit_derived_cache_bundle(&mut delta, &base);
+    assert_eq!(delta.changes, vec![staged], "a staged bundle stays bound");
+
+    let mut tracked = baseline("target/ripr/repair-attempts")?;
+    tracked
+        .paths
+        .insert(bundle.clone(), captured_file("tracked"));
+    if let Some(state) = tracked.paths.get_mut(&bundle) {
+        state.index_entry = Some("100644 tracked".to_string());
+    }
+    assert_eq!(derived_cache_bundle_path(&tracked), None, "tracked bundle");
+
+    let mut authored = baseline("target/ripr/repair-attempts")?;
+    authored
+        .policy
+        .allowed_edit_surface
+        .push(CagePathRule::subtree("target/ripr/cache")?);
+    assert_eq!(
+        derived_cache_bundle_path(&authored),
+        None,
+        "authored bundle"
+    );
+    Ok(())
+}

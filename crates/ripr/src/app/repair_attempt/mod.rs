@@ -719,17 +719,28 @@ fn recompute_after_verdict_binding_of_delta(
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let protected = if manifest.gap_binding.is_some() {
-        GAP_WORKFLOW_PROJECTIONS.as_slice()
+    let mut protected: Vec<&str> = if manifest.gap_binding.is_some() {
+        GAP_WORKFLOW_PROJECTIONS.to_vec()
     } else {
-        &[]
+        Vec::new()
     };
+    // A finish since #15060 leaves the derived scan bundle out of its bound
+    // delta, so a later re-check's rewrite of it is ignored here too. A staged
+    // copy is kept and protected from the later-write filter, so it still
+    // breaks the binding. A receipt whose bound verdict lists the bundle was
+    // finished before that rule and keeps its original reading.
+    let bundle = crate::edit_cage::derived_cache_bundle_path(&baseline)
+        .filter(|path| !after.verdict.changed_paths.contains(path));
+    if let Some(bundle) = &bundle {
+        crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
+        protected.push(bundle.as_str());
+    }
     let normalize = |delta: &crate::edit_cage::AttemptDelta| {
         crate::edit_cage::without_later_operational_writes_protecting(
             baseline.policy(),
             delta,
             &after.verdict.changed_paths,
-            protected,
+            &protected,
         )
     };
     let matches = |delta: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
@@ -4085,6 +4096,9 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         &manifest_relative_path(&manifest),
     )?;
     crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    // The derived module-tree scan bundle is rewritten by every check; it is
+    // not attempt evidence, so the finish does not bind its bytes (#15060).
+    crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
