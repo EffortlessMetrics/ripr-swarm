@@ -2187,7 +2187,8 @@ mod tests {{
 
 /// #14825 CodeRabbit review: a call under `cfg` is not copied, a scope that
 /// imports another `Bucket` (by name or glob, or `super::` from a nested
-/// module, or a `mod Bucket`) blocks the no-argument fallback too, and
+/// module, a `mod Bucket`, an item-position macro or `include!`, a macro
+/// definition naming it, or `extern crate Bucket`) blocks the no-argument fallback too, and
 /// `use super::Bucket;` outside a nested module names the owner, so reuse still applies under it.
 #[test]
 fn receiver_skips_cfg_calls_and_shadowed_fallbacks() -> Result<(), String> {
@@ -2235,6 +2236,41 @@ mod tests {{
         (
             with_capacity,
             "    use super::*;\n    mod Bucket { pub fn new(_s: &str) -> u8 { 0 } }\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    macro_rules! helpers { () => { mod Bucket { pub fn new(_s: &str) -> u8 { 0 } } } }\n    helpers!();\n    #[test]\n    fn t() { let _x: u8 = Bucket::new(\"x\"); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    include!(\"helpers.rs\");\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    helpers!();\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    #[test]\n    fn drains() {\n        let _b = Bucket::new(5);\n        assert!(Bucket::new(1).allow(0));\n        let _v = vec![Bucket::new(2)];\n    }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    macro_rules! mk { () => { struct Bucket; impl Bucket { fn new(_: u8) -> u8 { 0 } } } }\n    #[test]\n    fn t() { mk!(); let _b = Bucket::new(5); }\n",
+            None,
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    extern crate Bucket as other;\n    #[test]\n    fn drains() { let _b = Bucket::new(5); }\n",
+            Some("subject = Bucket::new(5), as in the existing test `drains`"),
+        ),
+        (
+            with_capacity,
+            "    use super::*;\n    extern crate Bucket;\n    #[test]\n    fn t() { let _b = Bucket::new(5); }\n",
             None,
         ),
         (
