@@ -456,12 +456,17 @@ fn literal_kind_rules_out_owner(
 fn file_rebinds_name(source: &str, name: &str, owner_line: usize) -> bool {
     const DECLARING: [&str; 5] = ["type", "struct", "enum", "union", "trait"];
     let masked = mask_comments_and_strings(source);
-    let owner_at = masked
+    // The owner's whole start line: a module opened on the same line as the
+    // owner (`mod m { use x::*; impl .. { fn f(..) } }`) may enclose it.
+    let line_start = masked
         .split_inclusive('\n')
         .take(owner_line.saturating_sub(1))
         .map(str::len)
         .sum::<usize>();
-    if has_glob_import_enclosing(&masked, owner_at) {
+    let line_end = masked[line_start..]
+        .find('\n')
+        .map_or(masked.len(), |end| line_start + end);
+    if has_glob_import_enclosing(&masked, line_start..line_end) {
         return true;
     }
     masked.match_indices(name).any(|(at, found)| {
@@ -485,15 +490,17 @@ fn file_rebinds_name(source: &str, name: &str, owner_line: usize) -> bool {
     })
 }
 
-/// Whether masked source has a glob import in a block that also holds byte
-/// `owner_at`: a `*` written as a path segment (after `::`, `{` or `,`) in a
-/// statement with a `use` keyword after the previous `;`, where the block
-/// around that `use` (or the file, at the top level) encloses the owner. A
+/// Whether masked source has a glob import in a block that may hold the
+/// owner, whose start line spans `owner_line`: a `*` written as a path
+/// segment (after `::`, `{` or `,`) in a statement with a `use` keyword after
+/// the previous `;`, where the block around that `use` (or the file, at the
+/// top level) overlaps the owner's line. Any overlap counts, so a module on
+/// the owner's line is read as enclosing it, which keeps the direct call. A
 /// glob in a sibling or nested module (a test module's `use super::*;`)
 /// cannot rebind a name the owner's signature resolves. A dereference after
 /// `{` or `,` that happens to share a statement with a `use` only keeps the
 /// direct call, which is the conservative answer.
-fn has_glob_import_enclosing(masked: &str, owner_at: usize) -> bool {
+fn has_glob_import_enclosing(masked: &str, owner_line: std::ops::Range<usize>) -> bool {
     masked.match_indices('*').any(|(at, _)| {
         let before = masked[..at].trim_end();
         if !before.ends_with(['{', ',']) && !before.ends_with("::") {
@@ -505,8 +512,9 @@ fn has_glob_import_enclosing(masked: &str, owner_at: usize) -> bool {
             .match_indices("use")
             .filter(|(start, matched)| ident_boundary(statement, *start, start + matched.len()))
             .any(|(start, _)| {
-                enclosing_block(masked, statement_start + start)
-                    .is_none_or(|block| block.contains(&owner_at))
+                enclosing_block(masked, statement_start + start).is_none_or(|block| {
+                    block.start < owner_line.end && owner_line.start < block.end
+                })
             })
     })
 }
@@ -863,6 +871,17 @@ mod tests {
             ),
             (
                 "mod other { use aliases::*; }\nimpl Scale<u8> for Bar {}",
+                2,
+                false,
+            ),
+            // A module opened on the owner's line may enclose it.
+            (
+                "mod m { use aliases::*; impl Scale<u8> for Bar {} }",
+                1,
+                true,
+            ),
+            (
+                "mod tests { use super::*; }\nimpl Scale<u8> for Bar {}",
                 2,
                 false,
             ),
