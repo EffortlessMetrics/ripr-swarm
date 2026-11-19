@@ -141,6 +141,46 @@ fn added_conflict_region_is_quarantined_and_typed() -> Result<(), String> {
 }
 
 #[test]
+fn conflict_region_split_across_zero_context_hunks_stays_quarantined() -> Result<(), String> {
+    // #15296: `git diff -U0` splits a region whose middle lines equal the base
+    // into separate hunks; the later `=======`/`>>>>>>>` hunk must not be read
+    // as ordinary changes, while the next file's section is analyzed normally.
+    let parsed = parse_unified_diff_with_metadata(
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n\
+         @@ -0,0 +1,1 @@\n\
+         +<<<<<<< ours\n\
+         @@ -2,0 +3,3 @@\n\
+         +=======\n\
+         +let value = 2;\n\
+         +>>>>>>> theirs\n\
+         @@ -5,1 +7,1 @@\n\
+         -let after = 1;\n\
+         +let after = 3;\n\
+         diff --git a/src/other.rs b/src/other.rs\n\
+         --- a/src/other.rs\n\
+         +++ b/src/other.rs\n\
+         @@ -1,1 +1,1 @@\n\
+         -let other = 1;\n\
+         +let other = 2;\n",
+    );
+
+    let limitation =
+        limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers)?;
+    assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
+    assert_eq!(limitation.affected_items, Some(1));
+    let file = changed_file(&parsed, "src/lib.rs")?;
+    let added: Vec<usize> = file.added_lines.iter().map(|line| line.line).collect();
+    assert_eq!(added, vec![7], "only the line after the closed region is a change");
+    assert_eq!(file.removed_lines.len(), 1);
+    let other = changed_file(&parsed, "src/other.rs")?;
+    assert_eq!(other.added_lines.len(), 1);
+    assert_eq!(other.removed_lines.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn removed_conflict_region_is_quarantined_and_typed() -> Result<(), String> {
     let parsed = parse_unified_diff_with_metadata(
         "diff --git a/src/lib.rs b/src/lib.rs\n\

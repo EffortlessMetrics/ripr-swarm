@@ -2845,8 +2845,8 @@ pub(crate) fn git_operation_advisory(root: &Path, git_timeout: Option<Duration>)
         ),
     };
     Some(format!(
-        "this repository is mid-{name}: conflicted files hold rival source states, so `ripr check` \
-         does not read their conflict regions as changes and exits 2 (analysis incomplete); \
+        "this repository is mid-{name}: while conflict markers remain, `ripr check` does not read \
+         their regions as changes and exits 2 (analysis incomplete); \
          finish it (`{finish}`) or abort it (`{abort}`), then rerun `ripr check`"
     ))
 }
