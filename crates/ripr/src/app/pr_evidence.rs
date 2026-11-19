@@ -1801,6 +1801,14 @@ mod tests {
         assert!(held[0].3.contains("first run marker"), "{}", held[0].3);
         assert!(held[1].3.contains("first run marker"), "{}", held[1].3);
 
+        assert!(held[2].3.contains("value() -> u8 { 1 }"), "{}", held[2].3);
+
+        // Move HEAD so the second run's diff differs from the first: an
+        // in-place rewrite of the diff then changes the held bytes too.
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 2 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "change rust"])?;
+
         run("second run marker")?;
         for (output, published, link, first_bytes) in &held {
             // The held file is the previous complete output, untouched.
@@ -1811,7 +1819,11 @@ mod tests {
                 assert!(second.contains("second run marker"), "{output}: {second}");
                 assert!(!second.contains("first run marker"), "{output}: {second}");
             } else {
-                assert_eq!(&second, first_bytes, "{output} diff changed between runs");
+                assert!(second.contains("value() -> u8 { 2 }"), "{output}: {second}");
+                assert_ne!(
+                    &second, first_bytes,
+                    "{output} diff did not change between runs"
+                );
             }
         }
         let packet: Value = serde_json::from_str(&read(&repo.join(PR_EVIDENCE_JSON))?)
