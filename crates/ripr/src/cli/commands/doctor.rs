@@ -846,7 +846,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         }
         _ => Vec::new(),
     };
-    lines.extend(detected_languages_lines_with_config(
+    lines.extend(detected_languages_lines(
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
         &configured,
@@ -1598,19 +1598,12 @@ fn language_runtime_probes_for_detected(
 ///
 /// Renders the same typed entries the JSON document serializes, so the two
 /// surfaces cannot disagree about what was found.
-fn detected_languages_lines(
-    detected: &[output::doctor::DoctorDetectedLanguage],
-    unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
-) -> Vec<String> {
-    detected_languages_lines_with_config(detected, unanalyzed, &[])
-}
-
-/// [`detected_languages_lines`] plus the languages a loaded `ripr.toml`
-/// enables (#15195). The marker scan stays shallow on purpose (#7506), so
-/// when it finds nothing while the config enables languages, the line says
-/// where it looked and names the configured languages instead of the bare
+///
+/// `configured` holds the languages a loaded `ripr.toml` enables (#15195).
+/// The marker scan stays shallow on purpose (#7506), so when it finds
+/// nothing while the config enables languages, the line says where it looked and names the configured languages instead of the bare
 /// "none detected" that reads as "ripr will analyze nothing here".
-fn detected_languages_lines_with_config(
+fn detected_languages_lines(
     detected: &[output::doctor::DoctorDetectedLanguage],
     unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
     configured: &[LanguageId],
@@ -7174,6 +7167,7 @@ mod tests {
         let lines = detected_languages_lines(
             &[detected_entry(LanguageId::Rust, true)],
             &[unanalyzed_entry("Go", 2)],
+            &[],
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
@@ -7184,23 +7178,20 @@ mod tests {
             lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
             "{lines:?}"
         );
-        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)]);
+        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)], &[]);
         assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
         // #15195: a loaded config that enables languages the shallow scan
         // missed is named instead of "none detected"; detected languages
         // keep the ordinary line whatever the config says.
-        let configured = detected_languages_lines_with_config(
-            &[],
-            &[],
-            &[LanguageId::Rust, LanguageId::TypeScript],
-        );
+        let configured =
+            detected_languages_lines(&[], &[], &[LanguageId::Rust, LanguageId::TypeScript]);
         assert_eq!(configured.len(), 1, "{configured:?}");
         assert!(
             configured[0].ends_with("ripr.toml enables rust, typescript"),
             "{configured:?}"
         );
         assert!(!configured[0].contains("none detected"), "{configured:?}");
-        let found = detected_languages_lines_with_config(
+        let found = detected_languages_lines(
             &[detected_entry(LanguageId::Rust, true)],
             &[],
             &[LanguageId::Rust, LanguageId::TypeScript],
@@ -7212,7 +7203,7 @@ mod tests {
         assert!(!found[0].contains("enables"), "{found:?}");
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(
-            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[]).len(),
+            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[], &[]).len(),
             1
         );
         // An adapter that was not compiled into this binary says so on the
@@ -7220,7 +7211,7 @@ mod tests {
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
         let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
-        let first = &detected_languages_lines(&unavailable, &[])[0];
+        let first = &detected_languages_lines(&unavailable, &[], &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
             assert!(!first.contains("[adapter not compiled]"), "{first}");
