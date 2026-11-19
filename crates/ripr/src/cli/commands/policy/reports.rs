@@ -127,6 +127,7 @@ pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
     let options = parse_policy_operations_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy operations")?;
     let input = output::policy_operations::PolicyOperationsInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -212,6 +213,7 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
     let options = parse_policy_history_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy history")?;
     let input = output::policy_history::PolicyHistoryInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -257,6 +259,7 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
     let options = parse_policy_promotion_options(args)?;
+    ensure_command_root(Path::new(&options.root), "policy promote")?;
     let input = output::policy_promotion::PolicyPromotionInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,

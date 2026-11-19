@@ -5604,6 +5604,8 @@ tests = [
   "crates/ripr/src/output/policy_operations.rs::tests::policy_operations_json_and_markdown_are_structured",
   "crates/ripr/src/cli/commands.rs::tests::policy_operations_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::policy_operations_command_writes_reports",
+  "crates/ripr/tests/cli_smoke.rs::mistyped_root_is_refused_and_not_created",
+  "crates/ripr/tests/cli_smoke.rs::policy_report_commands_accept_a_valid_root",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
@@ -5613,6 +5615,7 @@ code = [
   "crates/ripr/src/output/policy_operations.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/policy/reports.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/execute.rs",
 ]
@@ -5727,6 +5730,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::policy_history_command_writes_reports",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_is_opt_in_and_feeds_non_null_trend",
   "crates/ripr/src/cli/commands.rs::tests::policy_history_out_jsonl_refuses_unavailable_current",
+  "crates/ripr/tests/cli_smoke.rs::mistyped_root_is_refused_and_not_created",
+  "crates/ripr/tests/cli_smoke.rs::policy_report_commands_accept_a_valid_root",
   "crates/ripr/src/cli/help.rs::tests::command_specific_help_usage_lines_are_stable",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
