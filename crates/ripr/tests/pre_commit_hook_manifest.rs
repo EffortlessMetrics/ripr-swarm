@@ -272,3 +272,77 @@ fn reader_rejects_a_hook_without_an_entry() {
     let result = hooks("- id: ripr\n  name: x\n");
     assert!(result.is_err(), "{result:?}");
 }
+
+/// A fresh repository with nothing committed: the state of a new project's
+/// first `git commit`, where the hook runs against an unborn `HEAD`.
+fn fresh_repo_with_staged(files: &[(&str, String)]) -> Result<Scratch, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-pre-commit-first-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let scratch = Scratch(root.clone());
+    git(&root, &["init", "-q", "-b", "main"])?;
+    std::fs::create_dir(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    for (path, content) in files {
+        std::fs::write(root.join(path), content).map_err(|error| error.to_string())?;
+    }
+    git(&root, &["add", "."])?;
+    Ok(scratch)
+}
+
+#[test]
+fn commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head()
+-> Result<(), String> {
+    let hooks = hooks(&manifest()?)?;
+    let scratch = fresh_repo_with_staged(&[("src/lib.rs", BASE_SOURCE.to_string())])?;
+    let out = run_entry(&scratch.0, &hook(&hooks, "ripr")?.entry)?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}\n{stderr}");
+    assert!(
+        !stderr.contains("does not resolve to a commit") && !stderr.contains("no commits yet"),
+        "{stderr}"
+    );
+    // The staged file is the change being committed, so it is the analyzed
+    // diff: its source shows up in the report, not a refusal.
+    assert!(stdout.contains("src/lib.rs"), "{stdout}");
+    assert!(stdout.contains("x > 10"), "{stdout}");
+    Ok(())
+}
+
+#[test]
+fn unborn_head_keeps_other_bases_refused() -> Result<(), String> {
+    let scratch = fresh_repo_with_staged(&[("src/lib.rs", BASE_SOURCE.to_string())])?;
+    let out = run_entry(&scratch.0, "ripr check --worktree --base main --quiet")?;
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    Ok(())
+}
+
+#[test]
+fn oversized_first_commit_refusal_names_the_hook_bypass_and_scoping() -> Result<(), String> {
+    let hooks = hooks(&manifest()?)?;
+    let mut generated = String::new();
+    for index in 0..2100 {
+        generated.push_str(&format!(
+            "pub fn generated_{index}() -> i32 {{ {index} }}\n"
+        ));
+    }
+    let scratch = fresh_repo_with_staged(&[("src/lib.rs", generated)])?;
+    let out = run_entry(&scratch.0, &hook(&hooks, "ripr")?.entry)?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Still could-not-complete (exit 2), never a silent pass.
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
+    assert!(stderr.contains("SKIP=ripr git commit"), "{stderr}");
+    assert!(stderr.contains("--path <glob>"), "{stderr}");
+    assert!(stderr.contains("--exclude <glob>"), "{stderr}");
+    Ok(())
+}

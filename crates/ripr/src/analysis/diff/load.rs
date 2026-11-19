@@ -293,7 +293,15 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     warn_if_git_operation_in_progress(root, git_timeout);
 
     let (base, resolved_base_commit) =
-        resolve_effective_base_core_with_commit(root, base, git_timeout)?;
+        match resolve_effective_base_core_with_commit(root, base, git_timeout) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return match unborn_head_worktree_diff(root, base_arg, git_timeout) {
+                    Some(loaded) => loaded,
+                    None => Err(error),
+                };
+            }
+        };
 
     // Bind the origin to the probed identity pair BEFORE deriving it, so the
     // cached tuple is a pure function of `(head_sha, base_sha)`: the hit
@@ -347,6 +355,56 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
         // base than the one this diff used (#7716).
         merge_base_origin: Some(origin),
     })
+}
+
+/// The empty tree is the only "before" a first commit has. `git hash-object`
+/// derives it for the repository's object format (SHA-1 or SHA-256) instead of
+/// hardcoding either id.
+fn empty_tree_id(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["hash-object", "-t", "tree", "--", "/dev/null"],
+        git_timeout,
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    let id = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(id)
+}
+
+/// `--worktree --base HEAD` while `HEAD` is unborn (the first commit, e.g. the
+/// `pre-commit` hook): the staged and worktree content IS the change being
+/// committed, so it is diffed against the empty tree instead of refusing with
+/// "base HEAD does not resolve" and blocking a new project's first commit.
+/// Narrow on purpose: only the literal base `HEAD` (the one revision whose
+/// "before" is exactly the empty tree) and only when Git establishes the
+/// branch is unborn. Any other base, an unreadable HEAD or a probe that cannot
+/// answer keeps the original refusal. No base or merge-base commit is
+/// reported, because none exists.
+fn unborn_head_worktree_diff(
+    root: &Path,
+    base_arg: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Option<Result<LoadedDiff, CoreError>> {
+    if base_arg != Some("HEAD")
+        || !matches!(
+            probe_head_ref_state(root, git_timeout),
+            HeadRefState::Unborn
+        )
+    {
+        return None;
+    }
+    let empty_tree = empty_tree_id(root, git_timeout)?;
+    Some(
+        run_git_diff(root, &empty_tree, &["--submodule=short"], git_timeout, None).map(|text| {
+            LoadedDiff {
+                text,
+                effective_base: Some("HEAD".to_string()),
+                resolved_base_commit: None,
+                merge_base_origin: None,
+            }
+        }),
+    )
 }
 
 /// One resolved worktree-diff origin, cached under the repository identity it
