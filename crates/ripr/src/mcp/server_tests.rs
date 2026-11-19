@@ -2463,7 +2463,8 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
     for absent in [&none, &empty_map, &other_key] {
         assert_eq!(
             refresh_source_argument(absent),
-            Ok(workspace::RefreshSource::Committed)
+            Ok(None),
+            "an omitted source defers to the session default"
         );
     }
     for (value, expected) in [
@@ -2471,7 +2472,7 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         ("worktree", workspace::RefreshSource::Worktree),
     ] {
         let arguments = argument_map(serde_json::json!({"source": value}));
-        assert_eq!(refresh_source_argument(&arguments), Ok(expected));
+        assert_eq!(refresh_source_argument(&arguments), Ok(Some(expected)));
     }
     for (wrong, message, expected) in [
         (
