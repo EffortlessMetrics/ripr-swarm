@@ -1414,6 +1414,60 @@ fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
     );
 }
 
+/// A `missing=-` gap (no concrete discriminator, one related test): the row
+/// lacks the owner and the pre-change text, so the explain projection prints
+/// them and drops the `next=` pointer to a JSON packet that would add nothing.
+fn undiscriminated_gap() -> Finding {
+    let mut gap = weak_gap("probe:a", 2);
+    gap.activation.missing_discriminators.clear();
+    gap.probe.owner = Some(crate::domain::SymbolId(
+        "src/lib.rs::round_to_nickel".to_string(),
+    ));
+    gap.probe.before = Some("cents / 5 * 5".to_string());
+    gap.probe.expression = "(cents + 2) / 5 * 5".to_string();
+    gap
+}
+
+#[test]
+fn explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context() {
+    let text = explained(&undiscriminated_gap());
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"owner=round_to_nickel"), "{text}");
+    assert!(lines.contains(&"before=cents / 5 * 5"), "{text}");
+    assert!(
+        lines.iter().any(|l| l.starts_with("open=a test-side")),
+        "{text}"
+    );
+    assert!(!text.contains("next="), "{text}");
+}
+
+#[test]
+fn explain_agent_keeps_context_pointer_when_the_packet_holds_more() {
+    // A concrete missing discriminator: its reason and observed inputs live
+    // only in the packet.
+    let mut with_missing = undiscriminated_gap();
+    with_missing.activation.missing_discriminators =
+        weak_gap("probe:a", 2).activation.missing_discriminators;
+    assert!(explained(&with_missing).contains("\nnext=ripr context "));
+    // More than one related test: the packet lists the rest.
+    let mut many = undiscriminated_gap();
+    many.related_tests_matched_total = Some(3);
+    assert!(explained(&many).contains("\nnext=ripr context "));
+    // A finding that is not an open test-side gap keeps the pointer.
+    let mut done = finding("probe:ok", ExposureClass::Exposed, 4);
+    done.probe.owner = Some(crate::domain::SymbolId("src/lib.rs::f".to_string()));
+    assert!(explained(&done).contains("\nnext=ripr context "));
+}
+
+#[test]
+fn explain_agent_before_line_is_omitted_when_it_repeats_the_expression() {
+    let mut gap = undiscriminated_gap();
+    gap.probe.before = Some(gap.probe.expression.clone());
+    assert!(!explained(&gap).contains("before="));
+    gap.probe.owner = None;
+    assert!(!explained(&gap).contains("owner="));
+}
+
 #[test]
 fn explain_agent_exposed_finding_is_done_not_open() {
     let text = explained(&finding("probe:ok", ExposureClass::Exposed, 4));

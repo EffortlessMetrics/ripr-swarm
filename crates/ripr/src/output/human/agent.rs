@@ -530,10 +530,59 @@ pub(super) fn render_finding(
     {
         out.push_str(&format!("limit={}\n", field(&name)));
     }
+    // The owner and the pre-change text are what `ripr context` would add
+    // beyond the record above; printing them here lets the agent skip that
+    // 1 KB JSON packet when nothing else in it is new (see `context_adds_detail`).
+    if let Some(line) = owner_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if let Some(line) = before_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
     out.push_str(terminal);
     out.push('\n');
-    out.push_str(&format!("next={context_command}\n"));
+    if context_adds_detail(finding, terminal) {
+        out.push_str(&format!("next={context_command}\n"));
+    }
     out
+}
+
+/// `owner=NAME`: the function the changed line belongs to, from the producer's
+/// probe owner (`path::name`, `path::Type::name`). Absent without an owner.
+fn owner_line(finding: &Finding) -> Option<String> {
+    let owner = finding.probe.owner.as_ref()?;
+    let name = owner
+        .0
+        .split_once("::")
+        .map_or(owner.0.as_str(), |(_, n)| n);
+    (!name.is_empty()).then(|| format!("owner={}", field(name)))
+}
+
+/// `before=TEXT`: the changed expression as it read on the base side, when the
+/// producer recorded one that differs from the head expression in the record.
+fn before_line(finding: &Finding) -> Option<String> {
+    let before = finding.probe.before.as_deref()?.trim();
+    (!before.is_empty() && before != finding.probe.expression.trim())
+        .then(|| format!("before={}", field(&clip(before))))
+}
+
+/// Whether `ripr context` still holds something this projection did not print.
+/// For a test-side gap with no concrete missing discriminator and at most one
+/// related test, the packet's remaining body is the same record, `before`,
+/// owner and producer-internal limitations, so `next=` is omitted and the
+/// agent writes the test instead of fetching it. Any other finding keeps the
+/// pointer: the discriminator's reason, observed inputs, flow sink and extra
+/// related tests live only in the packet.
+fn context_adds_detail(finding: &Finding, terminal: &str) -> bool {
+    !(terminal.starts_with("open=a test-side")
+        && finding.activation.missing_discriminators.is_empty()
+        && finding
+            .related_tests_matched_total
+            .unwrap_or_default()
+            .max(finding.related_tests.len())
+            <= 1)
 }
 
 /// Terminal `stop=` rendering for a finding that is not a current edit target:
