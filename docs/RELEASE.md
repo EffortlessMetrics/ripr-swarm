@@ -187,7 +187,7 @@ cargo xtask release-readiness --version 0.11.0   # the version you are cutting
 cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
 cargo package -p ripr-contract --list
 cargo package -p ripr --list
-cargo xtask publish-dry-run
+cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarball contents
 ```
 
 `ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
@@ -269,11 +269,50 @@ list in `crates/ripr/Cargo.toml` therefore leaves out:
   check build the packaged crate and catch that);
 - every other file under `tests/`.
 
-With that list the packaged crate measured 10,285,280 bytes on the current
-candidate (200,480 bytes, about 1.9%, under the limit; 1,002 files,
-47,848,218 bytes uncompressed, via `cargo xtask publish-dry-run`). That is
-inside the 10% warning band, so the durable fix is still a raised crates.io
-limit or a smaller `ripr` crate; #14071 tracks it.
+That list alone was not enough. Packaged straight from the checkout, the
+crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
+2026-11-19 (main `5b9c56a4`, over the limit), because about a third of the
+remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
+test adds to them (#14198).
+
+So `ripr` is packaged from a **publish stage**, never straight from the
+checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+clone of the workspace checked out at `HEAD` (the workspace members, the root
+files and `.cargo/`; uncommitted edits are not staged) and, in
+`crates/ripr/src` only, removes every inline module whose attributes include
+exactly `#[cfg(test)]`, with its attributes and doc comments
+(`xtask/src/publish_stage.rs`). A build without `cfg(test)` never compiles
+those modules, so the library, binary and feature builds are unchanged; the
+repository checkout keeps every test. The strip parses each file with the
+Rust parser before and after the edit and stops the rehearsal on any parse
+error or when nothing was stripped, and the rehearsal then compiles the
+packaged crate. Out-of-line `#[cfg(test)] mod name;` declarations stay; their
+files are left out by the `include` list above. The rehearsal fails when a
+packaged crate is over the limit. A passing rehearsal leaves the stage at
+`target/publish-stage`, and the real publish runs from there (see
+[Publish](#publish)).
+
+Because the stage is a Git checkout of `HEAD`, the packaged
+`.cargo_vcs_info.json` still names the source commit, marked `"dirty": true`
+by the strip. The stage also writes `crates/ripr/.ripr-publish-stage`, which
+holds that commit and is packaged. A dirty record whose commit equals the
+marker's is identified as that commit, clean, by `build.rs` (so
+`ripr --version` prints the plain commit) and by the `package-install`
+identity check; any other dirty record stays dirty
+(`crates/ripr/src/build_commit_record.rs`).
+
+The #1609-qualified producer (`release-negative-corpus` with the
+`--candidate-*` group, `candidate_harness/archive.rs`) does not use the stage
+yet: it packages `ripr` straight from the admitted source and requires every
+packaged entry to equal its committed blob, so it cannot qualify the published
+representation. It also cannot package the real `ripr` before `ripr-contract`
+is on crates.io. #15204 owns moving it onto the stage with an explicit
+committed-blob-or-exact-strip rule.
+
+From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
+bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471
+bytes, stripped from 616 files), via `cargo xtask publish-dry-run`. The
+stage differed from `HEAD` only by those 616 files and the marker.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
@@ -427,17 +466,34 @@ versions, SHA-256 checksums, source commit, and the `verification` it passed)
 plus explicit per-channel authorization. A receipt exists only for a pair that
 passed the packaged check; a failed rehearsal leaves none.
 
+Publish from the stage the rehearsal just packaged and measured, not from the
+checkout: the checkout's `ripr` package is over the crates.io upload limit
+(see [Crate tarball contents](#crate-tarball-contents)).
+
+Run the rehearsal immediately before publishing, on the release commit, and
+check that the kept stage is that commit
+(`git -C target/publish-stage rev-parse HEAD`): `cargo publish` packages the
+stage again rather than uploading the rehearsed `.crate`, so a stage left by
+an earlier rehearsal would publish that earlier commit. `--allow-dirty` is
+required because the strip modifies the checked-out `ripr` sources. The
+rehearsal verifies, after staging and again after packaging, that the stage
+differs from `HEAD` only by the marker and by `.rs` files under
+`crates/ripr/src` that are exactly their `HEAD` content with inline test
+modules stripped, and fails otherwise.
+
 1. Publish `ripr-contract` first:
 
 ```bash
 cargo login
-cargo publish -p ripr-contract --locked
+cd target/publish-stage
+cargo publish --allow-dirty -p ripr-contract
 ```
 
 2. Read back the exact public `ripr-contract` version, checksum, and metadata
 from crates.io under a bounded polling/timeout policy and verify the published
-checksum matches `target/package/publish-receipt.json` and that the receipt's
-`verification` is `packaged-check-passed` before attempting `ripr`:
+checksum matches the repository root's `target/package/publish-receipt.json`
+and that the receipt's `verification` is `packaged-check-passed` before
+attempting `ripr`:
 
 ```bash
 curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"
@@ -450,7 +506,7 @@ around the edge.
 3. Publish `ripr` against that exact `=<version>` dependency:
 
 ```bash
-cargo publish -p ripr --locked
+cargo publish --allow-dirty -p ripr
 ```
 
 4. Verify `ripr` from public bytes in a clean environment without path or
