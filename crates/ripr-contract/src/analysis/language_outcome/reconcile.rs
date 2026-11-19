@@ -10,8 +10,15 @@
 //! aggregate-only disposition by design (#6468), with no top-level limitation.
 
 use super::{LanguageAggregate, LanguageOutcomeStatus, OutcomeMode};
-use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
 use crate::domain::{Finding, LanguageId};
+
+/// The existing top-level reconciliation inputs, projected without policy.
+pub struct OutcomeReconciliationInput<'a> {
+    pub finding_count: u64,
+    pub kind: &'a str,
+    pub complete: bool,
+    pub has_unsupported_limitation: bool,
+}
 
 /// Statuses whose denominator the run could not establish and which the diff
 /// pipeline always pairs with a typed top-level limitation.
@@ -26,11 +33,11 @@ const fn is_hard_blocker(status: LanguageOutcomeStatus) -> bool {
     )
 }
 
-pub(crate) fn reconcile(
+pub fn reconcile(
     aggregate: &LanguageAggregate,
     selected: &[LanguageId],
     findings: &[Finding],
-    outcome: Option<&AnalysisOutcome>,
+    outcome: Option<OutcomeReconciliationInput<'_>>,
 ) -> Result<(), String> {
     aggregate.validate()?;
     aggregate.validate_selected(selected)?;
@@ -77,10 +84,10 @@ pub(crate) fn reconcile(
     let Some(outcome) = outcome else {
         return Ok(());
     };
-    if outcome.counts.finding_count != findings.len() as u64 {
+    if outcome.finding_count != findings.len() as u64 {
         return Err(format!(
             "language reconcile: outcome counts {} finding(s), retained findings are {}",
-            outcome.counts.finding_count,
+            outcome.finding_count,
             findings.len()
         ));
     }
@@ -88,24 +95,19 @@ pub(crate) fn reconcile(
         .outcomes
         .iter()
         .find(|(_, child)| is_hard_blocker(child.status))
-        && outcome.kind.is_complete()
+        && outcome.complete
     {
         return Err(format!(
             "language reconcile: {label} is {} but outcome kind is {}",
             child.status.as_str(),
-            outcome.kind.as_str()
+            outcome.kind
         ));
     }
     let unsupported = aggregate
         .outcomes
         .values()
         .any(|child| child.status == LanguageOutcomeStatus::Unsupported);
-    if unsupported
-        && !outcome
-            .limitations
-            .iter()
-            .any(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
-    {
+    if unsupported && !outcome.has_unsupported_limitation {
         return Err(
             "language reconcile: unsupported changed source has no top-level limitation; report this as a ripr bug with the command and workspace shape"
                 .to_string(),

@@ -14,7 +14,7 @@ use super::{
     OutcomeMode,
 };
 use crate::domain::LanguageId;
-use ripr_contract::domain::language_capability::{
+use crate::domain::language_capability::{
     AnalysisMode, CAPABILITY_CELLS, CapabilityFamily, FRAMEWORK_ANY, state_establishes_capability,
 };
 use sha2::{Digest, Sha256};
@@ -24,13 +24,13 @@ use std::fmt::Write as _;
 /// Whole-diff completeness. `Incomplete` is the fail-closed default: it also
 /// covers an aggregate with no child at all, which evidenced nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiffCompleteness {
+pub enum DiffCompleteness {
     Complete,
     Incomplete,
 }
 
 impl DiffCompleteness {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
             Self::Incomplete => "incomplete",
@@ -39,36 +39,36 @@ impl DiffCompleteness {
 }
 
 /// The shared mixed-language aggregate shape (#6468 diff, #6470 repo).
-pub(crate) type DiffLanguageAggregate = LanguageAggregate;
+pub type DiffLanguageAggregate = LanguageAggregate;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LanguageAggregate {
-    pub(crate) mode: OutcomeMode,
+pub struct LanguageAggregate {
+    pub mode: OutcomeMode,
     /// Diff scope label every child must have run over; `None` in repo mode.
-    pub(crate) scope: Option<String>,
+    pub scope: Option<String>,
     /// Children keyed by canonical language label (`javascript` is its own
     /// key, never folded into `typescript`).
-    pub(crate) outcomes: BTreeMap<String, LanguageAnalysisOutcomeV1>,
+    pub outcomes: BTreeMap<String, LanguageAnalysisOutcomeV1>,
     /// Labels recorded more than once where one row would let the aggregate
     /// claim completeness and another blocks it. The kept child is still the
     /// deterministic blocker-first one; this only makes the disagreement
     /// visible to `validate` (#6473). Two blocking rows (a configured adapter
     /// that errors beside its own not-selected advisory) are not a conflict.
     /// Not part of the digest.
-    pub(crate) conflicts: BTreeSet<String>,
+    pub conflicts: BTreeSet<String>,
     /// The completeness this aggregate asserts; `validate` rejects a claim the
     /// children do not support.
-    pub(crate) claimed: DiffCompleteness,
-    pub(crate) semantic_digest: String,
+    pub claimed: DiffCompleteness,
+    pub semantic_digest: String,
 }
 
 impl LanguageAggregate {
-    pub(crate) fn new(scope: String) -> Self {
+    pub fn new(scope: String) -> Self {
         Self::with_scope(OutcomeMode::Diff, Some(scope))
     }
 
     /// A repo-mode aggregate: no diff scope, children bound to repo mode.
-    pub(crate) fn new_repo() -> Self {
+    pub fn new_repo() -> Self {
         Self::with_scope(OutcomeMode::Repo, None)
     }
 
@@ -88,7 +88,7 @@ impl LanguageAggregate {
     /// Records one child. A repeated label keeps the child that blocks
     /// completeness, then the greater digest, so the result does not depend on
     /// the order the duplicates arrived in.
-    pub(crate) fn record(&mut self, outcome: LanguageAnalysisOutcomeV1) {
+    pub fn record(&mut self, outcome: LanguageAnalysisOutcomeV1) {
         let rank = |candidate: &LanguageAnalysisOutcomeV1| {
             (
                 !candidate.status.is_complete_for_aggregate(),
@@ -111,7 +111,7 @@ impl LanguageAggregate {
 
     /// Seals the aggregate: asserts the completeness derived from the children
     /// and binds the digest.
-    pub(crate) fn finish(mut self) -> Self {
+    pub fn finish(mut self) -> Self {
         self.claimed = self.completeness();
         self.semantic_digest = self.compute_digest();
         self
@@ -125,7 +125,7 @@ impl LanguageAggregate {
     /// establish capability is also a blocker, named with the cell's limit
     /// text. The child keeps its own status, so the public compatibility
     /// projection is unchanged (#6470).
-    pub(crate) fn blockers(&self) -> Vec<(&str, &'static str)> {
+    pub fn blockers(&self) -> Vec<(&str, &'static str)> {
         self.outcomes
             .iter()
             .filter_map(|(label, outcome)| {
@@ -160,7 +160,7 @@ impl LanguageAggregate {
     /// `complete_zero`, or had nothing in scope. Nothing-in-scope children
     /// alone evidence nothing. Unsupported, not-selected, unavailable,
     /// invalid, failed and partial children all keep it incomplete.
-    pub(crate) fn completeness(&self) -> DiffCompleteness {
+    pub fn completeness(&self) -> DiffCompleteness {
         let evidenced = self.outcomes.values().any(|outcome| {
             matches!(
                 outcome.status,
@@ -177,7 +177,7 @@ impl LanguageAggregate {
     /// Rejects a self-contradictory aggregate: a child that contradicts its
     /// own status, a child filed under another label or scope, a completeness
     /// claim the children do not support, or a stale digest.
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         for (label, outcome) in &self.outcomes {
             if label != &outcome.language {
                 return Err(format!(
@@ -255,7 +255,7 @@ impl LanguageAggregate {
     /// Rejects an aggregate that omits a selected language: every language
     /// the run selected must have recorded a child, so an empty or short run
     /// vector cannot hide it (#6473).
-    pub(crate) fn validate_selected(&self, selected: &[LanguageId]) -> Result<(), String> {
+    pub fn validate_selected(&self, selected: &[LanguageId]) -> Result<(), String> {
         for language in selected {
             if !self.outcomes.contains_key(language.as_str()) {
                 return Err(format!(
@@ -300,7 +300,7 @@ impl LanguageAggregate {
 /// `None` when the language's exact repo `static_facts` cell establishes
 /// capability; otherwise the cell's limit text, or the state spelling when the
 /// cell names no limit. A missing cell is `not_proven`.
-pub(crate) fn repo_static_facts_limit(language: LanguageId) -> Option<&'static str> {
+pub fn repo_static_facts_limit(language: LanguageId) -> Option<&'static str> {
     let cell = CAPABILITY_CELLS.iter().find(|cell| {
         cell.language == language
             && cell.framework == FRAMEWORK_ANY
