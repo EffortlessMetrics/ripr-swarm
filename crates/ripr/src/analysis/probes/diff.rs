@@ -1081,6 +1081,16 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #7807: the same holds for any removed line that reads only the
+            // catch-all because it is classified without its context (a tail
+            // `x * 5` or `input`), when its block replacement's modeled probe
+            // carries the WHOLE removed text as `before`. That probe already
+            // judges the replaced code; the base-side twin only repeats it.
+            if family == ProbeFamily::StaticUnknown
+                && replaced_literal_is_paired(removed, text, text, changed, &probes)
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -7535,6 +7545,50 @@ mod tests {
         assert!(
             base_side.iter().all(|probe| probe.location.line == 9),
             "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
+        );
+    }
+
+    /// #7807: a changed tail expression (`x * 5` -> `x * 10`) reads only the
+    /// catch-all on the removed side, where it is classified without its
+    /// context. The added return-value probe carries the whole removed text
+    /// as `before`, so no base-side twin is added. The same text deleted
+    /// outright in a later hunk keeps its removed-side probe.
+    #[test]
+    fn a_replaced_tail_expression_adds_no_base_side_static_unknown_twin() {
+        let head = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n";
+        let probes = single_shape_probes(
+            "    x * 10",
+            "    x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("x * 5")),
+            "fixture: the added probe must pair the removed expression: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "x * 5"),
+            "a replaced tail expression must not get its own removed-side probe: {probes:?}"
+        );
+
+        let mixed = shapes_probes_with_deletions(
+            "    x * 10",
+            "    x * 5",
+            &[(9, "    x * 5")],
+            &[(ProbeShapeKind::ReturnValue, "x * 10")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "x * 5")
+            .collect();
+        assert!(
+            !base_side.is_empty() && base_side.iter().all(|probe| probe.location.line == 9),
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
         );
     }
 
