@@ -10143,10 +10143,11 @@ fn top_limitation_dto(
                 };
                 format!(
                     "analysis inspected {} changed file(s) ({} changed line(s)) of the diff; \
-                     {uninspected} (stop reason: {}); to widen the analyzed partition, {}",
+                     {uninspected} (stop reason: {}); {}{}",
                     scope.selected_files.len(),
                     scope.selected_changed_lines,
                     scope.stop_reason.as_str(),
+                    scope.widen_lead(false),
                     scope.widen_instruction(),
                 )
             },

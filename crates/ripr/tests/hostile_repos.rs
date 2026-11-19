@@ -805,6 +805,21 @@ fn unresolved_commit_id_base_names_the_commit_fetch() -> Result<(), String> {
 }
 
 #[test]
+fn unresolved_release_tag_base_names_the_tag_fetch() -> Result<(), String> {
+    let scratch = Scratch::new("tagbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    let stderr = base_refusal(&root, "v9.9.9")?;
+    if !stderr.contains("`git fetch --tags origin`") || stderr.contains("fetched branch") {
+        return Err(format!("a release-tag name needs the tag fetch\n{stderr}"));
+    }
+    let stderr = base_refusal(&root, "velocity")?;
+    if stderr.contains("--tags") || !stderr.contains("fetched branch is named `origin/velocity`") {
+        return Err(format!("a non-tag name keeps branch advice\n{stderr}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn fetched_only_base_advice_is_a_capitalized_sentence_with_the_short_spelling() -> Result<(), String>
 {
     let scratch = Scratch::new("trackbase")?;
@@ -830,16 +845,63 @@ fn fetched_only_base_advice_is_a_capitalized_sentence_with_the_short_spelling() 
 }
 
 #[test]
-fn unresolved_release_tag_base_names_the_tag_fetch() -> Result<(), String> {
-    let scratch = Scratch::new("tagbase")?;
-    let root = repo_with_origin(&scratch, "r")?;
-    let stderr = base_refusal(&root, "v9.9.9")?;
-    if !stderr.contains("`git fetch --tags origin`") || stderr.contains("fetched branch") {
-        return Err(format!("a release-tag name needs the tag fetch\n{stderr}"));
+fn partial_scope_over_the_analysis_limit_says_to_narrow_not_to_raise_the_budget()
+-> Result<(), String> {
+    let scratch = Scratch::new("narrowadvice")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        for file in 0..8 {
+            let mut body = String::new();
+            for i in 0..300 {
+                body.push_str(&format!(
+                    "pub fn f{file}_{i}(a: u32) -> u32 {{ a + {i} }}\n"
+                ));
+            }
+            fs::write(root.join(format!("src/m{file}.rs")), body)
+                .map_err(|e| format!("write failed: {e}"))?;
+        }
+        Ok(())
+    })?;
+    let run = |limit: &str| {
+        ripr(
+            &root,
+            &["check"],
+            &[
+                ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", limit),
+                ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "1000"),
+            ],
+        )
+    };
+    // 2,400 changed lines against the built-in 2,000-line limit: no budget
+    // can complete it.
+    let over = run("2000")?;
+    assert_sane(&over, "over the limit")?;
+    if over.code != Some(0)
+        || !over
+            .stdout
+            .contains("narrow the diff with a PATH argument or a nearer `--base`")
+        || over
+            .stdout
+            .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+    {
+        return Err(format!(
+            "an unreachable whole diff must say to narrow\n{:?}\n{}\n{}",
+            over.code, over.stdout, over.stderr
+        ));
     }
-    let stderr = base_refusal(&root, "velocity")?;
-    if stderr.contains("--tags") || !stderr.contains("fetched branch is named `origin/velocity`") {
-        return Err(format!("a non-tag name keeps branch advice\n{stderr}"));
+    // Control: the limit admits the whole diff, so the incremental raise can
+    // complete the run and stays the advice.
+    let fits = run("5000")?;
+    assert_sane(&fits, "within the limit")?;
+    if !fits
+        .stdout
+        .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+        || fits.stdout.contains("narrow the diff with a PATH argument")
+    {
+        return Err(format!(
+            "a reachable whole diff keeps the raise advice\n{:?}\n{}\n{}",
+            fits.code, fits.stdout, fits.stderr
+        ));
     }
     Ok(())
 }

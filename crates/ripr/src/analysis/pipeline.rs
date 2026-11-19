@@ -3597,7 +3597,7 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
         AnalysisStage::AnalysisPipeline,
         AnalysisRecovery::new(
             AnalysisRecoveryKind::IncreaseConfiguredLimit,
-            format!("To widen the analyzed partition, {}.", scope.widen_instruction()),
+            format!("{}{}.", scope.widen_lead(true), scope.widen_instruction()),
         )?,
     )
     .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
