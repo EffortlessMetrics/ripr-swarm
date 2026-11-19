@@ -2372,6 +2372,7 @@ mod tests {
         build_baseline_delta_report, render_baseline_delta_json, render_baseline_delta_markdown,
     };
     use serde_json::{Value, json};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     #[test]
