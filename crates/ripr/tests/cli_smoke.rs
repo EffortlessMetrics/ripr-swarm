@@ -3780,7 +3780,7 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
     // #15377: the refusal is a usage error, so the machine formats write no
     // `run_status=analysis_failed` record an agent would read as an analyzer
     // failure; stdout stays empty and stderr names the requested format.
-    for format in ["agent", "json-terse", "sarif-compact"] {
+    for format in ["sarif", "agent", "json-terse", "sarif-compact"] {
         let output = run_ripr(&[
             "check",
             "--root",

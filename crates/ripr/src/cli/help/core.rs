@@ -380,9 +380,10 @@ Options:
                            resolves against --root; a missing or malformed
                            policy fails the run. Every other format (sarif,
                            sarif-compact, agent, json-terse, badge and repo
-                           formats) refuses the flag as a usage error; SARIF
-                           and the badges read [suppressions] path from
-                           ripr.toml (default .ripr/suppressions.toml).
+                           formats) refuses the flag as a usage error. sarif,
+                           sarif-compact, badge-json, badge-shields and the
+                           badge-plus formats read [suppressions] path from
+                           ripr.toml (default .ripr/suppressions.toml) instead.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member

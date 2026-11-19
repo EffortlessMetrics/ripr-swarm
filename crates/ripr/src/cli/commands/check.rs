@@ -596,18 +596,6 @@ fn select_output_format(
     Ok(())
 }
 
-/// Refusal exit for a post-argv-parse `check` failure (#6834, widened #7332).
-///
-/// Machine-readable formats write a refusal document to stdout first — the
-/// frozen scope-guard envelope or the structural [`CoreError::check_refusal`]
-/// envelope for JSON (#6834), and each machine format's own refusal shape
-/// for SARIF, GitHub annotations, badge JSON, repo-exposure JSON, and
-/// agent-seam-packets JSON (#7332) — then the unchanged prose error returns
-/// for stderr. Human formats and formats without an honest refusal shape
-/// return the prose untouched. Failures before a result is rendered route
-/// through here; a rendered `unsupported_input` result keeps its original
-/// report instead of appending a refusal. Argv usage errors return before
-/// the envelope snapshot exists and stay prose-only.
 /// The usage refusal for `--suppression-policy` on a format that cannot
 /// apply it (#1441, #15377). It names the requested format: `agent`,
 /// `json-terse` and the SARIF formats refuse too, which the old "SARIF,
@@ -620,6 +608,18 @@ fn suppression_policy_format_refusal(format: OutputFormat) -> String {
     )
 }
 
+/// Refusal exit for a post-argv-parse `check` failure (#6834, widened #7332).
+///
+/// Machine-readable formats write a refusal document to stdout first — the
+/// frozen scope-guard envelope or the structural [`CoreError::check_refusal`]
+/// envelope for JSON (#6834), and each machine format's own refusal shape
+/// for SARIF, GitHub annotations, badge JSON, repo-exposure JSON, and
+/// agent-seam-packets JSON (#7332) — then the unchanged prose error returns
+/// for stderr. Human formats and formats without an honest refusal shape
+/// return the prose untouched. Failures before a result is rendered route
+/// through here; a rendered `unsupported_input` result keeps its original
+/// report instead of appending a refusal. Argv usage errors return before
+/// the envelope snapshot exists and stay prose-only.
 pub(super) fn refuse_check(
     envelope_input: &CheckInput,
     format: OutputFormat,
