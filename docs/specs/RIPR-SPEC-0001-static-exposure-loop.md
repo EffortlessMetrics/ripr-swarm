@@ -291,6 +291,21 @@ a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
 line (`&self,`) has no type and is not classified by this rule, and a fn nested
 inside another fn body in a macro keeps `field_construction`.
 
+A replaced line whose code is unchanged seeds no probe on either side when
+the only difference is a trailing `//` comment, its line ending, or a block
+comment inside the line (`if x > 1 /* old */ {`) added, removed or reworded
+(#14175, #15232). For a block comment, each line is read on its own: its code
+with comment and literal contents masked and whitespace collapsed, and the raw
+text of each string and character literal, must equal the other line's. At
+least one side must hold an actual block comment before any line comment.
+These keep their probes:
+- a comment that held two tokens apart (`a/*x*/b` against `ab`);
+- a documentation comment (`///`, `//!`, `/**`, `/*!`) on either side;
+- a line that ends inside a comment or string, or that reads differently in
+  its file than alone (inside a multi-line comment or string);
+- a changed literal;
+- a position macro or string continuation on either line.
+
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
 files do not change those inputs. Formatting whitespace outside Rust literals

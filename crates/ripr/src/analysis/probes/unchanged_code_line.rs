@@ -77,7 +77,7 @@ pub(super) fn is_trailing_line_comment_only_change(
 /// when the line ends inside a block comment or a string (it would not read
 /// the same on its own as in its file), or when it holds a documentation
 /// block comment (`/**`, `/*!`), which is an attribute a macro can match.
-fn inline_code(line: &str) -> Option<(String, Vec<&str>)> {
+fn inline_code(line: &str) -> Option<(String, Vec<&str>, bool)> {
     let probe = format!("{line}\nX");
     let masked = crate::analysis::extract::mask_comments_and_strings(&probe);
     if !masked.ends_with('X') {
@@ -95,19 +95,32 @@ fn inline_code(line: &str) -> Option<(String, Vec<&str>)> {
                 .iter()
                 .any(|&(open, close)| (open..=close).contains(&at))
     };
-    let doc_comment = line.match_indices("/*").any(|(at, _)| {
+    // An actual line comment ends the code; a `/*` after its `//` is
+    // comment text, and a `///` or `//!` is a documentation attribute.
+    let line_comment = crate::analysis::extract::line_comment_starts(line)
+        .first()
+        .copied();
+    if line_comment.is_some_and(|at| {
         let tail = &line[at..];
-        is_comment(at)
-            && (tail.starts_with("/*!")
-                || (tail.starts_with("/**")
-                    && !tail.starts_with("/***")
-                    && !tail.starts_with("/**/")))
+        tail.starts_with("//!") || (tail.starts_with("///") && !tail.starts_with("////"))
+    }) {
+        return None;
+    }
+    let block_opens: Vec<usize> = line
+        .match_indices("/*")
+        .map(|(at, _)| at)
+        .filter(|&at| is_comment(at) && line_comment.is_none_or(|start| at < start))
+        .collect();
+    let doc_comment = block_opens.iter().any(|&at| {
+        let tail = &line[at..];
+        tail.starts_with("/*!")
+            || (tail.starts_with("/**") && !tail.starts_with("/***") && !tail.starts_with("/**/"))
     });
     if doc_comment {
         return None;
     }
     let code = masked_line.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some((code, literals))
+    Some((code, literals, !block_opens.is_empty()))
 }
 
 /// Whether `after` and `before` hold the same code and differ only in block
@@ -124,7 +137,11 @@ pub(super) fn is_inline_block_comment_only_change(after: &str, before: &str) -> 
         return false;
     }
     match (inline_code(after), inline_code(before)) {
-        (Some(after), Some(before)) => !after.0.is_empty() && after == before,
+        (Some(after), Some(before)) => {
+            (after.2 || before.2)
+                && !after.0.is_empty()
+                && (after.0, after.1) == (before.0, before.1)
+        }
         _ => false,
     }
 }
@@ -257,6 +274,11 @@ mod tests {
             // The line ends inside a block comment or a string.
             ("    f(x); /* open", "    f(x); /* other"),
             ("    let s = \"open", "    let s = \"open /* c */"),
+            // `/*` inside a line comment is comment text, and a `///` or
+            // `//!` is a documentation attribute.
+            ("    flag!(0 /// /* note */", "    flag!(0 // /* note */"),
+            ("    flag!(0 // /* b */", "    flag!(0 // /* a */"),
+            ("    f(x); //! /* c */", "    f(x); /* c */"),
             // No code, no comment, or no change.
             ("    /* a */", "    /* b */"),
             ("    f(x);", "    f( x );"),
