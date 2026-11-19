@@ -1,0 +1,22 @@
+{
+  "case_id": "tier-flow-13037-transformed",
+  "subject_id": "authored-tier-flow-13037",
+  "origin": "authored",
+  "anchor": "src/lib.rs:33",
+  "behavior_family": "return_value",
+  "test_shape": "exact_pin_assert",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

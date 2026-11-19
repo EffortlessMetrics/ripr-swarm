@@ -1,33 +1,25 @@
 # Language Adapter Preview Workflow
 
-Use this guide when a repository wants to evaluate TypeScript, JavaScript, or
-Python evidence without changing the Rust-first default path.
+Use this guide to get TypeScript, JavaScript, or Python evidence from `ripr`
+without changing the Rust default path.
 
-Preview adapters are useful for advisory review, editor projection, and agent
-handoff. They are not a maturity claim equal to Rust, they do not run a
-typechecker or test runner, and they do not make generated CI blocking.
+Preview findings are advisory. They do not match Rust maturity, do not run a
+typechecker or test runner, and do not make generated CI blocking.
 
 ## Current Shape
 
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
-| Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | detected TypeScript projects (`tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`, at the root, in a directory one level below it, or in `packages/*`, `apps/*`, `libs/*` or `libraries/*`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
-| Python | preview static facts, plus a scoped repair-routing lane (tier in the registry projection below) | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
+| Rust | reference path | enabled | Rust static exposure evidence on every CLI, CI, editor, report, and gate surface. |
+| TypeScript and JavaScript | preview | enabled when TypeScript or JavaScript project markers are detected and no `ripr.toml` exists ([detection rules](CONFIGURATION.md#languages)); otherwise only when configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
+| Python | preview static facts, plus a scoped repair-routing lane (tier in the registry projection below) | enabled when Python project markers are detected and no `ripr.toml` exists ([detection rules](CONFIGURATION.md#languages)); otherwise only when configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 ## Capability Registry Projection
 
-Per-cell support states and tier ceilings for every language, framework, mode
-and family come only from the generated block below, which is the registry
-(`domain::language_capability::CAPABILITY_CELLS`, also `ripr capabilities
---json`) rendered by its single renderer. An absent cell is `not_proven`. The
-prose elsewhere in this guide is narrative and must not state a per-cell
-support state or tier that the block does not: `cargo xtask capability-docs
---check` fails when the block is hand-edited, and the `language_capability_drift`
-test fails when prose names a `not_proven` cell the registry does not leave
-`not_proven` or states a tier word the block owns. Edit cell states in the
-registry, never here. The block is a static-evidence statement, not a runtime
-mutation outcome or a sufficiency claim, and promotes no tier.
+The block below is generated from the capability registry (`ripr capabilities
+--json`) and is the only source of per-cell support states and tier ceilings.
+An absent cell is `not_proven`. Change states in the registry, never here;
+`cargo xtask capability-docs --check` rejects hand edits.
 
 <!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->
 
@@ -52,369 +44,141 @@ mutation outcome or a sufficiency claim, and promotes no tier.
 
 <!-- capability-registry:end -->
 
-The preview adapters feed the same output schema and review surfaces as Rust.
-Preview findings carry additive metadata such as `language`,
-`language_status`, `owner_kind`, and `static_limit_kind` when the adapter can
-populate them.
+Preview findings use the same output schema and review surfaces as Rust, with
+additive `language`, `language_status`, `owner_kind`, and `static_limit_kind`
+fields when the adapter can fill them.
 
 ## Enable Preview Adapters
 
-Add preview languages to the repo-root `ripr.toml` when you want explicit
-control:
+With no `ripr.toml`, `ripr` turns on Python and TypeScript preview when it
+detects their project markers ([detection rules](CONFIGURATION.md#languages)).
+For explicit control, list languages in the repo-root `ripr.toml`:
 
 ```toml
 [languages]
 enabled = ["rust", "typescript", "python"]
 ```
 
-With no `ripr.toml`, Python and TypeScript projects are detected and enabled
-automatically; a `ripr.toml` with `enabled = ["rust"]` keeps both off. A
-binary without the matching Cargo feature errors for Python and ignores
-detection silently for TypeScript.
+`javascript` is accepted as an alias for `typescript`; list only one of them.
+To opt out, or to roll back, set `enabled = ["rust"]`. An explicit `ripr.toml`
+always overrides detection.
 
-This runtime opt-in is separate from build-time adapter availability. The
-default published `ripr` build includes the TypeScript/JavaScript and Python
-preview adapter features. Rust-only binaries can be built with:
+Build features are separate from this runtime switch. The default published
+build includes both preview adapters; `cargo build -p ripr --no-default-features
+--features lang-rust` builds a Rust-only binary. On that binary:
 
-```bash
-cargo build -p ripr --no-default-features --features lang-rust
-```
+- with no `ripr.toml`, detected Python markers are a configuration error, while
+  detected TypeScript markers are ignored silently;
+- a `ripr.toml` that lists `python` or `typescript` fails closed with an error
+  naming the missing Cargo feature, and the editor shows the adapter as
+  unavailable instead of publishing preview diagnostics.
 
-If a Rust-only binary reads config that enables `typescript` or `python`, it
-fails closed with a configuration error naming the missing Cargo feature. The
-editor should surface that unavailable-adapter status instead of publishing
-preview diagnostics.
+Check the result with `ripr doctor --root .`. It prints `Detected languages`;
+add `--verbose` to see `Enabled languages`. On a root without `Cargo.toml` or
+`.rs` files, the Rust toolchain checks are skipped rather than failed.
 
-Use the smallest list that matches the repository. For a Python-only preview
-evaluation in an otherwise Rust repo, use:
-
-```toml
-[languages]
-enabled = ["rust", "python"]
-```
-
-Confirm the loaded configuration:
-
-```bash
-ripr doctor --root .
-```
-
-`doctor` should show the loaded config and enabled languages. Missing
-`ripr.toml` remains healthy. On a root with no Rust markers (no `Cargo.toml`
-or `.rs` files), the `Cargo.toml`, `cargo`, and `rustc` checks are reported as
-skipped with the reason instead of failing, so a Python-only or
-TypeScript-only repository does not need a Rust toolchain for `doctor` to
-pass. With no Python project markers, the built-in
-Rust-only default is active. With Python project markers such as
-`pyproject.toml`, `setup.py`, `requirements.txt`, `pytest.ini`, `tox.ini`,
-`noxfile.py`, or Python files under `src/` or `tests/`, `ripr` enables Python
-preview analysis for that repository root.
-
-An explicit `ripr.toml` remains authoritative. To keep Python preview disabled
-in a Python-shaped repo, add:
-
-```toml
-[languages]
-enabled = ["rust"]
-```
-
-## Bun UB Advisory Profile
-
-Bun stable-byte review can opt into the calibrated TypeScript-family preview
-profile with an explicit language list (detection does not turn on the
-profile):
-
-```toml
-[languages]
-enabled = ["rust", "typescript"]
-
-[profiles.bun_ub]
-test_roots = [
-  "test/js/**/*.test.ts",
-  "test/js/**/*.test.js",
-]
-bridge_hints = "ripr.bun.bridge.toml"
-```
-
-The `typescript` adapter covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`,
-`.jsx`, `.mjs`, and `.cjs` files, so the
-profile does not add a separate `javascript` language key. `profiles.bun_ub`
-is advisory configuration only: it records test roots and the bridge-hint file
-for Bun Blob / ArrayBuffer cross-language evidence, and `ripr doctor --root .`
-reports it when present. It does not run `tsc`, start `tsserver`, execute
-Bun/Jest/Vitest, generate tests, edit source, affect gates, badges, baselines,
-or RIPR Zero, or promote TypeScript/JavaScript beyond preview.
-
-Use the [Bun UB TypeScript preview runbook](BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md)
-for the operator loop that reads `rust_ungripped_ts_discriminated`,
-`rust_ungripped_ts_missing_discriminator`, `ts_mention_not_observer`, and
-`bridge_unknown` results, plus
-`public_reachable_panic_boundary_unrevealed` FFI limitation receipts.
+Bun stable-byte review has an opt-in `[profiles.bun_ub]` profile; see the
+[Bun UB TypeScript preview runbook](BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md).
 
 ## What Diff Analysis Refuses
 
-Diff analysis refuses vendored, built, and generated TypeScript/JavaScript
-trees before they enter the changed-file count: `node_modules`, `dist`,
-`build`, `coverage`, `vendor`, `__generated__`, and the repository tooling
-directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
-`.direnv`). `*.generated.*` files and minified bundles (`*.min.js`,
-`*.min.mjs`, `*.min.cjs`) are refused the same way. Near-misses such as
-`src/build.ts`, `src/docs.ts`, `generated.ts` and `admin.js` stay ordinary source.
-Changed files under a `docs/` directory (a documentation-site package such as
-`packages/docs`) are skipped the same way in diff and repo analysis (repo mode
-counts them as skipped files); the workspace walk still indexes `docs/` for
-related-test evidence. A library that really lives under `docs/` opts back
-in with `[languages.typescript] handwritten_files`. Unlike Python, this
-adapter has no excluded-role ledger, so those trees are omitted entirely
-rather than counted as an excluded role. A repair packet may still name a
-Jest/Vitest, Node, Cypress, Jasmine, or `__tests__` test path as its edit
-target; a production file cannot.
+Vendored, built, and generated files never count as changed source:
+`node_modules`, `dist`, `build`, `coverage`, `vendor`, `__generated__`,
+`*.generated.*`, minified bundles (`*.min.js`), TypeScript-family files under
+`docs/`, and generated Python such as `*_pb2.py`. Admit hand-written source
+under an excluded directory with `handwritten_files`
+([configuration](CONFIGURATION.md#languages)).
 
 ## Run The Local Preview Loop
 
-Start with the normal first-run loop:
-
 ```bash
 ripr pilot --root .
-```
-
-For diff-scoped output:
-
-```bash
 ripr check --root . --format human
+mkdir -p target/ripr/reports
 ripr check --root . --json > target/ripr/reports/check.json
 ```
 
 Read preview findings as syntax-first advisory evidence:
 
-- `language = "typescript"` or `language = "python"` identifies the adapter.
-- `language_status = "preview"` means the finding is opt-in and advisory.
-- `owner_kind` explains the syntactic owner shape when known.
+- `language` names the adapter (`typescript`, `javascript`, `python`). Rust
+  findings may omit it; a missing value means Rust.
+- `language_status = "preview"` marks advisory evidence.
+- `owner_kind` gives the syntactic owner shape when known.
 - `static_limit_kind` names a known static limitation instead of hiding it.
-- Python `missing_discriminators` are syntax-derived preview repair evidence
-  only. Direct weak findings may name boundary, return, exception, field, or
-  output/log/call-effect discriminators; heuristic, no-path, and static-limit
-  findings do not become safe repair work.
-- Detectable generated Python files such as `*_pb2.py`, `*_pb2_grpc.py`,
-  `*.generated.py`, `*_generated.py`, and `generated_*.py` are excluded from
-  preview diff analysis instead of being routed as repairable behavior changes.
+- Python `missing_discriminators` are syntax-derived. Only direct weak findings
+  become repair work; heuristic, no-path, and static-limit findings do not.
 
-Python repair routing has a separate scoped support-tier row (see
-[Support tiers](status/SUPPORT_TIERS.md) and the projection above) for
-selected pytest/unittest workflows. That row covers direct weak findings that
-carry a canonical gap, missing discriminator, suggested test target, verify
-command, stop conditions, bounded agent packet, and before/after receipt. It
-does not promote broader Python static facts, static limits, generated CI,
-gates, badges, baselines, or RIPR Zero.
+Python repair routing for selected pytest/unittest workflows has its own row in
+[Support tiers](status/SUPPORT_TIERS.md). It covers direct weak findings with a
+canonical gap, missing discriminator, test target, verify command, stop
+conditions, bounded agent packet, and before/after receipt. It does not promote
+other Python evidence, generated CI, gates, badges, baselines, or RIPR Zero.
 
-The exposure class still uses RIPR's normal conservative vocabulary:
-`exposed`, `weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
+Exposure classes keep RIPR's conservative vocabulary: `exposed`,
+`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
 `infection_unknown`, `propagation_unknown`, and `static_unknown`.
 
 ## Interpret Static Limits
 
-Static limits are part of the finding context, not a separate verdict. They
-explain where syntax-first analysis can see a useful shape but cannot infer the
-runtime behavior. See [Static limits](STATIC_LIMITS.md) for the user-facing
-interpretation guide and integration rules.
+A static limit marks where syntax-first analysis sees a shape but cannot infer
+runtime behavior. It is context on a finding, not a verdict, and does not erase
+a useful related test or strong oracle. See [Static limits](STATIC_LIMITS.md).
 
 | Static limit | How to read it |
 | --- | --- |
-| `dynamic_dispatch` | The call target is selected dynamically, such as computed member calls (`obj[name]` followed by invocation) or `getattr(obj, name)(...)`. |
-| `metaprogramming` | The code shape can change behavior through metaprogramming, such as decorators, proxies, or metaclasses. |
+| `dynamic_dispatch` | The call target is chosen at runtime, such as a computed member call (`obj[name]` then invoked) or `getattr(obj, name)(...)`. |
+| `metaprogramming` | Decorators, proxies, or metaclasses may change behavior. |
 | `missing_import_graph` | The adapter did not resolve a full project import graph. |
-| `decorator_indirection` | A Python decorator may change the callable boundary. Simple route decorators such as `@api.post(...)` can still be treated as static route metadata when the changed body has a supported repair shape. `functools.lru_cache`, `functools.cache`, and `functools.cached_property` are not this limit when they bind from `functools`. |
+| `decorator_indirection` | A Python decorator may change the callable boundary. Simple route decorators such as `@api.post(...)` and `functools` caching decorators are not this limit. |
 | `mocked_module` | A test replaces or mocks the module or symbol under review. |
 | `opaque_custom_assertion_helper` | A Python test uses a custom assertion helper whose body is not inspected. |
-| `property_based_test` | A Python test uses generated inputs, such as Hypothesis `@given(...)`, whose concrete cases are not known statically. |
-| `unresolved_pytest_fixture` | A Python pytest test depends on fixture-sourced values whose concrete inputs or expected values are not known statically. |
-| `unsupported_syntax` | The parser or preview adapter found syntax outside the current preview contract. |
-
-A static limit does not automatically erase a useful related test or strong
-oracle. It means the reviewer should keep the limitation visible while deciding
-the next test change.
+| `property_based_test` | A Python test uses generated inputs, such as Hypothesis `@given(...)`. |
+| `unresolved_pytest_fixture` | A pytest test depends on fixture values that are not known statically. |
+| `unsupported_syntax` | The parser found syntax outside the current preview contract. |
 
 ## Read Preview Confidence
 
-TypeScript and JavaScript preview findings carry a `confidence` number that is
-a per-class constant (`0.6` exposed, `0.4` weakly exposed or no static path,
-`0.2` static unknown). It is a preview ordinal, not a probability, and it is
-not on the same scale as Rust's `confidence`. The number is unchanged by
-#10700; what the finding adds is the reason it is held there:
-
-- `confidence_basis` in `check` and `context` JSON (`explain` prints the `Why capped:` text line only) is a list of
-  `{code, summary}` capping reasons: `preview_stages_not_modeled`,
-  `syntax_first_no_type_resolution`, and the evidence-specific
-  `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
-  `observation_not_confirmed` or `discriminator_not_established`.
-- `confidence_why_capped` is the one plain-English line; human `check` and
-  `explain` print it as `Why capped:` under the confidence.
-- Rust findings carry neither field. The basis explains the score only; it
-  never changes the class, actionability or repair-packet readiness. The
-  reasons live in the shared `ConfidenceCap` domain type; the TypeScript and
-  Python classifiers both derive them (Python: #12419).
+TypeScript, JavaScript, and Python preview `confidence` is a per-class constant
+(`0.6` exposed, `0.4` weakly exposed or no static path, `0.2` static unknown):
+an ordinal, not a probability, and not on Rust's scale. `confidence_basis` in
+JSON lists the capping reasons and human output prints `Why capped:`; neither
+changes the class, actionability, or repair-packet readiness.
 
 ## Read Mixed-Language Reports
 
-In JSON outputs, preview findings remain in the same arrays as Rust findings.
-Filter by `language` and `language_status` when a tool needs to separate them.
-
-In human output, preview language/status and static-limit lines appear before
-the evidence narrative. In review artifacts, preview evidence remains advisory
-unless a later policy explicitly promotes it.
-
-Promotion requires a policy-owned preview promotion packet, not just adapter
-routing. The scoped Python repair-routing support-tier review is limited to
-selected pytest/unittest repair work and keeps broader Python facts advisory.
-Future promotion beyond that scope still requires fixture matrix coverage,
-dogfood receipts, related-test accuracy review, static-limit taxonomy coverage,
-false-positive review, false repair packet review, surface consistency, and
-policy-owner signoff. JavaScript evidence shares the TypeScript-family adapter,
-but it stays JavaScript preview evidence unless a later packet explicitly names
-that scope.
-
-Useful references:
-
-- [Output schema](OUTPUT_SCHEMA.md) for field contracts.
-- [Support tiers](status/SUPPORT_TIERS.md) for maturity and trust boundaries.
-- [Python repair routing proposal](proposals/RIPR-PROP-0017-python-repair-routing-lane.md)
-  for the end-state repair-card and receipt loop and its scoped
-  support-tier boundary.
-- [Python repair routing usable-alpha closeout](handoffs/2026-05-31-python-repair-routing-usable-alpha-closeout.md)
-  for the proof and remaining limits behind the scoped support-tier row.
-- [Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md) for the
-  proof required before a preview language/class can be reviewed for stronger
-  status.
-- [Capability matrix](CAPABILITY_MATRIX.md) for proof artifacts.
-- [Language adapter preview dogfood receipts](handoffs/2026-05-13-language-adapter-preview-receipts.md)
-  for the checked TypeScript/Python preview receipt cases.
-- [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
-- [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
-- [Ruby preview static facts](specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract only; no adapter shipped).
-- [Go preview static facts](specs/RIPR-SPEC-0414-go-preview-static-facts.md) (proposed contract only; no adapter shipped).
+Preview findings share JSON arrays with Rust findings; filter by `language` and
+`language_status` to separate them. Human output prints the preview label and
+static limit before the evidence. Field contracts are in
+[Output schema](OUTPUT_SCHEMA.md), maturity in
+[Support tiers](status/SUPPORT_TIERS.md), and limits in
+[Static limits](STATIC_LIMITS.md).
 
 ## Repo-Mode Analysis: Rust Full, Python and TypeScript Bounded Preview
 
-The preview adapters (TypeScript, Python) implement diff-mode static exposure
-analysis. Repo-mode analysis differs per adapter:
+A zero-seam repo report for a TypeScript or Python workspace is not clean
+coverage. The seam formats below render only Rust seams; preview findings come
+from diff-scoped `ripr check` or the shared repo analysis result.
 
-- **Python** no longer returns an empty `LanguageRepoResult`: `analyze_repo`
-  runs a bounded native evidence pass (#3554). It selects a role-partitioned
-  working set under the shared repo working-set cap (#2109; default 800,
-  override with `RIPR_MAX_REPO_INDEX_FILES`), builds native Python behavior,
-  owner, relation, and oracle evidence over the selected files, and returns
-  findings with the same shape as diff-mode Python findings — preview-tier,
-  native `gap:python:` canonical identity, never bridged to Rust seam
-  vocabulary. Test and helper files contribute evidence but never seed
-  production findings. Generated, environment, cache, and vendor paths are
-  excluded with counts. A capped or partial run (working-set cap, parse
-  failure, incomplete discovery, ambiguous roles) keeps its computed
-  findings and discloses a partial language run on the shared
-  `language_runs` channel, which gates fail closed on: a capped or partial
-  Python repo run can never back a full-denominator, all-clear, badge, or
-  baseline claim. The scope is the typed `Finding.analysis_scope` (set only via
-  `Finding::mark_repo_scoped`, which also derives the compatibility evidence
-  line; consumers read the typed field and fail closed if the two disagree). The
-  typed scope is emitted in the hand-rendered check report JSON as
-  `findings[].analysis_scope: "repo"` for repo findings only (omitted for diff
-  scope, so diff bytes are unchanged); check-output consumers such as the gap
-  ledger read that field, never the evidence line, and a contradiction fails
-  closed.
-  Repo-mode Python findings carry the evidence line
-  `analysis_scope: repo` and never get a `python_repair_card` or repair
-  routing: the capability registry has no repo-mode `repair_routing` cell for
-  Python (absent = `not_proven`, #5531), so they differ from diff-mode
-  findings there. The gap ledger may still carry an advisory non-repair
-  record for them; its reason, like the human safe-next-action line, is
-  scope-specific and registry-derived from the typed scope (`repo-mode
-  findings have no repair routing (python/any/repo/repair_routing is
-  not_proven)`) rather than a test-placement reason, which stays the
-  diff-mode wording. A workspace with no Python production source is an honest
-  zero with zero counts, not a fabricated limitation. Broader Python repo
-  support remains preview until #1160's tier ruling.
-- **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
-  selects the production `.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs` files under
-  the same shared cap (#2109; default 800, `RIPR_MAX_REPO_INDEX_FILES`) and
-  runs the diff-mode owner/test/oracle/probe producers with every non-blank
-  line of each selected file treated as added (whole-file, not diff-scoped), keeping one finding per owner, probe family, delta, exposure class and changed expression (identical repeated lines collapse; distinct behaviors stay separate rows). Findings keep
-  their `typescript` or `javascript` language identity and preview status;
-  no Rust `RepoSeam` is fabricated. Test, declaration, generated, vendor and
-  build files never seed findings (tests still feed the evidence index). A
-  capped run, a truncated walk, an unreadable root, unreadable or
-  unparseable files, or typed indexing limitations disclose a partial
-  language run whose `partial_reason` starts with a stable `typescript_repo_*:`
-  code (`capped`, `discovery_truncated`, `links_skipped`, `unread`, `unread_tests`,
-  `test_parse_failure`, `limitations`, `root_unreadable`), joined by ` | `,
-  and can never back an all-clear, badge or baseline claim; a
-  fully discovered workspace without TS/JS production source is an honest
-  zero. The cap bounds the analysis subjects (the selected production
-  files); the test/evidence index stays workspace-wide and is bounded by
-  `RIPR_TS_MAX_WORKSPACE_FILES` and the `RIPR_TS_MAX_FILE_READ_BYTES` /
-  `RIPR_TS_MAX_WORKSPACE_READ_BYTES` read budgets, with any refusal named as a
-  partial reason. Declared `handwritten_files` are admitted as in diff mode.
-  Alongside the disclosure string, each repo-mode run reports typed per-language
-  file accounting (#6466: discovered, selected, skipped, omitted, and the first
-  fired cap) into the internal language outcome. Two caps are named with their
-  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript candidate source files, with a 5x total-entry backstop) and
-  `RIPR_MAX_REPO_INDEX_FILES` (selection, TypeScript and Python). Counts that
-  would only be lower bounds after truncated or unreadable discovery are
-  unknown, never zero; this does not change the public `LanguageRun` wire.
-  No support-tier, gate or baseline promotion.
-  Repo-mode TypeScript/JavaScript findings carry an `analysis_scope: repo` evidence line and never project a
-  repair packet or `repair_packet_ready: true`, because the capability
-  registry has no repo-mode `repair_routing` cell for these languages (#5531);
-  repair routing stays diff-mode only. The closed-packet reason shown for such
-  a finding names that scope (`repo-mode findings have no repair routing
-  (typescript/any/repo/repair_routing is not_proven)`), from the typed scope,
-  followed by `; ` and the finding's specific `why_not_actionable` reason when
-  one exists. This scope-led text is the `why_not_actionable` value in JSON,
-  SARIF, LSP diagnostics/hover, the TypeScript preview card and the human
-  `limitation:` row for repo-scoped TS/JS findings; diff-mode text is unchanged.
+Repo mode for Python and TypeScript/JavaScript analyzes a capped working set of
+production files (default 800, `RIPR_MAX_REPO_INDEX_FILES`). A capped or
+partial run discloses a partial `language_runs` entry and can never back an
+all-clear, badge, or baseline claim. Repo-mode findings carry
+`analysis_scope: "repo"` and get no repair routing:
+python/any/repo/repair_routing is not_proven, and
+typescript/any/repo/repair_routing is not_proven, in the registry. Diff mode
+caps the Python walk too (`RIPR_PYTHON_MAX_WORKSPACE_FILES`, default 4000), and
+refused files appear as named limitations, never silent skips.
 
-Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
-`repo-seams-*`, `repo-badge-*`, `agent-seam-packets-json`) render the
-Rust seam inventory (and Perl only in an opt-in `lang-perl` build, whose
-registry cells are `not_proven`) and do not render preview-language findings, so a
-Python-only or TypeScript-only workspace still shows zero seams in those
-formats — a known limitation, not a clean result. Repo-exposure emits a
-`typescript_diff_first` limitation entry for TS/JS-only workspaces and a
-`python_diff_first` limitation entry for Python-only workspaces, both
-pointing at diff-scoped `ripr check`. Neither entry fabricates seams.
-Python's repo-mode evidence is still consumed through the shared repo
-analysis result (`run_repo_analysis` / `check_workspace_repo`): its
-findings, per-language file counts, and `language_runs` partial-run
-disclosure — no seam renderer reconstructs Python semantics.
+| Format | Rust repo | TypeScript repo | Python repo |
+| --- | --- | --- | --- |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
+| `repo-seams-json` / `repo-seams-md` | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
+| `repo-badge-json` / `repo-badge-shields` | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
+| `agent-seam-packets-json` | full | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
 
-Diff mode bounds the Python workspace walk the same way the TypeScript
-adapter does: at most 4000 discovered `.py` files
-(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, sized so a Django-sized workspace
-completes; the repo-mode `RIPR_MAX_REPO_INDEX_FILES` working set is a
-separate bound), a 16 MiB per-file read cap
-(`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
-budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
-and unreadable changed files are named typed limitations on the diff
-result, never silent skips. The file-count cap only refuses unchanged context: changed
-`.py` files are kept past it, while the byte budgets still apply (#10461).
-The walk streams each discovered file into a selection bounded by that cap,
-so discovery holds at most the cap plus the changed files in memory (#10594).
-
-| Format | Rust repo | Perl repo | TypeScript repo | Python repo |
-| --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
-| `repo-seams-json` / `repo-seams-md` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
-| `repo-badge-json` / `repo-badge-shields` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; capped/partial runs never badge-eligible |
-| `agent-seam-packets-json` | full | opt-in `lang-perl` build only; registry `not_proven` | seams: none rendered; evidence via repo analysis result | seams: none rendered; evidence via repo analysis result |
-
-Diff-scoped `check` formats (`check --json`, `check --format human`, SARIF from
-a diff) work normally on Rust, TypeScript/JavaScript and Python; the Perl diff
-and repo static-facts cells are `not_proven` in the registry. The base/head `review-comments`
-path is the one diff-scoped exception (#6832): it projects seam-backed
-findings, and preview-language findings are not seams, so a Python or
-TypeScript diff yields an empty report (`comments: 0`, run status
-`complete`) even when `ripr check` finds actionable evidence — the emitted
-warning names this exclusion instead of reading as "no findings". To render
-preview-language findings as review comments, build a gap decision ledger
-from the diff-scoped check output and pass it explicitly:
+`review-comments` projects only seam-backed findings, so a Python or TypeScript
+diff yields `comments: 0` even when `ripr check` finds evidence. Render preview
+findings as review comments through a gap ledger:
 
 ```bash
 mkdir -p target/ripr/reports target/ripr/review
@@ -423,91 +187,34 @@ ripr reports gap-ledger --check-output target/ripr/reports/check-output.json --r
 ripr review-comments --base <pr-base> --head <pr-head> --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --out target/ripr/review/comments.json
 ```
 
-The Perl column assumes a ripr built with Cargo feature `lang-perl` plus a
-compatible Perl fact packet or exporter. Default builds do not compile the Perl
-adapter, and the canonical exporter (`perl-ripr-facts`) is not yet published, so
-no released ripr build plus exporter combination analyzes Perl yet; a released
-install reports changed Perl files as not analyzed.
-
-Do not interpret a zero-seam repo-mode report for TypeScript or Python as
-evidence of clean coverage; the seam renderers do not show preview findings.
-Run `ripr check --diff <diff>` against a representative PR diff, or read the
-repo analysis result. For both languages, read repo-mode results
-together with the disclosed run status: a capped or partial run covers only
-its selected working set, and preview-tier exposure evidence is draft-mode
-input, not a coverage claim.
-
 ## Editor Workflow
 
-The VS Code extension can activate on TypeScript, TSX, JavaScript, JSX, and
-Python files, but analysis still follows repo language selection. TypeScript
-and JavaScript require `[languages]`; Python may be selected by project
-detection when `ripr.toml` is absent. If an explicit repo config does not enable
-a preview language, that language should not produce preview diagnostics.
+The VS Code extension activates on TypeScript, TSX, JavaScript, JSX, and Python
+files, but analysis follows the repository's language selection: detection when
+no `ripr.toml` exists, otherwise `[languages]`. A language the config leaves
+out produces no preview diagnostics.
 
-When preview diagnostics appear:
-
-- hover shows the preview syntax-first and advisory boundary before the RIPR
-  evidence;
-- static-limit kinds appear before action language;
-- actions use structured diagnostic data, not parsed prose;
-- Rust saved-workspace behavior remains the default path.
-
-Use the normal editor recovery commands when diagnostics look stale:
-
-```text
-ripr: Show Status
-ripr: Show Output
-ripr: Restart Server
-Refresh Analysis - Saved Workspace Check
-```
+Preview hovers show the syntax-first advisory boundary and any static limit
+before the RIPR evidence; actions use structured diagnostic data. If
+diagnostics look stale, run `ripr: Show Status`, `ripr: Show Output`,
+`ripr: Restart Server`, or `ripr: Refresh Full Analysis`.
 
 ## Generated CI Workflow
 
-Generate or refresh the advisory GitHub workflow with:
-
-```bash
-ripr init --ci github
-```
-
-Generated CI remains advisory by default. When `ripr doctor` reports configured
-preview languages, the job summary adds a `Language preview grouping` section
-for TypeScript, JavaScript, and Python evidence. Rust-only configuration keeps
-that section hidden at runtime.
-
-When TypeScript preview is configured, the summary treats TypeScript-family
-adapter output as separately labeled `typescript` and `javascript` preview
-groups. Each group reports advisory artifact counts, preview-status counts,
-static-limit context, actionability state/category counts,
-repair-packet-ready counts, and `gate_impact = none`.
-
-The generated summary may group and summarize preview artifacts, but pass/fail
-authority remains with explicit gate-decision artifacts when a repository has
-configured them. The summary itself is not a gate.
+`ripr init --ci github` generates an advisory workflow. When preview languages
+are enabled, its job summary adds a `Language preview grouping` section with
+one group per enabled preview language and `gate_impact = none`. Enabling
+`typescript` adds both a `typescript` and a `javascript` group; Rust-only
+repositories do not see the section. The summary is not
+a gate: pass/fail authority stays with explicitly configured gate decisions.
 
 ## Roll Back Preview Evidence
 
-Remove the preview language from `ripr.toml`:
-
-```toml
-[languages]
-enabled = ["rust"]
-```
-
-Then refresh the relevant surface:
-
-```bash
-ripr doctor --root .
-ripr pilot --root .
-```
-
-For CI, commit the config change and rerun the generated workflow. For editor
-state, save the workspace file or run `Refresh Analysis - Saved Workspace
-Check`.
-
-Rollback does not require deleting generated reports by hand. New runs should
-stop producing preview findings for disabled languages. Treat older artifacts
-as stale evidence from the prior configuration.
+Set `enabled = ["rust"]` (see [Enable Preview Adapters](#enable-preview-adapters)),
+then rerun `ripr doctor --root .` and `ripr pilot --root .`. In CI, commit the
+change and rerun the workflow; in the editor, save a file or run
+`ripr: Refresh Full Analysis`. Older reports are stale evidence from the prior
+configuration; you do not need to delete them.
 
 ## What Not To Infer
 
@@ -522,7 +229,6 @@ Preview language evidence does not mean:
   default;
 - RIPR edited source files or generated tests.
 
-The useful claim is narrower: for enabled (configured or detected) preview languages, RIPR can
-surface syntax-first static evidence, related tests, missing discriminators,
-static limits, and repair-oriented next actions in the same review surfaces used
-by Rust.
+The useful claim is narrower: for enabled preview languages, RIPR surfaces
+syntax-first static evidence, related tests, missing discriminators, static
+limits, and repair-oriented next actions in the same review surfaces as Rust.

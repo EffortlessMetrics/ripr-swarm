@@ -30,6 +30,23 @@ pub(crate) enum Product {
     LocalTestMacros,
     FunctionOracles,
     ForeignEntryImport,
+    SourceNamings,
+    CallMakingClosure,
+    OwnerItemScan,
+    ModuleScopes,
+    ClosureArgumentPositions,
+    InvokedCallbackParams,
+    ReceiverLetBindings,
+    MacroSites,
+    DeclaredValueNames,
+    IncludeDirectives,
+    EmbedFileScan,
+    StrippedFileImports,
+    ItemSyntax,
+    FnCfgGates,
+    LocalMacroCalls,
+    CfgGatesOfFn,
+    OwnerFoldPlan,
 }
 
 impl Product {
@@ -39,11 +56,71 @@ impl Product {
             Self::LocalTestMacros => "local_test_macros",
             Self::FunctionOracles => "function_oracles",
             Self::ForeignEntryImport => "foreign_entry_import",
+            Self::SourceNamings => "source_namings",
+            Self::CallMakingClosure => "call_making_closure",
+            Self::OwnerItemScan => "owner_item_scan",
+            Self::ModuleScopes => "module_scopes",
+            Self::ClosureArgumentPositions => "closure_argument_positions",
+            Self::InvokedCallbackParams => "invoked_callback_params",
+            Self::ReceiverLetBindings => "receiver_let_bindings",
+            Self::MacroSites => "macro_sites",
+            Self::DeclaredValueNames => "declared_value_names",
+            Self::IncludeDirectives => "include_directives",
+            Self::EmbedFileScan => "embed_file_scan",
+            Self::StrippedFileImports => "stripped_file_imports",
+            Self::ItemSyntax => "item_syntax",
+            Self::FnCfgGates => "fn_cfg_gates",
+            Self::LocalMacroCalls => "local_macro_calls",
+            Self::CfgGatesOfFn => "cfg_gates_of_fn",
+            Self::OwnerFoldPlan => "owner_fold_plan",
         }
     }
 }
 
 type Key = (Product, [u8; 32]);
+
+/// Scoped memo consultations by outcome (#9575). Measurement only: the
+/// counters never feed a memo decision, so hit/miss behavior is identical
+/// whether or not a caller reads them. Calls outside a scope consult no
+/// entry and are not counted.
+static MEMO_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static MEMO_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Cumulative scoped hit/miss counts since process start. Callers that
+/// measure one pass snapshot before and after and report the delta.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MemoStats {
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
+impl MemoStats {
+    /// Counts added since `earlier` (saturating, so a wrapped or foreign
+    /// snapshot cannot underflow).
+    pub(crate) fn since(self, earlier: MemoStats) -> MemoStats {
+        MemoStats {
+            hits: self.hits.saturating_sub(earlier.hits),
+            misses: self.misses.saturating_sub(earlier.misses),
+        }
+    }
+}
+
+pub(crate) fn memo_stats() -> MemoStats {
+    use std::sync::atomic::Ordering;
+    MemoStats {
+        hits: MEMO_HITS.load(Ordering::Relaxed),
+        misses: MEMO_MISSES.load(Ordering::Relaxed),
+    }
+}
+
+fn record_memo_outcome(hit: bool) {
+    use std::sync::atomic::Ordering;
+    if hit {
+        MEMO_HITS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        MEMO_MISSES.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 #[derive(Default)]
 struct Memo {
@@ -119,8 +196,10 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
     crate::analysis::probe_read_trace::memo(product.name(), &key.1);
     let cached = MEMO.with(|memo| memo.borrow().entries.get(&key).cloned());
     if let Some(value) = cached.as_ref().and_then(|value| value.downcast_ref::<T>()) {
+        record_memo_outcome(true);
         return value.clone();
     }
+    record_memo_outcome(false);
     let value = compute();
     MEMO.with(|memo| {
         memo.borrow_mut()
@@ -151,21 +230,62 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     sources: &[&str],
     compute: impl Fn(&str) -> T + Sync,
 ) -> Vec<T> {
+    let queries: Vec<MemoQuery<'_>> = sources
+        .iter()
+        .map(|source| MemoQuery {
+            discriminator: 0,
+            extra: "",
+            source,
+        })
+        .collect();
+    memoize_many_with(product, &queries, |query| compute(query.source))
+}
+
+/// One [`memoize_with`] consultation for [`memoize_many_with`]: the same
+/// discriminator, extra query and source the serial call keys on.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MemoQuery<'a> {
+    pub(crate) discriminator: usize,
+    pub(crate) extra: &'a str,
+    pub(crate) source: &'a str,
+}
+
+/// Whether the calling thread holds a scope, so a product stored now is
+/// served to a later [`memoize_with`] on this thread. A batch that only warms
+/// the memo for a later serial fold checks this first: without a scope the
+/// warmed products are dropped and the fold recomputes them.
+pub(crate) fn active() -> bool {
+    MEMO.with(|memo| memo.borrow().depth > 0)
+}
+
+/// [`memoize_many`] for queries that also carry a discriminator and an extra
+/// query: each result is exactly what `memoize_with(product,
+/// query.discriminator, query.extra, query.source, || compute(query))`
+/// returns, in order, and `compute` runs once per distinct key the scope has
+/// not yet stored, on the rayon pool unless the caller is a pool worker. The
+/// same caveats as [`memoize_many`] apply: the memo is only touched on the
+/// calling thread and `compute` runs without a scope.
+#[track_caller]
+pub(crate) fn memoize_many_with<T: Clone + Send + 'static>(
+    product: Product,
+    queries: &[MemoQuery<'_>],
+    compute: impl Fn(&MemoQuery<'_>) -> T + Sync,
+) -> Vec<T> {
     use rayon::prelude::*;
     let fan_out = rayon::current_thread_index().is_none();
-    let run = |items: &[&str]| -> Vec<T> {
+    let run = |items: &[&MemoQuery<'_>]| -> Vec<T> {
         if fan_out {
-            items.par_iter().map(|source| compute(source)).collect()
+            items.par_iter().map(|query| compute(query)).collect()
         } else {
-            items.iter().map(|source| compute(source)).collect()
+            items.iter().map(|query| compute(query)).collect()
         }
     };
-    if MEMO.with(|memo| memo.borrow().depth == 0) {
-        return run(sources);
+    if !active() {
+        return run(&queries.iter().collect::<Vec<_>>());
     }
-    let keys: Vec<Key> = sources
+    let keys: Vec<Key> = queries
         .iter()
-        .map(|source| key(product, 0, "", source))
+        .map(|query| key(product, query.discriminator, query.extra, query.source))
         .collect();
     for key in &keys {
         crate::analysis::probe_read_trace::memo(product.name(), &key.1);
@@ -186,19 +306,29 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
         .filter(|(_, key)| recall(key).is_none() && seen.insert(**key))
         .map(|(position, _)| position)
         .collect();
-    let missing_sources: Vec<&str> = missing.iter().map(|position| sources[*position]).collect();
-    let computed = run(&missing_sources);
+    // Each distinct unseen key is one miss; every other consulted key —
+    // already stored, or a repeat of a key this call is about to store —
+    // is served from the scope and counts as a hit (#9575).
+    for _ in 0..missing.len() {
+        record_memo_outcome(false);
+    }
+    for _ in missing.len()..keys.len() {
+        record_memo_outcome(true);
+    }
+    let missing_queries: Vec<&MemoQuery<'_>> =
+        missing.iter().map(|position| &queries[*position]).collect();
+    let computed = run(&missing_queries);
     MEMO.with(|memo| {
         let mut memo = memo.borrow_mut();
         for (position, value) in missing.iter().zip(computed) {
             memo.entries.insert(keys[*position], Rc::new(value));
         }
     });
-    // Every key is stored now; a source repeated in `sources` reads the one
-    // product computed for its text, as the serial calls would.
+    // Every key is stored now; a query repeated in `queries` reads the one
+    // product computed for its key, as the serial calls would.
     keys.iter()
-        .zip(sources)
-        .map(|(key, source)| recall(key).unwrap_or_else(|| compute(source)))
+        .zip(queries)
+        .map(|(key, query)| recall(key).unwrap_or_else(|| compute(query)))
         .collect()
 }
 
@@ -338,6 +468,35 @@ mod tests {
             seen.iter().all(|id| *id == caller),
             "a pool worker computes in line instead of fanning out"
         );
+    }
+
+    #[test]
+    fn memo_stats_count_scoped_hits_and_misses_only() {
+        // Deltas, not absolutes: parallel tests share the process counters,
+        // and other activity can only add to a delta. Calls outside a scope
+        // return before any counter is touched (see `memoize_with`), so
+        // only the scoped sequence below is asserted.
+        let calls = Cell::new(0);
+        let before = super::memo_stats();
+        {
+            let _scope = enter();
+            counted(&calls, Product::SourceNamings, 41, "scoped-9575");
+            counted(&calls, Product::SourceNamings, 41, "scoped-9575");
+            counted(&calls, Product::SourceNamings, 41, "scoped-other-9575");
+            let batch = super::memoize_many(
+                Product::SourceNamings,
+                &["scoped-9575", "batch-9575", "batch-9575"],
+                |source| source.len(),
+            );
+            assert_eq!(batch.len(), 3);
+        }
+        let delta = super::memo_stats().since(before);
+        // Serial: 1 miss + 1 hit + 1 miss. Batch: "scoped-9575" hits under
+        // the plain key only if discriminator/extra match — it does not
+        // (serial used discriminator 41), so the batch pays 2 misses and
+        // the repeated text is 1 hit.
+        assert!(delta.misses >= 4, "misses: {delta:?}");
+        assert!(delta.hits >= 2, "hits: {delta:?}");
     }
 
     #[test]

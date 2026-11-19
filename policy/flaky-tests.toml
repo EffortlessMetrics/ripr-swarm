@@ -176,13 +176,14 @@ id = "ts-binding-names-wall-clock-bound"
 test = "analysis::language::typescript::loop_count_guard::tests::binding_names_skip_defaults_and_keys"
 lane = "Required nextest lane"
 class = "wall-clock-bound"
-status = "open"
+status = "fixed"
 issue = 10483
 timing_dependent = true
 first_seen = "2026-10-25"
-evidence = ["run 40236320956 (job 121298726158, PR #10478)"]
+evidence = ["run 40236320956 (job 121298726158, PR #10478; original failure)", "PR #10493 merged as 8ba2eed9e2cddfb270f377011bf9c68649efd160; required run 40241738076", "PR #10493 comment 6404897841: correct reducer accepted, input-scaled-budget mutant assertion rejected", "issue #10483 comment 6680899281: bounded acceptance reconciliation"]
 symptom = "A 2 s wall-clock bound on 20,000-deep reductions failed under a loaded runner (about 0.2 s per unit locally)."
-root_cause = "A wall-clock bound cannot tell a slow runner from a quadratic reduction. Bound the work (steps or rescans, depth N versus 2N) instead."
+root_cause = "The original absolute 2 s ceiling was replaced by a calibrated 10k/20k depth comparison in #10493. The retained control accepted the correct reducer and rejected an input-scaled-budget mutant. This completes the original absolute-threshold claim; the replacement remains timing-dependent and establishes neither scheduler causality, universal scheduling immunity nor asymptotic proof."
+guard = "binding_names_skip_defaults_and_keys"
 
 [[flake]]
 id = "rust-only-routing-timeout-windows"
@@ -293,3 +294,28 @@ first_seen = "2026-10-22"
 evidence = ["#9804 report: two failing full-suite runs while validating #9803 (no run id recorded)"]
 symptom = "Error: \"expected the first refresh to fail\" with only queued and started refresh notices observed; passes standalone and fails identically on a clean base."
 root_cause = "Not established: the test is #[serial] but its over-the-wire refresh-failure window is wall-clock sensitive under CPU contention with about 128 non-serial tests."
+
+[[flake]]
+id = "lsp-disk-equality-shared-cache-reset"
+test = "lsp::backend::disk_bytes_equal_text_tests::same_length_buffer_checks_read_unchanged_disk_once"
+lane = "Rust-only feature lane (cargo test --no-default-features --features lang-rust: tests are threads of one process)"
+class = "shared-state"
+status = "fixed"
+issue = 13839
+first_seen = "2026-11-08"
+evidence = ["run 42509427189 (PR #13789, job 128819051627)", "#13912 records the same failure on #13885 (2d14215cbb) and #13856 (7c8378b831)"]
+symptom = "Error: \"expected 1 disk reads, got 2\" on PRs that do not touch LSP code; the test passes alone and under nextest."
+root_cause = "reset_disk_equality_read_cache_for_tests() cleared the process-wide DISK_EQUALITY_DIGEST_CACHE as well as the thread-local read counter. Under cargo test the module's tests run in parallel threads, so a peer test's reset evicted this test's cached digest between its first and second lookup and the next lookup read the disk again. Fixed by #13912: the reset now clears only the calling thread's counter, and every test digests its own per-thread temp path. nextest runs one process per test, so the required lane never showed it."
+guard = "peer_reset_keeps_a_cached_disk_digest"
+
+[[flake]]
+id = "python-runtime-deadline-live-descendant-at-return"
+test = "installed_python_typescript_journeys::python_runtime_deadline_reaps_primary_and_stops_descendant"
+lane = "merge-queue test shard 4 (Linux)"
+class = "process-tree"
+status = "fixed"
+first_seen = "2026-11-13"
+evidence = ["merge-queue run for PR #14491, test shard 4 (a Rust analyzer change; run id not retained)", "#14503"]
+symptom = "Error: \"shared runtime owner left a live descendant at return\" on a queue entry that does not touch process ownership."
+root_cause = "Read from source, not reproduced: the shared process owner sent SIGKILL to the owned group at the deadline and reaped its leader without waiting for the other group members to reach a terminal state, so the test's /proc read straight after return could still see the descendant running under load. Fixed by #14503: on Linux the owner observes group quiescence under one signal-bound settlement deadline before it reaps the leader, and an expired or unobservable settlement is a retained cleanup failure rather than a success."
+guard = "linux_wait_refuses_expired_settlement_before_reaping"

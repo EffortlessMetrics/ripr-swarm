@@ -937,6 +937,11 @@ fn workflow_comment_trailing_backslash_does_not_hide_next_line() {
 const INIT_WORKFLOW_TEXT: &str =
     include_str!("../../../../crates/ripr/src/cli/commands/init_workflow.rs");
 
+/// #5409: the generated workflow installs through the `ripr-check` action, so
+/// the install step's target mapping and archive handling live in its
+/// `Install ripr` block.
+const INSTALL_STEP_TEXT: &str = include_str!("../../../../.github/actions/ripr-check/action.yml");
+
 /// Runner `$RUNNER_OS-$RUNNER_ARCH` label for a contract target, derived from
 /// the contract's own npm os/cpu identity rather than a second target list.
 fn runner_label(target: &contract::TargetContract) -> Result<String, String> {
@@ -957,7 +962,7 @@ fn runner_label(target: &contract::TargetContract) -> Result<String, String> {
 /// Every `Label) target=value ;;` arm of the generated install step, in source
 /// order, including the `*)` fallback.
 fn install_step_arm_lines() -> Vec<(String, String)> {
-    INIT_WORKFLOW_TEXT
+    INSTALL_STEP_TEXT
         .lines()
         .filter_map(|line| {
             let (label, rest) = line.trim().split_once(") target=")?;
@@ -1011,7 +1016,7 @@ fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), 
         "the `*)` fallback must keep target=\"\" (Cargo fallback route), never name a real target"
     );
     assert!(
-        INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.$ext""#),
+        INSTALL_STEP_TEXT.contains(r#"asset="ripr-server-v$version-$target.$ext""#),
         "the asset name must stay the contract's `ripr-server-v<version>-<target>.<archive>` shape"
     );
     Ok(())
@@ -1025,8 +1030,8 @@ fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), 
 fn generated_install_step_archive_and_executable_follow_the_contract() -> Result<(), String> {
     let contract = parsed_contract(CONTRACT_TEXT)?;
     assert!(
-        INIT_WORKFLOW_TEXT.contains("*-windows-*) ext=zip exe=ripr.exe ;;")
-            && INIT_WORKFLOW_TEXT.contains("*) ext=tar.gz exe=ripr ;;"),
+        INSTALL_STEP_TEXT.contains("*-windows-*) ext=zip exe=ripr.exe ;;")
+            && INSTALL_STEP_TEXT.contains("*) ext=tar.gz exe=ripr ;;"),
         "the installer's archive/executable selection drifted from the documented rule"
     );
     for target in &contract.target {
@@ -1071,19 +1076,24 @@ fn windows_x64_identity_is_contract_owned_and_mapped() -> Result<(), String> {
         "Windows ARM64 is not a contract target and must stay an explicit unsupported error"
     );
     assert!(
-        INIT_WORKFLOW_TEXT
+        INSTALL_STEP_TEXT
             .contains("Windows-ARM64) echo \"::error::Unsupported runner Windows-ARM64:")
-            && INIT_WORKFLOW_TEXT.contains("Use a Windows x64 runner.\"; exit 1 ;;"),
+            && INSTALL_STEP_TEXT.contains("Use a Windows x64 runner.\"; exit 1 ;;"),
         "Windows-ARM64 must be an explicit unsupported error arm"
     );
     Ok(())
 }
 
-/// #6245 falsifier 7 (partial): the install step's shell contract is Bash.
+/// #6245 falsifier 7 (partial): the install step's shell contract is Bash: the
+/// generated workflow's default shell, and the action step's own `shell:`.
 #[test]
 fn generated_workflow_shell_contract_stays_bash() {
     assert!(
         INIT_WORKFLOW_TEXT.contains("defaults:\n  run:\n    shell: bash\n"),
-        "the generated workflow default shell changed; the Install ripr step is Bash-only"
+        "the generated workflow default shell changed; its run steps are Bash"
+    );
+    assert!(
+        INSTALL_STEP_TEXT.contains("    - name: Install ripr\n      shell: bash\n"),
+        "the ripr-check Install ripr step is Bash-only"
     );
 }

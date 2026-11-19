@@ -52,7 +52,7 @@ pin is a commit whose own change touches production Rust, so the warm
 trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
 `heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`, `django-python`) run only with `--include-heavy`.
 
-Entries may set `ceilings`, a table of hard bounds on that repository's own samples by metric id (only measured per-repository `lower_is_better` metrics). With `--gate`, a sample above its ceiling, a ceilinged row that ran without producing a value, or a row the run selected with no sample of its ceilinged metric fails the run whatever the baseline holds, including when the baseline is from another runner class or absent; a relative regression margin alone would let a row creep back over a bar it was cut under. `ripr-swarm` (11 s, 720 MB warm check) and `ripr-swarm-2026-10` (60 s, 1,536 MB warm check; 300 s, 2,048 MB cold pilot) carry ratchet ceilings set just above measured values, not goals; the ratchet goals for this repository (not the global metric targets) are a 10 s, 768 MB warm check and a 60 s cold pilot, and a PR that earns a gain lowers them. `pandas-python` and `django-python` carry a 2000 ms `speed.warm_check_ms` and a 512 MiB `speed.warm_check_peak_rss_mb` ceiling (#10914).
+Entries may set `ceilings`, a table of hard bounds on that repository's own samples by metric id (only measured per-repository `lower_is_better` metrics). With `--gate`, a sample above its ceiling, a ceilinged row that ran without producing a value, or a row the run selected with no sample of its ceilinged metric fails the run whatever the baseline holds, including when the baseline is from another runner class or absent; a relative regression margin alone would let a row creep back over a bar it was cut under. `ripr-swarm` (11 s, 720 MB warm check) and `ripr-swarm-2026-10` (60 s, 1,200 MB warm check; 300 s, 2,048 MB cold pilot) carry ratchet ceilings set just above measured values, not goals; the ratchet goals for this repository (not the global metric targets) are a 10 s, 768 MB warm check and a 60 s cold pilot, and a PR that earns a gain lowers them. `pandas-python` and `django-python` carry a 2000 ms `speed.warm_check_ms` and a 512 MiB `speed.warm_check_peak_rss_mb` ceiling (#10914).
 
 Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger), `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) and `django-python` (2,937 `.py` files, a 27-file edit) pin single-parent commits that edit Python and its test; all four complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. Django fits under the 4,000-file Python workspace cap since #10468. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. `execa-typescript` pins a single-parent JavaScript edit (`lib/transform/generator.js` and its ava test), which the same adapter analyzes, and completes with findings; the commits that were partial there were partial only because `.d.ts` files were parsed as ordinary TypeScript (#10812). `destr-typescript` pins a single-parent edit to `src/index.ts` and its Vitest test and completes with findings. `zod-typescript` pins a single-parent edit to `packages/zod/src/v4/core/schemas.ts` and its union test and completes with findings now that a tooling directory alias (#10836) and text that only mentions the aliased path (#10901) no longer count as skipped links; other zod commits can still show typed limitations such as conditional assertion credit, so only the pinned diff is claimed. `valibot-typescript` pins a single-parent source-only edit to six object-schema files under `library/` (no test changes) and completes with findings; it stresses the workspace package table (#10943) and, with `library/` below the root, nested detection (#10941). `remeda-typescript` pins a single-parent edit to `packages/remeda/src/funnel.ts` and its test and completes with findings; without a `ripr.toml` only nested detection (#10941) selects the adapter for its `packages/remeda` layout, and its latest upstream commits are over the 2,000-line TypeScript diff budget, so only the pinned diff is claimed. `hono-typescript` pins a single-parent edit to `src/middleware/serve-static/index.ts` and its test and completes with five findings (about 3.7 s cold and 0.6 s warm on a release build of f7d3a66); it stresses reach scoping of the test-extraction disclosure against nested tsconfig `extends`/`references`, a lint rule named `no-this-alias` in the vite config, and a package self-import (#10954), and other hono commits are still partial when the diff reaches the unindexed `src/jsx/dom` tests, so only the pinned diff is claimed. `vscode-typescript` (heavy; 5,328 files, a three-file edit in `src/vs/platform/agentHost`) is the large TypeScript workspace: its `ceilings` of 90 s and 1 GiB are a regression gate above the measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target, and cover the quadratic persisted-facts failure of #11676. Its pinned diff is `partial_with_limitations` from ten typed `language_scope_unsupported` limitations (unindexed test shapes, files refused by the TypeScript read caps, read-budget exhaustion), so the row declares `expected_partial = "language_scope_unsupported"` like `typescript-compiler` (#12743). `typescript-compiler` (heavy) pins a diff to the TypeScript compiler's own repository, with `ceilings` of 5 s and 256 MiB above the measured 2.6 s warm / 62 MiB. The pinned diff no longer reaches the 20,000-entry workspace-walk cap (the baseline prune of #11984), but its analysis is `partial_with_limitations`: three typed `language_scope_unsupported` limitations (a skipped generated baseline, unindexed test shapes and an unparseable test fixture). The row declares `expected_partial = "language_scope_unsupported"`, so a warm-check sample is admitted only when the outcome is that typed partial result and every limitation is of that kind; a complete result, or any other limitation beside it, fails the row (#12052). `expected_partial` may also name a static limit (`typescript_workspace_discovery_truncated`), which additionally needs its typed cause (`diff_scope_oversized`) and a finding that names the limit. The admitted sample reads as an expected partial outcome in its detail and is never scanned for contradictions, so the row's contradiction sample stays incomplete. `expected_partial` is the only way a partial analysis enters the speed population. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
@@ -91,8 +91,10 @@ never raised:
 
 | Row | Tier | Ceiling now | Ladder bar | Set |
 |---|---|---|---|---|
-| `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
+| `ripr-swarm-2026-10` | `medium` | 1,200 MB | 1,024 MB | 2026-11-15 |
 | `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
+
+`bevy`, `deno` and `polars` (heavy, `large` tier) came from the 2026-11-08 robustness sweep (shallow clones, 15-file edits, peak RSS at most 525 MB; warm check 18 s, 32 s and 26 s; cold pilot 275 s, 73 s and 275 s). Their memory ceilings (700 MB) sit under the 1,024 MB large-tier bar, so none carries a `memory_ratchet` note, and the latency ceilings are ratchets about 30% above those measurements. The sweep's edits were synthetic; the rows pin a real upstream commit that edits several Rust files instead. The pilot stopping at exactly 275 s on bevy and polars is a suspected pilot-analysis-budget cut with a partial summary, **not verified**. A partial pilot is recorded as an incomplete sample, never a value, so a ceilinged pilot metric on those rows fails the gate until the pilot completes; the cold-pilot sample detail names the summary's `reason` (for example `timeout`) beside its `status`, so the first measured run shows whether the cut was a budget.
 
 Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
 1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
@@ -114,6 +116,54 @@ objects for the selected pin or base, `--clone` allows an unfiltered refetch;
 without it the instrument fails instead of fetching missing objects.
 Corpus preparation requires Git's `--no-lazy-fetch` global option; if the
 installed Git does not support it, preparation fails with the Git error.
+
+### Terminal evidence after cleanup
+
+Measured corpus rows add `terminal_evidence` (diagnostic schema `1`) without
+changing the v1 metric schema, admission rules, targets or gate decisions.
+It records the binary SHA-256 observed before pilot, root-identity SHA-256,
+base and requested modes, followed by ordered pilot, check warm-up and measured
+check invocations. Array position is the invocation ordinal. LSP sessions are
+not included in this invocation list; their existing metric details remain.
+
+Each invocation distinguishes completed capture, failed exit, termination,
+deadline, launch/capture failure and not-run. Analysis completeness is separate:
+an exit-zero pilot with `status: partial` stays partial, with its `timeout`
+reason and spent timeout retained in both the diagnostic projection and sample
+detail. An expected partial check remains named `expected_partial`, not complete.
+Check finding counts come from the existing admission result, so zero is visible
+and a missing count is not invented as zero. The list retains intended but unstarted measured slots; it fabricates no streams
+or resource observations for them or for launch failure.
+
+Only bounded producer diagnostics survive scratch deletion: the pilot's
+status/reason/budget projection, up to 16 short authenticated phase rows per
+invocation, and the existing authenticated CPU/RSS receipt through the shared
+receipt parser. Unknown strings are withheld rather than copied. The first 16 authenticated
+lines of at most 512 bytes are considered before vocabulary filtering; a 17th
+line is lookahead only. Unknown or malformed rows consume that inspection budget.
+`phase_lines_considered` and `phase_rows_withheld` expose filtering loss, while
+`phase_limit_reached` reports lookahead beyond the cap. Overlong lines are skipped.
+This is a bounded subset, not a complete phase inventory. The diff phases use
+production names `diff_admission_query` / `diff_admit_dependents` and numeric
+`core_files_` / `main_files_` status suffixes. The CLI's existing 50-sample limit bounds a row to 52 pilot/check
+records. Diagnostics use the producer's existing trace switch and token; they
+do not add another resource collector. An unavailable resource observation stays
+unavailable. Binary hashing requires a readable regular file no larger than
+256 MiB; otherwise its identity is explicitly unavailable without changing
+metric admission. The binary hash is an observation, not a freeze or race
+guarantee.
+
+Arbitrary stdout/stderr, configuration/environment contents, source text and
+credentials are not copied into the report. Stream byte counts and SHA-256
+identities are retained with `retention: digests_only`; those fields are **not**
+references to recoverable raw bytes. They identify the lossily decoded UTF-8 text
+that the shared capture reader returns (`identity: lossy_utf8_decoded`), so a
+stream with invalid bytes is counted after replacement-character decoding, not
+as the emitted bytes. Only the listed pilot-summary fields are
+retained, not its full packet. Older reports without this additive diagnostic
+object remain valid. No old measurement is relabeled by this change.
+
+### Measurements
 
 - **Cold pilot.** Fresh `RIPR_CACHE_DIR`, no `target/ripr` in the checkout,
   then the exact invocation the generated CI workflow runs:
@@ -340,6 +390,27 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+
+Built-in measured per-repository metrics pair numeric samples only when the
+retained `corpus` entries agree on URL, full head SHA, effective base,
+language and `expected_partial` (#13177). The producer records `HEAD~1`
+explicitly when no base SHA is configured; that recipe is bound to the exact
+head. It also records an explicit `null` when only complete analysis is admitted.
+A changed pin or scope under the same display ID is not a speed trend.
+Missing, malformed or duplicate identity is excluded from the common subset,
+including legacy reports that lack these fields. JSON and Markdown name each
+excluded repository and reason, even when another unchanged repository still
+compares. The current measurements and target status remain visible.
+
+Incomplete measurements still fail independently when a repository stopped
+completing. An incomplete baseline sample only excuses an already incomplete
+row when its workload identity matches; unknown or changed identity cannot
+hide a current failure. Absolute ceilings remain independent of baseline
+comparability. Ingested per-repository sources keep their own population
+contracts. These fields establish workload and scope, not sampling-method
+equivalence; the repeated-warm measurement work in #13076 owns that separate
+contract. No baseline is rewritten or accepted by this check.
+
 A passing gate is named honestly. When the missing-evidence counts the
 headline prints — `not_measured` plus the not-compared list — exceed half
 of the selected metrics, the gate status is `pass_with_gaps` instead of

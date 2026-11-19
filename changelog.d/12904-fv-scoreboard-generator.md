@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask fv-scoreboard` now generates the formal-verification scoreboard from source (real `#[kani::proof]` harness, module, `kani::cover!`, `kani::assume` and `#[kani::unwind(` counts with string-literal and comment mentions excluded, proptest suite presence, fuzz workflow step count) and writes `target/ripr/reports/fv-scoreboard.md`, so FV numbers are no longer hand-counted (#12904).

@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 46
+trap_floor = 49
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -182,6 +182,14 @@ reason = "CLI, command or receipt contract, not an analyzer verdict"
 [[spec]]
 id = "RIPR-SPEC-0117"
 scope = "in"
+
+[[spec.waived]]
+example = 13
+reason = "split from example 6 (#12766) so example 6 pins only its abstention; a direct confirmed discriminator beside the macro shape is pinned by proximity_reach_tests::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses, and no corpus case labels it yet"
+
+[[spec.waived]]
+example = 14
+reason = "split from example 7 (#12766) so example 7 pins only its propagation_unknown outcome; the weak-only and edgeless macro-argument shapes are pinned by the helper_transfer/macro_argument unit tests (string_comment_field_path_and_macro_name_tokens_never_match, unresolvable_or_ambiguous_macro_edges_stay_unrelated), and no corpus case labels them yet"
 
 # Rust Integration Public-API Path Limitation
 [[spec]]
@@ -1018,3 +1026,31 @@ reason = "TypeScript per-file fact persistence; a cache-admission behavior, not 
 id = "RIPR-SPEC-0411"
 scope = "out"
 reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
+
+# DX scoreboard workload identity pairing
+[[spec]]
+id = "RIPR-SPEC-0436"
+scope = "out"
+reason = "xtask dx-scoreboard workload pairing rule; not an exposure-verdict example a corpus case labels"
+
+# Long flag --name=value spelling
+[[spec]]
+id = "RIPR-SPEC-0438"
+scope = "out"
+reason = "CLI argv spelling rule; not an exposure-verdict example a corpus case labels"
+
+# Managed server archive pre-extraction inspection
+[[spec]]
+id = "RIPR-SPEC-0437"
+scope = "out"
+reason = "VS Code managed-server download archive-inspection rule; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0440"
+scope = "out"
+reason = "CLI output-path safety rule (an --out naming a command input is refused); not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0450"
+scope = "out"
+reason = "owner opt-out withholding rule (a cargo-mutants skip attribute withholds and discloses findings); not an exposure-verdict example a corpus case labels"

@@ -47,6 +47,10 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// rather than misreporting.
 /// Diff-bound generated-source selection also withholds identity whenever its
 /// source/evidence inputs differ from ordinary repo exposure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -55,6 +59,7 @@ fn write_pilot_repo_exposure_json(
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
     byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
+    evidence_limitations: &[crate::analysis_outcome::AnalysisLimitation],
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -70,6 +75,7 @@ fn write_pilot_repo_exposure_json(
                 python_guidance.as_ref(),
                 generated_skip,
                 byte_bound,
+                evidence_limitations,
             ),
         );
     };
@@ -82,6 +88,8 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
+            evidence_limitations,
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             context,
             &mut writer,
         ) {
@@ -238,6 +246,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
+                evidence_limitations: Vec::new(),
             },
             change,
             PilotStageTimes {
@@ -277,6 +286,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
         return Ok(());
@@ -302,7 +312,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         timings.record_inventory_phases(&inventory_phases);
     }
     let rust_files = analysis::workspace_rust_files(&input.root);
-    let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
+    // An unreadable-only tree is still Rust source (#13624): it must not read
+    // as "no Rust files". Its readable count is 0 and renders as unknown.
+    let rust_excluded = (!rust_enabled && analysis::workspace_has_rust_source(&input.root))
+        .then_some(rust_files.len());
 
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
@@ -315,6 +328,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
+    let inventory_evidence_limitations = report.evidence_limitations;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -399,6 +413,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
     let current_change = current_change
         .with_absent_file_limitations(absent_file_limitations)
+        .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
@@ -501,6 +516,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
+        inventory_evidence_limitations: &inventory_evidence_limitations,
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -534,6 +550,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
         repo_exposure_byte_bound.as_ref(),
+        &inventory_evidence_limitations,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -543,19 +560,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &inventory_evidence_limitations,
         ),
     )?;
     let packet_bound = analysis::pilot_packet_budget()?
         .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
-        output::agent_seam_packets::render_agent_seam_packets_json_for_root(
+        output::agent_seam_packets::render_agent_seam_packets_json_for_root_with_limitations(
             &classified,
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
             packet_bound,
+            &inventory_evidence_limitations,
         ),
     )?;
 
@@ -1701,6 +1720,7 @@ mod tests {
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
                     declined_rust_files: Vec::new(),
+                    evidence_limitations: Vec::new(),
                 })
             },
         );
@@ -2151,6 +2171,7 @@ mod tests {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
 
@@ -2253,7 +2274,13 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains(&format!(
+                "--out {out} is an existing file, but --out names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out is not a not-writable tree: {error}"
@@ -2289,5 +2316,132 @@ mod tests {
                 .map(|result| result.map(|report| report.classified.len())),
             Some(Err("the inventory used pilot's whole deadline".to_string()))
         );
+    }
+
+    #[test]
+    fn pilot_cli_gap_normalize_parent_components_resolves_or_refuses() {
+        // Accepted: lexical `.`/`..` resolution inside the root.
+        assert_eq!(
+            normalize_parent_components(Path::new("target/./ripr/pilot")),
+            Some(PathBuf::from("target/ripr/pilot"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("target/ripr/../reports")),
+            Some(PathBuf::from("target/reports"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("a/..")),
+            Some(PathBuf::new())
+        );
+        // Refused: a `..` that climbs above the root cannot be anchored.
+        assert_eq!(normalize_parent_components(Path::new("../outside")), None);
+        assert_eq!(normalize_parent_components(Path::new("a/../../b")), None);
+    }
+
+    #[test]
+    fn pilot_cli_gap_unavailable_reason_maps_typed_causes() {
+        let fallback = "fallback reason";
+        let missing = CoreError::message(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert_eq!(
+            current_change_unavailable_reason(&missing, fallback),
+            "git is not on PATH"
+        );
+        let timeout = CoreError::git_invocation_timeout("git diff", 10, true);
+        assert_eq!(
+            current_change_unavailable_reason(&timeout, fallback),
+            "git timed out"
+        );
+        let not_repo = CoreError::message("/tmp/x is not inside a Git work tree");
+        assert_eq!(
+            current_change_unavailable_reason(&not_repo, fallback),
+            "not a Git work tree"
+        );
+        // Anything else yields the caller's fixed fallback, never the raw
+        // message (paths and git stderr belong to `ripr check`).
+        let other = CoreError::message("fatal: bad object /secret/path");
+        assert_eq!(
+            current_change_unavailable_reason(&other, fallback),
+            fallback
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_value_flags_reject_non_numeric_and_unknown_mode() {
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "many"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"many\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "-3"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"-3\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--timeout-ms", "soon"])),
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"soon\"".to_string())
+        );
+        let error = match parse_pilot_options(&args(&["--mode", "bogus"])) {
+            Ok(_) => String::new(),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("bogus"),
+            "unknown --mode must be refused and echo the value: {error:?}"
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_repeated_root_conflicts_but_identical_repeat_is_accepted() -> Result<(), String>
+    {
+        assert_eq!(
+            parse_pilot_options(&args(&["--root", "a", "--root", "b"])),
+            Err("pilot takes --root once (got 'a' and 'b')".to_string())
+        );
+        let same = parse_pilot_options(&args(&["--root", "a", "--root", "a"]))?;
+        assert_eq!(same.root, Path::new("a"));
+        assert!(same.root_explicit);
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_flag_edges_quiet_mode_and_defaults() -> Result<(), String> {
+        // `--quiet` is a bare switch: it must not consume the next token.
+        let quiet_then_root = parse_pilot_options(&args(&["--quiet", "--root", "r"]))?;
+        assert!(quiet_then_root.quiet);
+        assert_eq!(quiet_then_root.root, Path::new("r"));
+        // Defaults: nothing typed means nothing explicit.
+        let defaults = parse_pilot_options(&args(&[]))?;
+        assert!(!defaults.quiet);
+        assert!(!defaults.root_explicit);
+        assert!(!defaults.out_explicit);
+        assert!(!defaults.explicit.mode);
+        assert_eq!(defaults.max_seams, 5);
+        assert_eq!(defaults.timeout_ms, DEFAULT_PILOT_TIMEOUT_MS);
+        assert!(!defaults.timeout_explicit);
+        // A typed `--mode` marks the mode explicit so config cannot override it.
+        let moded = parse_pilot_options(&args(&["--mode", "ready"]))?;
+        assert_eq!(moded.mode, Mode::Ready);
+        assert!(moded.explicit.mode);
+        // A later occurrence of a value flag wins.
+        let last = parse_pilot_options(&args(&["--max-seams", "2", "--max-seams", "9"]))?;
+        assert_eq!(last.max_seams, 9);
+        // `--out` is explicit even when it names the default location.
+        let out = parse_pilot_options(&args(&["--root", "r", "--out", "target/ripr/pilot"]))?;
+        assert!(out.out_explicit);
+        assert_eq!(out.out_dir, Path::new("target/ripr/pilot"));
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_timings_path_sits_beside_the_summary() {
+        let artifacts = packet_dir_artifacts(Path::new("some/packet"));
+        assert_eq!(
+            pilot_timings_path(&artifacts),
+            artifacts
+                .pilot_summary_json
+                .parent()
+                .map(|dir| dir.join("pilot-timings.json"))
+                .unwrap_or_default()
+        );
+        assert!(pilot_timings_path(&artifacts).ends_with("pilot-timings.json"));
     }
 }

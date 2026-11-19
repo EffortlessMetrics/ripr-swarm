@@ -1946,8 +1946,9 @@ mod tests {
 
     /// Differential proof against Cargo itself (#3037): the resolver's typed
     /// edge set for a synthetic workspace must agree with `cargo metadata`
-    /// on every supported path-dependency form. Skips (does not fail) when no
-    /// `cargo` binary is available.
+    /// on every supported path-dependency form. Fails closed when no `cargo`
+    /// binary is available, unless `RIPR_ALLOW_MISSING_CARGO` is set, which
+    /// skips the comparison.
     #[test]
     fn path_dependency_edges_match_cargo_metadata() -> Result<(), String> {
         let cargo_available = std::process::Command::new("cargo")

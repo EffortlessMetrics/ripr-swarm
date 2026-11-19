@@ -1,0 +1,30 @@
+{
+  "schema_version": "ripr-agent-discrimination-scenario-v1",
+  "scenario": "flipped-comparison",
+  "crate_name": "flipped-comparison",
+  "title": "Flipped comparison: senior discount boundary >= becomes >",
+  "initial_commit_message": "Initial membership pricing rules with baseline tests",
+  "change_commit_message": "Require age over 65 for the senior discount",
+  "changed_files": [
+    "src/lib.rs"
+  ],
+  "baseline_tests_discriminate": false,
+  "deterministic_identity": {
+    "author": "agent-bench <agent-bench@local>",
+    "commit_1_date": "2026-11-04T15:50:11-05:00",
+    "commit_2_date": "2026-11-04T15:50:12-05:00",
+    "reproduces_seed_study_head": "006aaf48af8a8e8582056d85ad87d12e9690682d"
+  },
+  "source": "Validated Nov 2-4 agent-efficiency study harness on the recording host, encoded with the issue #13113 validity fixes.",
+  "seed_study_context_bytes_original_capture": {
+    "vanilla.txt": 1099,
+    "ripr-context.txt": 4415,
+    "tool-note.txt": 1132
+  },
+  "checked_in_context_bytes": {
+    "vanilla.txt": 1099,
+    "ripr-context.txt": 4403,
+    "tool-note.txt": 1108
+  },
+  "checked_in_context_bytes_note": "ripr-context.txt and tool-note.txt were sanitized at encode time (machine path prefixes -> placeholders, see results/seed-study/README.md); vanilla.txt bytes are unmodified, so its checked-in bytes equal the study capture."
+}

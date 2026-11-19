@@ -391,8 +391,8 @@ async function runFullDevelopment(options = {}) {
       if (!/^[a-f0-9]{40,64}$/.test(head)) throw new Error('Git did not report a bounded source identity');
       report.source.head = head;
       report.source.executed_sources = ['editors/vscode/test/developerSetup.cjs',
-        'editors/vscode/src/lspCompatibility.ts', 'editors/vscode/test/hostDiagnostics.ts',
-        'tools/activate-rust.sh'].map(relative => {
+        'editors/vscode/src/lspCompatibility.ts', 'editors/vscode/src/packetJson.ts',
+        'editors/vscode/test/hostDiagnostics.ts', 'tools/activate-rust.sh'].map(relative => {
         const source = readAuthority(root, relative);
         return { path: relative, sha256: source.sha256 };
       });

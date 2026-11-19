@@ -7,7 +7,17 @@ pub(crate) fn expect_value<'a>(
 ) -> Result<&'a str, String> {
     args.get(idx)
         .map(|s| s.as_str())
-        .ok_or_else(|| format!("missing value for {flag}; pass a value right after it"))
+        .ok_or_else(|| missing_value(flag))
+}
+
+/// The refusal for a value flag with nothing after it. Parsers that read
+/// argv their own way (a following flag counts as a missing value) use it
+/// too, so every spelling of this refusal carries the typed code (#11979).
+pub(crate) fn missing_value(flag: &str) -> String {
+    let message = format!("missing value for {flag}; pass a value right after it");
+    // #11979: the typed code and flag travel to the JSON-requested boundary.
+    crate::cli::usage_refusal::note_missing_value(flag, &message);
+    message
 }
 
 /// Reconcile a `--root VALUE` occurrence against the root a command parser

@@ -1,6 +1,12 @@
 {
   "schema_version": "0.3",
   "tool": "ripr",
+  "status": "refused",
+  "error": {
+    "code": "analysis_timeout",
+    "message": "analysis_timeout: ripr check exceeded its 1s wall-clock budget",
+    "next": null
+  },
   "mode": "draft",
   "root": "fixtures/timeout-refusal/input",
   "base": "origin/main",

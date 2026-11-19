@@ -6,6 +6,7 @@
 //! that exact attempt. Store location is owned by [`store`]: before, status,
 //! and after resolve one store identity instead of joining a hardcoded path.
 
+pub(crate) mod retained_run;
 mod store;
 
 use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
@@ -38,6 +39,8 @@ pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
 /// The exact gap producer snapshot used by the retained verify/receipt pair.
 pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
+/// The validated caller-supplied focused test run (#13203 slice B).
+pub(crate) const TERMINAL_FOCUSED_RUN_ROLE: &str = "focused_test_result";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -189,6 +192,9 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) after: Option<RepairAttemptAfter>,
+    /// Durable receipt evaluation for a focused finish, excluded from the before commitment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) focused_receipt_evaluation: Option<FocusedReceiptEvaluation>,
     /// The refusal of this attempt's most recent after phase, when that phase
     /// refused after selecting the attempt. It is an observation, not a state:
     /// it never changes `state` or `after`, the before commitment excludes it,
@@ -316,8 +322,38 @@ pub(crate) struct RepairAttemptAfter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
+    /// The validated caller claim committed with this finish, before any
+    /// separately published terminal files can be recovered by another run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) focused_result: Option<PendingFocusedResult>,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
+    /// Paths whose only change was a git-invisible line-ending flip on a path
+    /// Git normalizes (`core.autocrlf` or a `text` attribute), so the cage
+    /// did not count them as edits (#7377, #13833). Recorded beside the
+    /// verdict, not in it, so the receipt binding's verdict comparison is
+    /// unchanged. Absent when there were none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) line_ending_only_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PendingFocusedResult {
+    pub(crate) record: String,
+    pub(crate) custody: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_protocol: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum FocusedReceiptEvaluation {
+    Started,
+    Accepted {
+        receipt_sha256: String,
+        verify_sha256: String,
+    },
 }
 
 fn open_attempt(
@@ -384,7 +420,7 @@ pub(crate) fn receipt_binding_from(
     seam_id: &str,
     packet_path: &Path,
     attempt_id: Option<&str>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ReceiptBindingError> {
     // Refusals name the root the caller typed, bound lexically against the
     // working directory so a pasted command runs from anywhere (#3999), never
     // the canonicalized verbatim path the store resolver hands back below
@@ -404,11 +440,11 @@ pub(crate) fn receipt_binding_from(
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
         if loaded.1.seam_id != seam_id {
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
                 attempt_id.as_str(),
                 loaded.1.seam_id
-            ));
+            )));
         }
         loaded
     } else {
@@ -448,9 +484,9 @@ pub(crate) fn receipt_binding_from(
                     matches.len()
                 )
             };
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "receipt requires exactly one repair attempt for seam `{seam_id}`: {detail} (`ripr agent status` lists the attempts)"
-            ));
+            )));
         }
         matches.pop().ok_or_else(|| {
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
@@ -484,14 +520,14 @@ pub(crate) fn receipt_binding_from(
         } else {
             " (repository HEAD moved since the after phase recorded its verdict; `ripr agent status` reads which head)".to_string()
         };
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt {} is not receipt-ready: state `{}`, current {}{}, verdict `{}`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
             manifest.repair_attempt_id.as_str(),
             repair_attempt_state_label(&manifest.state),
             after.current,
             current_gloss,
             after.verdict.status.as_label(),
-        ));
+        )));
     }
     // The receipt names the after head the finish recorded. That head is the
     // prepared head, or a descendant reached only by commits the edit cage
@@ -505,7 +541,7 @@ pub(crate) fn receipt_binding_from(
                 &current_head,
             )?)
     {
-        return Err("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string());
+        return Err(ReceiptBindingError::Other("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string()));
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
     let packet_artifact_bytes = std::fs::read(root.join(&packet_artifact.path))
@@ -514,7 +550,9 @@ pub(crate) fn receipt_binding_from(
         || packet_artifact.sha256 != packet_sha256
         || after.packet_sha256 != packet_sha256
     {
-        return Err("repair attempt packet binding is tampered or replayed".to_string());
+        return Err(ReceiptBindingError::Other(
+            "repair attempt packet binding is tampered or replayed".to_string(),
+        ));
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
@@ -538,7 +576,7 @@ pub(crate) fn receipt_binding_from(
         // A staging name an interrupted writer left beside a retained artifact
         // is the one cause with a one-step fix, so name it first.
         let residue = staged_residue_cause(&root, &manifest);
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
              {residue}Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
              Next: `{status}` reads the attempt's state.\n\
@@ -550,7 +588,7 @@ pub(crate) fn receipt_binding_from(
              3. Run `{restart}`; if it fails, put your copy back.\n\
              4. Re-apply your edit and run the new --attempt command it prints.\n\
              Write command output outside the repository."
-        ));
+        )));
     }
     validate_trusted_head_surface(
         &root,
@@ -1998,7 +2036,7 @@ fn complete_repair_attempt(
             // baseline that IS staged cannot silently dodge the read: these
             // bytes were just bound by digest, so a failure here is
             // publication trouble.
-            let baseline_ambiguous = artifacts
+            let baseline_state = artifacts
                 .iter()
                 .find(|artifact| artifact.role == "edit_cage_baseline")
                 .map(|artifact| {
@@ -2020,13 +2058,42 @@ fn complete_repair_attempt(
                         serde_json::from_slice(&bytes).map_err(|error| {
                             format!("decode staged edit-cage baseline failed: {error}")
                         })?;
-                    Ok(baseline.is_ambiguous())
+                    let followed = baseline
+                        .followed_new_test_proposal()
+                        .map(|proposal| (proposal.kind, proposal.file.clone()));
+                    Ok((baseline.is_ambiguous(), followed))
                 })
                 .transpose()?
-                .unwrap_or(false);
+                .unwrap_or((false, None));
+            let (baseline_ambiguous, followed_proposal) = baseline_state;
             let mut limitations = vec![
                 "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
             ];
+            // #13205: a followed new-test proposal has no test yet. Say so, with
+            // the owning package, instead of leaving a missing result to read
+            // as an empty one; a target that no longer passes the preflight
+            // fails the start closed.
+            if let Some((kind, file)) = &followed_proposal {
+                match crate::analysis::new_test_target::preflight_new_test_target(
+                    canonical_root,
+                    *kind,
+                    file,
+                ) {
+                    crate::analysis::new_test_target::ProposedTargetPreflight::NoTestYet {
+                        package,
+                    } => limitations.push(match kind {
+                        crate::analysis::new_test_target::NewTestKind::Integration => format!(
+                            "target preflight: at the before phase, the proposed test file `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                        crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
+                            "target preflight: at the before phase, the proposed test in the existing inline test module in `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                    }),
+                    crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
+                        return Err(reason);
+                    }
+                }
+            }
             if baseline_ambiguous {
                 limitations.push("the captured edit-cage baseline recorded `ambiguous: true`, so the cage cannot prove the exact worktree state this attempt measures: the after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface. Resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and start a fresh attempt if a scorable result is needed".to_string());
             }
@@ -2050,6 +2117,7 @@ fn complete_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
                 after: None,
+                focused_receipt_evaluation: None,
                 last_after_refusal: None,
                 after_refusal_count: 0,
                 after_refusal_history: Vec::new(),
@@ -2352,7 +2420,7 @@ fn read_bound_terminal_receipt(
     Ok((artifact.path.clone(), value))
 }
 
-fn read_terminal_artifact_bytes(
+pub(crate) fn read_terminal_artifact_bytes(
     root: &Path,
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
@@ -2446,11 +2514,66 @@ pub(crate) fn retain_terminal_evidence_from(
     attempt_id: &RepairAttemptId,
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
+    retain_terminal_evidence_with_custody_from(root, store, attempt_id, sources, None)
+        .map(|(artifacts, _)| artifacts)
+}
+
+/// Proof that this invocation, rather than an earlier retainer, committed
+/// these exact terminal references. A reused existing result grants no proof.
+pub(crate) struct TerminalRetentionCustody {
+    attempt_id: RepairAttemptId,
+    committed_manifest: Vec<u8>,
+}
+
+/// Run a read-and-publish recovery against the same terminal manifest while
+/// its commit lock is held. The callback must not invoke a manifest writer.
+pub(crate) fn with_locked_terminal_manifest_from<T>(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptManifest,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let (_, path, _, _) = open_attempt_with_bytes(root, store, attempt_id)?;
+    let attempt_dir = path
+        .parent()
+        .ok_or("repair attempt manifest path has no parent")?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    let (_, _, _, current) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if current != *expected {
+        return Err(
+            "repair attempt terminal evidence changed before apply-record recovery".to_string(),
+        );
+    }
+    action()
+}
+
+pub(crate) fn retain_terminal_evidence_with_custody_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    sources: &[BeforeArtifactSource<'_>],
+    expected: Option<&RepairAttemptAfter>,
+) -> Result<(Vec<RepairAttemptArtifact>, Option<TerminalRetentionCustody>), String> {
     if sources.is_empty() {
         return Err("terminal retention requires at least one after-phase artifact".to_string());
     }
+    // Hold the commit lock while writing attempt-local files as well as while
+    // committing their manifest. Otherwise a losing retainer can replace a
+    // winner's files between the winner's commit and its own failed commit.
+    let (_, manifest_path, _, _) = open_attempt_with_bytes(root, store, attempt_id)?;
+    let attempt_dir = manifest_path
+        .parent()
+        .ok_or("repair attempt manifest path has no parent")?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
+    if expected.is_some_and(|expected| manifest.after.as_ref() != Some(expected)) {
+        return Err(
+            "focused finish custody changed before terminal retention; refusing to retain"
+                .to_string(),
+        );
+    }
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish {
         return Err(format!(
@@ -2461,6 +2584,34 @@ pub(crate) fn retain_terminal_evidence_from(
     let destination_directory = store
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    let pending_focused = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref());
+    if pending_focused
+        .is_some_and(|pending| pending.receipt_protocol.as_deref() == Some("durable-v1"))
+        && !matches!(
+            manifest.focused_receipt_evaluation,
+            Some(FocusedReceiptEvaluation::Accepted { .. })
+        )
+    {
+        return Err("focused receipt evaluation has no committed successful outcome".to_string());
+    }
+    let legacy_focused = manifest
+        .terminal_artifacts
+        .iter()
+        .find(|artifact| artifact.role == TERMINAL_FOCUSED_RUN_ROLE);
+    let supplied_focused = sources
+        .iter()
+        .any(|source| source.role == TERMINAL_FOCUSED_RUN_ROLE);
+    if (pending_focused.is_some() && !supplied_focused)
+        || (supplied_focused && pending_focused.is_none() && legacy_focused.is_none())
+    {
+        return Err(
+            "terminal evidence must include exactly the focused result committed with the finish"
+                .to_string(),
+        );
+    }
     let mut retained = Vec::with_capacity(sources.len());
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -2474,6 +2625,7 @@ pub(crate) fn retain_terminal_evidence_from(
         if source.role != TERMINAL_RECEIPT_ROLE
             && source.role != TERMINAL_VERIFY_ROLE
             && source.role != TERMINAL_GAP_AFTER_ROLE
+            && source.role != TERMINAL_FOCUSED_RUN_ROLE
         {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
@@ -2526,7 +2678,37 @@ pub(crate) fn retain_terminal_evidence_from(
                     crate::output::path::human_path(&source_path)
                 )
             })?;
+        if source.role == TERMINAL_FOCUSED_RUN_ROLE
+            && match pending_focused {
+                Some(pending) => bytes != pending.record.as_bytes(),
+                None => legacy_focused.is_none_or(|artifact| {
+                    artifact.sha256 != sha256_bytes(&bytes) || artifact.bytes != bytes.len() as u64
+                }),
+            }
+        {
+            return Err(
+                "focused test result changed after validation; refusing to retain foreign bytes"
+                    .to_string(),
+            );
+        }
         let digest = sha256_bytes(&bytes);
+        if let Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256,
+            verify_sha256,
+        }) = &manifest.focused_receipt_evaluation
+        {
+            let expected_digest = match source.role {
+                TERMINAL_RECEIPT_ROLE => Some(receipt_sha256),
+                TERMINAL_VERIFY_ROLE => Some(verify_sha256),
+                _ => None,
+            };
+            if expected_digest.is_some_and(|expected| expected != &digest) {
+                return Err(
+                    "receipt evaluation evidence changed before retention; refusing foreign bytes"
+                        .to_string(),
+                );
+            }
+        }
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
         })?;
@@ -2603,14 +2785,14 @@ pub(crate) fn retain_terminal_evidence_from(
         ));
     }
     if manifest.terminal_artifacts == retained {
-        return Ok(retained);
+        return Ok((retained, None));
     }
     manifest.terminal_artifacts = retained.clone();
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt terminal retention failed: {error}"))?;
     bytes.push(b'\n');
-    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+    commit_manifest_with_held_lock(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
         if current.state != RepairAttemptState::ReadyToFinish {
             return Err(format!(
                 "repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish",
@@ -2626,7 +2808,13 @@ pub(crate) fn retain_terminal_evidence_from(
         Ok(())
     })?;
     read_repair_attempt_manifest_at(&store, &manifest_path)?;
-    Ok(retained)
+    Ok((
+        retained,
+        Some(TerminalRetentionCustody {
+            attempt_id: attempt_id.clone(),
+            committed_manifest: bytes,
+        }),
+    ))
 }
 
 /// Completes terminal retention for a finished attempt whose after phase
@@ -2656,6 +2844,76 @@ pub(crate) fn complete_pending_terminal_retention_from(
     store: Option<&Path>,
     attempt_id: &str,
 ) -> Result<bool, String> {
+    complete_pending_terminal_retention_authorized_from(root, store, attempt_id, false)
+}
+
+/// Whether the compatibility receipt and verify files an accepted focused
+/// receipt decision named are present with exactly the accepted digests: the
+/// precondition pending retention needs to promote that decision. Status uses
+/// it to offer the same-result retry only when that retry can recover.
+pub(crate) fn focused_accepted_projection_present(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> bool {
+    let Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256,
+        verify_sha256,
+    }) = &manifest.focused_receipt_evaluation
+    else {
+        return false;
+    };
+    let matches = |relative: &str, expected: &str| {
+        crate::bounded_input::read(root.join(relative))
+            .is_ok_and(|bytes| sha256_bytes(&bytes) == expected)
+    };
+    matches(
+        crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        receipt_sha256,
+    ) && matches(
+        crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
+        verify_sha256,
+    )
+}
+
+/// Whether a trust-bound attempt's accepted focused finish is blocked from
+/// recovery by the apply-record compatibility path: the after phase promotes
+/// such a finish only while nothing exists at that path and its components
+/// are safe, so any entry there (an earlier attempt's record included), an
+/// unsafe component or an unreadable path leaves it unrecoverable. Attempts
+/// without a trust binding are never blocked by it.
+pub(crate) fn trust_apply_record_blocks_focused_recovery(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> bool {
+    if find_manifest_artifact_by_role(
+        manifest,
+        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+    )
+    .is_none()
+    {
+        return false;
+    }
+    let relative = Path::new(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+    if !crate::edit_cage::workflow_path_components_are_safe(root, relative).unwrap_or(false) {
+        return true;
+    }
+    !matches!(
+        std::fs::symlink_metadata(root.join(relative)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// `focused_claim_rechecked` means the caller re-validated the same
+/// caller-reported focused result (current HEAD, attempt and test file, and
+/// record-equal to the pending claim) and, for a trust-bound attempt, its
+/// authority and missing apply projection. Without it, no focused finish is
+/// promoted.
+pub(crate) fn complete_pending_terminal_retention_authorized_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+    focused_claim_rechecked: bool,
+) -> Result<bool, String> {
     let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
     let locator = store;
     let Ok((store, _, manifest)) = open_attempt(root, locator, &attempt_id) else {
@@ -2664,6 +2922,18 @@ pub(crate) fn complete_pending_terminal_retention_from(
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish
         || find_terminal_artifact_by_role(&manifest, TERMINAL_RECEIPT_ROLE).is_some()
+    {
+        return Ok(false);
+    }
+    // A focused finish is promoted only after the after command re-validated
+    // the same caller-reported claim (and, for a trust-bound attempt, its
+    // authority and missing apply projection). A receipt alone must not turn
+    // an interrupted focused finish into a completed evidence set.
+    if !focused_claim_rechecked
+        && manifest
+            .after
+            .as_ref()
+            .is_some_and(|after| after.focused_result.is_some())
     {
         return Ok(false);
     }
@@ -2681,6 +2951,13 @@ pub(crate) fn complete_pending_terminal_retention_from(
     let Some(after) = manifest.after.as_ref() else {
         return Ok(false);
     };
+    if after.focused_result.is_some() {
+        match &manifest.focused_receipt_evaluation {
+            Some(FocusedReceiptEvaluation::Accepted { receipt_sha256, .. })
+                if *receipt_sha256 == sha256_bytes(receipt_text.as_bytes()) => {}
+            _ => return Ok(false),
+        }
+    }
     let bound = |pointer: &str, expected: &str| {
         receipt.pointer(pointer).and_then(serde_json::Value::as_str) == Some(expected)
     };
@@ -2693,6 +2970,12 @@ pub(crate) fn complete_pending_terminal_retention_from(
     }
     let verify_bytes = std::fs::read(&verify_path)
         .map_err(|error| format!("read {} failed: {error}", verify_path.display()))?;
+    if let Some(FocusedReceiptEvaluation::Accepted { verify_sha256, .. }) =
+        &manifest.focused_receipt_evaluation
+        && *verify_sha256 != sha256_bytes(&verify_bytes)
+    {
+        return Ok(false);
+    }
     let Some(expected_verify) = receipt
         .pointer("/provenance/verify_artifact/sha256")
         .and_then(serde_json::Value::as_str)
@@ -2733,6 +3016,18 @@ pub(crate) fn complete_pending_terminal_retention_from(
         sources.push(BeforeArtifactSource {
             role: TERMINAL_GAP_AFTER_ROLE,
             path: &gap_after_path,
+        });
+    }
+    let focused_path = root
+        .join("target/ripr/workflow/focused-results")
+        .join(attempt_id.as_str())
+        .join(crate::app::focused_run::FOCUSED_RUN_ARTIFACT_FILE);
+    if let Some(pending) = after.focused_result.as_ref() {
+        crate::output::file_write::write(&focused_path, pending.record.as_bytes())
+            .map_err(|error| format!("publish {} failed: {error}", focused_path.display()))?;
+        sources.push(BeforeArtifactSource {
+            role: TERMINAL_FOCUSED_RUN_ROLE,
+            path: &focused_path,
         });
     }
     retain_terminal_evidence_from(&root, locator, &attempt_id, &sources)?;
@@ -2895,6 +3190,7 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     let mut before = manifest.clone();
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
+    before.focused_receipt_evaluation = None;
     before.last_after_refusal = None;
     before.after_refusal_count = 0;
     before.after_refusal_history.clear();
@@ -3005,6 +3301,8 @@ pub(crate) fn edit_cage_policy_from_packet(
     // verdict admits only a pure insertion of test functions into it.
     let inline_test_module_target = !is_test_surface_path(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
+    let external_test_file_target = is_test_surface_path(selected_target_text)
+        && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
@@ -3095,6 +3393,37 @@ pub(crate) fn edit_cage_policy_from_packet(
     } else {
         None
     };
+    // #13203: a packet that names a producer-owned new-test proposal binds
+    // the attempt to it. The proposal's file must be the selected target, so
+    // the attempt cannot follow one proposal while the cage confines another.
+    let new_test_proposal = match value
+        .get("recommended_test")
+        .and_then(|test| test.get("target_kind"))
+        .and_then(serde_json::Value::as_str)
+    {
+        None => None,
+        Some(label) => {
+            let kind =
+                crate::analysis::new_test_target::NewTestKind::from_packet_target_kind(label)
+                    .ok_or_else(|| {
+                        format!("repair packet names an unknown new-test proposal kind `{label}`")
+                    })?;
+            let proposed_file = value
+                .get("recommended_test")
+                .and_then(|test| test.get("file"))
+                .and_then(serde_json::Value::as_str);
+            if proposed_file != Some(selected_target.path()) {
+                return Err(format!(
+                    "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
+                    selected_target.path()
+                ));
+            }
+            Some(crate::edit_cage::FollowedNewTestProposal {
+                kind,
+                file: selected_target.path().to_string(),
+            })
+        }
+    };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -3107,6 +3436,8 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        external_test_file_target,
+        new_test_proposal,
     })
 }
 
@@ -3382,6 +3713,7 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
     }
     manifest.state = RepairAttemptState::AwaitingEdit;
     manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
     // Terminal files stay on disk. They are not before-phase inputs; clearing
     // the manifest field keeps the restored awaiting_edit record from claiming
     // a finished result. A retry reuses them when the bytes still match, and
@@ -3408,6 +3740,200 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
         Ok(())
     })?;
     Ok(())
+}
+
+pub(crate) struct FocusedEvaluationCustody {
+    committed_manifest: Vec<u8>,
+}
+
+/// Commit the evaluation boundary before any receipt decision is made.
+pub(crate) fn start_focused_receipt_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+) -> Result<FocusedEvaluationCustody, String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+        || manifest.focused_receipt_evaluation.is_some()
+        || expected
+            .focused_result
+            .as_ref()
+            .is_none_or(|pending| pending.receipt_protocol.as_deref() != Some("durable-v1"))
+    {
+        return Err(
+            "focused receipt evaluation custody changed; inspect the attempt before retrying"
+                .to_string(),
+        );
+    }
+    manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Started);
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation.is_some()
+        {
+            return Err("focused receipt evaluation custody changed".to_string());
+        }
+        Ok(())
+    })?;
+    Ok(FocusedEvaluationCustody {
+        committed_manifest: bytes,
+    })
+}
+
+/// Record the successful decision and exact in-memory result before publishing it.
+pub(crate) fn accept_focused_receipt_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    receipt: &[u8],
+    verify: &[u8],
+    custody: &mut FocusedEvaluationCustody,
+) -> Result<(), String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if base != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+        || manifest.focused_receipt_evaluation != Some(FocusedReceiptEvaluation::Started)
+    {
+        return Err("focused receipt evaluation custody changed before acceptance".to_string());
+    }
+    let receipt_value: serde_json::Value = serde_json::from_slice(receipt)
+        .map_err(|error| format!("decode focused receipt before acceptance failed: {error}"))?;
+    if receipt_value
+        .pointer("/provenance/verify_artifact/sha256")
+        .and_then(serde_json::Value::as_str)
+        != Some(sha256_bytes(verify).as_str())
+    {
+        return Err("focused receipt verify bytes changed during evaluation".to_string());
+    }
+    validate_issued_receipt_evidence(root, &manifest, &receipt_value, verify)?;
+    manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256: sha256_bytes(receipt),
+        verify_sha256: sha256_bytes(verify),
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation != Some(FocusedReceiptEvaluation::Started)
+        {
+            return Err("focused receipt evaluation custody changed before acceptance".to_string());
+        }
+        Ok(())
+    })?;
+    custody.committed_manifest = bytes;
+    Ok(())
+}
+
+/// Restore only the exact evaluation snapshot this invocation committed.
+pub(crate) fn restore_owned_focused_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    custody: FocusedEvaluationCustody,
+) -> Result<(), String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if base != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return Err("focused receipt evaluation custody changed; refusing to restore".to_string());
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected) || !current.terminal_artifacts.is_empty() {
+            return Err(
+                "focused receipt evaluation custody changed; refusing to restore".to_string(),
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Roll back only the focused finish owned by this caller, before any other
+/// process has committed terminal evidence for it.
+pub(crate) fn restore_focused_finish_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+) -> Result<(), String> {
+    if expected.focused_result.is_none() {
+        return Err("focused finish custody is missing".to_string());
+    }
+    let (_store, manifest_path, base_bytes, mut manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    let check = |current: &RepairAttemptManifest| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation.is_some()
+        {
+            return Err("focused finish custody changed or terminal evidence is already retained; refusing to restore".to_string());
+        }
+        Ok(())
+    };
+    check(&manifest)?;
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, check)
+}
+
+/// Revert a focused finish and terminal retention only while the exact
+/// manifest committed by this invocation still stands. A retainer that found
+/// an existing result receives no custody and cannot roll it back.
+pub(crate) fn restore_owned_focused_retention_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    custody: TerminalRetentionCustody,
+) -> Result<(), String> {
+    if custody.attempt_id != *attempt_id || expected.focused_result.is_none() {
+        return Err("focused terminal retention custody does not match the attempt".to_string());
+    }
+    let (_store, manifest_path, base_bytes, mut manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    if base_bytes != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || manifest.terminal_artifacts.is_empty()
+    {
+        return Err("focused terminal retention custody changed; refusing to restore".to_string());
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    manifest.terminal_artifacts.clear();
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.after.as_ref() != Some(expected) || current.terminal_artifacts.is_empty() {
+            return Err(
+                "focused terminal retention custody changed; refusing to restore".to_string(),
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Records the after-phase verdict. `movement` states whether commits made
@@ -3470,7 +3996,17 @@ pub(crate) fn finish_repair_attempt_from(
         packet_path,
         movement,
         &[],
+        None,
     )
+}
+
+/// Identity of the source bytes used to validate a caller's focused result.
+/// The cage capture, not a later filesystem read, must confirm this identity.
+pub(crate) struct FocusedResultIdentity {
+    pub(crate) head: String,
+    pub(crate) file: String,
+    pub(crate) worktree_digest: String,
+    pub(crate) record: String,
 }
 
 pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
@@ -3480,6 +4016,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     packet_path: &Path,
     movement: HeadMovement,
     backups: &[(PathBuf, String, bool)],
+    focused: Option<&FocusedResultIdentity>,
 ) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
@@ -3536,7 +4073,12 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _, captured_digest, line_ending_only_paths) =
+        crate::edit_cage::evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            movement,
+            focused.map(|result| result.file.as_str()),
+        )?;
     crate::edit_cage::omit_attempt_manifest_identity(
         &mut delta,
         &baseline,
@@ -3546,6 +4088,62 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
+    if current
+        && verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && let Some(focused) = focused
+        && (current_head != focused.head
+            || captured_digest.as_deref() != Some(focused.worktree_digest.as_str()))
+    {
+        return Err(format!(
+            "repair attempt {} {REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL}",
+            attempt_id.as_str()
+        ));
+    }
+    // #13203 slice C at the finish authority: the after-phase gate skips a
+    // proposal whose file is absent, leaving it to the cage. If the file
+    // appears after that check, the cage evaluated here can be compliant
+    // with no focused run, so refuse from this same evaluated state.
+    // The same holds for a result whose file the gate did not see: the
+    // gate's passing-run check is skipped with it, so the finish re-applies
+    // that check to the record it would retain (#15033).
+    if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && let Some(proposal) = &baseline.policy().new_test_proposal
+    {
+        let Some(focused) = focused else {
+            return Err(format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL}",
+                attempt_id.as_str()
+            ));
+        };
+        let inline_baseline = if proposal.kind
+            == crate::analysis::new_test_target::NewTestKind::InlineUnit
+        {
+            let source = baseline.inline_test_region_source().ok_or_else(|| {
+                    format!(
+                        "attempt `{}` follows an inline proposal but retains no baseline text of `{}`; start a new attempt",
+                        attempt_id.as_str(),
+                        proposal.file
+                    )
+                })?;
+            Some(crate::app::focused_run::baseline_test_names(
+                &proposal.file,
+                source,
+            )?)
+        } else {
+            None
+        };
+        crate::app::focused_run::require_passing_recorded_run(
+            &focused.record,
+            attempt_id.as_str(),
+            inline_baseline.as_ref(),
+        )
+        .map_err(|error| {
+            format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX}{error}",
+                attempt_id.as_str()
+            )
+        })?;
+    }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -3553,6 +4151,25 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         .map_err(|error| format!("serialize repair delta failed: {error}; rerun, and report a repeat as a ripr bug with this message"))?;
     let receipt_projection_predecessor =
         receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
+    let pending_focused =
+        if current && verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant {
+            focused
+                .map(|focused| -> Result<_, String> {
+                    Ok(PendingFocusedResult {
+                        record: focused.record.clone(),
+                        receipt_protocol: Some("durable-v1".to_string()),
+                        custody: format!(
+                            "{}-{}-{}",
+                            current_unix_ms()?,
+                            std::process::id(),
+                            ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed)
+                        ),
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
@@ -3560,8 +4177,10 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         delta_binding: Some("path-state-v1".to_string()),
         receipt_projection_predecessor,
         packet_sha256,
+        focused_result: pending_focused,
         current,
         verdict,
+        line_ending_only_paths,
     };
     manifest.after = Some(after.clone());
     // This after phase reached the durable finish, so an earlier refusal no
@@ -4130,7 +4749,7 @@ fn select_awaiting_repair_attempt_by_seam(
     // A fresh workspace has no attempts directory at all: that is zero
     // matches, not an operational error (#4332), so the refusal still names
     // the start command.
-    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(manifests_root) {
+    let mut entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(manifests_root) {
         Ok(entries) => {
             // A failed directory entry is an operational error, not a silent
             // skip: a partial listing must never masquerade as a complete one
@@ -4147,6 +4766,10 @@ fn select_awaiting_repair_attempt_by_seam(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(format!("read {} failed: {error}", manifests_root.display())),
     };
+    // `read_dir` order is filesystem-defined. Visit attempts in directory-name
+    // order so the same store always names the same ids in the same order,
+    // and always reports the same unreadable manifest first.
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
         if !path.is_file() {
@@ -4292,6 +4915,45 @@ pub(crate) const REPAIR_ATTEMPT_CONTENTION_TAIL: &str =
 pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
     "changed while the after phase ran; retry the after phase";
 
+/// The result was checked against another HEAD or test-file snapshot than the
+/// one the cage captured. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test result no longer matches the captured HEAD or test file; rerun the focused test and retry the after phase with --test-result FILE";
+
+/// The finish authority's own refusal for an attempt that follows a new-test
+/// proposal but reached the finish without a focused result (#13203 slice C).
+/// No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL: &str = "follows a new-test proposal, so it cannot finish without a focused test result; rerun the after phase with `--test-result FILE`";
+
+/// The finish authority's refusal of a proposal attempt's focused result that
+/// is not a counted passing run of a new test (#15033). The checked reason
+/// follows this prefix. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX: &str =
+    "cannot finish its new-test proposal: ";
+
+pub(crate) fn repair_attempt_proposal_focused_required_is_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok()
+        && (tail == REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL
+            || tail
+                .strip_prefix(REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX)
+                .is_some_and(|reason| !reason.is_empty()))
+}
+
+pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok() && tail == REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL
+}
+
 /// True when a manifest-commit error is a retryable named refusal (lock
 /// contention or a concurrent commit underfoot) rather than an operational
 /// failure. Match the complete product sentence and validate its attempt ID:
@@ -4366,6 +5028,16 @@ fn commit_manifest_locked(
         .parent()
         .ok_or_else(|| "repair attempt manifest path has no parent".to_string())?;
     let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    commit_manifest_with_held_lock(manifest_path, attempt_id, base_bytes, bytes, check)
+}
+
+fn commit_manifest_with_held_lock(
+    manifest_path: &Path,
+    attempt_id: &RepairAttemptId,
+    base_bytes: &[u8],
+    bytes: &[u8],
+    check: impl FnOnce(&RepairAttemptManifest) -> Result<(), String>,
+) -> Result<(), String> {
     let current_bytes = std::fs::read(manifest_path)
         .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     let current: RepairAttemptManifest = serde_json::from_slice(&current_bytes)
@@ -4625,6 +5297,58 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
         return Err("repair attempt delta binding version is not recognized".to_string());
     }
     if let Some(after) = &manifest.after
+        && let Some(pending) = &after.focused_result
+        && (!after.current
+            || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
+            || pending.record.is_empty()
+            || pending.custody.is_empty())
+    {
+        return Err(
+            "repair attempt pending focused result is inconsistent with its finish".to_string(),
+        );
+    }
+    if let Some(pending) = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        && pending
+            .receipt_protocol
+            .as_deref()
+            .is_some_and(|protocol| protocol != "durable-v1")
+    {
+        return Err("focused receipt recovery protocol is unsupported".to_string());
+    }
+    if let Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256,
+        verify_sha256,
+    }) = &manifest.focused_receipt_evaluation
+        && (!is_sha256_digest(receipt_sha256) || !is_sha256_digest(verify_sha256))
+    {
+        return Err("focused receipt evaluation has invalid evidence digests".to_string());
+    }
+    if manifest.focused_receipt_evaluation.is_some()
+        && manifest
+            .after
+            .as_ref()
+            .and_then(|after| after.focused_result.as_ref())
+            .is_none_or(|pending| pending.receipt_protocol.as_deref() != Some("durable-v1"))
+    {
+        return Err("focused receipt evaluation lacks its durable finish protocol".to_string());
+    }
+    if !manifest.terminal_artifacts.is_empty()
+        && manifest
+            .after
+            .as_ref()
+            .and_then(|after| after.focused_result.as_ref())
+            .is_some_and(|pending| pending.receipt_protocol.as_deref() == Some("durable-v1"))
+        && !matches!(
+            manifest.focused_receipt_evaluation,
+            Some(FocusedReceiptEvaluation::Accepted { .. })
+        )
+    {
+        return Err("focused terminal evidence lacks a committed receipt outcome".to_string());
+    }
+    if let Some(after) = &manifest.after
         && let Some(predecessor) = &after.receipt_projection_predecessor
     {
         RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
@@ -4697,14 +5421,49 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
             .iter()
             .any(|artifact| artifact.role == role)
     };
+    if let Some(pending) = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        && !manifest.terminal_artifacts.is_empty()
+        && manifest
+            .terminal_artifacts
+            .iter()
+            .find(|artifact| artifact.role == TERMINAL_FOCUSED_RUN_ROLE)
+            .is_none_or(|artifact| {
+                artifact.sha256 != sha256_bytes(pending.record.as_bytes())
+                    || artifact.bytes != pending.record.len() as u64
+            })
+    {
+        return Err("retained focused result does not match the focused finish".to_string());
+    }
+    if manifest.terminal_artifacts.iter().any(|artifact| {
+        ![
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+            TERMINAL_FOCUSED_RUN_ROLE,
+        ]
+        .contains(&artifact.role.as_str())
+    }) {
+        return Err(
+            "repair attempt manifest contains an unknown terminal artifact role".to_string(),
+        );
+    }
+    // The optional caller-reported focused result is a fourth role beside
+    // the three required gap roles; it never stands in for one of them.
+    let required_terminal_roles = terminal_roles
+        .iter()
+        .filter(|role| role.as_str() != TERMINAL_FOCUSED_RUN_ROLE)
+        .count();
     if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
         && (manifest.gap_binding.is_none()
-            || terminal_roles.len() != 3
+            || required_terminal_roles != 3
             || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
             || !has_terminal_role(TERMINAL_VERIFY_ROLE))
     {
         return Err(
-            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
+            "gap after retention requires the gap snapshot, receipt and verify roles, plus at most one focused test result"
                 .to_string(),
         );
     }
@@ -4787,24 +5546,72 @@ fn validate_manifest_at(
 /// phase (for example a `Cargo.lock` an earlier build generated) is not an
 /// attempt write, and the cage's compliant verdict already reported it as
 /// unchanged, so refusing it here would contradict the cage's own delta.
+/// Typed refusal class for repair-receipt admission (#12102): which record
+/// authority a refusal narrates into, whether the focused evaluation restores,
+/// and whether the refusal maps to the decision exit code are all read from
+/// this type at the call sites, never re-derived from message text. The
+/// rendered messages stay byte-identical to the historical strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReceiptBindingError {
+    /// The repository differs from the attempt's trusted edit surface
+    /// (#5262); carries the first refusing path. This is the deliberate named
+    /// refusal: the attempt is terminal and the recovery is to commit or
+    /// remove the observed change first.
+    TrustedSurfaceUntrusted {
+        /// The repository-relative path outside the allowed edit surface.
+        path: String,
+    },
+    /// Every other admission refusal (stale or tampered binding, wrong seam,
+    /// not receipt-ready, ambiguous attempt selection). The message text is
+    /// the full contract for these.
+    Other(String),
+}
+
+impl ReceiptBindingError {
+    /// The refusal message exactly as the historical `String` errors rendered
+    /// it, so consumers that log or persist the text see unchanged bytes.
+    pub(crate) fn message(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl std::fmt::Display for ReceiptBindingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TrustedSurfaceUntrusted { path } => write!(
+                formatter,
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
+            ),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ReceiptBindingError {}
+
+impl From<String> for ReceiptBindingError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
 fn validate_trusted_head_surface(
     root: &Path,
     policy: &EditCagePolicy,
     observed_changes: &[String],
     before_head: &str,
-) -> Result<(), String> {
+) -> Result<(), ReceiptBindingError> {
     match trusted_head_surface_violations(root, policy, observed_changes, before_head)?.as_slice() {
         [] => Ok(()),
-        [path, ..] => Err(format!(
-            "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
-        )),
+        [path, ..] => Err(ReceiptBindingError::TrustedSurfaceUntrusted { path: path.clone() }),
     }
 }
 
 /// The stable tail of the receipt's trusted-surface admission refusal. The
-/// after phase matches it to narrate the commit-first recovery when the
-/// refusal still fires mid-loop, so the shared vocabulary cannot drift
-/// between the refusing validator and its narration (#5262).
+/// after phase's narration names this same vocabulary (through
+/// [`ReceiptBindingError::message`]) when the refusal still fires mid-loop, so
+/// the shared vocabulary cannot drift between the refusing validator and its
+/// narration (#5262).
 pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surface";
 
 /// The repository paths a receipt would refuse for this head: tracked paths
@@ -4817,18 +5624,62 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
 fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
-    git_paths(
+    let repo_top_paths = git_paths(
         root,
         &[
             "diff",
             "--no-renames",
             "--no-ext-diff",
+            // A user's `diff.relative=true` would otherwise spell paths from
+            // the working directory and drop changes outside it.
+            "--no-relative",
             "--name-only",
             "-z",
             head,
             "--",
         ],
-    )
+    )?;
+    // `git diff --name-only` spells paths from the repository top, while every
+    // rule they meet (packet surface, operational subtrees) and the untracked
+    // inventory are relative to `root` (#13947). Translate once here.
+    let prefix = git_paths_prefix(root)?;
+    Ok(repo_top_paths
+        .into_iter()
+        .map(|path| root_relative_dirty_path(&prefix, &path))
+        .collect())
+}
+
+/// `git rev-parse --show-prefix`: the root's own path below the repository
+/// top, with a trailing `/`, or empty when the root is the repository top.
+fn git_paths_prefix(root: &Path) -> Result<String, String> {
+    let args = ["rev-parse", "--show-prefix"];
+    let output = crate::git::run_git_output_with_deadline(root, &args, Some(GIT_PATHS_DEADLINE))
+        .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|_error| "git rev-parse --show-prefix output is not valid UTF-8".to_string())?;
+    Ok(text.trim_end_matches(['\n', '\r']).to_string())
+}
+
+/// Respells one repository-top path relative to the root. A path below the
+/// root loses the prefix; a path outside the root climbs out with `../`, so no
+/// root-relative rule can match a namesake and the refusal pathspec still
+/// resolves from inside the root.
+fn root_relative_dirty_path(prefix: &str, repo_top_path: &str) -> String {
+    if prefix.is_empty() {
+        return repo_top_path.to_string();
+    }
+    if let Some(inside) = repo_top_path.strip_prefix(prefix) {
+        return inside.to_string();
+    }
+    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
+    format!("{}{repo_top_path}", "../".repeat(depth))
 }
 
 /// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
@@ -4857,6 +5708,56 @@ pub(crate) fn conservative_dirty_premise_violations(
                 && dirty_path_cannot_be_repair_target(root, path)
         })
         .collect())
+}
+
+/// The dirty production premise a seam start would refuse right now
+/// (#13636): [`conservative_dirty_premise_violations`] at the current HEAD
+/// with the default store, the same policy-free preflight the before phase
+/// applies before any inventory. Consumers that print a repair start (the
+/// `ripr check` route) ask this instead of re-deriving dirtiness. Paths are
+/// relative to `root` (outside it as `../...`, #13962). Being a subset of the
+/// exact before-phase check, a non-empty answer means the start refuses; an
+/// empty one does not promise it starts.
+pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, String> {
+    let head = crate::agent::artifact::current_git_head(root)?;
+    conservative_dirty_premise_violations(root, &head, None, None)
+}
+
+/// The before-phase refusal for a dirty production premise (#5262), for a
+/// seam-bound start: names the paths, states the production-vs-test boundary,
+/// and gives the commit-first route. Called by the CLI before phase
+/// (`ripr repair` / `ripr agent repair --phase before`), which has written
+/// nothing yet, so the tail says so. A start through the `ripr repair <item>`
+/// façade is told to rerun that command, not the advanced `ripr agent repair`
+/// route it never typed (#14394).
+pub(crate) fn seam_dirty_premise_refusal(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+    violations: &[String],
+) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let seam_arg = shell_arg(seam_id);
+    let store_flag = quoted_store_flag(store);
+    let restart = if facade_start && store.is_none() {
+        format!("ripr repair {seam_arg} --root {root_arg}")
+    } else {
+        format!(
+            "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
+        )
+    };
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// [`seam_dirty_premise_refusal`] for any start spelling: the seam and
+/// gap-bound (#9103) starts differ only in the command they name.
+pub(crate) fn dirty_premise_refusal(restart: &str, violations: &[String]) -> String {
+    let first = violations.first().map(String::as_str).unwrap_or_default();
+    format!(
+        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
+        violations.join(", "),
+    )
 }
 
 /// The tracked subtrees the exact policy check always allows as operational
@@ -5173,6 +6074,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -5693,9 +6595,11 @@ mod tests {
                 .to_string(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Compliant,
@@ -5983,6 +6887,216 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    fn terminal_artifact(role: &str) -> RepairAttemptArtifact {
+        RepairAttemptArtifact {
+            role: role.to_string(),
+            path: format!("target/ripr/repair-attempts/sample/artifacts/{role}.json"),
+            sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            bytes: 2,
+        }
+    }
+
+    #[test]
+    fn a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role()
+    -> Result<(), String> {
+        let root = test_root("terminal-roles")?;
+        let gap_roles = [
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+        ];
+        let build = |roles: &[&str]| -> Result<RepairAttemptManifest, String> {
+            let mut manifest = sample_manifest(&root)?;
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: "HEAD~1".to_string(),
+                base_commit: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            });
+            manifest.terminal_artifacts = roles.iter().map(|r| terminal_artifact(r)).collect();
+            Ok(manifest)
+        };
+        let mut with_focused = gap_roles.to_vec();
+        with_focused.push(TERMINAL_FOCUSED_RUN_ROLE);
+        let mut with_foreign = gap_roles.to_vec();
+        with_foreign.push("foreign_role");
+        let outcome = (|| {
+            validate_manifest(&build(&gap_roles)?)
+                .map_err(|e| format!("three gap roles refused: {e}"))?;
+            validate_manifest(&build(&with_focused)?)
+                .map_err(|e| format!("gap roles plus focused result refused: {e}"))?;
+            if validate_manifest(&build(&with_foreign)?).is_ok() {
+                return Err("a foreign terminal role was accepted".to_string());
+            }
+            if validate_manifest(&build(&[
+                TERMINAL_GAP_AFTER_ROLE,
+                TERMINAL_FOCUSED_RUN_ROLE,
+            ])?)
+            .is_ok()
+            {
+                return Err("the focused result stood in for a required gap role".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        outcome
+    }
+
+    #[test]
+    fn focused_restore_refuses_another_finish_or_committed_evidence() -> Result<(), String> {
+        let root = test_repo_root("focused-restore-custody")?;
+        let outcome = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "focused-restore")?;
+            let attempt_id = prepared.manifest.repair_attempt_id.clone();
+            let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+            let source = "#[test]\nfn focused() {}\n";
+            std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+            std::fs::write(root.join("tests/target.rs"), source)
+                .map_err(|error| error.to_string())?;
+            let focused = FocusedResultIdentity {
+                head: crate::agent::artifact::current_git_head(&root)?,
+                file: "tests/target.rs".to_string(),
+                worktree_digest: crate::edit_cage::inline_test_region::digest_bytes(
+                    source.as_bytes(),
+                ),
+                record: "validated focused record\n".to_string(),
+            };
+            let after = finish_repair_attempt_with_workflow_backups_from(
+                &root,
+                None,
+                &attempt_id,
+                &resolved.packet_path,
+                HeadMovement::AdmitDescendantCommits,
+                &[],
+                Some(&focused),
+            )?;
+            let mut other = after.clone();
+            other
+                .focused_result
+                .as_mut()
+                .ok_or("missing focused custody")?
+                .custody
+                .push_str("-other");
+            if restore_focused_finish_from(&root, None, &attempt_id, &other).is_ok() {
+                return Err("restored a different finish".to_string());
+            }
+            let receipt = root.join("agent-receipt.json");
+            let verify = root.join("agent-verify.json");
+            let result = root.join("focused-test-result.json");
+            std::fs::write(&receipt, b"receipt").map_err(|error| error.to_string())?;
+            std::fs::write(&verify, b"verify").map_err(|error| error.to_string())?;
+            std::fs::write(&result, focused.record.as_bytes())
+                .map_err(|error| error.to_string())?;
+            // This isolated custody unit supplies synthetic receipt bytes; seed an
+            // accepted outcome solely to exercise retention ownership independently
+            // of the real receipt producer's validation.
+            let (_, path, mut staged) = open_attempt(&root, None, &attempt_id)?;
+            staged.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+                receipt_sha256: sha256_bytes(b"receipt"),
+                verify_sha256: sha256_bytes(b"verify"),
+            });
+            let mut staged_bytes =
+                serde_json::to_vec_pretty(&staged).map_err(|error| error.to_string())?;
+            staged_bytes.push(b'\n');
+            replace_manifest_bytes(&path, &staged_bytes)?;
+            let sources = [
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_FOCUSED_RUN_ROLE,
+                    path: &result,
+                },
+            ];
+            let (_, first_custody) = retain_terminal_evidence_with_custody_from(
+                &root,
+                None,
+                &attempt_id,
+                &sources,
+                Some(&after),
+            )?;
+            let first_custody = first_custody.ok_or("first retention granted no custody")?;
+            let (_, reused_custody) = retain_terminal_evidence_with_custody_from(
+                &root,
+                None,
+                &attempt_id,
+                &sources,
+                Some(&after),
+            )?;
+            if reused_custody.is_some() {
+                return Err("an idempotent second retainer acquired rollback custody".to_string());
+            }
+            let before = open_attempt(&root, None, &attempt_id)?.2;
+            if restore_focused_finish_from(&root, None, &attempt_id, &after).is_ok() {
+                return Err("restored over committed terminal evidence".to_string());
+            }
+            let actual = open_attempt(&root, None, &attempt_id)?.2;
+            if actual != before {
+                return Err("restore altered the winner's manifest".to_string());
+            }
+            // Even the original writer loses rollback custody if any other
+            // manifest commit lands after its terminal retention.
+            let mut changed = actual.clone();
+            changed.after_refusal_count = changed.after_refusal_count.saturating_add(1);
+            let (_, path, _) = open_attempt(&root, None, &attempt_id)?;
+            let mut bytes =
+                serde_json::to_vec_pretty(&changed).map_err(|error| error.to_string())?;
+            bytes.push(b'\n');
+            replace_manifest_bytes(&path, &bytes)?;
+            if restore_owned_focused_retention_from(&root, None, &attempt_id, &after, first_custody)
+                .is_ok()
+            {
+                return Err("restored a changed terminal manifest".to_string());
+            }
+            if open_attempt(&root, None, &attempt_id)?.2 != changed {
+                return Err("changed terminal evidence was overwritten".to_string());
+            }
+            // A finish retained by an older producer has no pending field. Its
+            // committed focused artifact remains idempotent, but different bytes
+            // must not be substituted on that legacy route either.
+            let mut legacy = changed;
+            legacy.focused_receipt_evaluation = None;
+            legacy
+                .after
+                .as_mut()
+                .ok_or("missing finish")?
+                .focused_result = None;
+            let (_, path, _) = open_attempt(&root, None, &attempt_id)?;
+            let mut bytes =
+                serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?;
+            bytes.push(b'\n');
+            replace_manifest_bytes(&path, &bytes)?;
+            let sources = [
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_FOCUSED_RUN_ROLE,
+                    path: &result,
+                },
+            ];
+            retain_terminal_evidence_from(&root, None, &attempt_id, &sources)?;
+            std::fs::write(&result, "foreign bytes\n").map_err(|error| error.to_string())?;
+            if retain_terminal_evidence_from(&root, None, &attempt_id, &sources).is_ok() {
+                return Err("legacy re-retention accepted different focused bytes".to_string());
+            }
+            Ok(())
+        })();
+        let removed = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        outcome?;
+        removed
     }
 
     #[test]
@@ -6592,7 +7706,8 @@ mod tests {
                 .map_err(|error| format!("write test: {error}"))?;
             run_git(&root, &["add", "tests/target.rs"])?;
             run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
-            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)?;
+            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)
+                .map_err(|error| error.message())?;
 
             std::fs::write(root.join("src.rs"), "pub fn moved() {}\n")
                 .map_err(|error| format!("write production file: {error}"))?;
@@ -6604,7 +7719,9 @@ mod tests {
                 return Err("the production change must be committed".to_string());
             }
             match validate_trusted_head_surface(&root, &policy, &[], &prepared_head) {
-                Err(error) if error.contains("outside trusted edit surface: src.rs") => Ok(()),
+                Err(ReceiptBindingError::TrustedSurfaceUntrusted { path }) if path == "src.rs" => {
+                    Ok(())
+                }
                 other => Err(format!(
                     "a committed production change must block the receipt: {other:?}"
                 )),
@@ -6676,6 +7793,110 @@ mod tests {
         result
     }
 
+    /// Builds a repository whose `--root` is the `crate/` subdirectory, with a
+    /// committed production file at both `crate/src/plain.rs` and the
+    /// repository-level `src/plain.rs`, then dirties both and one operational
+    /// file under `crate/target/ripr`.
+    fn subdir_root_fixture(name: &str) -> Result<(PathBuf, PathBuf), String> {
+        let top = test_repo_root(name)?;
+        let sub = top.join("crate");
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            let path = top.join(file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, "pub fn f() {}\n").map_err(|e| e.to_string())?;
+        }
+        run_git(&top, &["add", "-A"])?;
+        run_git(&top, &["commit", "--no-gpg-sign", "-qm", "subdir"])?;
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            std::fs::write(top.join(file), "pub fn g() {}\n").map_err(|e| e.to_string())?;
+        }
+        Ok((top, sub))
+    }
+
+    /// #13947: under a subdirectory `--root`, tracked dirty paths are spelled
+    /// relative to the root. The tracked operational file is exempted (positive),
+    /// the root's own production file is named root-relative, and the
+    /// repository-level namesake is named outside the root rather than
+    /// collapsing onto the same spelling (discriminating negative).
+    #[test]
+    fn dirty_premise_preflight_matches_root_relative_rules_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "expected the namesake outside the root and the root's file root-relative, never the operational file: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: a user's `diff.relative=true` must not change which dirty paths
+    /// the preflight names or how they are spelled under a subdirectory root.
+    #[test]
+    fn dirty_premise_preflight_ignores_a_diff_relative_setting_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-diff-relative")?;
+        let result = (|| -> Result<(), String> {
+            run_git(&top, &["config", "diff.relative", "true"])?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "diff.relative must not change the inventory: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: the exact check admits the confined target only for the root's
+    /// own file. The repository-level namesake `src/plain.rs` is refused even
+    /// though the packet allows the root-relative `src/plain.rs`.
+    #[test]
+    fn trusted_surface_does_not_admit_a_repository_level_namesake_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("trusted-surface-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["src/plain.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = trusted_head_surface_violations(&sub, &policy, &[], &head)?;
+            if violations != vec!["../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "only the repository-level namesake may violate: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
     /// The terminal receipt-refusal authority records the narration beside a
     /// committed after verdict (#5262 review): the late trusted-surface
     /// refusal fires only after `finish_repair_attempt`, so the resumable
@@ -6723,6 +7944,7 @@ mod tests {
             }
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_receipt_refusal_from(
                 &root,
@@ -6774,6 +7996,7 @@ mod tests {
 
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_after_refusal_from(
                 &root,
@@ -7707,14 +8930,17 @@ mod tests {
             let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
             let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("no post-change path identity binding") => {}
+                Err(error)
+                    if error
+                        .message()
+                        .contains("no post-change path identity binding") => {}
                 other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
             }
             std::fs::write(&prepared.manifest_path, manifest_bytes)
                 .map_err(|error| error.to_string())?;
 
             // The selected path already appears in the finished delta. A
-            // second edit keeps its kind (Added) but changes its identity.
+            // second edit keeps its kind (Modified) but changes its identity.
             let selected = root.join("tests/target.rs");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
             std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
@@ -7724,7 +8950,7 @@ mod tests {
                 return Err("second edit to bound selected path remained current".to_string());
             }
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
             }
             std::fs::write(&selected, original).map_err(|error| error.to_string())?;
@@ -7787,7 +9013,7 @@ mod tests {
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
             }
             std::fs::remove_file(&production)
@@ -7798,7 +9024,8 @@ mod tests {
                     "reverting the drift must restore current: {restored:?}"
                 ));
             }
-            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))
+                .map_err(|error| error.message())?;
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
@@ -7809,20 +9036,38 @@ mod tests {
     fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
         let root = test_repo_root("ignored-bound-test")?;
         let result = (|| -> Result<(), String> {
-            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+            std::fs::write(root.join(".gitignore"), "tests/target.py\n")
                 .map_err(|error| error.to_string())?;
             run_git(&root, &["add", ".gitignore"])?;
             run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
-            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
-            let finished = finish_sample_attempt(&root, &prepared)?;
+            // Rust external targets must already be committed; an ignored
+            // Python test retains the path-only content-identity control.
+            let prepared = prepare_sample_attempt_for_target(
+                &root,
+                "seam:sample",
+                "ignored",
+                "tests/target.py",
+            )?;
+            std::fs::write(root.join("tests/target.py"), "def test_focused(): pass\n")
+                .map_err(|error| error.to_string())?;
+            let packet =
+                root.join(&find_manifest_artifact(&prepared.manifest, "agent_packet")?.path);
+            finish_repair_attempt(
+                &root,
+                &prepared.manifest.repair_attempt_id,
+                &packet,
+                HeadMovement::AdmitDescendantCommits,
+            )?;
+            let finished =
+                load_repair_attempt_manifest(&root, &prepared.manifest.repair_attempt_id)?;
             let head = crate::agent::artifact::current_git_head(&root)?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
             {
                 return Err("ignored selected test was not initially current".to_string());
             }
-            let selected = root.join("tests/target.rs");
+            let selected = root.join("tests/target.py");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
-            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+            std::fs::write(&selected, b"def test_changed(): pass\n")
                 .map_err(|error| error.to_string())?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
             {
@@ -7900,6 +9145,15 @@ mod tests {
         seam_id: &str,
         label: &str,
     ) -> Result<BeginRepairAttemptResult, String> {
+        prepare_sample_attempt_for_target(root, seam_id, label, "tests/target.rs")
+    }
+
+    fn prepare_sample_attempt_for_target(
+        root: &Path,
+        seam_id: &str,
+        label: &str,
+        target: &str,
+    ) -> Result<BeginRepairAttemptResult, String> {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
@@ -7923,7 +9177,7 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", before.display()))?;
         let packet_value = serde_json::json!({
             "seam_id": seam_id,
-            "allowed_edit_surface": ["tests/target.rs"],
+            "allowed_edit_surface": [target],
             "forbidden_files": []
         });
         let packet_text = serde_json::to_string_pretty(&packet_value)
@@ -7967,6 +9221,13 @@ mod tests {
         let readme = root.join("README.md");
         std::fs::write(&readme, "# test\n")
             .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        // The external Rust cage requires a committed selected target at
+        // before-time. An empty Rust file is a clean insertion surface for
+        // the lifecycle fixtures that add focused() after preparing an attempt.
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests dir failed: {error}"))?;
+        std::fs::write(root.join("tests/target.rs"), "")
+            .map_err(|error| format!("write baseline target failed: {error}"))?;
         run_git(&root, &["add", "."])?;
         run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
         Ok(root)
@@ -9833,7 +11094,9 @@ mod tests {
             delta_sha256: String::new(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: String::new(),
+            line_ending_only_paths: Vec::new(),
             current,
             verdict: crate::edit_cage::EditCageVerdict {
                 status,

@@ -116,6 +116,13 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
             field(
                 "seam_id",
                 FieldRole::Canonical,
+                CHECK_SCHEMA,
+                FieldVisibility::Public,
+                None,
+            ),
+            field(
+                "seam_id",
+                FieldRole::Canonical,
                 REPAIR_ATTEMPT,
                 FieldVisibility::Public,
                 None,
@@ -151,13 +158,22 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
         children: &[],
         invalidation: "Changed owner or probe family. Display titles do not participate.",
         persistence: "May be referenced from packets. Must not become DiagnosticResultId.",
-        serialization: &[field(
-            "finding_id",
-            FieldRole::Canonical,
-            ACTION_CONTRACT,
-            FieldVisibility::Public,
-            None,
-        )],
+        serialization: &[
+            field(
+                "finding_id",
+                FieldRole::Canonical,
+                CHECK_SCHEMA,
+                FieldVisibility::Public,
+                None,
+            ),
+            field(
+                "finding_id",
+                FieldRole::Canonical,
+                ACTION_CONTRACT,
+                FieldVisibility::Public,
+                None,
+            ),
+        ],
         competing_wrappers: &[
             "ProbeId remains the current Rust type; this row records it rather than wrapping it",
         ],

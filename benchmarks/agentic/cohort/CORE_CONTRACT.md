@@ -30,6 +30,10 @@ timeout, process failure, cleanup failure, zero tests, incomplete output or
 changed inputs cannot establish a catch. Phase, exit, counts, elapsed time,
 raw stdout/stderr hashes and lengths, and bounded diagnostic tails are retained.
 Owned process trees are terminated on timeout; cleanup failure remains visible.
+On POSIX, cleanup waits at most five seconds for a supported `ps` snapshot to
+show no executing members in the owned process group. Missing, malformed or
+unsupported observations retain a cleanup error; a reaped direct child alone
+does not establish descendant termination.
 
 The initial pristine tests must pass with nonzero execution. For every declared
 mutant, retain its identity, run it, restore the original bytes and rerun pristine

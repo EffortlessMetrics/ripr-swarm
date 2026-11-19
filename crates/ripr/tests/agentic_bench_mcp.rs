@@ -161,9 +161,45 @@ impl Drop for McpSession {
     }
 }
 
+/// Refuse a result document that carries an issue-tracker reference: `#`
+/// followed by three or more digits, the shape of `(#6825 review)`.
+fn require_no_issue_reference(document: &Value, context: &str) -> Result<(), String> {
+    let text = document.to_string();
+    let bytes = text.as_bytes();
+    for (index, _) in text.match_indices('#') {
+        let digits = bytes[index + 1..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if digits >= 3 {
+            let end = (index + 1 + digits).min(text.len());
+            return Err(format!(
+                "{context}: the document carries the issue reference {}",
+                &text[index..end]
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn issue_reference_check_refuses_a_tracker_id_and_accepts_other_hashes() -> Result<(), String> {
+    match require_no_issue_reference(&json!({"note": "same config (#6825 review)"}), "control") {
+        Err(error) if error.ends_with("#6825") => {}
+        other => return Err(format!("a tracker id was not refused: {other:?}")),
+    }
+    require_no_issue_reference(
+        &json!({"code": "#[test] fn a() {}", "n": "item #12"}),
+        "control",
+    )
+}
+
 struct SessionAudit {
     frames: usize,
     max_frame_bytes: usize,
+    /// Every reply byte the session wrote: what an agent that reads each
+    /// result once pays for the whole walk.
+    total_frame_bytes: usize,
 }
 
 impl McpSession {
@@ -429,6 +465,7 @@ impl McpSession {
                     return Ok(SessionAudit {
                         frames: self.frame_sizes.len(),
                         max_frame_bytes,
+                        total_frame_bytes: self.frame_sizes.iter().sum(),
                     });
                 }
                 None if Instant::now() < deadline => {
@@ -1232,6 +1269,23 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     if audit.frames == 0 || audit.max_frame_bytes == 0 {
         return Err("b2: session audit is empty".to_string());
     }
+    // #9360: the whole walk is what an agent pays to take one gap from
+    // discovery to the repair route, so its reply bytes are held here the
+    // way `tools/list` and the descriptions are held in the unit tests.
+    // Measured 84,384 bytes over 14 replies on this one-predicate fixture
+    // (2026-11-11), with the default text mode carrying each document twice.
+    // The ceiling leaves about 4% for temp-path length; a failure means a
+    // result document or the listing grew and needs an explicit decision.
+    const B2_JOURNEY_REPLY_BYTE_CEILING: usize = 88_000;
+    if audit.total_frame_bytes > B2_JOURNEY_REPLY_BYTE_CEILING {
+        return Err(format!(
+            "b2: the journey's {} replies total {} bytes, over the {B2_JOURNEY_REPLY_BYTE_CEILING}-byte ceiling",
+            audit.frames, audit.total_frame_bytes
+        ));
+    }
+    if audit.total_frame_bytes < audit.max_frame_bytes {
+        return Err("b2: the reply total is below its largest frame".to_string());
+    }
 
     // The journey may warm the producer fact cache under target/ and
     // nothing else; repair or receipt artifacts anywhere are a violation.
@@ -1848,6 +1902,11 @@ fn mcp_repair_card_success_matches_the_cli_card() -> Result<(), String> {
         nonempty_str(&document, "/card/repair_card_id", "card get_repair_card")?.to_string();
     let seam_id =
         nonempty_str(&document, "/card/subject/seam_id", "card get_repair_card")?.to_string();
+    // #9360 item 4: an agent pays for every byte and cannot follow an issue
+    // number, so no result document on this walk carries one.
+    require_no_issue_reference(&refresh, "card refresh")?;
+    require_no_issue_reference(&list, "card list_gaps")?;
+    require_no_issue_reference(&document, "card get_repair_card")?;
 
     let audit = session.finish(bound)?;
     if audit.frames == 0 {

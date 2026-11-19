@@ -32,7 +32,9 @@ fn generation_counter_is_monotonic() {
 /// proofs below therefore assume `generation < u64::MAX`.
 #[kani::proof]
 fn generation_counter_saturates_at_max() {
-    assert!(bump_generation(u64::MAX) == u64::MAX);
+    let next = bump_generation(u64::MAX);
+    assert!(next == u64::MAX);
+    kani::cover!(next == u64::MAX, "the saturated generation is reached");
 }
 
 /// A result stamped with a generation can never publish once the scheduler
