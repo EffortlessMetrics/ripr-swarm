@@ -46,3 +46,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_added_disjunct_sibling_field (5)
+
+Reason:
+RIPR-SPEC-0122: the repair-start note names the spots tied on the changed line instead of claiming none ties (#15157)
+
+Command:
+`cargo xtask goldens bless rust_predicate_added_disjunct_sibling_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

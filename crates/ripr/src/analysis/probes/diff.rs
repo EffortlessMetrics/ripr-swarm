@@ -282,6 +282,17 @@ pub(crate) fn probes_for_file_with_relations(
             }
         }
     }
+    // #15110: a complete item moved within its owner, with no other change,
+    // is the same program.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let moved = super::moved_item::moved_item_lines(changed, &facts.source, old_source);
+        for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+            *flag |= moved.added.contains(&line.new_side_line);
+        }
+        for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+            *flag |= moved.removed.contains(&line.line);
+        }
+    }
     // A line that is byte-identical on both sides of one replacement run
     // (unchanged or moved inside a rewritten block) is not an edit (#8389).
     for (new_side_line, old_line) in changed.identical_replacement_lines() {

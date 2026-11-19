@@ -291,13 +291,29 @@ a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
 line (`&self,`) has no type and is not classified by this rule, and a fn nested
 inside another fn body in a macro keeps `field_construction`.
 
+A complete Rust item moved within its file and its owner, with no other
+change, seeds no probe on either side (#15110). The removed run and the added
+run must hold the same text and the same code once comments and strings are
+blanked, no other run may hold that text, the block must be one or more
+complete items starting at an item boundary, and both copies must sit in the
+same owner: the file's top level, or the same chain of `mod` headers ending in
+a `mod`, `impl` or `trait` header. An owner block that opens with an inner
+attribute is never that owner. A file where order or source position is
+observable keeps every move probed: `macro_rules!` or `#[macro_use]`,
+`std::panic::Location`, `line` or `column` imported under another name, or a
+macro invocation outside a short list of position-free standard macros. A
+statement, field or variant reordered inside its parent, a move into another
+owner, a fragment of an item and a move with an edit keep their probes.
+
 A replaced line whose code is unchanged seeds no probe on either side when
 the only difference is a trailing `//` comment, its line ending, or a block
 comment inside the line (`if x > 1 /* old */ {`) added, removed or reworded
 (#14175, #15232). For a block comment, each line is read on its own: its code
-with comment and literal contents masked and whitespace collapsed, and the raw
-text of each string and character literal, must equal the other line's. At
-least one side must hold an actual block comment before any line comment.
+with comment and literal contents masked and whitespace kept only where it
+separates two word characters or two characters of a longer Rust token
+(`&&`, `==`, `::`), and the raw text of each string and character literal,
+must equal the other line's. At least one side must hold an actual block
+comment before any line comment.
 These keep their probes:
 - a comment that held two tokens apart (`a/*x*/b` against `ab`);
 - a documentation comment (`///`, `//!`, `/**`, `/*!`) on either side;
