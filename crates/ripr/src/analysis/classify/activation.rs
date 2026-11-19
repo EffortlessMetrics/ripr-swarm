@@ -4599,14 +4599,17 @@ pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 /// refusal to print (it never starts a repair), and `ripr repair` re-reads the
 /// full inventory. The same refusals apply as in `check` (a same-named
 /// function, a helper or unreadable use of the owner, a computed input), each
-/// leaving the arm unnamed.
+/// leaving the arm unnamed. A rebound read macro (#15022) is the one refusal
+/// that comes back as [`UnselectedArm::ReadMacroRebound`] rather than `None`
+/// (#15233): the inputs the reading saw sit inside a macro whose expansion it
+/// does not read, so they do not establish that any test runs the arm either.
 pub(in crate::analysis) fn repo_seam_unselected_arm(
     file: &std::path::Path,
     line: usize,
     owner: &FunctionSummary,
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
-) -> Option<MissingDiscriminatorFact> {
+) -> Option<UnselectedArm> {
     let source_line = owner
         .body
         .lines()
@@ -4628,8 +4631,7 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
     // The selector read is cheap and refuses most arms (a computed or
     // guarded arm, a non-parameter scrutinee) before the workspace lookups.
     super::arm_selection::ArmSelector::establish(&probe, owner)?;
-    let fact =
-        missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)?;
+    let reading = unselected_match_arm(&probe, Some(owner), related_tests, &[], index, true)?;
     // The check-side callee-identity defeat (`classifier::evidence`): a test
     // file that imports the owner's name from a foreign path may call that
     // item instead, so its bare call's input says nothing about which arm
@@ -4642,16 +4644,25 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
             context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
         })
     });
-    (!imports_foreign).then_some(fact)
+    (!imports_foreign).then_some(reading)
 }
 
-/// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
-/// discriminator when every related test calls the owner directly and every
-/// call's scrutinee input provably selects a different arm (`reason(Some(5))`
-/// against `None => 0`). One unreadable use of the owner, one variable or
-/// computed input, one wildcard or refutable alternative, or one related
-/// test that never names the owner leaves the arm unnamed: such a test may
-/// select the arm in a way this reading cannot see.
+/// The arm reading's answer when every related test's visible input selects
+/// another arm.
+#[derive(Debug)]
+pub(in crate::analysis) enum UnselectedArm {
+    /// No related test runs the arm: its pattern is the missing
+    /// discriminator.
+    Named(MissingDiscriminatorFact),
+    /// #15233: a read macro the owner, a function it reaches, a related test
+    /// or a test helper invokes is rebound (#15022), so the arm stays
+    /// unnamed, and the visible inputs, read through that macro, establish
+    /// no activation of it either. The string is the stage summary.
+    ReadMacroRebound(String),
+}
+
+/// [`unselected_match_arm`] read as `ripr check` reads it: only a named arm
+/// is a missing discriminator.
 fn missing_match_arm_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -4660,6 +4671,35 @@ fn missing_match_arm_discriminator(
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
+    match unselected_match_arm(
+        probe,
+        owner_fn,
+        related_tests,
+        flow_sinks,
+        index,
+        workspace_complete,
+    )? {
+        UnselectedArm::Named(fact) => Some(fact),
+        UnselectedArm::ReadMacroRebound(_) => None,
+    }
+}
+
+/// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
+/// discriminator when every related test calls the owner directly and every
+/// call's scrutinee input provably selects a different arm (`reason(Some(5))`
+/// against `None => 0`). One unreadable use of the owner, one variable or
+/// computed input, one wildcard or refutable alternative, or one related
+/// test that never names the owner leaves the arm unnamed: such a test may
+/// select the arm in a way this reading cannot see. A rebound read macro
+/// leaves it unnamed too, as [`UnselectedArm::ReadMacroRebound`].
+fn unselected_match_arm(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<UnselectedArm> {
     let owner = owner_fn?;
     // A trait method runs from calls that never name it (`.into()` reaching
     // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
@@ -4721,16 +4761,37 @@ fn missing_match_arm_discriminator(
     inputs.sort();
     inputs.dedup();
     let pattern = selector.pattern_text();
-    Some(MissingDiscriminatorFact {
+    let observed = inputs
+        .iter()
+        .map(|input| format!("`{input}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The read macros are trusted by name (#15022, as in
+    // `missing_guard_entry_discriminator`): a workspace that defines,
+    // imports or may glob in another macro under one of those names can run
+    // the owner with an input the call it wraps never shows, or never run
+    // the call it wraps at all. Only the names the owner, its callees, the
+    // related tests and their helpers invoke are asked about, so an
+    // unrelated `macro_rules! assert` elsewhere leaves an `assert_eq!`-only
+    // arm readable. Asked after every refusal that keeps the stage, so it
+    // never lowers a stage an earlier refusal left as it was (#15233).
+    let rebound = invoked_read_macros_rebound(owner, &functions_by_name, index, related_tests);
+    if !rebound.is_empty() {
+        return Some(UnselectedArm::ReadMacroRebound(format!(
+            "A read macro on the related tests' path ({}) is rebound in the workspace, so ripr cannot tell whether a related test runs arm `{pattern} =>`; the inputs read through it select other arms (observed `{}` values: {observed})",
+            rebound
+                .iter()
+                .map(|name| format!("`{name}!`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            selector.scrutinee(),
+        )));
+    }
+    Some(UnselectedArm::Named(MissingDiscriminatorFact {
         value: pattern.to_string(),
         reason: format!(
-            "{ARM_UNSELECTED_REASON_PREFIX} `{pattern} =>`; observed `{}` values: {}",
+            "{ARM_UNSELECTED_REASON_PREFIX} `{pattern} =>`; observed `{}` values: {observed}",
             selector.scrutinee(),
-            inputs
-                .iter()
-                .map(|input| format!("`{input}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
         ),
         flow_sink: flow_sinks
             .iter()
@@ -4739,7 +4800,7 @@ fn missing_match_arm_discriminator(
             .cloned(),
         shape: DiscriminatorShape::Other,
         drafted_boundary: None,
-    })
+    }))
 }
 
 pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
@@ -4830,10 +4891,7 @@ fn missing_guard_entry_discriminator(
 /// that selects one arm can still run another. The same refusals as
 /// [`missing_guard_entry_discriminator`]: a callee may call it back
 /// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
-/// read, a read macro that it, a callee, a related test or a test helper
-/// invokes is rebound ([`invoked_read_macro_rebound`]; the guard reading
-/// asks about every read-macro name), or anything outside the related tests
-/// names it
+/// read, or anything outside the related tests names it
 /// ([`owner_named_outside_related_tests`]): its own body (a direct,
 /// `Self::`-qualified or `self.` self-call), a helper passed as a function
 /// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
@@ -4850,26 +4908,19 @@ fn owner_may_call_itself(
     owner_may_reenter(owner, functions_by_name)
         || invokes_unread_macro(&owner.body)
         || owner_named_outside_related_tests(index, &owner.name, related_tests)
-        // The read macros are trusted by name (#15022, as in
-        // `missing_guard_entry_discriminator`): a workspace that defines,
-        // imports or may glob in another macro under one of those names can
-        // run the owner with an input the call it wraps never shows. Only
-        // the names the owner, its callees, the related tests and their
-        // helpers invoke are asked about, so an unrelated `macro_rules!
-        // assert` elsewhere leaves an `assert_eq!`-only arm readable.
-        || invoked_read_macro_rebound(owner, functions_by_name, index, related_tests)
 }
 
-/// Whether a [`READ_MACROS`] name that the owner, a function it reaches,
-/// a related test or a helper that test reaches invokes is rebound in the
-/// workspace ([`macro_names_rebound`]). A name nothing on those paths
-/// invokes cannot run the owner from a read call.
-fn invoked_read_macro_rebound(
+/// The [`READ_MACROS`] names that the owner, a function it reaches, a
+/// related test or a helper that test reaches invoke, when that set is
+/// rebound in the workspace ([`macro_names_rebound`]); empty otherwise. A
+/// name nothing on those paths invokes cannot run the owner from a read
+/// call (#15022).
+fn invoked_read_macros_rebound(
     owner: &FunctionSummary,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
     index: &crate::analysis::rust_index::RustIndex,
     related_tests: &[&TestSummary],
-) -> bool {
+) -> Vec<&'static str> {
     let mut invoked = std::collections::BTreeSet::new();
     let mut pending = Vec::new();
     collect_read_macros(&owner.body, &mut invoked);
@@ -4889,7 +4940,11 @@ fn invoked_read_macro_rebound(
         }
     }
     let names = invoked.into_iter().collect::<Vec<_>>();
-    !names.is_empty() && macro_names_rebound(index, &names)
+    if !names.is_empty() && macro_names_rebound(index, &names) {
+        names
+    } else {
+        Vec::new()
+    }
 }
 
 /// Whether a function the owner reaches through its calls names the owner

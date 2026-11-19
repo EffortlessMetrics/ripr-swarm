@@ -18757,6 +18757,7 @@ tests = [
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
   "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_rebound_read_macro_keeps_the_arm_unnamed",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_rebound_read_macro_refusal_reads_activation_unknown_not_yes",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_head_edit_drops_the_unchanged_return_value",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_respelled_arm_value_drops_the_return_value_probe",

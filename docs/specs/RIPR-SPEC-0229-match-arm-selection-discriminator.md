@@ -543,7 +543,13 @@ implies but does not spell out:
   invokes (#15022): a test-local `macro_rules! assert_eq` can run the owner
   with an input the call it wraps never shows. A name nothing on those
   paths invokes is not asked about. A glob of a workspace package does not
-  count as foreign; a glob of any other crate does.
+  count as foreign; a glob of any other crate does. In the repo seam view
+  this refusal, unlike the others, does not keep the activation stage as it
+  was (#15233): the inputs it read sit inside a macro whose expansion is not
+  read, so the stage reads `unknown` (`activation_unknown`), never the
+  generic `yes` that observed values alone would give. The scan ignores
+  definition order, so a `macro_rules! assert_eq` defined after every
+  assertion also refuses; that costs the arm its name, never credit.
 
 ## Required Evidence
 
@@ -656,7 +662,11 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs`:
   `a_rebound_read_macro_keeps_the_arm_unnamed` (#15022): a test-local
   `assert_eq!` that runs the owner with `Size::Medium` leaves that arm
-  unnamed, while the same test with the standard macro names it.
+  unnamed, while the same test with the standard macro names it;
+  `a_rebound_read_macro_refusal_reads_activation_unknown_not_yes` (#15233):
+  a rebinding defined after or before the assertions reads activation
+  `unknown` and `activation_unknown`, never `yes` or `strongly_gripped`,
+  while the standard macro reads `weak` with the arm named.
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
