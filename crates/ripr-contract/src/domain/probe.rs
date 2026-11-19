@@ -107,21 +107,25 @@ pub enum StopReason {
     MaxDepthReached,
     /// `external_crate_boundary`: reserved wire value; not emitted today.
     ExternalCrateBoundary,
-    /// `dynamic_dispatch_unresolved`: a call goes through dynamic dispatch
-    /// that static analysis cannot resolve to one target.
+    /// `dynamic_dispatch_unresolved`: the path goes through a dynamic call
+    /// `ripr` cannot resolve statically.
     DynamicDispatchUnresolved,
-    /// `proc_macro_opaque`: the changed expression goes through a macro
-    /// invocation `ripr` does not expand.
+    /// `proc_macro_opaque`: heuristic annotation. The changed expression
+    /// contains a macro call (`name!(`) whose expansion `ripr` does not see.
     ProcMacroOpaque,
-    /// `fixture_opaque`: a related test builds its input through a fixture,
-    /// builder, or generator whose values `ripr` does not see.
+    /// `fixture_opaque`: heuristic annotation. A related test mentions a
+    /// fixture, builder, or generator, so its inputs may come from values
+    /// `ripr` does not evaluate.
     FixtureOpaque,
     /// `feature_unknown`: reserved wire value; not emitted today.
     FeatureUnknown,
-    /// `async_boundary_opaque`: the changed expression crosses an async,
-    /// spawn, or await boundary.
+    /// `async_boundary_opaque`: heuristic annotation. The changed expression
+    /// names `async`, `spawn`, or `await`, so the path may cross a task
+    /// boundary `ripr` does not follow. A name match alone does not mean a
+    /// boundary is crossed.
     AsyncBoundaryOpaque,
-    /// `no_changed_rust_line`: the changed line has no owning Rust function.
+    /// `no_changed_rust_line`: heuristic annotation. `ripr` could not place
+    /// the changed line inside a Rust function it analyzes.
     NoChangedRustLine,
     /// `infection_evidence_unknown`: added when a finding is
     /// `infection_unknown` and has no more specific reason.
