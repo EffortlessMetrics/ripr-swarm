@@ -780,3 +780,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_error_path_shape (37)
+
+Reason:
+RIPR-SPEC-0238: a builtin TypeError to ValueError swap pinned by pytest.raises(ValueError) reads as an exact error variant (#13869)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — python_error_path_shape (38)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/human.txt`

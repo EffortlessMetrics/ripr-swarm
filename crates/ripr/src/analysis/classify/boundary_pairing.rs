@@ -792,7 +792,7 @@ fn owner_parameter_literals(
         .collect()
 }
 
-fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
     matches!(assertion.strength, OracleStrength::Strong)
         || matches!(
             assertion.kind,
@@ -825,6 +825,24 @@ fn assertion_observes_boundary_owner_call(
     } else {
         owner_call_sites(&subject, owner)
     };
+    // #13037: a comparison guarded by `&& flag` pairs only with a call that
+    // sits on the boundary and holds every guard. A guarded shape the rule
+    // declines pairs with nothing: the readings below see the comparison
+    // without its guards.
+    if let Some(guarded) = super::activation::guarded_comparison(probe, owner) {
+        return lists
+            .iter()
+            .try_fold(false, |any, arguments| {
+                let values: Vec<Vec<String>> = arguments
+                    .iter()
+                    .map(|argument| pairing_argument_values(test, argument, scope))
+                    .collect();
+                guarded
+                    .call_reaches_boundary(probe, owner, index, &values)
+                    .map(|reached| any || reached)
+            })
+            .unwrap_or(false);
+    }
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -858,6 +876,7 @@ fn assertion_observes_boundary_owner_call(
                 name: owner.name.clone(),
                 text: assertion.text.clone().into(),
             },
+            &test.file,
         )
 }
 
@@ -1253,14 +1272,21 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
+        // #13037: the guarded argument check above already read this call's
+        // own guards and boundary; a line-level fact may belong to a sibling
+        // call on the same line that holds the guards.
+        if super::activation::guarded_comparison(probe, owner).is_some()
+            || !owner_call_arguments_admit_activation_fallback(probe, owner, arguments)
+        {
             return false;
         }
     }
     // A projected block tail cannot borrow an earlier discarded call's
     // line-level activation. Keep the original binding fact for the
     // unchanged nonblock fallback, never the shortened result text.
-    !result.block_tail && sites.len() == 1 && activation_marks_boundary_call(activation, call)
+    !result.block_tail
+        && sites.len() == 1
+        && activation_marks_boundary_call(activation, call, &test.file)
 }
 
 fn argument_list_activates_boundary(
@@ -1274,10 +1300,23 @@ fn argument_list_activates_boundary(
         .iter()
         .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
+    let parameters = function_parameters(owner);
+    // #13037: a guarded comparison is reached only by a call that holds
+    // every guard, and its boundary operand is the comparison's alone (not
+    // `5 && !x`).
+    let guarded = super::activation::guarded_comparison(probe, owner);
+    if guarded
+        .as_ref()
+        .is_some_and(|guarded| !guarded.guards_hold_in(&parameters, &arg_values))
+    {
+        return false;
+    }
+    let expression = guarded
+        .as_ref()
+        .map_or(probe.expression.as_str(), |guarded| guarded.comparison());
+    let Some((left, right)) = comparison_operands(expression) else {
         return false;
     };
-    let parameters = function_parameters(owner);
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
@@ -1450,6 +1489,17 @@ fn pairing_argument_values(
     let trimmed = argument.trim();
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
+    }
+    // A parenthesized whole literal is that literal: a `#[test_case(10 =>
+    // 90)]` row's synthesized comparison writes its argument as `(10)` so a
+    // negated literal keeps its sign (RIPR-SPEC-0231).
+    if let Some(inner) = trimmed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+        .filter(|inner| argument_is_whole_scalar_literal(inner))
+    {
+        return owner_argument_values(test, inner);
     }
     // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
     // the whole argument's value, exactly as the literal it computes would be.
@@ -1673,9 +1723,19 @@ fn values_overlap(left: &[String], right: &[String]) -> bool {
 
 /// Infection already recorded that this owner-call line sits on the boundary
 /// (`left == right` from named constants, helper hops, or local bindings).
-fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFact) -> bool {
+/// #14726: a row located in another file never marks this test's call.
+/// Lines repeat across test files (`tests/a.rs:5` and `tests/b.rs:5`), so a
+/// boundary input another file's test feeds would otherwise pair with an
+/// assertion that never runs it. A row without a recorded file keeps the
+/// line rule, as before.
+fn activation_marks_boundary_call(
+    activation: &ActivationEvidence,
+    call: &CallFact,
+    test_file: &std::path::Path,
+) -> bool {
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
+            && fact.file.as_deref().is_none_or(|file| file == test_file)
             && fact.value.contains(" == ")
             && activation_fact_text_pairs_call(fact.text.as_str(), call.text.as_str())
     })
@@ -1802,7 +1862,44 @@ mod tests {
             name: "is_stale".into(),
             text: "assert_eq!(is_stale(&manifest), true);".into(),
         };
-        assert!(activation_marks_boundary_call(&activation, &call));
+        assert!(activation_marks_boundary_call(
+            &activation,
+            &call,
+            std::path::Path::new("tests/a.rs")
+        ));
+    }
+
+    /// #14726: the same line in another test file is another call.
+    #[test]
+    fn located_row_marks_only_a_call_in_its_own_file() {
+        let row = |file: Option<&str>| ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: file.map(PathBuf::from),
+                line: 5,
+                text: String::new(),
+                value: "flag == \"--verbose\"".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let call = CallFact {
+            line: 5,
+            name: "options_from_flag".into(),
+            text: "assert!(options_from_flag(\"-v\").verbose);".into(),
+        };
+        let here = std::path::Path::new("tests/eval_reference.rs");
+        assert!(activation_marks_boundary_call(
+            &row(Some("tests/eval_reference.rs")),
+            &call,
+            here
+        ));
+        assert!(!activation_marks_boundary_call(
+            &row(Some("tests/t.rs")),
+            &call,
+            here
+        ));
+        // A row with no recorded file keeps the line rule.
+        assert!(activation_marks_boundary_call(&row(None), &call, here));
     }
 
     #[test]
@@ -3359,6 +3456,7 @@ mod tests {
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,

@@ -1,0 +1,48 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_forwarding_wrapper_discriminating_input/input
+
+Summary: 1 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+INFO ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:3e02ed73
+
+Changed
+  before: cents / 5 * 5
+  after:  (cents + 2) / 5 * 5
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::round_to_nickel
+  gap id (for scripts): gap:rust:src/lib.rs:round_to_nickel:return_value:return_value:cents+2/5*5
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach round_to_nickel: rounds_to_the_nearest_nickel
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: (cents + 2) / 5 * 5
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: (cents + 2) / 5 * 5 (line 2)
+  - related test tests/total.rs:4 rounds_to_the_nearest_nickel uses strong exact value oracle: assert_eq!(cash_total(103), 105);
+  - related test tests/total.rs:4 rounds_to_the_nearest_nickel uses strong exact value oracle: assert_eq!(cash_total(102), 100);
+  - source assertion argument value 103 at line 5
+  - source assertion argument value 105 at line 5
+  - source assertion argument value 100 at line 6
+  - source assertion argument value 102 at line 6
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_forwarding_wrapper_discriminating_input/input --diff <cwd>/fixtures/rust_forwarding_wrapper_discriminating_input/diff.patch --mode fast probe:src_lib.rs:return_value:3e02ed73
+  ripr context --root <cwd>/fixtures/rust_forwarding_wrapper_discriminating_input/input --diff <cwd>/fixtures/rust_forwarding_wrapper_discriminating_input/diff.patch --mode fast --at probe:src_lib.rs:return_value:3e02ed73

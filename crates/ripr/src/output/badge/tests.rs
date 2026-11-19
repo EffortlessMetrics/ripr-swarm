@@ -1231,6 +1231,7 @@ fn exposure_suppression(finding_id: &str, expires: Option<&str>) -> SuppressionE
         finding_id: Some(finding_id.to_string()),
         test: None,
         path: None,
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -1256,6 +1257,7 @@ fn path_exposure_suppression(
         finding_id: None,
         test: None,
         path: Some(path.to_string()),
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -1277,6 +1279,7 @@ fn te_suppression(test: &str, path: Option<&str>, expires: Option<&str>) -> Supp
         finding_id: None,
         test: Some(test.to_string()),
         path: path.map(str::to_string),
+        function: None,
         reason: "x".to_string(),
         owner: "y".to_string(),
         expires: expires.map(str::to_string),
@@ -2392,7 +2395,7 @@ fn base_deleted_findings_never_count_as_exposure_gaps() {
 /// `counts.unknowns` audit still lists every unknown class.
 #[test]
 fn withheld_owner_unknowns_stay_out_of_both_badge_headlines() {
-    use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason};
+    use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
     let with_id = |class: ExposureClass, id: &str| {
         let mut finding = finding(class, vec![]);
         finding.id = id.to_string();
@@ -2408,6 +2411,8 @@ fn withheld_owner_unknowns_stay_out_of_both_badge_headlines() {
         finding_id: "probe:withheld_unknown".to_string(),
         owner: "skipped_owner".to_string(),
         reason: OwnerOptOutReason::MutantsSkip,
+        scope: OwnerOptOutScope::Fn,
+        scope_label: String::new(),
     }];
     let include_unknowns = || BadgePolicy {
         include_unknowns: true,

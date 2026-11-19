@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_nested_result_discarded/input --diff <cwd>/fixtures/python_nested_result_discarded/diff.patch --mode fast probe:src_tally.py:python_preview:24c935dc
   ripr context --root <cwd>/fixtures/python_nested_result_discarded/input --diff <cwd>/fixtures/python_nested_result_discarded/diff.patch --mode fast --at probe:src_tally.py:python_preview:24c935dc
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

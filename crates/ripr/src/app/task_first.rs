@@ -183,6 +183,7 @@ pub(crate) fn decide_repair_start(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -559,7 +560,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison{module_note}; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -942,7 +943,7 @@ pub(crate) fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Optio
 pub(crate) fn resolve_repair_start(
     root: &Path,
     base: Option<&str>,
-) -> Result<RepairStartDecision, String> {
+) -> Result<ResolvedRepairStart, String> {
     let config = load_for_root(root)?;
     let (classified, limit_info) = inventory_for_repair(root, &config)?;
     if let Some(info) = &limit_info
@@ -1214,16 +1215,21 @@ pub(crate) fn resolve_repair_start(
     // #11246: inference only narrows. When no changed line could be read, the
     // spots above are not scoped to the change, and the text says so first
     // (the reason list is capped, so it is placed where it survives).
-    if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
+    let narrowed = matches!(scope, Some(ChangeScope::TouchesSeams(_)));
+    if let Some(note) = (!narrowed)
+        .then(|| unscoped_diff_note(diff.as_deref(), base, unscoped_subject::REFUSAL_SPOTS))
+        .flatten()
+    {
         refusal_reasons.insert(0, note);
     }
-    // #12831: several eligible seams on the change. `ripr check` is the
-    // authority on the change, so its single recommended start wins; failing
-    // that, a seam whose check finding is already noticed, or which check
-    // cannot judge (and so offers no start for), is no start here either
-    // (#12849). Only a seam among the eligible ones is taken; no first or
-    // newest pick.
-    if candidates.len() > 1
+    // #12831: eligible seams on the change. `ripr check` is the authority on
+    // the change, so its single recommended start wins; failing that, a seam
+    // whose check finding is already noticed, or which check cannot judge
+    // (and so offers no start for), is no start here either (#12849). Only a
+    // seam among the eligible ones is taken; no first or newest pick. A lone
+    // eligible seam is held to the same rule (#14872): starting it while
+    // check reads its finding as noticed would contradict check.
+    if !candidates.is_empty()
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
     {
@@ -1289,7 +1295,7 @@ pub(crate) fn resolve_repair_start(
     } else {
         None
     };
-    decide_repair_start(&RepairStartFacts {
+    let decision = decide_repair_start(&RepairStartFacts {
         root_display: &bound,
         eligible_ids: &eligible_ids,
         total_seams: classified.len(),
@@ -1299,7 +1305,43 @@ pub(crate) fn resolve_repair_start(
         candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
         change,
+    })?;
+    // #13701: a menu or a single start chosen with no readable change is not
+    // narrowed to it either, so it carries the same note the refusal leads
+    // with. The refusal already has it among its reasons.
+    let subject = match &decision {
+        RepairStartDecision::Start { .. } => Some(unscoped_subject::STARTED_SPOT),
+        RepairStartDecision::Action(..) => Some(unscoped_subject::OFFERED_CHOICES),
+        RepairStartDecision::NoEligible { .. } => None,
+    };
+    let unscoped_note = subject
+        .filter(|_| !narrowed)
+        .and_then(|subject| unscoped_diff_note(diff.as_deref(), base, subject));
+    Ok(ResolvedRepairStart {
+        decision,
+        unscoped_note,
     })
+}
+
+/// A resolved bare `ripr repair`: the decision, and whether the selection
+/// behind a start or a menu was narrowed to the change (#13701).
+pub(crate) struct ResolvedRepairStart {
+    pub(crate) decision: RepairStartDecision,
+    /// The unscoped note (#11246) when the start or the menu was chosen with
+    /// no readable change, so it is not narrowed to the change; `None` when
+    /// the diff was read (the selection is then scoped by it) and always for
+    /// a no-eligible outcome, whose reasons already lead with the note.
+    pub(crate) unscoped_note: Option<String>,
+}
+
+/// The rerun that narrows an unscoped bare `ripr repair` to the change
+/// (#13701): the same root with an explicit `--base`, whose ref the reader
+/// names, so it is a template, never a runnable step.
+pub(crate) fn unscoped_base_command(root_display: &str) -> String {
+    format!(
+        "ripr repair --root {} --base <ref>",
+        shell_arg(root_display)
+    )
 }
 
 /// The outcome after check's closure dropped candidates (#12861). Only a spot
@@ -1379,9 +1421,11 @@ impl<T, F: Fn() -> Option<T>> RunOnce<T, F> {
 }
 
 /// The seam of the one repair start the default `ripr check` prints for the
-/// change, when it is among the eligible `candidates` and needs no commit
-/// first. `None` when check names no start or another seam (fail-closed: the
-/// caller keeps its selection prompt).
+/// change, when it is among the eligible `candidates` and holds no inline
+/// test target in an uncommitted production file. `None` when check names no
+/// start or another seam (fail-closed: the caller keeps its selection prompt).
+/// A dirty production premise (#13636) does not withhold the pick: the before
+/// phase refuses that start itself and names the commit to make.
 fn check_recommended_start(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -1918,6 +1962,34 @@ pub(crate) fn render_repair_choice(
     out
 }
 
+/// The same selection as [`render_repair_choice`], as the typed `choices`
+/// of the `cli_refusal` document (#14980): each listed candidate's start
+/// command (composed from its seam id and the bound root) with the words
+/// that tell it apart, and the selection's full count.
+pub(crate) fn repair_choice_items(
+    candidates: &[RepairCandidateNote],
+    total: usize,
+) -> crate::output::refusal::RefusalChoices {
+    crate::output::refusal::RefusalChoices {
+        total: total.max(candidates.len()),
+        items: candidates
+            .iter()
+            .map(|candidate| {
+                crate::output::refusal::RefusalChoice::new(
+                    format!(
+                        "{} `{}`: {}{}",
+                        candidate.location,
+                        candidate.code,
+                        candidate.test_need,
+                        column_suffix(candidates, candidate)
+                    ),
+                    candidate.command.clone(),
+                )
+            })
+            .collect(),
+    }
+}
+
 /// One candidate's start command, then its PowerShell spelling only when
 /// PowerShell needs a different one (or has none), from the shared translator.
 fn push_candidate_command(out: &mut String, command: &str) {
@@ -2110,6 +2182,19 @@ pub(crate) fn resolve_repair_subject_in(
                 )
         })
         .collect();
+    // #14719: a producer gap id is content-derived, so a compound predicate's
+    // id (`a && s.len() > 1` names `s.len==1`) also names the inner
+    // comparison seam on the same line. When only producer-gap matches
+    // remain, the most-specific seam wins, as the repair-card join already
+    // does (#7179); any other collision stays ambiguous.
+    if matches.len() > 1
+        && matches
+            .iter()
+            .all(|entry| producer_gap_id_names_seam(item, entry))
+        && let Some(innermost) = unique_innermost_seam(&matches)
+    {
+        return outcome_for(innermost);
+    }
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
@@ -2124,6 +2209,21 @@ pub(crate) fn resolve_repair_subject_in(
                 .collect(),
         },
     }
+}
+
+/// The one seam every other candidate strictly encloses, if there is one
+/// (#7179 most-specific span selection). Identical or crossing spans have no
+/// unique innermost seam.
+fn unique_innermost_seam<'a>(
+    candidates: &[&'a crate::analysis::ClassifiedSeam],
+) -> Option<&'a crate::analysis::ClassifiedSeam> {
+    let mut innermost = candidates.iter().copied().filter(|entry| {
+        candidates.iter().all(|other| {
+            other.seam.id() == entry.seam.id() || other.seam.strictly_encloses(&entry.seam)
+        })
+    });
+    let found = innermost.next()?;
+    innermost.next().is_none().then_some(found)
 }
 
 /// Why one named seam may not start a repair attempt right now (#8766), as
@@ -2468,7 +2568,19 @@ fn start_refusal_with_next(reason: &str, next: &str) -> String {
 /// `ripr repair`, the agent card and the MCP admission so every surface names
 /// the same cause (#11397).
 pub(crate) fn held_inline_reason(file: &str) -> String {
-    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+    format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
+}
+
+const HELD_INLINE_OPENING: &str = "the inline test target `";
+const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
+
+impl RepairStartRefusal {
+    /// Whether the start is held only because its inline test target has
+    /// uncommitted changes ([`held_inline_reason`]). Undoing or committing
+    /// those changes lifts this hold, unlike a refusal about the gap itself.
+    pub(crate) fn held_by_uncommitted_target(&self) -> bool {
+        self.reason.starts_with(HELD_INLINE_OPENING) && self.reason.ends_with(HELD_INLINE_CLOSING)
+    }
 }
 
 /// What the human agent card says when the shared start gate holds a seam
@@ -2932,6 +3044,18 @@ pub(crate) fn check_repair_route(
         if gripped.next().is_some() && gripped.next().is_none() {
             return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
         }
+        // #15157: a changed `a < b && c == d` line holds one spot per
+        // comparison; the join refuses to pick between them, which is a tie
+        // on the changed line, not a line no spot could be tied to.
+        let tied = super::repair_card_handoff::seams_tied_on_finding_line(finding, &classified);
+        if !tied.is_empty() {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralSpotsOnChangedLine {
+                spots: tied
+                    .iter()
+                    .map(|entry| entry.seam.expression().to_string())
+                    .collect(),
+            });
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam {
             seams_in_file: classified.len(),
         });
@@ -2991,11 +3115,59 @@ pub(crate) fn check_repair_route(
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
     let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    // #13636: the before phase refuses a dirty production premise ("commit
+    // first ... Nothing was started"). Ask its own preflight so the screen
+    // names that commit before the start; an unreadable premise offers no
+    // start rather than one that may refuse.
+    let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
+            reason: "could not validate the prerequisites for the repair start",
+        });
+    };
+    if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
+    }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
+        uncommitted_files,
     })
+}
+
+/// Why the seam route cannot print a commit step for `uncommitted_files`, in
+/// the gap-bound route's terms for the same state (#13636, #10698): a run that
+/// did not analyze those files must not vouch for them with a commit step.
+/// `None` when nothing is dirty or the run analyzed the working tree.
+fn seam_commit_step_refusal(
+    output: &super::CheckOutput,
+    uncommitted_files: &[String],
+) -> Option<&'static str> {
+    if uncommitted_files.is_empty() {
+        return None;
+    }
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return Some("could not establish which revisions the check analyzed");
+    };
+    if !revisions.working_tree {
+        return Some(
+            "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+        );
+    }
+    if output.unanalyzed_working_tree {
+        return Some("the working tree contains source or test changes that were not analyzed");
+    }
+    None
+}
+
+/// The dirty production files the seam start refuses today (#13636): every
+/// path the shared before-phase preflight reports, none dropped. The
+/// preflight already spells them relative to the analyzed `root` (paths
+/// outside it as `../...`, #13962), which is where the user runs the printed
+/// commit step. A non-empty list means the start refuses; an empty one means
+/// the preflight found no dirty premise.
+fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
+    crate::app::repair_attempt::seam_start_dirty_premise(root)
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -3032,26 +3204,46 @@ pub(crate) struct ChangedNonRust {
     pub(crate) enabled: bool,
 }
 
+/// What an unscoped note is about, so one note serves the refusal list, the
+/// selection menu and a single start (#13701). Each is the phrase that
+/// precedes "not narrowed to your change".
+pub(crate) mod unscoped_subject {
+    /// The refusal's list of spots, printed after the note.
+    pub(crate) const REFUSAL_SPOTS: &str = "the spots below are";
+    /// The selection menu's choices.
+    pub(crate) const OFFERED_CHOICES: &str = "the repairs ripr offers here are";
+    /// The one spot a bare `ripr repair` started on.
+    pub(crate) const STARTED_SPOT: &str = "the spot this repair starts on is";
+}
+
 /// Why repair could not narrow its spots to the change, when it could not
-/// (#11246): no diff was readable (no base resolved), or the diff against the
-/// base changed nothing. A readable diff with changes is not unscoped here.
+/// (#11246): no diff was readable (no base resolved), the diff against the
+/// base changed nothing, or (#13701) the diff changes no Rust production line
+/// (only tests, benches, docs or other files), so no seam can be the change.
+/// A diff that changes Rust production lines adds no note here. `subject`
+/// names what is not narrowed (see [`unscoped_subject`]). Callers skip it when
+/// the diff touches a seam: that selection is narrowed.
 fn unscoped_diff_note(
     diff: Option<&[crate::analysis::ChangedFile]>,
     base: Option<&str>,
+    subject: &str,
 ) -> Option<String> {
     match (diff, base) {
         (None, Some(base)) => Some(format!(
-            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so the spots below are not narrowed to your change; check that `{base}` names a ref that exists here"
+            "ripr could not tell which lines you changed, because it could not read a diff against `{base}`, so {subject} not narrowed to your change; check that `{base}` names a ref that exists here"
         )),
-        (None, None) => Some(
-            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so the spots below are not narrowed to your change; pass `--base <ref>` to name it".to_string(),
-        ),
+        (None, None) => Some(format!(
+            "ripr could not tell which lines you changed, because no base to compare against could be found (the same base `ripr check` uses), so {subject} not narrowed to your change; pass `--base <ref>` to name it"
+        )),
         (Some([]), Some(base)) => Some(format!(
-            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so the spots below are not narrowed to your change; pass `--base <ref>` to name another base"
+            "ripr could not tell which lines you changed, because nothing differs from `{base}`, so {subject} not narrowed to your change; pass `--base <ref>` to name another base"
         )),
-        (Some([]), None) => Some(
-            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so the spots below are not narrowed to your change; pass `--base <ref>` to name another base".to_string(),
-        ),
+        (Some([]), None) => Some(format!(
+            "ripr could not tell which lines you changed, because nothing differs from the base `ripr check` compares against (for example, you are on the default branch itself), so {subject} not narrowed to your change; pass `--base <ref>` to name another base"
+        )),
+        (Some(files), _) if changed_rust_production_lines(files).is_none() => Some(format!(
+            "ripr read your change, but it touches no Rust production code (only tests or other files), so {subject} not narrowed to it; pass `--base <ref>` to name another base"
+        )),
         (Some(_), _) => None,
     }
 }
@@ -3059,10 +3251,11 @@ fn unscoped_diff_note(
 #[cfg(test)]
 mod unscoped_note_tests {
     use super::unscoped_diff_note;
+    use super::unscoped_subject::REFUSAL_SPOTS as SPOTS;
 
     #[test]
     fn unreadable_diff_says_no_base_could_be_found() {
-        let note = unscoped_diff_note(None, None).unwrap_or_default();
+        let note = unscoped_diff_note(None, None, SPOTS).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("no base to compare against could be found"));
         assert!(note.contains("--base <ref>"));
@@ -3070,16 +3263,16 @@ mod unscoped_note_tests {
 
     #[test]
     fn an_explicit_base_is_named_when_its_diff_cannot_be_read() {
-        let unreadable = unscoped_diff_note(None, Some("no-such-ref")).unwrap_or_default();
+        let unreadable = unscoped_diff_note(None, Some("no-such-ref"), SPOTS).unwrap_or_default();
         assert!(unreadable.contains("could not read a diff against `no-such-ref`"));
         assert!(!unreadable.contains("no base to compare against could be found"));
-        let empty = unscoped_diff_note(Some(&[]), Some("main")).unwrap_or_default();
+        let empty = unscoped_diff_note(Some(&[]), Some("main"), SPOTS).unwrap_or_default();
         assert!(empty.contains("nothing differs from `main`"));
     }
 
     #[test]
     fn empty_diff_says_nothing_differs_from_the_base() {
-        let note = unscoped_diff_note(Some(&[]), None).unwrap_or_default();
+        let note = unscoped_diff_note(Some(&[]), None, SPOTS).unwrap_or_default();
         assert!(note.contains("could not tell which lines you changed"));
         assert!(note.contains("nothing differs from the base"));
     }
@@ -3090,8 +3283,28 @@ mod unscoped_note_tests {
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n",
         );
         assert!(!files.is_empty(), "fixture must parse to a changed file");
-        assert_eq!(unscoped_diff_note(Some(&files), None), None);
-        assert_eq!(unscoped_diff_note(Some(&files), Some("main")), None);
+        assert_eq!(unscoped_diff_note(Some(&files), None, SPOTS), None);
+        assert_eq!(unscoped_diff_note(Some(&files), Some("main"), SPOTS), None);
+    }
+
+    /// #13701: a readable diff that changes no Rust production line says so
+    /// in its own words, not as an unreadable change.
+    #[test]
+    fn a_diff_with_no_rust_production_line_says_it_touches_none() {
+        let files = crate::analysis::parse_unified_diff(
+            "diff --git a/tests/t.rs b/tests/t.rs\n--- a/tests/t.rs\n+++ b/tests/t.rs\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert_eq!(files.len(), 2, "fixture must parse to two changed files");
+        let note = unscoped_diff_note(Some(&files), None, SPOTS).unwrap_or_default();
+        assert!(note.contains("touches no Rust production code"), "{note}");
+        assert!(
+            note.contains("the spots below are not narrowed to it"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("could not tell which lines you changed"),
+            "{note}"
+        );
     }
 }
 
@@ -3702,6 +3915,47 @@ impl RepairRefusalCode {
     pub(crate) fn message_with_stderr_line(self, message: &str) -> String {
         format!("{}\n{}", message.trim_end(), self.stderr_line())
     }
+
+    /// The inverse of [`Self::message_with_stderr_line`]: the code and the
+    /// plain-words prose of a message whose last line is this code's machine
+    /// line. A message routed through a layer that carries only the rendered
+    /// text (the before phase's start refusal) keeps its typed code this
+    /// way (#14931). `None` when the last line is not a known code's line.
+    pub(crate) fn split_stderr_line(message: &str) -> Option<(Self, &str)> {
+        let (prose, line) = message.trim_end().rsplit_once('\n')?;
+        let name = line
+            .strip_prefix("ripr: refusal code=")?
+            .split_once(" disposition=")?
+            .0;
+        let code = Self::from_code_name(name)?;
+        (line == code.stderr_line()).then_some((code, prose.trim_end()))
+    }
+
+    fn from_code_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "item_names_no_seam" => Self::ItemNamesNoSeam,
+            "item_names_several_seams" => Self::ItemNamesSeveralSeams,
+            "seam_not_repair_eligible" => Self::SeamNotRepairEligible,
+            "no_eligible_seam" => Self::NoEligibleSeam,
+            "several_eligible_seams" => Self::SeveralEligibleSeams,
+            "repair_needs_item" => Self::RepairNeedsItem,
+            "start_refused_uncommitted_target" => Self::StartRefusedUncommittedTarget,
+            "build_output_not_ignored" => Self::BuildOutputNotIgnored,
+            "no_test_route" => Self::NoTestRoute,
+            "awaiting_edit" => Self::AwaitingEdit,
+            "retry_budget_exhausted" => Self::RetryBudgetExhausted,
+            "no_current_attempt" => Self::NoCurrentAttempt,
+            "attempt_baseline_blocked" => Self::AttemptBaselineBlocked,
+            "unanchored_root" => Self::UnanchoredRoot,
+            "ambiguous_attempts" => Self::AmbiguousAttempts,
+            "attempt_ended_without_receipt" => Self::AttemptEndedWithoutReceipt,
+            "attempt_completion_unconfirmed" => Self::AttemptCompletionUnconfirmed,
+            "edit_cage_violation" => Self::EditCageViolation,
+            "attempt_stale" => Self::AttemptStale,
+            "attempt_incomparable" => Self::AttemptIncomparable,
+            _ => return None,
+        })
+    }
 }
 
 /// Bound full status reconstruction after a complete eligibility inventory.
@@ -4080,6 +4334,74 @@ pub(crate) mod tests {
             ),
         );
         assert_eq!(code, None);
+    }
+
+    /// #14931: the before phase's start refusal reaches the façade as
+    /// rendered text; its typed code is recovered only from an exact line.
+    #[test]
+    fn split_stderr_line_inverts_message_with_stderr_line_for_every_code() {
+        for code in RepairRefusalCode::ALL {
+            let message = code.message_with_stderr_line("Plain words.\nnext: do it\n");
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(&message),
+                Some((code, "Plain words.\nnext: do it")),
+                "{message}"
+            );
+        }
+        for message in [
+            "no code line",
+            "prose\nripr: refusal code=not_a_code disposition=terminal",
+            // A known code with the wrong disposition is not its line.
+            "prose\nripr: refusal code=awaiting_edit disposition=terminal",
+            "ripr: refusal code=awaiting_edit disposition=retryable",
+        ] {
+            assert_eq!(
+                RepairRefusalCode::split_stderr_line(message),
+                None,
+                "{message}"
+            );
+        }
+    }
+
+    /// #14931: the `cli_refusal` schema's closed `code` and `disposition`
+    /// enums carry every repair/continue code and disposition, so the JSON
+    /// document a typed refusal writes under `--json` validates.
+    #[test]
+    fn cli_refusal_schema_names_every_refusal_code_and_disposition() -> Result<(), String> {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../schemas/ripr/cli-refusal.schema.json"),
+        )
+        .map_err(|error| format!("read cli-refusal schema: {error}"))?;
+        let schema: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| format!("parse schema: {error}"))?;
+        let error = &schema["properties"]["error"]["properties"];
+        let enum_of = |key: &str| -> Vec<String> {
+            error[key]["enum"]
+                .as_array()
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let codes = enum_of("code");
+        let dispositions = enum_of("disposition");
+        for code in RepairRefusalCode::ALL {
+            if !codes.iter().any(|known| known == code.as_str()) {
+                return Err(format!("schema code enum misses {}", code.as_str()));
+            }
+            let disposition = code.disposition().as_str();
+            if !dispositions.iter().any(|known| known == disposition) {
+                return Err(format!("schema disposition enum misses {disposition}"));
+            }
+        }
+        if dispositions.len() != 4 {
+            return Err(format!("unexpected dispositions {dispositions:?}"));
+        }
+        Ok(())
     }
 
     /// #11597: the refusal-code vocabulary is closed and snake_case, every
@@ -5027,8 +5349,69 @@ pub(crate) mod tests {
         )
     }
 
+    /// #13636: the seam route refuses a commit step in exactly the states the
+    /// gap-bound route refuses one: revisions unknown, a committed-only run,
+    /// or unanalyzed working-tree changes. Each branch is exercised alone.
+    #[test]
+    fn seam_commit_step_refuses_when_the_run_did_not_analyze_the_dirt() {
+        let revisions = |working_tree| crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("a".repeat(40)),
+            merge_base_commit: None,
+            loaded_diff_origin: None,
+            head_commit: Some("b".repeat(40)),
+            working_tree,
+        };
+        let output = |analyzed_revisions, unanalyzed_working_tree| crate::app::CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            owner_opt_outs: Vec::new(),
+            file_fact_cache: None,
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Fast,
+            root: std::path::PathBuf::from("."),
+            base: None,
+            summary: crate::domain::Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions,
+        };
+        let dirty = vec!["../src/lib.rs".to_string()];
+        let analyzed = output(Some(revisions(true)), false);
+        assert_eq!(seam_commit_step_refusal(&analyzed, &dirty), None);
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), true), &[]),
+            None,
+            "nothing dirty means no commit step to withhold"
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(None, false), &dirty),
+            Some("could not establish which revisions the check analyzed")
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), false), &dirty),
+            Some(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning"
+            )
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(true)), true), &dirty),
+            Some("the working tree contains source or test changes that were not analyzed")
+        );
+    }
+
     /// #12831: check's pick narrows the choice only when it is an eligible
-    /// seam that needs no commit first.
+    /// seam with no held inline target.
     #[test]
     fn check_pick_narrows_only_when_eligible_and_committed() {
         use crate::app::{CheckRepairRoute, RepairRoute};
@@ -5038,6 +5421,7 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
+                uncommitted_files: Vec::new(),
             })
         };
         assert_eq!(
@@ -5402,6 +5786,19 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Only the uncommitted-target hold is one that undoing a change lifts.
+    #[test]
+    fn held_by_uncommitted_target_reads_only_the_held_inline_reason() {
+        let refusal = |reason: String| RepairStartRefusal {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        assert!(refusal(held_inline_reason("src/lib.rs")).held_by_uncommitted_target());
+        assert!(!refusal(GRIPPED_SPOT_REASON.to_string()).held_by_uncommitted_target());
+        assert!(!refusal(NO_TEST_TARGET_REASON.to_string()).held_by_uncommitted_target());
+    }
+
     /// #14084: the gate words the first unknown or opaque stage of a seam the
     /// agent brief withholds, and the brief's predicate (not this wording)
     /// makes the decision.
@@ -5553,6 +5950,16 @@ pub(crate) mod tests {
                 && refusal
                     .reason
                     .contains("new test proposal blocked: no governed inline cfg-test module"),
+            "{}",
+            refusal.reason
+        );
+        // #14308: the route names the stub once, in the same short shape as
+        // the return-value route.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
+        assert!(
+            refusal.reason.contains(&format!(
+                "or run `ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate` for a fill-in skeleton"
+            )) && refusal.reason.ends_with("the stub adds one), then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );
@@ -6071,9 +6478,7 @@ pub(crate) mod tests {
                 "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
             )) && refusal
                 .reason
-                .contains("writes a fill-in skeleton for the changed comparison")
-                && refusal.reason.contains("prefilled when it derives")
-                && refusal.reason.contains("then rerun `ripr repair`"),
+                .contains("--kind predicate` for a fill-in skeleton, then rerun `ripr repair`"),
             "{}",
             refusal.reason
         );

@@ -14,8 +14,8 @@
 //! `exposed`; it only keeps the helper from claiming that no test reaches it.
 
 use super::{
-    is_python_identifier_char, line_prefix_before, python_callee_start_has_boundary,
-    python_text_hides_code,
+    PythonHiddenCode, is_python_identifier_char, line_prefix_before,
+    python_callee_start_has_boundary, python_text_hides_code,
 };
 
 /// Whether `body` uses the syntax that runs at least one of `dunders`.
@@ -81,8 +81,9 @@ fn trailing_word(text: &str) -> &str {
 /// Every subscript `value[...]` in code: a `[` that directly follows a value
 /// (an identifier that is not a keyword, `)` or `]`), not a list literal.
 fn subscripts(body: &str) -> impl Iterator<Item = Subscript> + '_ {
+    let mut hidden = PythonHiddenCode::new(body);
     body.match_indices('[').filter_map(move |(idx, _)| {
-        if python_text_hides_code(body, idx) {
+        if hidden.hides(idx) {
             return None;
         }
         let before = &body[..idx];
@@ -144,8 +145,9 @@ fn word_boundaries(text: &str, idx: usize, word: &str) -> bool {
 /// Each `in` keyword in code: `true` for the `in` of a `for` header or
 /// comprehension (iteration), `false` for a membership test.
 fn in_operators(body: &str) -> impl Iterator<Item = bool> + '_ {
+    let mut hidden = PythonHiddenCode::new(body);
     body.match_indices("in").filter_map(move |(idx, _)| {
-        if !word_boundaries(body, idx, "in") || python_text_hides_code(body, idx) {
+        if !word_boundaries(body, idx, "in") || hidden.hides(idx) {
             return None;
         }
         let prefix = line_prefix_before(body, idx);
@@ -159,9 +161,9 @@ fn in_operators(body: &str) -> impl Iterator<Item = bool> + '_ {
 /// A call `name(` of a builtin, not a method or longer name.
 fn calls_builtin(body: &str, name: &str) -> bool {
     let call = format!("{name}(");
-    body.match_indices(&call).any(|(idx, _)| {
-        python_callee_start_has_boundary(body, idx) && !python_text_hides_code(body, idx)
-    })
+    let mut hidden = PythonHiddenCode::new(body);
+    body.match_indices(&call)
+        .any(|(idx, _)| python_callee_start_has_boundary(body, idx) && !hidden.hides(idx))
 }
 
 fn has_with_statement(body: &str) -> bool {
@@ -175,12 +177,13 @@ fn has_with_statement(body: &str) -> bool {
 
 fn has_equality_operator(body: &str) -> bool {
     ["==", "!="].iter().any(|op| {
+        let mut hidden = PythonHiddenCode::new(body);
         body.match_indices(op).any(|(idx, _)| {
             let previous = body[..idx].chars().next_back();
             let after = body[idx + 2..].chars().next();
             !previous.is_some_and(|ch| matches!(ch, '=' | '!' | '<' | '>'))
                 && after != Some('=')
-                && !python_text_hides_code(body, idx)
+                && !hidden.hides(idx)
         })
     })
 }
