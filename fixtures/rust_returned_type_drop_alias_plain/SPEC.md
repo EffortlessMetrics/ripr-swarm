@@ -13,3 +13,7 @@ The control for `rust_returned_type_drop_alias_exit`. The same files, re-export,
 ## Then
 
 The return_value finding reads `exposed`: following the rename to a plain `Drop` impl does not withhold the pin (#15107). The field_construction finding reads `weakly_exposed`, as it already did on main before #15107, because the field pin is not lent through a re-exported name. That is a conservative miss outside this fixture's claim.
+
+## Must Not
+
+- Withhold the return_value credit because a rename leads to a type whose `Drop` impl is plain.

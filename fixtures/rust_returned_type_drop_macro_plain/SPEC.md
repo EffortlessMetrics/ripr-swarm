@@ -13,3 +13,7 @@ The control for `rust_returned_type_drop_macro_exit`. The same owner, diff and w
 ## Then
 
 Both findings on the changed line read `exposed`. A macro that writes no `Drop` impl does not withhold the pin (#15107).
+
+## Must Not
+
+- Withhold the pin because the crate holds a macro that writes no `Drop` impl.

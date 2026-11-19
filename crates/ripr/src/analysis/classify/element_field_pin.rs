@@ -762,6 +762,7 @@ fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet
 /// when the source does not parse cleanly. A source that never spells `Drop`
 /// cannot hold a `Drop` impl or a `Drop` alias, so it is parsed only to
 /// confirm it is readable and its tree is not walked.
+#[cfg(test)]
 fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
     scan_drop_source(source).map(|scan| scan.non_plain)
 }
