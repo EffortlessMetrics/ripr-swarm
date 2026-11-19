@@ -714,6 +714,142 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
 /// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
 /// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
 /// a shadowing `macro_rules!` compares nothing.
+/// Why a related test's input to `owner` is unreadable when no boundary
+/// input was found: a boundary literal passed to a macro whose expansion
+/// ripr does not read (a test-local wrapper such as `check!(100, 0)` may
+/// pass it to the owner, #15344), or an owner call fed by an rstest
+/// fixture parameter, whose value the `#[fixture]` supplies (#15343).
+fn opaque_boundary_input(
+    related_tests: &[&TestSummary],
+    owner: &str,
+    probe_literals: &[String],
+) -> Option<String> {
+    for test in related_tests {
+        for (name, arguments) in unread_macro_arguments(&test.body) {
+            let literals = extract_literals(&arguments);
+            if let Some(boundary) = probe_literals
+                .iter()
+                .find(|literal| literals.contains(literal))
+            {
+                return Some(format!(
+                    "A related test passes the changed boundary literal [{boundary}] to `{name}!`, whose expansion ripr does not read, so whether it reaches the changed owner as an input is unknown"
+                ));
+            }
+        }
+        // A same-file wrapper macro's spliced expansion (#9122) shows the
+        // owner call in the body text, but activation does not read its
+        // arguments as owner inputs.
+        if let Some(boundary) = call_arguments(&test.body, owner)
+            .iter()
+            .flat_map(|arguments| extract_literals(arguments))
+            .find(|literal| probe_literals.contains(literal))
+        {
+            return Some(format!(
+                "A related test passes the changed boundary literal [{boundary}] to `{owner}` in a form ripr does not read as an owner input (for example a wrapper macro's expansion), so whether it activates the change is unknown"
+            ));
+        }
+        let fixtures = crate::analysis::value_resolution::rstest_fixture_parameters(test);
+        if fixtures.is_empty() {
+            continue;
+        }
+        for call in test.calls.iter().filter(|call| call.name == owner) {
+            if let Some(fixture) = fixtures.iter().find(|fixture| {
+                call_arguments(call.text.as_ref(), owner)
+                    .iter()
+                    .any(|arguments| {
+                        super::activation::free_identifiers(arguments).contains(fixture)
+                    })
+            }) {
+                return Some(format!(
+                    "A related test passes the rstest fixture `{fixture}` to `{owner}`; ripr does not read the fixture's value, so whether it sits on the changed boundary [{}] is unknown",
+                    list_or_unknown(probe_literals)
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The argument text of each invocation in `body` of a macro other than the
+/// standard ones ripr reads ([`super::activation::READ_MACROS`]) and
+/// `macro_rules!`, with comments and strings masked for the scan.
+fn unread_macro_arguments(body: &str) -> Vec<(String, String)> {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut out = Vec::new();
+    for (bang, _) in masked.match_indices('!') {
+        let Some(open) = bytes[bang + 1..]
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .map(|skip| bang + 1 + skip)
+            .filter(|open| matches!(bytes[*open], b'(' | b'[' | b'{'))
+        else {
+            continue;
+        };
+        let name_end = masked[..bang].trim_end().len();
+        let name_start = masked[..name_end]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &masked[name_start..name_end];
+        if name.is_empty()
+            || name == "macro_rules"
+            || super::activation::READ_MACROS.contains(&name)
+        {
+            continue;
+        }
+        let Some(close) = balanced_close(bytes, open) else {
+            continue;
+        };
+        if let Some(arguments) = body.get(open + 1..close) {
+            out.push((name.to_string(), arguments.to_string()));
+        }
+    }
+    out
+}
+
+/// Offset of the delimiter closing the one at `open` in masked text.
+fn balanced_close(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, byte) in bytes.iter().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The argument text of each `owner(..)` call in `text`.
+fn call_arguments(text: &str, owner: &str) -> Vec<String> {
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked
+        .match_indices(owner)
+        .filter_map(|(at, _)| {
+            let end = at + owner.len();
+            if at > 0 && is_word(bytes[at - 1]) {
+                return None;
+            }
+            let open = bytes[end..]
+                .iter()
+                .position(|byte| !byte.is_ascii_whitespace())
+                .map(|skip| end + skip)
+                .filter(|open| bytes[*open] == b'(')?;
+            let close = balanced_close(bytes, open)?;
+            text.get(open + 1..close).map(str::to_string)
+        })
+        .collect()
+}
+
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],
@@ -987,6 +1123,13 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         list_or_unknown(&boundary_input_literals)
                     ),
                 )
+            } else if let Some(opaque) = owner.and_then(|owner| {
+                opaque_boundary_input(related_tests, &owner.name, &probe_literals)
+            }) {
+                // #15343, #15344: the boundary may reach the owner through an
+                // input ripr does not read, so calling it absent (or an
+                // expected value) would be a wrong actionable gap.
+                StageEvidence::new(StageState::Unknown, Confidence::Low, opaque)
             } else if !boundary_oracle_only_literals.is_empty() {
                 StageEvidence::new(
                     StageState::Weak,
@@ -2620,6 +2763,102 @@ mod tests {
             evidence.summary,
             "Related tests contain the changed boundary literal [2000] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected"
         );
+    }
+
+    /// #15343, #15344: a boundary that may reach the owner through an input
+    /// ripr does not read is unknown, never an absent input.
+    #[test]
+    fn an_unread_owner_input_holding_the_boundary_is_opaque() {
+        let boundary = ["100".to_string()];
+        let test_with = |body: &str, attrs: &[&str], calls: &[&str]| {
+            let mut test = test_with_literals(&["100", "0"]);
+            test.body = body.into();
+            test.attrs = attrs
+                .iter()
+                .map(|attr| (*attr).to_string())
+                .collect::<Vec<_>>()
+                .into();
+            test.calls = calls
+                .iter()
+                .map(|text| crate::analysis::facts::CallFact {
+                    name: "discount".to_string(),
+                    line: 2,
+                    text: (*text).to_string().into(),
+                })
+                .collect::<Vec<_>>()
+                .into();
+            test
+        };
+        let opaque = |test: &TestSummary| opaque_boundary_input(&[test], "discount", &boundary);
+        // A same-file wrapper macro, unspliced and spliced (#9122).
+        let wrapped = opaque(&test_with("fn t() { check!(100, 0); }", &[], &[]));
+        assert!(
+            wrapped
+                .as_deref()
+                .is_some_and(|why| why.contains("`check!`")),
+            "{wrapped:?}"
+        );
+        let spliced = opaque(&test_with(
+            "fn t() { assert_eq!(discount(100), 0, \"input {}\", 100); }",
+            &[],
+            &[],
+        ));
+        assert!(spliced.is_some());
+        // A local macro nested in a standard assertion.
+        assert!(opaque(&test_with("fn t() { assert_eq!(d!(100), 0); }", &[], &[])).is_some());
+        // An rstest fixture parameter fed to the owner.
+        let fixture = opaque(&test_with(
+            "fn at_threshold(amount: u32) { assert_eq!(discount(amount), 0); }",
+            &["#[rstest]"],
+            &["assert_eq!(discount(amount), 0);"],
+        ));
+        assert!(
+            fixture
+                .as_deref()
+                .is_some_and(|why| why.contains("fixture `amount`")),
+            "{fixture:?}"
+        );
+
+        // Alternates that stay readable, so the absent-input reading stands.
+        for (body, attrs, calls) in [
+            // No unread macro holds the boundary; it feeds another function.
+            (
+                "fn t() { check!(50, 0); assert_eq!(other(100), 0); }",
+                &["#[test]"][..],
+                &[][..],
+            ),
+            (
+                "fn t() { assert_eq!(discount_all(100), 0); }",
+                &[][..],
+                &[][..],
+            ),
+            // `vec!` and the standard assertions are read.
+            (
+                "fn t() { assert_eq!(total(vec![100]), 0); }",
+                &[][..],
+                &[][..],
+            ),
+            // A `#[case]` or `#[values]` parameter is not a fixture.
+            (
+                "fn t(#[case] amount: u32) { assert_eq!(discount(amount), 0); }",
+                &["#[rstest]", "#[case(50)]"][..],
+                &["assert_eq!(discount(amount), 0);"][..],
+            ),
+            (
+                "fn t(#[values(1, 2)] amount: u32) { assert_eq!(discount(amount), 0); }",
+                &["#[rstest]"][..],
+                &["assert_eq!(discount(amount), 0);"][..],
+            ),
+            // Without `#[rstest]` the parameter is no fixture.
+            (
+                "fn t(amount: u32) { assert_eq!(discount(amount), 0); }",
+                &[][..],
+                &["assert_eq!(discount(amount), 0);"][..],
+            ),
+        ] {
+            let test = test_with(body, attrs, calls);
+            assert_eq!(opaque(&test), None, "{body}");
+        }
     }
 
     #[test]

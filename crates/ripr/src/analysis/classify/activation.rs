@@ -5218,7 +5218,7 @@ fn in_use_item(before: &str) -> bool {
 
 /// The standard assertion and formatting macros whose expansion cannot
 /// call the owner.
-const READ_MACROS: &[&str] = &[
+pub(super) const READ_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
