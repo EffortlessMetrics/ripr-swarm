@@ -242,3 +242,38 @@ fn the_same_root_glob_written_twice_does_not_link() -> Result<(), String> {
     assert!(!outcome.related);
     Ok(())
 }
+
+#[test]
+fn a_glob_inside_the_test_body_does_not_link() -> Result<(), String> {
+    let tests =
+        "#[test]\nfn rounds_up() {\n    use money::*;\n    assert_eq!(cash_total(103), 105);\n}\n";
+    let outcome = outcome_of(
+        "src/lib.rs",
+        &[("src/lib.rs", ENTRY), ("tests/total.rs", tests)],
+    )?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
+
+#[test]
+fn an_explicit_foreign_import_of_the_name_beats_the_glob() -> Result<(), String> {
+    // An explicit import shadows a glob, so `cash_total` is `other`'s.
+    let outcome = at_root("use money::*;\nuse other::cash_total;\n")?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
+
+#[test]
+fn a_module_test_sharing_a_top_level_fn_name_does_not_link() -> Result<(), String> {
+    // The analyzed test is the module's, where `cash_total` is `other`'s.
+    let tests = "use money::*;\n\nfn rounds_up() {}\n\nmod inner {\n    use other::cash_total;\n\n    #[test]\n    fn rounds_up() {\n        assert_eq!(cash_total(103), 105);\n    }\n}\n";
+    let outcome = outcome_of(
+        "src/lib.rs",
+        &[("src/lib.rs", ENTRY), ("tests/total.rs", tests)],
+    )?;
+    assert_ne!(outcome.classification, "exposed");
+    assert!(!outcome.related);
+    Ok(())
+}
