@@ -244,7 +244,10 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke. The patch veto is narrowed
+    or non-literal argument stays smoke, except a plain name that is a direct,
+    settled pytest parametrize argname of the test with recorded cases, rebound
+    nowhere in the body (no statement binding and no `:=`) and not a
+    Hypothesis input (#15310), which counts as the row's literal. The patch veto is narrowed
     only to a closed allow-list (#10391): a test file keeps the credit when
     every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
     `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
@@ -325,7 +328,9 @@ mock expectations, and custom `assert_*` helpers.
   defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
   class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
   `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
-  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  truthiness on a non-bool owner and non-literal arguments stay uncredited
+  (the pytest `is True` / `is False` forms take the #15310 parametrize-argname
+  exception above; the unittest forms never do).
   `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
