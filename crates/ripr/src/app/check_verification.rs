@@ -95,14 +95,15 @@ impl CheckVerification {
 ///   either is a contributing row of `strong` or `medium` strength here, or
 ///   is an examined-only row (ripr ran its assertions against this change
 ///   and matched none, `assertion_not_observing`) of a test that is a
-///   contributing, reaching `strong` / `medium` row on some finding in the
-///   same run. An examined-only row alone proves nothing: its oracle text is
-///   just the test's first assertion, which may be a smoke `is_ok()`. A
-///   static limit's reaching test is often examined-only, so the run-wide
-///   cross-check is what lets a known exact test vouch for it. A limit no
-///   test reaches, reached only by tests that assert nothing, or whose
-///   assertion ripr refused to credit (`assertion_not_credited`, strength
-///   `none`), is not a finished workflow.
+///   contributing, reaching `strong` / `medium` row on another finding of
+///   the same owner function in the run. An examined-only row alone proves
+///   nothing: its oracle text is just the test's first assertion, which may
+///   be a smoke `is_ok()`. A static limit's reaching test is often
+///   examined-only, so the same-owner cross-check is what lets a test that
+///   pins that function vouch for it. A limit no test reaches, reached only
+///   by tests that assert nothing, or whose assertion ripr refused to credit
+///   (`assertion_not_credited`, strength `none`), is not a finished
+///   workflow.
 fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> bool {
     let owner_is_function = finding.probe.owner.is_some();
     let contributing = || {
@@ -134,14 +135,24 @@ fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> 
                     pins_exactly(test)
                 } else {
                     test.miss == Some(RelatedTestMiss::AssertionNotObserving)
-                        && exact_tests.contains(&(test.file.as_path(), test.name.as_str()))
+                        && finding.probe.owner.as_ref().is_some_and(|owner| {
+                            exact_tests.contains(&(
+                                owner.0.as_str(),
+                                test.file.as_path(),
+                                test.name.as_str(),
+                            ))
+                        })
                 }
         })
 }
 
-/// Tests (file, name) that are a contributing, reaching `strong` / `medium`
-/// row on at least one finding of the run.
-type ExactTests<'a> = std::collections::BTreeSet<(&'a std::path::Path, &'a str)>;
+/// (owner, test file, test name) for each test that is a contributing,
+/// reaching `strong` / `medium` row on a non-withheld finding of that owner
+/// in the run. Keyed by owner so a test that pins one function exactly never
+/// vouches for an unasserted call to another (#14821 review). Two same-named
+/// tests in different modules of one file share a key; both must reach the
+/// same owner for that to matter.
+type ExactTests<'a> = std::collections::BTreeSet<(&'a str, &'a std::path::Path, &'a str)>;
 
 fn reaches(test: &crate::domain::RelatedTest, owner_is_function: bool) -> bool {
     test.relation_reason
@@ -214,14 +225,14 @@ impl CheckOutput {
             .findings
             .iter()
             .filter(|finding| !withheld.contains(finding.id.as_str()))
-            .flat_map(|finding| {
-                let owner_is_function = finding.probe.owner.is_some();
+            .filter_map(|finding| Some((finding.probe.owner.as_ref()?.0.as_str(), finding)))
+            .flat_map(|(owner, finding)| {
                 finding
                     .related_tests
                     .iter()
-                    .filter(move |test| pins_exactly(test) && reaches(test, owner_is_function))
+                    .filter(|test| pins_exactly(test) && reaches(test, true))
+                    .map(move |test| (owner, test.file.as_path(), test.name.as_str()))
             })
-            .map(|test| (test.file.as_path(), test.name.as_str()))
             .collect();
         let mut exposed = 0usize;
         let mut limits: Vec<(ExposureClass, usize)> = Vec::new();
@@ -495,6 +506,18 @@ mod tests {
         ]
     }
 
+    /// `limits_only` with finding `b`'s one row examined-only (its
+    /// assertion matched nothing in the change) and named `name`.
+    fn examined_only(name: &str) -> Vec<Finding> {
+        let mut findings = limits_only();
+        let row = &mut findings[1].related_tests[0];
+        row.role = crate::domain::RelatedTestRole::ExaminedOnly;
+        row.oracle_strength = OracleStrength::None;
+        row.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        row.name = name.to_string();
+        findings
+    }
+
     #[test]
     fn analyzer_limits_alone_complete_with_limits_and_stay_disclosed() -> Result<(), String> {
         let verdict = complete_with(limits_only())?.verification();
@@ -511,15 +534,6 @@ mod tests {
         // The repro 1 static_unknown shape: the only reaching row is
         // examined-only (its assertion matched nothing in this change), but
         // the same test pins another finding of the run exactly.
-        let examined_only = |name: &str| {
-            let mut findings = limits_only();
-            let row = &mut findings[1].related_tests[0];
-            row.role = crate::domain::RelatedTestRole::ExaminedOnly;
-            row.oracle_strength = OracleStrength::None;
-            row.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
-            row.name = name.to_string();
-            findings
-        };
         assert!(
             complete_with(examined_only("test_c"))?
                 .verification()
@@ -646,6 +660,15 @@ mod tests {
         }
         far[2].related_tests[0].relation_reason = Some(RelationReason::OwnerNamedTest);
         refuses(far)?;
+        // A test that pins another function exactly never vouches for an
+        // unasserted call to this one (#14821 second review).
+        let mut other_owner = examined_only("test_c");
+        other_owner[2].probe.owner = Some(crate::domain::SymbolId("crate::g".to_string()));
+        refuses(other_owner)?;
+        // A limit with no owner has nothing to bind a vouching test to.
+        let mut ownerless = examined_only("test_c");
+        ownerless[1].probe.owner = None;
+        refuses(ownerless)?;
         // Contributing rows that pin nothing: an unmatched or refused
         // assertion (`none` strength) is not exact evidence.
         for miss in [

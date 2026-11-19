@@ -1157,7 +1157,8 @@ verify=complete|outcome=O|findings=N|exposed=N
   affinity for a non-function owner) is either contributing with `strong` or
   `medium` strength, or examined-only with `miss=assertion_not_observing`
   and is a contributing, reaching `strong`/`medium` row on another finding
-  of the same run. The listed counts must reconcile to the full summary. `limits`
+  of the same owner function in the run (a test that pins one function
+  never vouches for an unasserted call to another). The listed counts must reconcile to the full summary. `limits`
   lists those classes in vocabulary order. It upgrades no finding: the limits
   stay unproven, and `no_static_path`, `weakly_exposed` and
   `reachable_unrevealed` findings always refuse. It is projected

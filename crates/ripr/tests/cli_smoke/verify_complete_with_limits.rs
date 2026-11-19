@@ -2,7 +2,8 @@
 //! `verify=complete_with_limits|...|limits=...`, so the documented loop can
 //! finish in DONE with those limits disclosed. The same diff under tests that
 //! only smoke-check (`is_ok()`), assert nothing, or assert something unrelated
-//! (`assert!(true)`) keeps `verify=refused`.
+//! (`assert!(true)`) keeps `verify=refused`, and so does a limit in a second
+//! function that the exact test only calls without asserting on it.
 use super::{ignore_remove_dir_all, run_command, run_git, unique_temp_workspace};
 use std::path::{Path, PathBuf};
 
@@ -104,11 +105,33 @@ fn asserts_nothing_about_the_change() {
 }
 "#;
 
+/// The exact drain test of `REFERENCE_TESTS`, plus an unasserted `refill`
+/// call: it pins `try_take` exactly but says nothing about `refill`.
+const MIXED_TESTS: &str = r#"use ratelimit::{Bucket, TakeError};
+
+#[test]
+fn drains_exactly_to_zero() {
+    let mut b = Bucket::new(5);
+    assert_eq!(b.try_take(5), Ok(()));
+    assert_eq!(b.try_take(1), Err(TakeError::Insufficient { available: 0 }));
+    b.refill(10);
+}
+"#;
+
+/// Which `LIB_BASE` lines the `feature` commit fixes.
+#[derive(Clone, Copy)]
+enum Change {
+    /// The drain boundary (`<=` -> `<`) in `try_take`: one
+    /// `infection_unknown` finding.
+    Boundary,
+    /// The boundary plus the refill precision (`/ 100` -> `/ 1000`) in
+    /// `refill`, which reads `static_unknown`.
+    BoundaryAndRefill,
+}
+
 /// A committed `main` with `LIB_BASE` and `tests`, then a `feature` commit
-/// that fixes the refill precision (`/ 100` -> `/ 1000`) and the drain
-/// boundary (`<=` -> `<`): the two changed lines read `static_unknown` and
-/// `infection_unknown`.
-fn fixture(label: &str, tests: &str) -> TestResult<PathBuf> {
+/// applying `change`.
+fn fixture(label: &str, tests: &str, change: Change) -> TestResult<PathBuf> {
     let root = unique_temp_workspace(label);
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
@@ -127,12 +150,13 @@ fn fixture(label: &str, tests: &str) -> TestResult<PathBuf> {
         &[&COMMITTER[..], &["commit", "-qm", "base"]].concat(),
     )?;
     run_git(&root, &["checkout", "-q", "-b", "feature"])?;
-    let head = LIB_BASE
-        .replace(
+    let mut head = LIB_BASE.replace("self.tokens <= cost", "self.tokens < cost");
+    if matches!(change, Change::BoundaryAndRefill) {
+        head = head.replace(
             "elapsed_ms * self.rate / 100;",
             "elapsed_ms * self.rate / 1000;",
-        )
-        .replace("self.tokens <= cost", "self.tokens < cost");
+        );
+    }
     std::fs::write(root.join("src/lib.rs"), head)?;
     run_git(&root, &["add", "-A"])?;
     run_git(
@@ -160,23 +184,23 @@ fn last_line(report: &str) -> &str {
 
 #[test]
 fn exact_tests_leaving_only_analyzer_limits_complete_with_limits() -> TestResult {
-    let root = fixture("verify-limits-reference", REFERENCE_TESTS)?;
+    let root = fixture("verify-limits-reference", REFERENCE_TESTS, Change::Boundary)?;
     let result = agent_report(&root);
     ignore_remove_dir_all(&root);
     let (code, report) = result?;
     assert_eq!(code, Some(0), "{report}");
-    // Fixture premise: no test-side gap, and both changed lines are limits.
+    // Fixture premise: no test-side gap, and the changed line is a limit.
     assert!(
-        report.starts_with("#ripr agent static-advisory base=main findings=2 gaps=0 "),
+        report.starts_with("#ripr agent static-advisory base=main findings=1 gaps=0 "),
         "{report}"
     );
     assert!(
-        report.contains("\nlimits=infection_unknown:1,static_unknown:1\n"),
+        report.contains("\nlimits=infection_unknown:1\n"),
         "{report}"
     );
     assert_eq!(
         last_line(&report),
-        "verify=complete_with_limits|outcome=complete_with_findings|findings=2|exposed=0|limits=infection_unknown:1,static_unknown:1",
+        "verify=complete_with_limits|outcome=complete_with_findings|findings=1|exposed=0|limits=infection_unknown:1",
         "{report}"
     );
     Ok(())
@@ -184,25 +208,48 @@ fn exact_tests_leaving_only_analyzer_limits_complete_with_limits() -> TestResult
 
 #[test]
 fn smoke_unrelated_or_assertion_free_tests_over_the_same_limits_still_refuse() -> TestResult {
-    for (label, tests) in [
-        ("verify-limits-smoke", SMOKE_TESTS),
-        ("verify-limits-calls-only", CALL_ONLY_TESTS),
-        ("verify-limits-unrelated-assert", UNRELATED_ASSERT_TESTS),
+    for (label, tests, change, limits) in [
+        (
+            "verify-limits-smoke",
+            SMOKE_TESTS,
+            Change::Boundary,
+            "infection_unknown:1",
+        ),
+        (
+            "verify-limits-calls-only",
+            CALL_ONLY_TESTS,
+            Change::Boundary,
+            "infection_unknown:1",
+        ),
+        (
+            "verify-limits-unrelated-assert",
+            UNRELATED_ASSERT_TESTS,
+            Change::Boundary,
+            "infection_unknown:1",
+        ),
+        (
+            "verify-limits-mixed",
+            MIXED_TESTS,
+            Change::BoundaryAndRefill,
+            "infection_unknown:1,static_unknown:1",
+        ),
     ] {
-        let root = fixture(label, tests)?;
+        let root = fixture(label, tests, change)?;
         let result = agent_report(&root);
         ignore_remove_dir_all(&root);
         let (code, report) = result?;
         assert_eq!(code, Some(0), "{label}: {report}");
-        // Same premise as the reference tree: gaps=0 and the same limits.
+        // Same premise as the reference tree: gaps=0 and only limits.
         assert!(
-            report.contains(" findings=2 gaps=0 ")
-                && report.contains("\nlimits=infection_unknown:1,static_unknown:1\n"),
+            report.contains(" gaps=0 ") && report.contains(&format!("\nlimits={limits}\n")),
             "{label}: {report}"
         );
+        let findings = if limits.contains(',') { 2 } else { 1 };
         assert_eq!(
             last_line(&report),
-            "verify=refused|outcome=complete_with_findings|findings=2|exposed=0|reason=unexposed_findings_remain",
+            format!(
+                "verify=refused|outcome=complete_with_findings|findings={findings}|exposed=0|reason=unexposed_findings_remain"
+            ),
             "{label}: {report}"
         );
     }

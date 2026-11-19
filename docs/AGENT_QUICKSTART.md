@@ -187,7 +187,8 @@ subset:
   candidate-current, non-preview `static_unknown`, `infection_unknown` or
   `propagation_unknown` finding that a test calls and that some exact test
   pins: a related test reaches it and is `strong`/`medium` there, or is a
-  test ripr reads as `strong`/`medium` on another finding of the same run.
+  test ripr reads as `strong`/`medium` on another finding of the same
+  changed function in this run.
   No related test bound to it may assert only weakly (`weak` or `smoke`).
   The loop may end in DONE; report the `limits=` as unproven, not as
   exposed. Any gap, `no_static_path`, weak or smoke-only related test, test

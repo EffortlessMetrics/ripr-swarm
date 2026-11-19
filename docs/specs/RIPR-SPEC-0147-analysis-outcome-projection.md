@@ -42,7 +42,8 @@ When that is the only unmet condition and every unexposed finding is an
 analyzer limit no test edit can close (a candidate-current, non-preview,
 non-withheld `static_unknown`, `infection_unknown` or `propagation_unknown`
 finding that a reaching related test pins `strong`/`medium` here or, as an
-examined-only row, on another finding of the run, with no owner-bound related
+examined-only row with `miss=assertion_not_observing`, on another finding
+of the same owner function in the run, with no owner-bound related
 test asserting only weakly), the record
 reads `verify=complete_with_limits|...|limits=CLASS:COUNT,...` (#14821), and
 the consumer may finish with those limits disclosed. It upgrades no finding
