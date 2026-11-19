@@ -8,3 +8,6 @@
   shared base-owner gate decision the bool and unary tail readings use
   (#15104). Ungated owners, including one beside an unrelated `cfg(test)`
   module or a same-named function on another path, keep their credit.
+  The gate fails closed: a workspace file whose `mod` declarations cannot
+  be parsed refuses the credit too. Other returned shapes (`format!`,
+  `concat!`, `Ok(..)` and early-return tails) are not covered yet (#15198).

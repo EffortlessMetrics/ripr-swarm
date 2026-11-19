@@ -397,12 +397,20 @@ case = "spec-b-0153-opt-in-sibling-helper"
 reason = "Runtime truth is discriminated, but this edit is a test-only helper in a tests/ sibling outside production_like_targets. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
+case = "spec-b-0153-opted-in-test-helper"
+reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner, so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
+
+[[entry]]
 case = "spec-b-0153-registered-harness-helper"
 reason = "Runtime truth is discriminated, but this edit is a test-only helper in a declared harness=false target with a custom path. Required silence is an abstention, not exposure credit; exact row comparison protects the source-role boundary (#10495)."
 
 [[entry]]
 case = "spec-b-0153-registered-harness-subject"
 reason = "The registered Trial callback is indexed for reach but its assertion is not credited, so this configured adapter control records static_unknown/limited rather than ideal credit. Removing only the valid registration loses the adapted relation and changes the exact row to no_static_path; this entry does not accept that drift (#10495)."
+
+[[entry]]
+case = "spec-b-0153-undeclared-harness-helper"
+reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner, so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
 
 [[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"

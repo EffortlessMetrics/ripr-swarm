@@ -180,13 +180,10 @@ pub(crate) fn owner_may_be_swapped(
     };
     let root = parse.tree().syntax().clone();
     // Innermost last, as in `verified_base_owner`.
-    let Some(function) = named_functions(&root, name)
-        .filter(|function| {
-            node_lines(new_source, function.syntax())
-                .is_some_and(|(first, last)| first <= start_line && end_line <= last)
-        })
-        .next_back()
-    else {
+    let Some(function) = named_functions(&root, name).rfind(|function| {
+        node_lines(new_source, function.syntax())
+            .is_some_and(|(first, last)| first <= start_line && end_line <= last)
+    }) else {
         return true;
     };
     let Some(bare) = bare_path(new_source, &function) else {

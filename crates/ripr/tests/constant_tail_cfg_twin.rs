@@ -69,7 +69,10 @@ impl TempRepo {
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        // Keep a failing run's crate for inspection.
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
     }
 }
 
@@ -121,14 +124,30 @@ fn assert_credited(items: &str, line: usize) -> Result<(), String> {
 }
 
 /// The changed tail reads no stronger than `propagation_unknown`: no
-/// exposure credit and no propagation credited to the return.
+/// exposure credit, and propagation unknown for the `cfg` gate.
 fn assert_not_credited(items: &str, line: usize) -> Result<(), String> {
     let finding = tail_finding(items, line)?;
     assert!(
         !matches!(
             finding.class,
             ExposureClass::Exposed | ExposureClass::WeaklyExposed
-        ) && finding.ripr.propagate.state != StageState::Yes,
+        ),
+        "{finding:?}"
+    );
+    assert_eq!(
+        finding.ripr.propagate.state,
+        StageState::Unknown,
+        "{finding:?}"
+    );
+    assert!(
+        finding.ripr.propagate.summary.contains("cfg_gated_owner"),
+        "{finding:?}"
+    );
+    // Reach stands, so the refusal is the propagation one.
+    assert_eq!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
+    assert_eq!(
+        finding.class,
+        ExposureClass::PropagationUnknown,
         "{finding:?}"
     );
     Ok(())
@@ -188,7 +207,7 @@ fn a_cfg_module_twin_is_not_credited() -> Result<(), String> {
 #[test]
 fn a_cfg_attr_on_the_owner_is_not_credited() -> Result<(), String> {
     assert_not_credited(
-        "#[cfg_attr(test, allow(dead_code))]\npub fn ready() -> i32 {\n    2\n}",
+        "#[cfg_attr(test, inline(never))]\npub fn ready() -> i32 {\n    2\n}",
         3,
     )
 }
