@@ -963,8 +963,10 @@ general combinator, callback or mutation adequacy.
    `env!` and `option_env!` are in the set (#14116): each expands to a
    literal read from the build environment, so neither can leave the test.
    `use std::env;` (or `core::env`) binds that standard macro too, so it is
-   not a rebinding while the standard root is unbound; any other import,
-   definition or macro-argument mention of the name still refuses.
+   not a rebinding while the standard root is unbound. A plain import that
+   binds the root name itself (`use other::std;`) takes the root over, so
+   `use std::env;` then refuses; any other import, definition or
+   macro-argument mention of the name still refuses.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!`, `format!` or `vec!` expands to one call

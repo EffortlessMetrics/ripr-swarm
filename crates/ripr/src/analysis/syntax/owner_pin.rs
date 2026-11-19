@@ -1686,7 +1686,14 @@ fn macro_binding_sites_in_tree(
                     let name = name.trim_start_matches("r#");
                     let kind = if !trusted.contains(&name) {
                         None
-                    } else if !is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external)
+                    } else if !is_drop_in_assertion(&item, name)
+                        || drop_in_shadowed(root, external)
+                        // A plain import that binds a standard root's name
+                        // (`use foreign::std;`) takes the root over for this
+                        // file, as it does for a standard-root glob.
+                        || !external
+                            && matches!(root, "std" | "core")
+                            && plain_import_names().contains(root)
                     {
                         Some(MacroBindingKind::Import)
                     } else if !drop_in_verified(root) {

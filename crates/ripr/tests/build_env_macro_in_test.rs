@@ -116,6 +116,16 @@ fn a_rebound_build_environment_macro_keeps_the_assertion_uncredited() -> Result<
         ),
         // An import from a crate other than `std`/`core` is another macro.
         ("use demo::env;\n", "env!(\"CARGO_MANIFEST_DIR\");"),
+        // A plain import that takes over the `std` or `core` name makes
+        // `std::env` that crate's macro.
+        (
+            "use demo::std;\nuse std::env;\n",
+            "env!(\"CARGO_MANIFEST_DIR\");",
+        ),
+        (
+            "use demo::core;\nuse core::option_env;\n",
+            "option_env!(\"RIPR_UNSET\");",
+        ),
         // An unrelated macro called in the test stays opaque.
         ("macro_rules! leave { () => { return }; }\n", "leave!();"),
     ] {
