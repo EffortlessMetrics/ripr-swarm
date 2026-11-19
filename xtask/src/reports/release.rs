@@ -3178,8 +3178,8 @@ fn init_generator_self_pin_check(
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
     "#### First-run status",
     "missing_start_here",
-    // The summary names the packet by its artifact, not a repo path (#11322).
-    "`start-here.md` in the `ripr-reports` artifact",
+    // The summary names the packet by its artifact, not a repo path (#11322, #14356).
+    "`ripr/reports/start-here.md` in the `ripr-reports` artifact",
     "Safe next action: run `ripr first-pr",
 ];
 
@@ -6013,7 +6013,7 @@ mod tests {
             "good",
             "[ \"$1 $2\" = 'reports ci-summary' ] || exit 9\n\
              printf '#### First-run status\\n- Status: `missing_start_here`\\n\
-             - Open `start-here.md` in the `ripr-reports` artifact first.\\n\
+             - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact first.\\n\
              - Safe next action: run `ripr first-pr --root .`.\\n'",
         )?;
         // First-run block present but the packet is no longer named.
@@ -6068,7 +6068,10 @@ mod tests {
                 "complete summary reported missing: {good_missing:?}"
             ));
         }
-        if unnamed_missing.len() != 1 || !unnamed_missing[0].contains("start-here.md") {
+        if unnamed_missing.len() != 1
+            || !unnamed_missing[0]
+                .contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact")
+        {
             return Err(format!(
                 "summary that no longer names start-here: {unnamed_missing:?}"
             ));
@@ -6090,5 +6093,37 @@ mod tests {
             return Err(format!("failing binary not named: {failing_missing:?}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn ci_summary_first_run_needles_match_artifact_relative_start_here_path() {
+        let current_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_current =
+            super::missing_required_needles(current_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert!(
+            missing_current.is_empty(),
+            "current ci-summary output should satisfy all needles, missing: {missing_current:?}"
+        );
+
+        let pre_14356_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_stale =
+            super::missing_required_needles(pre_14356_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert_eq!(
+            missing_stale,
+            vec!["`ripr/reports/start-here.md` in the `ripr-reports` artifact".to_string()],
+            "pre-#14356 path should be rejected"
+        );
     }
 }
