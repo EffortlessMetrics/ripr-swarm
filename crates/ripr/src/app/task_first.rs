@@ -546,8 +546,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, "predicate");
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -560,7 +559,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -599,8 +598,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, kind);
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -613,7 +611,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // A named stub route already answers "no test calls this"; a second
@@ -1798,8 +1796,8 @@ pub(crate) fn no_test_route_refusal(
     let file = crate::analysis::stable_path_text(entry.seam.file());
     let line = entry.seam.display_line();
     let family = crate::analysis::probe_family_for_seam_kind(entry.seam.kind());
-    let at = shell_arg(&format!("{file}:{line}"));
-    let stub = format!("ripr agent stub --root {root_arg} --at {at} --kind {family}");
+    let selector = super::test_stub::stub_selector_args(Some(root), &entry.seam, family);
+    let stub = format!("ripr agent stub --root {root_arg} {selector}");
     let inline: Vec<String> = source
         .and_then(crate::analysis::governed_cfg_test_modules)
         .map(|modules| {

@@ -660,6 +660,42 @@ pub(crate) fn stub_route_location(
     ))
 }
 
+/// The selector arguments (`--at FILE:LINE --kind FAMILY`, or
+/// `--seam-id ID` when the location alone cannot pick one seam) for a stub
+/// command pointing at `seam`. A line that holds several seams of one kind
+/// (`Config { retries: 5, verbose: false }`) makes `--at` refuse with an
+/// ambiguity, so a hint built from the location would fail when run; the
+/// seam's own id always names the changed one.
+pub(crate) fn stub_selector_args(
+    root: Option<&Path>,
+    seam: &analysis::seams::RepoSeam,
+    family: &str,
+) -> String {
+    let file = analysis::stable_path_text(seam.file());
+    let line = seam.display_line();
+    let ambiguous = root.is_some_and(|root| {
+        matches!(
+            resolve_at_location(
+                root,
+                &RiprConfig::default(),
+                &file,
+                line,
+                Some(family),
+                &mut None,
+            ),
+            Err(TestStubError::Ambiguous { .. })
+        )
+    });
+    if ambiguous {
+        format!("--seam-id {}", shell_arg(seam.id().as_str()))
+    } else {
+        format!(
+            "--at {} --kind {family}",
+            shell_arg(&format!("{file}:{line}"))
+        )
+    }
+}
+
 /// The route decision for one finding, from the resolver
 /// `ripr agent stub --at` runs. `None` when the finding gets no route or the
 /// resolver finds no seam there; nothing is printed then.
@@ -2168,6 +2204,45 @@ mod tests {
         .map_err(|error| error.to_string())?;
         std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
         Ok(root)
+    }
+
+    /// A stub hint for one of several same-kind seams on a line names the
+    /// seam id (the `--at` form refuses as ambiguous); a lone seam keeps the
+    /// location form. The id must be the changed field's, not its sibling's.
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn stub_hint_uses_the_seam_id_only_when_the_line_is_ambiguous() -> Result<(), String> {
+        let source = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn new() -> Config {\n    Config { retries: 5, verbose: false }\n}\n\npub fn solo() -> u32 {\n    7\n}\n";
+        let root = scratch_stub_crate("hint-selector", source)?;
+        let config = RiprConfig::default();
+        let mut index = None;
+        let seams =
+            analysis::scoped_file_seams(&root, &config, &PathBuf::from("src/lib.rs"), &mut index)?;
+        let field = |needle: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.kind() == SeamKind::FieldConstruction && seam.expression().contains(needle)
+                })
+                .ok_or_else(|| format!("no field seam for {needle}"))
+        };
+        let retries = field("retries")?;
+        let verbose = field("verbose")?;
+        assert_ne!(retries.id(), verbose.id(), "precondition: two seams");
+        let hint = stub_selector_args(Some(&root), retries, "field_construction");
+        assert_eq!(hint, format!("--seam-id {}", retries.id().as_str()));
+        assert_ne!(hint, format!("--seam-id {}", verbose.id().as_str()));
+        let solo = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or("no return seam")?;
+        let line = solo.display_line();
+        assert_eq!(
+            stub_selector_args(Some(&root), solo, "return_value"),
+            format!("--at src/lib.rs:{line} --kind return_value")
+        );
+        // The hint is a command that works: the id it names resolves.
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
     }
 
     /// #10710: the narrowed seam is only offered when `ripr agent stub
