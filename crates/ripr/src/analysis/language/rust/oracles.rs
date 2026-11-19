@@ -766,6 +766,18 @@ fn unresolved_assertion_macro_invocations(
     unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
+/// The first assertion-like macro a test body invokes that ripr does not
+/// classify as an oracle (`assert_delta!(..)`, an `assert_*` spelling that is
+/// not a recognized std macro), read from comment- and string-masked text
+/// (#15237). The same name predicate as the #7089 witness. It never grades an
+/// oracle: the caller only withdraws a false "has no assertion" claim.
+pub(crate) fn first_unread_assertion_like_macro(body: &str) -> Option<String> {
+    unresolved_assertion_macro_invocations_among(body, 0, None, &[], &[])
+        .into_iter()
+        .min_by_key(|(_, line)| *line)
+        .map(|(name, _)| name)
+}
+
 fn unresolved_assertion_macro_invocations_among(
     body: &str,
     start_line: usize,
