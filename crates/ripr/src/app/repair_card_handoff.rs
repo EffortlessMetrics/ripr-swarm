@@ -1512,6 +1512,38 @@ mod tests {
         let nested = [outer.clone(), left.clone()];
         assert!(seams_tied_on_finding_line(&finding, &nested).is_empty());
 
+        // An outer seam enclosing one claimant beside a disjoint claimant
+        // (`f(|d| d == x) == 0 ... g() == 1` on one line): the outer drops out
+        // and the two minimal seams tie.
+        let outer_left = spanned_twin_boundary_entry(5, 88, span(88, 1, 16));
+        let three = [outer_left.clone(), left.clone(), right.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &three)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        assert!(!finding_names_seam_by_location(&finding, &left, &three));
+
+        // A seam without a span encloses nothing, so it ties with a spanned
+        // claimant, matching the join's refusal to bind either.
+        let mut spanless = spanned_twin_boundary_entry(50, 88, span(88, 40, 50));
+        spanless.seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            50,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let mixed = [left.clone(), spanless.clone()];
+        assert_eq!(seams_tied_on_finding_line(&finding, &mixed).len(), 2);
+        assert!(!finding_names_seam_by_location(&finding, &left, &mixed));
+        assert!(!finding_names_seam_by_location(&finding, &spanless, &mixed));
+
         // A finding on another line ties nothing.
         finding.probe.location.line = 89;
         assert!(seams_tied_on_finding_line(&finding, &pair).is_empty());
