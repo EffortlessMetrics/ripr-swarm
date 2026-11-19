@@ -88,6 +88,19 @@ Open VSX extension:
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
 
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
+
 ### Server Resolution
 
 On activation, the extension resolves the server in this order and records the

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { knownExtensionVersion } from './extensionVersion';
 import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   combineActiveManagedServerIdentity,
@@ -143,7 +144,11 @@ export async function resolveServer(
     version = requestedServerVersion(context, config);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
+    const message =
+      config.serverVersion.trim().length > 0
+        ? 'ripr.server.version is invalid.'
+        : 'The matching ripr server version is unknown.';
+    return { message, detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
@@ -375,8 +380,14 @@ export function requestedServerVersion(context: vscode.ExtensionContext, config:
   if (configured.length > 0) {
     return validateManagedServerVersion(configured.replace(/^v/, ''));
   }
-  const version = context.extension?.packageJSON?.version;
-  return validateManagedServerVersion(typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0');
+  const version = knownExtensionVersion(context);
+  if (version === undefined) {
+    throw new Error(
+      "The extension's own version could not be read, so the matching server version is unknown. " +
+        'Set ripr.server.version to the ripr release to use, or reinstall the extension.'
+    );
+  }
+  return validateManagedServerVersion(version);
 }
 
 function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatform): string {

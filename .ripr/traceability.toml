@@ -6339,6 +6339,12 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status bar reports disabled configuration without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports missing workspace without starting server",
   "editors/vscode/test/suite/extension.test.ts::status bar reports unavailable server without hanging on modal UI",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::the context manifest version wins and a leading v is dropped (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::a context without a manifest reads the shipped package.json, not a fixed release (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::a missing or malformed manifest leaves the version unknown (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::only extensionVersion.ts reads the manifest version from a context (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::workspaceContains activation events are exactly the analyzable project markers (#14647)",
+  "editors/vscode/test/suite/extension_version_manifest.test.ts::@types/vscode matches the minimum VS Code the extension declares (#14647)",
   "editors/vscode/test/suite/missing_server_message.test.ts::a download that never reached its host is a network failure (#13638)",
   "editors/vscode/test/suite/missing_server_message.test.ts::network guidance names the connection and the offline route, other kinds do not (#13638)",
   "editors/vscode/test/suite/missing_server_message.test.ts::a network resolution failure shows the offline route in the popup (#13638)",
@@ -6355,6 +6361,8 @@ code = [
   "editors/vscode/src/extension.ts",
   "editors/vscode/src/serverResolver.ts",
   "editors/vscode/src/downloader.ts",
+  "editors/vscode/src/extensionVersion.ts",
+  "editors/vscode/src/workspaceHelpers.ts",
   "editors/vscode/package.json",
 ]
 outputs = [

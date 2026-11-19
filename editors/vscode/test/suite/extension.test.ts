@@ -6902,7 +6902,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       return undefined;
     },
   };
-  const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime, status, options.attemptStatusBar);
+  // The fixture's server reports `ripr 0.8.0+test`, so the context names the
+  // matching extension version instead of inheriting the shipped one (#14647).
+  const extensionContext = { extension: { packageJSON: { version: '0.8.0' } } } as unknown as vscode.ExtensionContext;
+  const controller = new RiprClientController(extensionContext, output, runtime, status, options.attemptStatusBar);
   return {
     client,
     controller,
