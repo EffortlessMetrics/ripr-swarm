@@ -605,7 +605,7 @@ impl Summary {
         self.status_row(&state, &format!("- Selected state: `{state}`"));
         // #14148: a blocked packet carries its own reason; without it the
         // reader sees a state token and a command, and the sentence that
-        // explains both sits inside the collapsed full report.
+        // explains both is only in the start-here report in the uploaded artifact.
         let reason = doc.optional(&["selected.message"]);
         if !reason.is_empty() {
             self.line(&format!("- Reason: {}", code_span(&reason)));

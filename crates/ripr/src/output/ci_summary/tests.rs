@@ -1956,7 +1956,7 @@ fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn s
     Ok(String::from_utf8(render_ci_summary(&input))?)
 }
 
-/// The visible part of First-run status: up to the collapsed full report.
+/// The First-run status section: up to any collapsed block or the next heading.
 fn visible_first_run(summary: &str) -> &str {
     let status = summary
         .split("#### First-run status\n")
@@ -1970,8 +1970,8 @@ fn visible_first_run(summary: &str) -> &str {
 }
 
 /// #14148: a blocked start-here packet states its own reason, and the
-/// summary shows it with the state instead of leaving it in the collapsed
-/// report. A packet without a reason prints no reason line.
+/// summary shows it with the state; the start-here report itself is only in
+/// the uploaded artifact. A packet without a reason prints no reason line.
 #[test]
 fn a_blocked_start_here_packet_shows_its_reason() -> TestResult {
     let fixture = Fixture::new("blocked-reason")?;

@@ -177,7 +177,7 @@ the missing artifact and the regeneration command when known. If no command is
 known, the missing entry must say so explicitly.
 
 When the pull request analysis did not run, the visible first-run status says
-why instead of leaving the reason in a collapsed report:
+why instead of leaving the reason in the uploaded start-here report:
 
 - a blocked start-here packet's own reason is shown with its selected state;
 - a run whose event is not `pull_request` states that it has no pull request
