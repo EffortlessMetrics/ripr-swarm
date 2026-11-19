@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Agent-facing output now says the values it shows are what the changed code does now, so a new test pins them rather than the pre-change value: `ripr agent brief --json` adds a top-level `value_basis` note when it names a seam, the `ripr init --agents` WRITE step and docs/AGENT_QUICKSTART.md say to pin the new behavior, the MCP server instructions say the same, and the repair assertion-shape note says the expected value is what the changed code returns now (#15361).

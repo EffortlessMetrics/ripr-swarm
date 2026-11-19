@@ -2554,7 +2554,7 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "  (replace each /* ... */ comment with a real value from your test before using it)",
+            "  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code returns now, not the pre-change value)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
