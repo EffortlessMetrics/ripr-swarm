@@ -63,6 +63,11 @@ pub(crate) struct NameScope {
     /// Names of non-module items declared directly in this scope (`fn`,
     /// `const`, `static`, types, traits).
     pub(crate) defines: BTreeSet<String>,
+    /// The subset of `defines` that binds a callable value which is not a
+    /// function: a `const`, a `static` or a tuple `struct` (its constructor).
+    /// A bare call of such a name runs that item, never a same-named `fn`
+    /// a glob or an enclosing scope would otherwise supply.
+    pub(crate) value_items: BTreeSet<String>,
     /// Names of `mod` items declared directly in this scope.
     pub(crate) child_modules: BTreeSet<String>,
     /// Names an item inside a nested block of this function body binds.
@@ -218,7 +223,7 @@ pub(super) fn name_scopes_in_tree(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules
@@ -442,7 +447,7 @@ fn name_scopes_at_line(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules
@@ -559,9 +564,12 @@ fn nearest_item_scope(node: &SyntaxNode) -> Option<SyntaxNode> {
 }
 
 fn record_item(item: &ast::Item, scope: &mut NameScope) {
-    let mut define = |name: Option<ast::Name>| {
+    let mut define = |name: Option<ast::Name>, value_item: bool| {
         if let Some(name) = name {
-            scope.defines.insert(name.text().to_string());
+            if value_item {
+                scope.value_items.insert(unraw(name.text()));
+            }
+            scope.defines.insert(unraw(name.text()));
         }
     };
     match item {
@@ -572,8 +580,8 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::ExternCrate(item) => {
             let bound = match item.rename() {
-                Some(rename) => rename.name().map(|ident| ident.text().to_string()),
-                None => item.name_ref().map(|name| name.text().to_string()),
+                Some(rename) => rename.name().map(|ident| unraw(ident.text())),
+                None => item.name_ref().map(|name| unraw(name.text())),
             };
             if let Some(bound) = bound {
                 scope.imports.push(UseImport {
@@ -584,17 +592,20 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::Module(module) => {
             if let Some(name) = module.name() {
-                scope.child_modules.insert(name.text().to_string());
+                scope.child_modules.insert(unraw(name.text()));
             }
         }
-        ast::Item::Fn(item) => define(item.name()),
-        ast::Item::Const(item) => define(item.name()),
-        ast::Item::Static(item) => define(item.name()),
-        ast::Item::Struct(item) => define(item.name()),
-        ast::Item::Enum(item) => define(item.name()),
-        ast::Item::Union(item) => define(item.name()),
-        ast::Item::Trait(item) => define(item.name()),
-        ast::Item::TypeAlias(item) => define(item.name()),
+        ast::Item::Fn(item) => define(item.name(), false),
+        ast::Item::Const(item) => define(item.name(), true),
+        ast::Item::Static(item) => define(item.name(), true),
+        ast::Item::Struct(item) => {
+            let tuple = matches!(item.field_list(), Some(ast::FieldList::TupleFieldList(_)));
+            define(item.name(), tuple);
+        }
+        ast::Item::Enum(item) => define(item.name(), false),
+        ast::Item::Union(item) => define(item.name(), false),
+        ast::Item::Trait(item) => define(item.name(), false),
+        ast::Item::TypeAlias(item) => define(item.name(), false),
         ast::Item::MacroRules(_) | ast::Item::MacroCall(_) => {
             // A macro may expand to an item of any name; the caller sees
             // only spelled bindings. Item-producing macros are a documented
@@ -628,9 +639,15 @@ pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
         {
             return None;
         }
-        segments.push(segment.name_ref()?.text().to_string());
+        segments.push(unraw(segment.name_ref()?.text()));
     }
     (!segments.is_empty()).then_some(segments)
+}
+
+/// An identifier's name without the raw prefix: `r#render` and `render` are
+/// one name to the compiler, so scopes record and compare the plain spelling.
+fn unraw(text: &str) -> String {
+    text.strip_prefix("r#").unwrap_or(text).to_string()
 }
 
 /// Import leaves of one use item, sharing the same grouped-path reading as
@@ -652,7 +669,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
         last_text = path
             .segment()
             .and_then(|segment| segment.name_ref())
-            .map(|name| name.text().to_string());
+            .map(|name| unraw(name.text()));
         full = match (full, path_segments(&path)) {
             (Some(mut full), Some(segments)) => {
                 full.extend(segments);
@@ -680,7 +697,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
     }
     let renamed_to = tree
         .rename()
-        .map(|rename| rename.name().map(|ident| ident.text().to_string()));
+        .map(|rename| rename.name().map(|ident| unraw(ident.text())));
     let bound = match &renamed_to {
         // `use x as _;` binds no name.
         Some(name) => name.clone(),
@@ -711,6 +728,79 @@ mod tests {
 
     fn imports_of(scope: &NameScope, name: &str) -> Vec<UseBinding> {
         scope.imports_of(name).cloned().collect()
+    }
+
+    /// #14087: `value_items` holds exactly the items whose name a bare call
+    /// runs as a value that is not a function.
+    #[test]
+    fn records_const_static_and_tuple_struct_items_as_value_items() {
+        let source = "\
+mod tests {
+    const limit: fn(u32) -> u32 = other;
+    static table: fn(u32) -> u32 = other;
+    struct wrap(u32);
+    struct unit;
+    struct braced { x: u32 }
+    enum choice { A }
+    type alias = u32;
+    trait shape {}
+    fn helper() {}
+    fn probe() {
+        const inner: u32 = 1;
+        assert_eq!(limit(1), 1);
+    }
+}
+";
+        let found = scopes(source, 11, "probe");
+        assert_eq!(found.scopes.len(), 3, "fn body, mod tests, file root");
+        let names = |names: &BTreeSet<String>| names.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(names(&found.scopes[0].value_items), strings(&["inner"]));
+        assert_eq!(
+            names(&found.scopes[1].value_items),
+            strings(&["limit", "table", "wrap"])
+        );
+        for name in [
+            "limit", "table", "wrap", "unit", "braced", "choice", "alias", "shape", "helper",
+        ] {
+            assert!(found.scopes[1].defines.contains(name), "{name} is defined");
+        }
+        assert!(found.scopes[2].value_items.is_empty());
+    }
+
+    /// #14087 shape B: `r#name` and `name` are one name, so every recorded
+    /// spelling drops the raw prefix.
+    #[test]
+    fn records_raw_identifiers_under_their_plain_names() {
+        let source = "\
+mod r#inner {}
+mod tests {
+    use crate::b::r#render;
+    use crate::r#a::{r#snap as r#draw, r#other::*};
+    extern crate r#alloc;
+    const r#limit: u32 = 1;
+    fn r#helper() {}
+    fn probe() {
+        assert_eq!(render(1), 1);
+    }
+}
+";
+        let found = scopes(source, 8, "probe");
+        assert_eq!(found.scopes.len(), 3, "fn body, mod tests, file root");
+        let tests = &found.scopes[1];
+        assert_eq!(
+            imports_of(tests, "render"),
+            vec![UseBinding::Path(strings(&["crate", "b", "render"]))]
+        );
+        assert!(imports_of(tests, "r#render").is_empty());
+        assert_eq!(
+            imports_of(tests, "draw"),
+            vec![UseBinding::Renamed(strings(&["crate", "a", "snap"]))]
+        );
+        assert_eq!(imports_of(tests, "alloc"), vec![UseBinding::Opaque]);
+        assert_eq!(tests.globs, vec![Some(strings(&["crate", "a", "other"]))]);
+        assert!(tests.defines.contains("limit") && tests.defines.contains("helper"));
+        assert!(tests.value_items.contains("limit"));
+        assert!(found.scopes[2].child_modules.contains("inner"));
     }
 
     #[test]

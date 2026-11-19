@@ -56,6 +56,17 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
             "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `{pointer}`."
         );
     }
+    // `git diff --staged`/`--cached` muscle memory: `ripr check` has no
+    // index-only mode and no near flag, so the bare refusal named nothing.
+    // Name what check already reads and the exact staged-only spelling.
+    if command == "check" && matches!(arg, "--staged" | "--cached") {
+        return format!(
+            "unknown {command} argument {arg:?}. `ripr check` already reads staged and \
+             unstaged changes together; to limit findings to the staged lines run \
+             `git diff --cached | ripr check --diff -` (source is still read from the \
+             working tree). Run `{pointer}`."
+        );
+    }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
@@ -108,6 +119,55 @@ fn unknown_format_message(value: &str, accepted: &[&str]) -> String {
     }
 }
 
+/// How a flag typed where a command belongs (`ripr --base main`) relates to
+/// the flags `command` documents. The top-level error uses this so its
+/// placement example never names a spelling `command` would then reject.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FlagPlacement {
+    /// `command` documents the flag as typed.
+    Documented,
+    /// `command` documents a near spelling; the payload is that flag.
+    Near(String),
+    /// `command` documents nothing close to it.
+    Unknown,
+}
+
+/// Flags a command documents only as a modifier of `--help`. The parser
+/// rejects them on their own (`ripr check --all`), so a placement example
+/// must not name one.
+const HELP_ONLY_FLAGS: &[&str] = &["--all"];
+
+/// The flag name of a typed option: `--root=.` names `--root`
+/// (RIPR-SPEC-0438 accepts the `--name=value` spelling after a command).
+pub(crate) fn flag_name(arg: &str) -> &str {
+    match arg.split_once('=') {
+        Some((name, _)) if name.starts_with("--") => name,
+        _ => arg,
+    }
+}
+
+pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
+    let arg = flag_name(arg);
+    let Some(help_text) = help::help_text_for(command) else {
+        return FlagPlacement::Unknown;
+    };
+    let runnable: Vec<&str> = known_flags(command, help_text)
+        .into_iter()
+        .filter(|flag| !HELP_ONLY_FLAGS.contains(flag))
+        .collect();
+    if runnable.contains(&arg) {
+        return FlagPlacement::Documented;
+    }
+    // Only flag-shaped input gets a flag suggestion (see `closest_flag`).
+    if !arg.starts_with('-') {
+        return FlagPlacement::Unknown;
+    }
+    match closest(arg, runnable.into_iter()) {
+        Some(flag) => FlagPlacement::Near(flag.to_string()),
+        None => FlagPlacement::Unknown,
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be
@@ -156,7 +216,7 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
 /// out of each other's candidate sets: the parser rejects a sibling's flag,
 /// so proposing it would be a wrong suggestion. The Options mining below
 /// keeps its existing section scoping for the same reason.
-fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<&'a str> {
+pub(in crate::cli) fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<&'a str> {
     let section = option_section(command);
     let mut in_section = section.is_none();
     let mut in_usage_block = false;
@@ -260,7 +320,7 @@ fn collect_usage_flags<'a>(line: &'a str, command: &str, flags: &mut Vec<&'a str
 /// Whole-body mining passes an empty command (a test aid that deliberately
 /// sweeps every Options line); with no owner to scope to, no usage line
 /// qualifies.
-fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
+pub(in crate::cli) fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
     if command.is_empty() {
         return false;
     }
@@ -286,7 +346,7 @@ fn usage_line_belongs_to_command(line: &str, command: &str) -> bool {
 /// The shared body is still useful for rendering `--help`, but mining the
 /// whole body would let one sibling suggest another sibling's flag. Commands
 /// with a single options section keep the existing full-body scan.
-fn option_section(command: &str) -> Option<&'static str> {
+pub(in crate::cli) fn option_section(command: &str) -> Option<&'static str> {
     match command {
         "assistant-loop proof" => Some("Proof options:"),
         "assistant-loop health" => Some("Health options:"),
@@ -388,6 +448,20 @@ mod tests {
             message,
             "unknown check argument \"--forma\". Did you mean `--format`? Run `ripr check --help --all`."
         );
+    }
+
+    /// #15162: `first-pr` and `pr-comments` spell the directory flag
+    /// `--out-dir`; `check` spells it `--output-dir`. The other command's
+    /// spelling names the flag this one accepts.
+    #[test]
+    fn the_other_commands_out_dir_spelling_names_check_output_dir() {
+        let message = unknown_argument("check", "--out-dir");
+        assert_eq!(
+            message,
+            "unknown check argument \"--out-dir\". Did you mean `--output-dir`? Run `ripr check --help --all`."
+        );
+        let message = unknown_argument("first-pr", "--output-dir");
+        assert!(message.contains("Did you mean `--out-dir`?"), "{message}");
     }
 
     /// #8158 item 2: the default `check --help` is a short summary, but typo

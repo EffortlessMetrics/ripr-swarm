@@ -1,0 +1,34 @@
+[[behavior]]
+id = "RIPR-SPEC-0450"
+name = "owner opt-outs honor enclosing mutants::skip scopes"
+spec = "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md"
+tests = [
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::impl_level_mutants_skip_withholds_its_method_but_not_another_impl",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::cfg_attr_impl_level_mutants_skip_withholds",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::raw_string_doc_on_impl_mentioning_mutants_skip_does_not_withhold",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::module_level_mutants_skip_withholds_nested_fn_but_not_same_name_elsewhere",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::file_level_inner_mutants_skip_withholds",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::fn_level_mutants_skip_names_the_fn_scope",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::trait_level_mutants_skip_withholds_default_method_only",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::fn_nested_in_a_skipped_fn_is_withheld",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::explain_states_owner_opt_out_withholding",
+  "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::reads_impl_trait_module_and_file_scopes_innermost_first",
+  "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::inner_attributes_are_rewritten_to_outer_form",
+  "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::unparsable_source_and_ambiguous_owner_yield_nothing",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs",
+  "crates/ripr/src/analysis/owner_opt_out.rs",
+  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/app/explain.rs",
+]
+outputs = [
+  "schemas/ripr/check.schema.json",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/CONFIGURATION.md",
+  "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

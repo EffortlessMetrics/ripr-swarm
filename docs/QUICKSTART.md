@@ -20,7 +20,7 @@ archive (about a second on Linux). Pick your platform; the
 [release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
 archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
-hosted runners and records the timings (#5311).
+hosted runners when explicitly dispatched and records the timings (#5311).
 
 Linux and macOS (Bash or zsh):
 
@@ -204,6 +204,11 @@ standalone — it does not chain with `&&`.) To explore a clean repository
 without making a change, use the separate
 [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
+
+To get this advisory check on every commit or push, add the shipped
+[pre-commit hooks](INTEGRATIONS.md#pre-commit-framework) or a
+[lefthook, husky or plain Git hook](INTEGRATIONS.md#lefthook-husky-and-plain-git-hooks).
+Findings exit 0, so a hook never blocks on them.
 
 ### Reference: output mechanics and terms
 
@@ -392,10 +397,12 @@ has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
 under `src/` or `tests/`. Work from a Python repository on a branch with a
 change to inspect.
+To try it first on a small project with a known gap, use the
+[Python starter example](../examples/python-bulk-discount/README.md).
 
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -438,9 +445,11 @@ root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+To try it first on a small project with a known gap, use the
+[TypeScript starter example](../examples/typescript-discount-threshold/README.md).
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -694,6 +703,9 @@ It also appears when no repairable PR-local gap was selected; read the printed
 
 ## Troubleshooting
 
+The [troubleshooting guide](TROUBLESHOOTING.md) lists each situation by the
+line `ripr` prints. The common ones:
+
 | Symptom | Next step |
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
@@ -748,4 +760,4 @@ and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md) for supported cases.
 
 [Command guide](COMMAND_HIERARCHY.md) · [Configuration](CONFIGURATION.md) ·
 [Targeted tests](TARGETED_TEST_WORKFLOW.md) · [Output formats](OUTPUT_SCHEMA.md) ·
-[Terminology](TERMINOLOGY.md)
+[Integrations and Git hooks](INTEGRATIONS.md) · [Terminology](TERMINOLOGY.md)

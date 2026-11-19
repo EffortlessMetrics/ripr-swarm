@@ -140,5 +140,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast probe:src_audit.ts:typescript_preview:fe5718af
   ripr context --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:fe5718af
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

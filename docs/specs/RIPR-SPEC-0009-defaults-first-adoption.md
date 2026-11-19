@@ -77,7 +77,15 @@ The default contract is:
   directory leaves behind. A bare filesystem or drive root keeps its spelling.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
-  intentionally created by `init` or other commands.
+  intentionally created by `init` or other commands. One deliberate exception
+  is in `[languages] enabled`. When it writes that list, `init` also enables
+  TypeScript for analyzable source directly inside an immediate child
+  directory, such as `web/pricing.ts`. That layout is not a no-config marker
+  (#13788). The rule skips hidden, excluded and `docs` directories, `.d.ts` and
+  generated names, deeper nesting, and `test`/`tests` beside a `Cargo.toml`
+  (compared with the host path case rule). It lives only in the reviewable file
+  `init` writes, so `doctor` does not ask the user to enable a language that
+  `init` could have enabled. No-config detection is unchanged.
 - `ripr init --agents` writes language-appropriate agent instructions. The
   Rust block stays byte-identical to `docs/AGENT_QUICKSTART.md`; a preview
   language (Python, TypeScript/JavaScript) gets its own test runner and
@@ -87,6 +95,10 @@ The default contract is:
   producer-owned `verify=` record enforces complete outcome, equal full
   findings/exposed counts and source/scope currentness. A missing, refused or
   cut-off record cannot establish completion. JSON drilldown is not required.
+  The DETAIL step (`ripr explain`, then `ripr context`) is skipped only when a
+  gap row's `missing=` is one complete code value; it is followed when
+  `missing=` is `-`, prose, clipped (`…`) or carries the renderer's
+  `(+N more)` count of further distinct missing discriminator values.
   A language counts
   only when it is both detected and enabled in the effective
   `[languages].enabled` (the config this run writes, else the one it keeps,

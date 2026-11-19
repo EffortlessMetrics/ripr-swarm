@@ -1,0 +1,21 @@
+{
+  "id": "rust_statement_macro_spelling_other_item",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_statement_macro_spelling_other_item",
+  "vector": "statement_macro_defined_out_of_file_spelling_an_item_of_another_name_keeps_the_imported_owner_credit",
+  "probe_family": "match_arm",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    }
+  ]
+}

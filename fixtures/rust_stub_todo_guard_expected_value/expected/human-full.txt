@@ -1,0 +1,53 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_stub_todo_guard_expected_value/input
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:367934ee
+
+Changed
+  before: amount - 9
+  after:  amount - 10
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::price
+  gap id (for scripts): gap:rust:src/lib.rs:price:return_value:return_value:amount-10
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach price: equality_discriminator, guard_discriminator
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: amount - 10
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches returned value: amount - 10 (line 2)
+  - related test src/lib.rs:19 equality_discriminator uses an unclassified oracle, not graded against this probe: assert!(price(100) == expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:10 guard_discriminator uses an unclassified oracle, not graded against this probe: if price(100) != expected { return Err("price(100) returned the wrong value".into()); }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source function argument value amount = 100 at line 12
+  - source function argument value amount = 100 at line 21
+  - assertion not credited: `assert!` in equality_discriminator at src/lib.rs:21: the expected value is an unfilled placeholder macro (`todo!`, `unimplemented!`, `unreachable!` or `panic!`), so the assertion pins no value
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_stub_todo_guard_expected_value/input --diff <cwd>/fixtures/rust_stub_todo_guard_expected_value/diff.patch --mode fast probe:src_lib.rs:return_value:367934ee
+  ripr context --root <cwd>/fixtures/rust_stub_todo_guard_expected_value/input --diff <cwd>/fixtures/rust_stub_todo_guard_expected_value/diff.patch --mode fast --at probe:src_lib.rs:return_value:367934ee

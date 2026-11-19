@@ -145,7 +145,11 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
         .get("suggested_test")
         .and_then(|test| test.get("intent"))
         .and_then(Value::as_str);
-    let mut message = reason.to_string();
+    // A card on another changed line of its function names the gap's own
+    // line first (#14303).
+    let mut message =
+        crate::output::review_comments::displaced_seam_prefix(item).unwrap_or_default();
+    message.push_str(reason);
     if let Some(intent) = intent {
         message.push_str(" Suggested test: ");
         message.push_str(intent);
@@ -282,6 +286,34 @@ mod tests {
         {
             return Err(format!("wire encoding mismatch: {annotation}"));
         }
+        Ok(())
+    }
+
+    /// #14303: `ripr annotations` names a displaced card's gap line, the
+    /// same prefix the workflow annotations print; exact cards are unchanged.
+    #[test]
+    fn a_displaced_card_annotation_names_the_gap_line() -> Result<(), String> {
+        let card = |mode: &str| -> Result<Value, String> {
+            serde_json::from_str(&format!(
+                r#"{{
+                    "placement": {{"path": "src/p.rs", "line": 3, "mode": "{mode}"}},
+                    "source_location": {{"line": 5}},
+                    "seam": {{"line": 5, "expression": "total_cents >= 5_000"}},
+                    "severity": "warning",
+                    "kind": "predicate_boundary",
+                    "reason": "Missing 5_000."
+                }}"#
+            ))
+            .map_err(|err| format!("fixture must parse: {err}"))
+        };
+        assert_eq!(
+            annotation_from_comment(&card("owner_function_changed_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Gap at line 5 (`total_cents >= 5_000`) of this function: Missing 5_000."
+        );
+        assert_eq!(
+            annotation_from_comment(&card("exact_seam_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Missing 5_000."
+        );
         Ok(())
     }
 

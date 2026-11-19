@@ -84,5 +84,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_while_counter_past_bound/input --diff <cwd>/fixtures/python_while_counter_past_bound/diff.patch --mode fast probe:src_steps.py:python_preview:bc3d08af
   ripr context --root <cwd>/fixtures/python_while_counter_past_bound/input --diff <cwd>/fixtures/python_while_counter_past_bound/diff.patch --mode fast --at probe:src_steps.py:python_preview:bc3d08af
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

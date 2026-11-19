@@ -84,5 +84,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_unreached_get_default/input --diff <cwd>/fixtures/python_unreached_get_default/diff.patch --mode fast probe:src_rates.py:python_preview:0a52360f
   ripr context --root <cwd>/fixtures/python_unreached_get_default/input --diff <cwd>/fixtures/python_unreached_get_default/diff.patch --mode fast --at probe:src_rates.py:python_preview:0a52360f
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

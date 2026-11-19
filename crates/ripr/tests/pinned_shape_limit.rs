@@ -219,10 +219,16 @@ fn a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap() -> Result<(), String>
         let finding = spawned(attrs, body)?;
         // A test that never runs leaves no live oracle, so those rows are a
         // different class; the rest are the weak gap this rule must not hide.
+        // #14968: the literal-only `assert_eq!(2 + 2, 4)` supplies no oracle,
+        // so that row is the unrevealed gap rather than the weak one.
         if attrs.is_empty() {
             assert_eq!(
                 finding.class,
-                ExposureClass::WeaklyExposed,
+                if body.starts_with("assert_eq!(2 + 2, 4);") {
+                    ExposureClass::ReachableUnrevealed
+                } else {
+                    ExposureClass::WeaklyExposed
+                },
                 "{attrs} {body}"
             );
         } else {

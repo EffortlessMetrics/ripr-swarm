@@ -164,6 +164,15 @@ The review summary should answer:
 - what the reviewer should inspect;
 - which static limits remain.
 
+The receipt is review evidence only when it records the `advisory` status.
+A receipt that is `invalid` or `incomplete`, or that records no recognized
+status, keeps the summary `incomplete`: the recorded movement is still shown,
+with a fixed statement that it is not review evidence, and the remaining step
+is to reissue the receipt over a complete analysis outcome. A receipt file
+that is present but yields no movement (unreadable, not JSON, or without a
+seam) is reported as unreadable or invalid, never as a missing receipt; only
+an absent file is "missing".
+
 The executable status command embedded in a review-summary surface uses the
 native selected root for both its `--root` argument and anchored redirect.
 It shares command authority with the top-level continuation even though the
@@ -772,6 +781,15 @@ for each such spot; if none remain, bare repair refuses (`no_eligible_seam`)
 instead of listing starts. When exactly one seam survives and check recommended none, it is not started on its own; the refusal gives its `ripr repair <id>` command. A single eligible seam and an unscoped change keep
 their earlier behavior.
 
+## Amendment (#14872): a lone eligible seam follows the same rule
+
+A single eligible seam on a scoped change is now held to the #12849 rule
+too: when its bound check finding is exposed or static-limited and check
+recommends no start, bare repair does not start it and gives that reason
+instead (`no_eligible_seam`). Before, a lone eligible seam started even while
+check read the same change as already noticed. An unscoped change still keeps
+its earlier behavior. A seam check does recommend still starts.
+
 ## Amendment (#12861): refusal closing step for open spots on the change
 
 A bare-repair refusal for a scoped change that still has open spots which
@@ -836,6 +854,25 @@ closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
+## Amendment (#14079): a recorded focused test result is read back, not reported as absent
+
+A finish that retained a caller-reported focused result (#13203 B) reports it
+on the test-run axis. The finish summary, `ripr status` and `ripr agent status`
+(default and `--attempt`, Markdown and JSON) say `Test run: reported by the
+caller, not run by ripr: N test(s) ran in <file> (P passed, F failed)`, and the
+JSON `test_run` object carries `status: "caller_reported"` with `file`, `ran`,
+`passed` and `failed`. A reported failure is named with its next step; it is
+never presented as a pass and never hidden behind `none recorded`. An attempt
+with no retained result keeps `Test run: none recorded` / `not_recorded`.
+
+The reading comes from the record the finish committed in the attempt
+manifest, and only when the `focused_test_result` terminal binding names
+exactly those bytes and the record is for this attempt. The two axes stay
+separate: the receipt's `verification.status` remains `verification_not_run`
+(ripr ran nothing), and static movement is whatever the static comparison
+found, so a reported failure can sit beside `improved`. The receipt-owned
+`next:` line is unchanged. MCP documents do not project the record yet.
+
 ## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
 
 ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
@@ -857,9 +894,9 @@ bound attempt id and HEAD) is retained as the `focused_test_result` terminal
 artifact. The record states that ripr checked shape, binding, file membership
 and per-test outcomes and did not observe the run: the caller's claim that
 those events came from that file stays the caller's. A failed test the selected file
-does not define is refused rather than passed over. `--test-result` is
-optional and does not gate finish: it validates and records a caller-reported
-result, and requiring one to finish is a later, separate change.
+does not define is refused rather than passed over. `--test-result` validates and
+records a caller-reported result; it is optional except for an attempt that
+follows a new-test proposal (see the C amendment).
 The retained artifact is the normalized record, not the caller's bytes.
 Caller-reported progress must be complete: started or timeout tests need a
 terminal outcome, and each announced suite must close before another begins.
@@ -882,12 +919,12 @@ time. If either differs from the evaluated capture, the after phase refuses with
 can rerun the test and retry. A descendant committed before validation remains
 eligible. An edit to the test file between the caller's run and validation,
 with HEAD unchanged, is not detected: that the events came from this file's
-content stays the caller's claim. A result remains optional and does not gate
-finish.
+content stays the caller's claim. A result stays optional for attempts that follow an
+existing test target.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when the exact finish is
-still owned and no terminal evidence has been committed. An apply-record
-failure can also restore the exact terminal retention that this same
+still owned and no terminal evidence has been committed. A trust-bound apply
+record failure can also restore the exact terminal retention that this same
 invocation committed, provided its entire manifest remains unchanged; reusing
 another retainer's result grants no rollback custody. An unsuccessful restore
 is reported explicitly. If evaluation cannot start after the finish committed,
@@ -901,24 +938,44 @@ manifest commit lock for the whole write for every attempt; non-focused
 attempts keep the same evidence set and the existing retention tests cover
 them. The finish commits the normalized claim before
 publishing the receipt, and retention checks the bytes against that claim.
-A focused finish records its receipt protocol before evaluation starts.
+A focused finish records its receipt recovery protocol before evaluation starts.
 A separate durable marker precedes evaluation, and a successful decision commits
 the exact rendered receipt and verified-input digests before receipt publication.
-A stop after the marker without a matching durable success and receipt is
-ambiguous, so status reports the attempt as limited and a new attempt is the
-safe route. Standalone receipt publication does not commit the after-phase
-outcome. Recovering an interrupted focused finish with the original claim is
-not part of this change: it lands separately, and until then an interrupted
-focused finish is inspected and restarted as a new attempt. These transaction
-checks assume the local manifest and cooperating writers honor the existing
-lock and integrity model; they do not protect against a writer that can
-arbitrarily rewrite the manifest itself.
+After interruption, recovery retains only the receipt and verify bytes named by
+that outcome, and a different supplied claim is refused. Every focused
+recovery, trust-bound or not, requires the same `--test-result FILE`: it is
+re-validated against the current HEAD, the attempt and its test file and must
+equal the pending normalized claim before any evidence is promoted. An after
+phase without it is refused and leaves the attempt recoverable; status names
+that same-result retry for a recoverable finish and a new attempt otherwise
+(including a finish whose recorded recovery protocol is not durable-v1, and an
+accepted decision whose receipt and verify files are not present with the
+accepted digests, or a trust-bound attempt whose apply-record compatibility path
+is already occupied, since the after phase recovers a trust-bound finish only
+while that path is absent). A finish that holds no focused claim keeps the ordinary
+pending-retention route, except a new-test proposal finish: under the C gate
+it must hold a passing focused claim, so one without a claim is not promoted. A stop before the
+marker allows the original claim to retry. A stop after the marker without a
+matching durable success and receipt is ambiguous: the attempt stays finished
+and requires a new attempt, even if evaluation had not yet made its decision.
+This prevents a later edit from erasing a refusal. Standalone receipt publication
+does not commit the after-phase outcome. A trust-bound recovery additionally
+revalidates its retained binding and explicit edit authority and only recovers a
+missing apply projection. These transaction checks assume the local manifest and
+cooperating writers honor the existing lock and integrity model; they do not
+protect against a writer that can arbitrarily rewrite the manifest itself.
+If interruption follows terminal retention but precedes the trust apply
+projection, the same authorized claim may recover that missing projection
+only after revalidating the retained evidence and current cage binding. The
+projection is created exclusively; an existing file is never replaced by
+recovery.
 When a trusted-surface receipt refusal ends evaluation after the marker was
 recorded, the attempt is deliberately not restored: it stays finished, status
-reports it as limited with the started marker, and the safe route is to start a
-new attempt (`ripr agent repair --phase before`). If the marker commit itself
-reports an error whose outcome is uncertain, restore refuses (a marker may
-exist) and says so; the same inspect-then-restart route applies. The named trusted-surface receipt refusal remains a decision refusal with its
+reports it as limited, and the safe route is to start a new attempt
+(`ripr agent repair --phase before`). If the marker commit itself reports an
+error whose outcome is uncertain, restore refuses (a marker may exist) and
+says so; the same inspect-then-restart route applies.
+The named trusted-surface receipt refusal remains a decision refusal with its
 existing recovery guidance; it is not classified as a publication failure.
 These records remain caller claims.
 
@@ -939,13 +996,58 @@ count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
 target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
 module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
-so a later finish gate would have to require `failed == 0` to treat it as a pass.
+so the C gate requires `failed == 0` to treat it as a pass.
 
 A focused test result is accepted for Rust test files only: a Python or
 TypeScript attempt that passes `--test-result` is refused up front with that
 scope and the next step of finishing without the flag. A result file must be
 saved outside the checkout; one inside it would be an untracked edit the cage
 judges, so it is refused with that next step.
+
+## Amendment (#13203 C): a new-test proposal attempt finishes only with a passing focused run
+
+An attempt whose edit-cage baseline records a followed new-test proposal does
+not finish without a recorded focused result. `agent repair --phase after`
+refuses, before issuing anything and leaving the attempt awaiting its edit,
+when no `--test-result` is passed, when the result counted no test, or when it
+reports any failed test (`failed == 0` is required; a failed test counts as
+having ran but not as a pass). Each refusal names the command to run and the
+flag to pass, and counts against the after-phase retry budget. A proposal
+whose file was never created is left to the cage verdict
+(`selected_target_not_changed`) rather than this gate. The finish authority
+re-checks this from its own evaluated cage state: a proposal attempt whose cage
+evaluates compliant without a focused result is refused there too, so a
+proposed file created after the gate looked cannot finish compliant unrecorded.
+It also re-applies the passing-run check to the result it would retain, so a
+failing or zero-count run that the gate did not check is refused there (#15033).
+Attempts that follow an
+existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
+pass `--test-result`; for a proposal attempt they reach this refusal, whose text
+names the explicit `ripr agent repair --phase after --attempt <id> --test-result
+FILE` command. Teaching `continue` and the printed command to carry the flag is
+left to a follow-up. Attribution of the events to
+the file stays the caller's claim (see the B amendment).
+
+For an inline new-test proposal the new test goes into a file that already
+holds tests, so the counted passing run must also include at least one test
+whose name was absent from the file's test functions when the attempt began
+(read from the retained baseline text). Names compare as exact file-internal
+paths: a counted libtest name minus the file's own module path (`tests::adds`
+for `math::tests::adds` in `src/math.rs`) is new only when the baseline did not
+define that path, so a new `tests::adds` is not mistaken for a top-level
+`adds`, and a name whose file path cannot be derived is never new. A result
+that counts only tests the baseline already defined is refused with the same retry route, and an inline
+attempt with no retained baseline text fails closed. A new-file (integration)
+proposal needs only a counted passing test in the new file.
+
+When C recovers an interrupted proposal finish from an earlier B producer, its
+committed normalized result must also satisfy the counted-passing gate before
+retention, restoration, or apply recovery. The caller must supply a focused
+result again so the current validator can check reported completion and exact
+normalized-record equality; older normalized records alone lost suite framing.
+This does not prove that the supplied raw bytes are the original events. A failed historical result is not
+promoted; status inspection and a new attempt are required. Existing-target
+attempts retain B's optional-result and visible-failure behavior.
 
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
@@ -1060,8 +1162,50 @@ committed change also touches are not listed.
 - `crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit` (a git-visible flip is not reported)
 - `crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them` (narration, bound, escaping, manifest round-trip)
 
+## Amendment (#14271): a refused production edit names the start that follows the undo
+
+The after phase withholds the new-attempt recipe from a narrated recovery when
+the shared start gate refuses a new start (#8766). It asks the gate while the
+refused changes are still in the tree. When the gate's only hold is that the
+attempt's inline test target has uncommitted changes, those can be the refused
+changes themselves, and undoing them lifts the hold. For that hold the
+edit-cage recovery line ("undo the refused changes ...") does not say "a new
+attempt is not offered"; it says no new attempt can start while the refused
+changes are in place and names `ripr repair --root <root>`, which asks the gate
+again once they are undone. A refusal about the gap itself keeps the withheld
+wording.
+
 ## Test Mapping
 
+- `crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works` (#14271)
+- `crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason` (#14271)
+
+## Amendment (#14084): no start the before phase would withhold
+
+The before phase selects its seam through the agent brief, which withholds a
+gap-class seam whose static evidence is unknown or opaque at a stage (for
+example a test that calls the changed function and asserts nothing, so the
+propagation stage is unknown). The shared repair-admission gate asks that same
+brief predicate after route eligibility and policy, and refuses such a seam up
+front: bare repair lists it under `no_eligible_seam`, an explicit item refuses
+with `seam_not_repair_eligible` (exit 3), and no attempt is created. The reason
+names the first unclear stage in plain words ("it cannot tell from reading the
+code whether the changed value reaches a result a test can check") and ends
+with "write the test by hand". `ripr agent start`, the card hold and the MCP
+admission use the same gate.
+
+The check screen prints `no repair start offered:` with that reason when its
+finding is a gap. When its finding is already read as unclear, the finding's
+own limitation guidance stands and no repair advisory is added. The brief owns
+the decision; the gate only words it. Whether such a gap should start a repair
+is not decided here.
+
+## Test Mapping
+
+- `crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses` (#14084)
+- `crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts` (#14084 control)
+- `crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory` (#14084)
+- `crates/ripr/src/app/task_first.rs::tests::evidence_limited_reason_names_the_first_unclear_stage` (#14084)
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
@@ -1070,6 +1214,10 @@ committed change also touches are not listed.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process)
+- `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
+- `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
+- `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)
 - `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
@@ -1107,10 +1255,21 @@ committed change also touches are not listed.
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failing_result_the_gate_did_not_check_cannot_finish` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_needs_a_passing_test_absent_from_the_baseline` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::an_inline_proposal_in_a_module_file_refuses_a_test_it_began_with` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_finish_without_a_retained_focused_claim` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_refuses_a_retained_claim_that_is_not_a_passing_run` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_new_test_check_compares_file_internal_paths_exactly` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_continue_refusal_recovers_on_the_same_attempt` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_printed_focused_retry_preserves_explicit_store` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_failure_the_file_does_not_explain_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
-- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::receipt_surface_decision_is_not_mislabeled_as_publication_failure` (#13203)
@@ -1123,7 +1282,22 @@ committed change also touches are not listed.
 - `crates/ripr/tests/focused_test_result.rs::interrupted_surface_refusal_cannot_be_retried` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::standalone_receipt_does_not_finish_an_unresolved_evaluation` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_evaluation_start_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_after_retention_can_recover_success` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_before_receipt_requires_and_retries_the_same_claim` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_finish_recovers_the_full_evidence_set` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_receipt_evaluation_fails_closed` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_recovery_refuses_changed_claim_and_partial_publication` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_revalidates_reported_completion` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::pending_promotion_rejects_an_interposed_receipt_replacement` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::accepted_focused_finish_recovery_requires_the_same_result` (#13203)
+- `crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_receipt_retries_apply` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_pending_promotion_reports_replaced_trust_manifest_as_decision` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_retention_recovers_missing_apply` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_apply_failure_does_not_restore_a_changed_terminal_manifest` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_accepts_a_descendant_committed_before_validation` (#13203)

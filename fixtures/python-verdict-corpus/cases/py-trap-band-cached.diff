@@ -1,0 +1,9 @@
+diff --git a/band_traps/cached.py b/band_traps/cached.py
+--- a/band_traps/cached.py
++++ b/band_traps/cached.py
+@@ -7,4 +7,4 @@
+ 
+ @functools.lru_cache(maxsize=None)
+ def band(x):
+-    return x * 3
++    return x * 3 + 5

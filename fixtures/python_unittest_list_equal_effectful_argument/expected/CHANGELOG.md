@@ -298,3 +298,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unittest_list_equal_effectful_argument (24)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_effectful_argument --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_unittest_list_equal_effectful_argument (25)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_effectful_argument --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

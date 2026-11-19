@@ -3,8 +3,6 @@ name: Windows Advisory
 on:
   schedule:
     - cron: "17 5 * * *"
-  pull_request:
-    types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       repeat_nested_alias:
@@ -1685,9 +1683,9 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 34, 'passes': 31, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 38, 'passes': 31, 'failures': 0, 'pending': 7}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 31 native process/setup controls; three POSIX-only adapter controls are pending.')
+              print('Verified 31 native process/setup controls; seven POSIX-only controls (three adapter, four procfs observation) are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status
