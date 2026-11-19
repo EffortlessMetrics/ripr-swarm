@@ -768,25 +768,35 @@ fn out_jsonl_naming_an_input_by_absolute_path_or_symlink_is_refused() -> Result<
             }
         }
     }
-    // Control: `--history` equal to `--out-jsonl` is the append flow.
-    let append = run(
-        &dir,
-        &[
-            "policy",
-            "history",
-            "--current",
-            "art/in.json",
-            "--history",
-            "art/h.jsonl",
-            "--out-jsonl",
-            "art/h.jsonl",
-        ],
-    )?;
-    let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
-    if append_stderr.contains("--out-jsonl must not be the same path")
-        || append_stderr.contains("names the same file as")
-    {
-        failures.push(format!("history append flow was refused: {append_stderr}"));
+    // Control: `--history` equal to `--out-jsonl` is the append flow. Run it
+    // twice with the absolute spelling so the second run names an existing
+    // history file by a different spelling: the canonical check must still
+    // let it append rather than refuse it as an input.
+    let history_absolute = dir.join("art").join("h.jsonl").display().to_string();
+    for run_index in 1..=2 {
+        let append = run(
+            &dir,
+            &[
+                "policy",
+                "history",
+                "--current",
+                "art/in.json",
+                "--history",
+                "art/h.jsonl",
+                "--out-jsonl",
+                &history_absolute,
+            ],
+        )?;
+        let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
+        let lines = fs::read_to_string(dir.join("art/h.jsonl"))
+            .map(|text| text.lines().count())
+            .unwrap_or(0);
+        if append.status.code() != Some(0) || lines != run_index {
+            failures.push(format!(
+                "history append run {run_index}: exit {:?}; {lines} history line(s); stderr: {append_stderr}",
+                append.status.code()
+            ));
+        }
     }
     let _ = fs::remove_dir_all(&dir);
     if failures.is_empty() {
