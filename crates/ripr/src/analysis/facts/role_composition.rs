@@ -266,14 +266,15 @@ fn files_in_skipped_unit_test_targets(
                 .entry(package_dir.clone())
                 .or_insert_with(|| manifest_skip_premise(workspace_root, &package_dir));
             // #14972: an `examples/` source is a default `test = false` target
-            // whatever the manifest says.
-            let in_examples = path
-                .strip_prefix(&package_dir)
-                .is_ok_and(|relative| relative.starts_with("examples"));
+            // whatever the manifest says, and so is a `benches/` source
+            // (#15262).
+            let in_default_skipped_dir = path.strip_prefix(&package_dir).is_ok_and(|relative| {
+                relative.starts_with("examples") || relative.starts_with("benches")
+            });
             Some((
                 package_dir,
                 SkipPremise {
-                    probe: premise.probe || in_examples,
+                    probe: premise.probe || in_default_skipped_dir,
                     ..premise
                 },
             ))
@@ -312,7 +313,7 @@ fn files_in_skipped_unit_test_targets(
                         return false;
                     }
                     if inventory.crate_root_unit_tests_skipped(workspace_root, root) {
-                        if inventory.crate_root_skipped_example(workspace_root, root) {
+                        if inventory.crate_root_skipped_example_or_bench(workspace_root, root) {
                             scanned_roots.insert(root.clone());
                         }
                         return true;
@@ -849,6 +850,7 @@ fn manifest_skip_premise(workspace_root: &Path, package_dir: &Path) -> SkipPremi
     let probe = undiscovered_roots
         || value.get("lib").is_some_and(switches_off)
         || value.get("example").is_some()
+        || value.get("bench").is_some()
         || value
             .get("bin")
             .and_then(toml::Value::as_array)

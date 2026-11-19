@@ -10,7 +10,8 @@
 //!
 //! #14972 adds roots cargo never discovers (`autobins = false`, `autolib =
 //! false`) and examples, which `cargo test` builds without their tests
-//! unless `[[example]] test = true`.
+//! unless `[[example]] test = true`. #15262 adds benches, which plain
+//! `cargo test` does not build unless `[[bench]] test = true`.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -936,6 +937,52 @@ fn example_unit_tests_are_not_a_discriminator_unless_the_example_is_tested() -> 
         );
     }
     Ok(())
+}
+
+/// A bench whose own `#[test]` calls the library's changed `f`.
+const BENCH_TESTS: &str = "#[test]\nfn t() {\n    assert_eq!(auto_targets::f(5), 7);\n}\n";
+
+#[test]
+fn bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested() -> Result<(), String> {
+    // #15262: a bench defaults to `test = false`, so plain `cargo test`
+    // does not build `benches/load.rs` and `t` never runs; the library's
+    // changed `f` has no running discriminator.
+    let lib = lib_source("");
+    let files = [("src/lib.rs", lib.as_str()), ("benches/load.rs", BENCH_TESTS)];
+    let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
+    assert_no_static_path_in_every_mode(&skipped, "a default bench")?;
+    // Control: `test = true` makes `cargo test` build and run the bench's
+    // tests. `--mode instant` does not index `benches/`, so every other
+    // mode credits the running bench test.
+    let tested = TempCrate::create_in(
+        &package_manifest("", "\n[[bench]]\nname = \"load\"\ntest = true\n"),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&tested, "a `test = true` bench")
+}
+
+#[test]
+fn a_bench_included_into_an_integration_test_keeps_credit() -> Result<(), String> {
+    // #15262: `tests/it.rs` compiles `benches/load.rs` through `include!`
+    // inside a module body, so `cargo test` runs `t` although the bench
+    // target itself is skipped; the mount scan sees the running target.
+    let lib = lib_source("");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("benches/load.rs", BENCH_TESTS),
+            (
+                "tests/it.rs",
+                "mod load {\n    include!(\"../benches/load.rs\");\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "a bench included by an integration test")
 }
 
 #[test]
