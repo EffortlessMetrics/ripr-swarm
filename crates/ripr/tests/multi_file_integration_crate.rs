@@ -179,6 +179,24 @@ fn a_multi_file_integration_crate_that_rebinds_the_library_name_is_not_credited(
 }
 
 #[test]
+fn a_multi_file_root_under_autotests_false_without_a_test_target_is_not_credited()
+-> Result<(), String> {
+    // With `autotests = false` and no `[[test]]` entry, Cargo compiles no
+    // `tests/it` target, so the directory form is no crate root and its
+    // test is not one ripr reads. Declaring the target restores the credit,
+    // so the refusal comes from the missing target, not the fixture.
+    let manifest = format!("{MANIFEST}autotests = false\n");
+    let finding = return_finding(&[("Cargo.toml", &manifest), ("tests/it/main.rs", PIN)])?;
+    assert_ne!(class_of(&finding), "exposed", "{finding}");
+    let declared = format!("{manifest}\n[[test]]\nname = \"it\"\npath = \"tests/it/main.rs\"\n");
+    assert_reading(
+        &[("Cargo.toml", &declared), ("tests/it/main.rs", PIN)],
+        "exposed",
+        "tests/it/main.rs",
+    )
+}
+
+#[test]
 fn a_weak_assertion_in_a_multi_file_integration_crate_stays_weak() -> Result<(), String> {
     assert_reading(
         &[

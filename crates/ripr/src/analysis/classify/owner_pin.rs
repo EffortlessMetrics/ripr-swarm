@@ -3849,10 +3849,11 @@ impl TargetRoots {
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
-/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example (`tests/NAME.rs` or `tests/NAME/main.rs` and kin) or build script), a root the package manifest names (`[lib] path`,
-/// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
-/// `path`), or `None` when composition is unresolved, goes through
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`,
+/// an integration test, bench or example (`tests/NAME.rs` or
+/// `tests/NAME/main.rs` and kin) or build script), a root the package
+/// manifest names (`[lib] path`, or an explicit `[[bin]]`, `[[example]]`,
+/// `[[test]]` or `[[bench]]` `path`), or `None` when composition is unresolved, goes through
 /// `include!`, or ends at a file no target is known to root.
 pub(super) fn target_root(
     file: &Path,

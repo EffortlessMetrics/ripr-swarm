@@ -6,6 +6,7 @@ tests = [
   "crates/ripr/tests/multi_file_integration_crate.rs::a_pin_in_a_multi_file_integration_root_is_credited",
   "crates/ripr/tests/multi_file_integration_crate.rs::a_pin_in_a_module_of_a_multi_file_integration_root_is_credited",
   "crates/ripr/tests/multi_file_integration_crate.rs::a_multi_file_integration_crate_that_rebinds_the_library_name_is_not_credited",
+  "crates/ripr/tests/multi_file_integration_crate.rs::a_multi_file_root_under_autotests_false_without_a_test_target_is_not_credited",
   "crates/ripr/tests/multi_file_integration_crate.rs::a_weak_assertion_in_a_multi_file_integration_crate_stays_weak",
   "crates/ripr/tests/multi_file_integration_crate.rs::a_test_module_shared_by_two_integration_roots_keeps_its_reading",
 ]
