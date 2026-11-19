@@ -768,34 +768,49 @@ fn out_jsonl_naming_an_input_by_absolute_path_or_symlink_is_refused() -> Result<
             }
         }
     }
-    // Control: `--history` equal to `--out-jsonl` is the append flow. Run it
-    // twice with the absolute spelling so the second run names an existing
-    // history file by a different spelling: the canonical check must still
-    // let it append rather than refuse it as an input.
-    let history_absolute = dir.join("art").join("h.jsonl").display().to_string();
-    for run_index in 1..=2 {
-        let append = run(
-            &dir,
+    // Control: `--history` equal to `--out-jsonl` is the append flow for both
+    // commands. Run each twice with the absolute spelling so the second run names
+    // an existing history file by a different spelling: the canonical check
+    // must still let it append rather than refuse it as an input.
+    for (label, file, args) in [
+        (
+            "policy history",
+            "h.jsonl",
+            &["policy", "history", "--current", "art/in.json"][..],
+        ),
+        (
+            "pr-ledger record",
+            "ledger.jsonl",
             &[
-                "policy",
-                "history",
-                "--current",
+                "pr-ledger",
+                "record",
+                "--pr-number",
+                "1",
+                "--base",
+                "a",
+                "--head",
+                "b",
+                "--gap-ledger",
                 "art/in.json",
-                "--history",
-                "art/h.jsonl",
-                "--out-jsonl",
-                &history_absolute,
-            ],
-        )?;
-        let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
-        let lines = fs::read_to_string(dir.join("art/h.jsonl"))
-            .map(|text| text.lines().count())
-            .unwrap_or(0);
-        if append.status.code() != Some(0) || lines != run_index {
-            failures.push(format!(
-                "history append run {run_index}: exit {:?}; {lines} history line(s); stderr: {append_stderr}",
-                append.status.code()
-            ));
+            ][..],
+        ),
+    ] {
+        let relative = format!("art/{file}");
+        let absolute = dir.join("art").join(file).display().to_string();
+        for run_index in 1..=2 {
+            let mut argv = args.to_vec();
+            argv.extend(["--history", &relative, "--out-jsonl", &absolute]);
+            let append = run(&dir, &argv)?;
+            let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
+            let lines = fs::read_to_string(dir.join(&relative))
+                .map(|text| text.lines().count())
+                .unwrap_or(0);
+            if append.status.code() != Some(0) || lines != run_index {
+                failures.push(format!(
+                    "{label} history append run {run_index}: exit {:?}; {lines} history line(s); stderr: {append_stderr}",
+                    append.status.code()
+                ));
+            }
         }
     }
     let _ = fs::remove_dir_all(&dir);
