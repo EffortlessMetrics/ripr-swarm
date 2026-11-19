@@ -1404,4 +1404,24 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
+        use crate::domain::ProbeFamily;
+        let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
+        let base = unresolved.describe();
+        assert!(base.contains("`assert_eq!`"), "{base}");
+        let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
+        assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
+        assert!(!arm.contains("`assert_eq!`"));
+        assert_eq!(
+            unresolved.describe_for_family(&ProbeFamily::Predicate),
+            base
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
+    }
 }
