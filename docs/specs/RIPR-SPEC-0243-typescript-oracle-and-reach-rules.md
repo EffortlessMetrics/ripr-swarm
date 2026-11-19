@@ -2671,6 +2671,22 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15306: a changed one-line `return <literal>` whose owner returns only
+  distinct scalar literals (a switch or if-chain lookup) is credited only when
+  some strong related assertion expects the arm's old literal. When every
+  strong assertion on a direct owner call expects another readable literal,
+  the change is not observed: the existing literal-return reading makes it
+  `infection_unknown`, with a line naming the unpinned arm result.
+  A duplicated old literal, any non-literal or multi-line return, a generator
+  or concise-arrow owner, a non-direct relation, and a snapshot, structural,
+  dynamic or table-row expected side on an owner call keep the verdict.
+  `tests/literal_arm_return_tests.rs` pins the reader
+  (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
+  refusals) and the production path:
+  `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
+  `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_unreadable_expected_side_keeps_the_verdict` and
+  `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2784,6 +2800,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15306: `crates/ripr/src/analysis/language/typescript/literal_arm_return_guard.rs`
+  reads the owner's literal returns and the related assertions' expected
+  values; `classify_resolved_owner` in `classifier.rs` withholds
+  `observation_confirmed` when the changed arm is unpinned.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

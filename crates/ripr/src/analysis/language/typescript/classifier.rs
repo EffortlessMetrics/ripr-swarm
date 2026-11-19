@@ -8063,6 +8063,23 @@ pub(crate) fn classify_resolved_owner(
     let lookup_witnessed = lookup_change.as_ref().is_none_or(|change| {
         ts_lookup_table_witnessed(change, owner, related_candidates, alias_map, workspace_root)
     });
+    // #15306: a changed literal return of one arm of a literal-return lookup
+    // is seen only by an assertion that expects that arm's old result.
+    let literal_arm_unpinned = strong_oracle_present
+        .then(|| literal_arm_return(owner, line, line_text, old_line_text))
+        .flatten()
+        .and_then(|change| {
+            match ts_literal_arm_witness(
+                &change,
+                owner,
+                related_candidates,
+                alias_map,
+                workspace_root,
+            ) {
+                LiteralArmWitness::Unpinned(expected) => Some((change, expected)),
+                LiteralArmWitness::Kept => None,
+            }
+        });
     let returned_expression_unexercised = strong_oracle_present
         && ts_returned_expression_unexercised(
             line,
@@ -8078,6 +8095,7 @@ pub(crate) fn classify_resolved_owner(
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
+        && literal_arm_unpinned.is_none()
         && !returned_expression_unexercised
         && (field_update_witnessed
             || ts_changed_value_is_observed(
@@ -8242,6 +8260,12 @@ pub(crate) fn classify_resolved_owner(
                     .collect::<Vec<_>>()
                     .join(", "),
                 owner.name
+            )
+        } else if let Some((change, expected)) = &literal_arm_unpinned {
+            format!(
+                "{} Add a case whose input reaches that arm and expects `{}`.",
+                ts_literal_arm_unpinned_line(&owner.name, change, expected),
+                change.old_text
             )
         } else if returned_expression_unexercised {
             // RIPR-SPEC-0246 rule 11: when the same-outcome inputs are a
@@ -8489,6 +8513,12 @@ pub(crate) fn classify_resolved_owner(
                 "The change to `{}` is a `{}` edit: {}. No assertion is requested until a test input is shown to change the behavior.",
                 owner.name, shape.shape, shape.reason
             )];
+            // #15306: the unpinned arm stays named under the unknown reading.
+            if let Some((change, expected)) = &literal_arm_unpinned {
+                verdict
+                    .missing
+                    .push(ts_literal_arm_unpinned_line(&owner.name, change, expected));
+            }
             infection = Some(TsInfectionVerdict {
                 state: StageState::Unknown,
                 shape: shape.shape,
@@ -8729,6 +8759,9 @@ pub(crate) fn classify_resolved_owner(
                 .first()
                 .map_or("see missing evidence.", String::as_str)
         )
+    } else if strongest_strength >= OracleStrength::Strong.rank() && literal_arm_unpinned.is_some()
+    {
+        "TypeScript preview adapter: strong oracle found but every exact assertion expects another arm's result; the changed arm's old result is not pinned.".to_string()
     } else if returned_expression_unexercised {
         "TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.".to_string()
     } else if strongest_strength >= OracleStrength::Strong.rank() {
