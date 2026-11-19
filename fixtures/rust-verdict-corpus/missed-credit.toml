@@ -398,7 +398,7 @@ reason = "Runtime truth is discriminated, but this edit is a test-only helper in
 
 [[entry]]
 case = "spec-b-0153-opted-in-test-helper"
-reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner, so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
+reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner outside a default crate root (this owner is not in one), so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
 
 [[entry]]
 case = "spec-b-0153-registered-harness-helper"
@@ -410,7 +410,7 @@ reason = "The registered Trial callback is indexed for reach but its assertion i
 
 [[entry]]
 case = "spec-b-0153-undeclared-harness-helper"
-reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner, so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
+reason = "Runtime truth is discriminated, but the subject workspace carries a `#[path]` module declaration, which the shared base-owner gate decision reads as able to retarget any owner outside a default crate root (this owner is not in one), so the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets are resolved per owner."
 
 [[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
