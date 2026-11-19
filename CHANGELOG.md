@@ -2361,6 +2361,272 @@ entries below are the complete record.
   including the `RIPR_SARIF_RESULTS_BYTES` bound and its disclosed
   truncation (#13195).
 - `ripr check --format sarif` and `--format repo-sarif` now bound the results array with `RIPR_SARIF_RESULTS_BYTES` (default 1000000 bytes, `0` for unbounded), disclosing `results_rendered`/`results_total`/`results_omitted` with `limited_results_bound` and `document_complete: false` when the budget omits results, so large runs stay token-efficient instead of emitting unbounded pretty-printed SARIF (#13102).
+- `ripr check --format json` findings carry the additive `evidence_stages`
+  rows — stage, state, confidence and the capping basis each stage owns —
+  and `--format agent` / `ripr explain --format agent` print a compact
+  `stages=` line per finding record, so scripts read the staged evidence
+  without parsing prose; the human rendering is unchanged and no row claims
+  test attribution (RIPR-SPEC-0429, #13453).
+- TypeScript: a Vitest `test.for` / `it.for` registration over an inline
+  literal table is now indexed with one concrete case per row, so its
+  boundary inputs and expected values count like the same `.each` or
+  hand-written tests. The whole-row first argument is read through array
+  destructuring, a scalar row, or `row[0]`-style reads, and a second-argument
+  `{ expect }` context supplies the runner `expect`; other `.for` shapes stay
+  disclosed as a partial test extraction (#10760).
+- `ripr check --format json` now carries an additive `finding_routes` array: per finding, the scope-bound `explain_command`, plus `stub_command` and `repair` (`seam_id`/`canonical_gap_id`, `command`, `ready` or `blocked_uncommitted`) where the check pipeline offered them, so an agent reading JSON no longer scrapes the human or agent format for its next command. Absent keys mean no route was offered. (#11976)
+- Add the independently testable cohort scoring and token-accounting core,
+  retaining failed attempts, unknown costs and runtime-quality controls; isolate
+  custom task manifests from enclosing workspaces and withhold verified quality
+  on harness errors without crashing reports. Native selftests run no model
+  cohorts (#12902, #12912).
+- Honesty: disclose unanalyzed working tree when using --base (RIPR-SPEC-0112, #1291) (#1295).
+- Honesty: honest no_static_path messaging (RIPR-SPEC-0113, first-run-trust P2) (#1300).
+- P3a: name Rust transitive-reach limitation — RIPR-SPEC-0114 (fail-closed, no promotion) (#1305).
+- `ripr doctor`: dirty-worktree-aware first-command recommendation (#1308).
+- `ripr check` counts `no_static_path` findings whose only reaching code is a
+  proof harness ripr does not evaluate. JSON carries `summary.proof_harness_only`
+  (additive, emitted only when greater than 0, declared in
+  `check.schema.json`), the human summary names the count and says it is not
+  test coverage, and the MCP `ripr_list_gaps` document carries a top-level
+  `proof_harness_only` count plus `"proof_harness_only": true` on each such
+  item. The exposure classes are unchanged and the harness earns no test
+  credit (#13085).
+- Rust checks: name the transitive-reach witness test (RIPR-SPEC-0115, P3.1) (#1310).
+- Output: explain named static limitations in plain English (#1162, #1314).
+- A focused `--test-result` finish now binds the caller-reported claim to the evaluated HEAD and the digest of the selected test file at validation time (an edit between the caller's run and validation with HEAD unchanged is not detected), commits the claim before publishing the receipt, restores the attempt to `awaiting_edit` when publication or retention fails, and shows an interrupted focused finish as limited in status. Recovering an interrupted focused finish is not included yet (#13203).
+- `ripr agent repair --phase after --test-result <file>` validates and records a caller-reported focused `cargo test` result: it must be bound to the attempt and the evaluated HEAD, name the selected test file, include at least one test that ran in that file or inline module, and carry no failure the file does not explain. It checks binding and per-test outcomes, and refuses incomplete or contradictory event sequences (see the focused-completion entry). It is optional for existing-test attempts and required for new-test proposal attempts; ripr never runs or observes the tests (#13203).
+- The repair card, the agent packet and MCP now read the selected new-test proposal through one shared projection, and a ready MCP gap item whose target is that proposal names its kind and file (`proposed_new_test`); an item held by another gate discloses nothing, and admission is unchanged (a proposal-only item held only by `fix_site_not_established` also names it, see the next fragment) (#13204).
+- A repair attempt that follows a producer-owned new-test proposal now preflights the proposed target read-only (a plain in-repository path, an unchanged stale-proposal rule, an owning Cargo package) and says in the attempt's limitations that no test exists yet for it, instead of a missing result reading as an empty one; attempts on existing tests are unchanged (#13205).
+- TypeScript checks: recognize execution-context assertion oracles (#1323).
+- `ripr check`: add worktree diff mode (#1325).
+- `ripr check --format json-terse` is an opt-in JSON rendering for
+  token-priced consumers. Long repeated evidence strings in findings are coded
+  as `E0001`-style codes with the full text emitted once in a document-head
+  `evidence_legend`, and a finding field that repeats another field's value is
+  emitted once with the omitted key listed in `dropped_aliases`. Identity and
+  verdict fields are never dropped and the document is stamped
+  `"rendering": "terse"`; default `json` and `json-compact` output is
+  unchanged. On the 11-finding `returned_closure_arithmetic_masking` fixture
+  the output is 91,971 B against 114,611 B for `json-compact` and 157,293 B for
+  `json`. The published check schema gains the three optional head properties
+  (#13302).
+- `ripr check --format missed-txt` prints one sorted `path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>` line per candidate-actionable, unsuppressed, non-exposed finding and nothing for exposed findings, using the shared finding owner and static vocabulary only (#13626)
+- The VS Code get-started walkthrough has a "Check that the server started" step that runs
+  `ripr: Diagnose Setup` and lists the fixes for a missing server (#13638).
+- Docs: add a generated CLI reference listing every command and option (#13653).
+- A misspelled `ripr.toml` key now names the nearest valid key in the same
+  table (``did you mean `mode`?``), and `schemas/config/ripr-toml.schema.json`
+  lets editors validate and complete `ripr.toml`. `docs/CONFIGURATION.md`
+  lists every key, and a test keeps the parser, schema and docs in step (#13682).
+- `ripr gate check --base REV` is a one-command CI gate. It runs `review-comments`, then `gate evaluate` (acknowledgeable by default) in one process, and exits 0 for pass, 3 for blocked and 2 when it could not complete. A failed producer run is a config_error, never a pass over stale guidance (#13772)
+- `ripr check` honors cargo-mutants' `#[mutants::skip]` (and
+  `#[cfg_attr(<predicate>, mutants::skip)]`) on a changed owner function or
+  method as an explicit owner opt-out. Its findings keep their class but are
+  withheld from the human listing, triage, GitHub annotations, SARIF results,
+  `missed-txt` lines and the diff-scope badge gap and unknown counts, and the
+  withholding is disclosed: human output names the count, owner and the
+  `owner_mutants_skip` reason, and JSON adds `withheld_by` on each such
+  finding, a top-level `owner_opt_outs` object and a
+  `summary.withheld_by_owner_opt_out` count, and SARIF adds a
+  `withheld_by_owner_opt_out` run property. LSP, MCP and `ripr explain` still
+  report these findings (#13819).
+- `ripr review-comments` accepts `--suppression-policy PATH` (same file and matcher as `ripr check`): matching seams move to the `suppressed` array and no longer block `ripr gate evaluate`. `--check-output` also honors findings its check run marked suppressed (each by its own finding id). `.ripr/suppressions.toml` entries can select by owner with `path` + `function`, so a suppression survives edits to the expression; `ripr gate check --suppression-policy PATH` forwards the file to its review-comments step (#13895).
+- `ripr check` honors cargo-mutants' `#[mutants::skip]` (and
+  `#[cfg_attr(<predicate>, mutants::skip)]`) on a scope that encloses the
+  changed owner, as cargo-mutants does: an `impl` or `trait` block, an inline
+  module at any depth, or the whole file through an inner
+  `#![mutants::skip]`. Such findings are withheld and disclosed exactly like a
+  function-level skip; JSON adds `findings[].withheld_scope` (`fn`, `impl`,
+  `trait`, `module` or `file`) and the human block names the scope. Enclosing
+  scopes come from the parsed syntax tree and a file that does not parse
+  cleanly withholds nothing. A `#[mutants::skip] mod name;` declaration is not
+  followed into the module's own file. `ripr explain` now states on its first
+  line when the selected finding is withheld by an owner opt-out (#13910).
+- `ripr capabilities --json` now has a published schema,
+  `schemas/ripr/capabilities.schema.json`, so a consumer can validate the
+  language capability registry instead of reading its shape from prose. The
+  emitted bytes and `schema_version` `0.1` are unchanged; tests validate what
+  the real command writes, for the whole table and every `--language`
+  projection, against that file (#14067).
+- Output: project structured related_test object on review cards (#1414).
+- Badges: project public repo badge into closed RIPR-SPEC-0066 states (#1416).
+- Report: language_runs[] status output + non-abort multi-language pipeline (Campaign 31 PR 10, #1403) (#1418).
+- Perl checks: typed prove/yath/carton command validation (Campaign 31 PR 13, #1406) (#1421).
+- Perl checks: production packet ingestion boundary (Campaign 31 PR 9, #1402) (#1422).
+- `RIPR_GENERATED_AT=unix_ms:<millis>` pins `artifact.generated_at` in `check-findings-json`, `repo-exposure-json` and `repo-seams-json`, so two runs over the same inputs write byte-identical artifacts and digests; a malformed value refuses the run instead of stamping the current time (#14230).
+- Perl checks: route .pm/.pl/.t/.psgi to LanguageId::Perl under lang-perl (Campaign 31 PR 11, #1404) (#1426).
+- Perl checks: relation-kind gating + concrete discriminator — the honesty gate (Campaign 31 PR 12, #1405) (#1428).
+- Perl checks: productionize PerlAdapter — impl LanguageAdapter, pipeline dispatch, lang-perl CI (C1, #1430) (#1431).
+- Perl checks: packet_to_findings() — convert validated packet into Finding records (C2, #1429) (#1432).
+- `ripr repair` names the exact native command that runs the suggested Rust
+  test (`Run the new test: cargo test --manifest-path Cargo.toml --test
+  pricing NAME`), resolved the way `ripr agent stub` resolves its run command;
+  no line is printed for inline module tests or when the target cannot be
+  named exactly, and `--json`
+  output is unchanged (#14320).
+- The repository root now ships `.pre-commit-hooks.yaml` with a `ripr` hook
+  (`language: system`, advisory `ripr check --worktree --base HEAD --quiet`), so
+  projects can add `repo: https://github.com/EffortlessMetrics/ripr` to
+  `.pre-commit-config.yaml` instead of hand-writing a `repo: local` hook;
+  `docs/INTEGRATIONS.md` shows both forms (#14337).
+- `.pre-commit-hooks.yaml` adds a `ripr-push` hook (`ripr check --committed
+  --quiet` at push time). The `ripr` hook now runs only at commit time, so a
+  push-time install no longer prints "nothing was in scope" on every push.
+  `docs/INTEGRATIONS.md` adds lefthook, husky and plain Git hook snippets
+  (#14348).
+- Perl checks: managed producer mode — [perl] producer = "perllsp" (Phase D PR 1, #1407) (#1435).
+- `ripr doctor`: Perl-aware doctor diagnostics (Phase D PR 2, #1408) (#1436).
+- Perl checks: consumer-side contract freeze — accept frozen fields + Test2::V1 (Campaign 31 step 2, #1379) (#1450).
+- Perl checks: packet integrity hardening — fingerprint/coherence/freshness/capability/path/id + Invalid status (Campaign 31 item 2) (#1454).
+- Perl checks: harden managed producer mode — SPEC argv + timeout/kill + atomic + cache + freshness (Campaign 31 item 4) (#1456).
+- `ripr doctor`: Perl preview section — producer/markers/roots/frameworks/runners/next-cmd (Campaign 31 item 5) (#1457).
+- Perl checks: accept producer='perl-ripr-facts' + derive default executable from producer name (#1462).
+- `ripr doctor`: detect perl-ripr-facts first, explain wrapper requirement (post #3294) (#1464).
+- Output: project card-level oracle_kind/oracle_strength on review cards (#1483).
+- `ripr -v check` prints how long each phase took and one `ripr: verdict`
+  line per reported finding (at most 50) naming its class, the five stage
+  states and the first stage that is not `yes` with the reason ripr recorded.
+  `RIPR_VERBOSE=1` turns on the same stderr diagnostics for editors, MCP
+  hosts, hooks and CI without changing stdout, and the troubleshooting guide
+  explains how to attach the log to a bug report (#14831, #14832).
+- TypeScript checks: surface preview audit signals (#1488).
+- TypeScript checks: bridge preview packets into gap receipts (#1490).
+- Output: project canonical_gap_id on working-set review cards (#1505).
+- Gate output: add structured exact repair routes (#1510).
+- Gate output: project exact repair routes in human summaries (#1512).
+- Rerun: select canonical gaps from explicit ledger (#1524).
+- Rerun: add explicit before movement receipts (#1527).
+- Rerun: disclose file-fact cache reuse (#1529).
+- Rerun: add opt-in full pipeline parity (#1530).
+- Rerun: support changed test node selectors (#1532).
+- Rerun: disclose file content invalidation (#1534).
+- Rerun: compare targeted evidence with full parity (#1535).
+- Rerun: disclose workspace input invalidation (#1537).
+- Rerun: include input fingerprints in parity (#1539).
+- Rerun: fingerprint explicit gap ledger (#1540).
+- Routing: make targeted mutation routes concrete (#1545).
+- Rerun: disclose local package and feature graph provenance (#1550).
+- Rerun: prove two-sided selector-scoped parity (#1558).
+- `ripr repair`: establish producer-owned Rust route readiness (#1563).
+- LSP: project canonical diagnostics (#1581).
+- Output: project canonical causal deltas (#1608).
+- LSP: advertise draft riprAgent capability contract (#1611).
+- LSP: project discriminator witness facts (#1620).
+- LSP: model analysis input identity (#1642).
+- LSP: add actionable diagnostic profile (#1651).
+- LSP: reload repository configuration safely (#1659).
+- LSP: define deterministic diagnostic delivery budget (#1666).
+- LSP: govern diagnostic codes with a versioned catalog (#1662 slice A) (#1763).
+- UX: first-pr/start-here disclosure of side effects, costs, and cache (#1823).
+- Receipts: add current_head to receipt JSON output (#1827).
+- LSP: advertise CodeActionOptions with closed kind hierarchy (#1750, #1829).
+- LSP: wire diagnostic budget into collect_workspace_status (#1764, #1837).
+- LSP: advertise UTF-16 position encoding (#1856).
+- LSP: define versioned agent protocol contract (#1861).
+- LSP: negotiate position encoding at initialize (prefer UTF-16) (#1749, #1864).
+- `ripr gate evaluate --acknowledgements PATH` accepts a structured
+  acknowledgement ledger that scopes matches to explicit canonical gap ids
+  while preserving legacy label acknowledgement compatibility (#1966).
+- VS Code extension: start one server session after Workspace Trust is granted (#2047).
+- VS Code extension: add a first-run walkthrough contribution (#2003, #2066).
+- LSP: disclose push-delivery budget omissions to the client (#1969, #2116).
+- LSP: emit standard work-done progress for analysis lifecycle (#1971, #2128).
+- LSP: deduplicate didSave refreshes by saved-content identity (#1968, #2129).
+- LSP: one stored diagnostic selection authority for push and pull (#1973, #2134).
+- Analysis: partial diff-scope analysis with disclosed limited run state (#1999, #2142).
+- LSP: quarantine dirty-buffer diagnostics until save (#1970, #2146).
+- Lib: re-export every public field type from the crate root (#2112, #2161).
+- `ripr doctor`: probe verify-route runtimes for detected languages (#2071, #2183).
+- LSP: capability-negotiated workspace/configuration pull (#2031, #2211).
+- Agent mode: populate canonical command specs (#2218).
+- LSP: redacted $/setTrace and $/logTrace protocol tracing (#2035, #2219).
+- LSP: project typed command specs into repair actions (#2223).
+- LSP: negotiate codeLens refresh support with a semantic lens-view identity (#2032, #2226).
+- Verify: add provenance-bound execution result contract (#2232).
+- LSP: filter code-action commands by the negotiated riprEditor profile (#1776, #2282).
+- LSP: honor CodeActionContext.only and restore kind parity (#1750, #2286).
+- LSP: versioned code-action data contract and closed disabled reasons (#1892, #2289).
+- LSP: stable InvalidParams rejection for unsupported executeCommand ids (#1628, #2292).
+- LSP: advertise codeAction/resolve as fail-closed revalidation (#1751, #2310).
+- LSP: cooperative git invocation timeout in the refresh path (#2303, #2317).
+- LSP: commit limited snapshot with one warning diagnostic on oversized diffs (#2299, #2319).
+- LSP: physical refresh deadline with named DeadlineExceeded outcome (#1972, #2321).
+- CLI: add Performance section to explain/context help for --from flag (#2340, #2500).
+- Agent mode: add two-phase repair command (#2443, #2538).
+- VS Code extension: expose targeted repair packet command (#2603).
+- CLI: add isolated config validation (#2793).
+- Help text: add 'config validate' to the overview help (#2817).
+- Schema: add bounded check JSON contract (#2913).
+- CLI: add --verbose flag for pipeline stage visibility (#2610, #3000).
+- Agent mode: enforce pair lineage and verify movement for readiness artifacts (#3042).
+- Agent mode: bind verify results to exact artifact bytes (verify schema 0.2) (#3045).
+- Agent mode: make repo-exposure input identity portable across checkout roots (#2823, #3049).
+- VS Code extension: install managed servers atomically (#3184).
+- `ripr repair`: derive edit cages from exact Git deltas (#3194).
+- Analysis: resolve every finding to a source-currentness disposition (#3280, C1 of #3212) (#3291).
+- Projection: gate every actionability surface on candidate currentness (#3281, C2 of #3212) (#3302).
+- LSP: gate code lenses on candidate actionability and land the currentness qualification corpus (#3282, C3 of #3212) (#3314).
+- Analysis: execute immutable Git candidates through object plumbing (#3277, R2 of #3237) (#3394).
+- Agent mode: bind repair receipts to edit cages (#3406).
+- Receipts: add typed review-comments terminal setters (#3470).
+- Analysis: project Rust findings into portable test evidence (#3507).
+- Agent mode: finish repairs by durable attempt identity (#3511).
+- Analysis: surface unsafe Rust execution boundaries (#3516).
+- Swarm: apply --top to the live-current assignable frontier (#3575).
+- Analysis / Python checks: repo-mode input authority — roles, bounded discovery, run status (#3554 PR A) (#3666).
+- Analysis / Python checks: repo-mode native evidence producer over the selected working set (#3554 PR B) (#3667).
+- Analysis / Python checks: wire repo-mode findings through analyze_repo, delete scaffold (#3554 PR C) (#3668).
+- Ripr: constant declarations no longer classify as call/field probes (#3719, #3720).
+- CLI: machine-readable modes for receipt check and agent start (#4074).
+- `packaging/npm/qualification/` proves a clean npm install-to-use
+  TypeScript journey: an isolated loopback registry serves the staged
+  launcher and native tarballs, and npm installs them with scripts disabled.
+  The journey analyzes a TypeScript change through a project-local script,
+  follows the explain continuation offline from a foreign directory, and
+  checks that a missing or wrong native package fails with exact recovery
+  advice. It emits a typed `package_qualification_receipt` for
+  `cargo xtask package-qualification-gate` (#4627).
+- The release package-family rehearsal now runs the npm install-to-use
+  journey on all five targets through an isolated loopback registry, then
+  gates each target's receipt against the candidate commit, tree, launcher
+  tarball and qualified payload digest. A missing, failed or mismatched row
+  fails the aggregate (#4632).
+- Agent mode: carry before-phase continuation in machine-readable stdout (#4329, #4944).
+- CLI: typed workflow catalog and bounded help workflow discovery (#4965).
+- Credit per-byte slice-input counter boundaries when literal `&[u8]` / byte-string arguments bracket the changed comparison (Advances #5346).
+- Release rehearsal: builds the `ripr-rs` wheels and native npm packages for all five targets (Linux x64/ARM64, macOS Intel/ARM64, Windows x64) from the qualified archive payloads and install-tests each on its own platform with pip and npm (#5378).
+- `ripr completions <bash|zsh|fish|powershell>` prints a tab-completion script
+  for command names and the word after a command (such as `cache status`). It
+  does not complete flags and installs nothing (#7438).
+- `ripr init`: ripr init --mcp writes the Claude Code project MCP config (#8338).
+- Add opt-in `independent_pages` for MCP gap-list continuations, allowing clients to walk item and omitted identities separately without replaying the other window (#9360).
+- Analysis: per-language repo file accounting and fired cap (#6466, #9830).
+- Analysis: deterministic mixed-language diff aggregation (#6468, #9891).
+- Analysis: repo-mode language outcomes and capability-aware aggregation (slice of #6470) (#9958).
+- `ripr cache status --json` now has a published schema,
+  `schemas/ripr/cache-status.schema.json`, including the two cross-field
+  rules the docs already stated: `via_symlink` agrees with `real_cache_dir`,
+  and a `not_found` or `unavailable` report has every count at `0`. The
+  emitted bytes and `schema_version` `0.2` are unchanged (#14067).
+- `ripr diff --json` now has published schemas for both documents it writes:
+  `schemas/ripr/diff.schema.json` for the `ripr_diff` report and
+  `schemas/ripr/diff-refusal.schema.json` for the exit-2 refusal envelope. The
+  report schema states the agreement between `run_status`, `runtime_status`
+  and `receipt.outcome_hint`; both share their `analysis_outcome`,
+  `preview_languages`, `summary` and `run_limitations` definitions with the
+  check schema, held identical by test. The emitted bytes and
+  `schema_version` `0.1` are unchanged (#14067).
+- `ripr repair` and `ripr continue` accept `--json`. A repair start prints the
+  agent packet with `repair_attempt.attempt_id` on stdout, a repeated start or
+  an already-complete continue prints the attempt's status document, and
+  `continue` prints its after-phase document. Under `continue --json` a typed
+  after-phase refusal or failure also prints its document on stdout
+  (`repair_after_refusal`, `repair_after_failure`, or the verify document)
+  with the same exit code and stderr prose. Selection refusals and the
+  `repair` refusals keep their exit codes, stderr prose and empty stdout.
+  An unknown flag under `--json` keeps exit 2 and its stderr prose and
+  writes the standalone `cli_refusal` document to stdout (#11584).
 
 ### Fixed
 
