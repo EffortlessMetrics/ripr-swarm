@@ -185,9 +185,16 @@ cargo xtask check-packaged-readme
 cargo xtask check-generated-clean
 cargo xtask release-readiness --version 0.11.0   # the version you are cutting
 cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 ```
+
+`ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
+`cargo publish -p ripr --dry-run` fails pre-publish until `ripr-contract` exists
+on crates.io. `cargo xtask publish-dry-run` is the canonical lockstep rehearsal
+(`cargo publish -p ripr-contract --dry-run`, vendored `ripr` packaging, and
+unlocked check against the packaged `ripr-contract`).
 
 For the #1609-qualified path, the existing corpus also accepts the complete
 `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
@@ -352,8 +359,9 @@ Before calling an install or release-path PR complete, verify the crate package,
 the local install path, the extension package, and the published server assets:
 
 ```bash
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke
 target/ripr/install-smoke/bin/ripr --version
 target/ripr/install-smoke/bin/ripr first-pr --help
@@ -389,30 +397,81 @@ manifest checksum matches the downloaded archive. The extracted server must run
 
 ## Name Gate
 
-Immediately before the first real publish:
+Immediately before the first real publish, verify crates.io ownership, name
+availability, and existing-version metadata for both `ripr-contract` and
+`ripr`:
 
 ```bash
+cargo search ripr-contract --limit 5
 cargo search ripr --limit 5
 ```
 
-Then check the crates.io API:
+Then check the crates.io API for both crates:
 
 ```bash
+curl -i https://crates.io/api/v1/crates/ripr-contract
 curl -i https://crates.io/api/v1/crates/ripr
 ```
 
-If `ripr` is taken, stop. Do not publish under a fallback name without a naming
-decision.
+If either `ripr-contract` or `ripr` is owned by an unexpected publisher, or if
+`ripr-contract` at the target version already exists with different bytes or
+metadata than the rehearsed receipt, stop. Do not publish under a fallback name
+without a naming decision, and do not try to overwrite an immutable version.
 
 ## Publish
 
+Both `cargo publish -p ripr-contract` and `cargo publish -p ripr` require the
+exact qualified ship packet (`cargo xtask release-readiness --version <version>`
+and `cargo xtask publish-dry-run` receipt recording both `.crate` filenames,
+versions, SHA-256 checksums, and source commit) plus explicit per-channel
+authorization.
+
+1. Publish `ripr-contract` first:
+
 ```bash
 cargo login
-cargo publish -p ripr
+cargo publish -p ripr-contract --locked
 ```
 
-Cargo may time out while polling the registry index after upload. If that
-happens, check crates.io manually before retrying.
+2. Read back the exact public `ripr-contract` version, checksum, and metadata
+from crates.io under a bounded polling/timeout policy and verify the published
+checksum matches `target/package/publish-receipt.json` before attempting `ripr`:
+
+```bash
+curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"
+```
+
+A transient index delay is not a product failure, but an unavailable or
+mismatched `ripr-contract` dependency is not permission to publish `ripr`
+around the edge.
+
+3. Publish `ripr` against that exact `=<version>` dependency:
+
+```bash
+cargo publish -p ripr --locked
+```
+
+4. Verify `ripr` from public bytes in a clean environment without path or
+vendor substitution (`cargo install ripr --version <version> --locked --root
+target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown
+in [Post-Publish](#post-publish)).
+
+### Partial-publication recovery
+
+- **Contract-only / `ripr` failed**: if `ripr-contract` is public and its
+  version/checksum matches the receipt, retain the exact `ripr-contract`
+  receipt, diagnose the `ripr` failure, and retry only the unchanged authorized
+  `ripr` package where registry policy permits.
+- **Mismatched existing `ripr-contract` bytes or metadata**: stop. Published
+  bytes for a crate version on crates.io are immutable. Select a new coordinated
+  version for both `ripr-contract` and `ripr`; never silently weaken `ripr`'s
+  `=<version>` dependency or auto-yank as recovery.
+- **Registry propagation timeout**: stop and re-check the sparse index and
+  crates.io API before attempting `ripr`.
+- **Cross-channel partial completion**: if `ripr` publishes to crates.io but a
+  later channel fails, preserve the successful Cargo publication as an immutable
+  fact and follow the cross-channel recovery/authorization record; do not treat
+  the release as atomic across registries.
 
 ## Post-Publish
 

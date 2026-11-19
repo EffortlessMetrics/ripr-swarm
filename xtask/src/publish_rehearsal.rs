@@ -111,7 +111,10 @@ pub(crate) fn vendored_ripr_crate(
 }
 
 fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
+    verify_workspace_lockstep_edge(version)?;
     let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
+    let contract_sha = sha256_hex(&contract_crate)?;
+    let ripr_sha = sha256_hex(&ripr_crate)?;
     // Leave the packaged crates where `cargo package` would put them, so
     // callers (CI release-proof) can consume the exact rehearsed archives.
     let package_out = Path::new("target/package");
@@ -124,6 +127,18 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
         fs::copy(krate, package_out.join(name))
             .map_err(|e| format!("cannot copy {}: {e}", krate.display()))?;
     }
+    let receipt = PublishReceipt::capture(
+        version,
+        &contract_crate,
+        &contract_sha,
+        &ripr_crate,
+        &ripr_sha,
+    )?;
+    let receipt_path = package_out.join("publish-receipt.json");
+    let receipt_json = serde_json::to_string_pretty(&receipt)
+        .map_err(|e| format!("cannot serialize publish receipt: {e}"))?;
+    fs::write(&receipt_path, format!("{receipt_json}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", receipt_path.display()))?;
 
     let extract = scratch.join("extract");
     let contract_dir = format!("ripr-contract-{version}");
@@ -158,9 +173,218 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
         }
     }
     println!(
-        "publish rehearsal ok: ripr-contract {version} dry-run passed; packaged ripr {version} packaged against vendored ripr-contract and checks against the packaged crate"
+        "publish rehearsal ok: ripr-contract {version} ({contract_sha}) dry-run passed; packaged ripr {version} ({ripr_sha}) packaged against vendored ripr-contract and checks against the packaged crate; receipt={}",
+        receipt_path.display()
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct PublishReceipt {
+    pub(crate) version: String,
+    pub(crate) source_commit: String,
+    pub(crate) source_dirty: bool,
+    pub(crate) contract_filename: String,
+    pub(crate) contract_sha256: String,
+    pub(crate) ripr_filename: String,
+    pub(crate) ripr_sha256: String,
+}
+
+impl PublishReceipt {
+    fn capture(
+        version: &str,
+        contract_crate: &Path,
+        contract_sha256: &str,
+        ripr_crate: &Path,
+        ripr_sha256: &str,
+    ) -> Result<Self, String> {
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map_err(|e| format!("git rev-parse HEAD failed: {e}"))?;
+        let source_commit = if head.status.success() {
+            String::from_utf8_lossy(&head.stdout).trim().to_string()
+        } else {
+            "unknown".to_string()
+        };
+        let status = Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .map_err(|e| format!("git status --porcelain failed: {e}"))?;
+        let source_dirty = !status.status.success() || !status.stdout.is_empty();
+        let file_name = |p: &Path| -> Result<String, String> {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .ok_or_else(|| format!("crate path has no file name: {}", p.display()))
+        };
+        Ok(Self {
+            version: version.to_string(),
+            source_commit,
+            source_dirty,
+            contract_filename: file_name(contract_crate)?,
+            contract_sha256: contract_sha256.to_string(),
+            ripr_filename: file_name(ripr_crate)?,
+            ripr_sha256: ripr_sha256.to_string(),
+        })
+    }
+}
+
+fn verify_workspace_lockstep_edge(workspace_version: &str) -> Result<(), String> {
+    let ripr_manifest = fs::read_to_string("crates/ripr/Cargo.toml")
+        .map_err(|e| format!("cannot read crates/ripr/Cargo.toml: {e}"))?;
+    let contract_manifest = fs::read_to_string("crates/ripr-contract/Cargo.toml")
+        .map_err(|e| format!("cannot read crates/ripr-contract/Cargo.toml: {e}"))?;
+    verify_lockstep_contract_edge(&ripr_manifest, &contract_manifest, workspace_version)
+}
+
+fn manifest_package_version(
+    doc: &toml::Value,
+    workspace_version: &str,
+    label: &str,
+) -> Result<String, String> {
+    let package = doc
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| format!("{label} missing [package] table"))?;
+    match package.get("version") {
+        Some(toml::Value::String(v)) => Ok(v.clone()),
+        Some(toml::Value::Table(t))
+            if t.get("workspace").and_then(toml::Value::as_bool) == Some(true) =>
+        {
+            Ok(workspace_version.to_string())
+        }
+        _ => Err(format!(
+            "{label} has missing or non-workspace package.version"
+        )),
+    }
+}
+
+pub(crate) fn verify_lockstep_contract_edge(
+    ripr_manifest: &str,
+    contract_manifest: &str,
+    workspace_version: &str,
+) -> Result<(), String> {
+    let ripr_doc: toml::Value =
+        toml::from_str(ripr_manifest).map_err(|e| format!("invalid ripr Cargo.toml: {e}"))?;
+    let contract_doc: toml::Value = toml::from_str(contract_manifest)
+        .map_err(|e| format!("invalid ripr-contract Cargo.toml: {e}"))?;
+
+    let ripr_ver =
+        manifest_package_version(&ripr_doc, workspace_version, "crates/ripr/Cargo.toml")?;
+    let contract_ver = manifest_package_version(
+        &contract_doc,
+        workspace_version,
+        "crates/ripr-contract/Cargo.toml",
+    )?;
+    if ripr_ver != workspace_version || contract_ver != workspace_version {
+        return Err(format!(
+            "lockstep version mismatch: workspace={workspace_version}, ripr={ripr_ver}, ripr-contract={contract_ver}"
+        ));
+    }
+
+    let expected_req = format!("={workspace_version}");
+    let contract_dep = ripr_doc
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .and_then(|deps| deps.get("ripr-contract"))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "crates/ripr/Cargo.toml missing [dependencies.ripr-contract]".to_string())?;
+    let actual_req = contract_dep
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| {
+            "crates/ripr/Cargo.toml ripr-contract dependency missing version".to_string()
+        })?;
+    if actual_req != expected_req {
+        return Err(format!(
+            "crates/ripr/Cargo.toml ripr-contract version `{actual_req}` != expected `{expected_req}`"
+        ));
+    }
+    Ok(())
+}
+
+/// Public crates.io state of `ripr-contract` before/during two-crate publication.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ContractRegistryState {
+    Absent,
+    MatchingImmutable {
+        version: String,
+        sha256: String,
+    },
+    MismatchedImmutable {
+        version: String,
+        expected_sha256: String,
+        actual_sha256: String,
+    },
+    PropagationTimeout {
+        version: String,
+    },
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PublicationDisposition {
+    PublishContractThenProduct,
+    ResumeProductOnly {
+        version: String,
+        contract_sha256: String,
+    },
+    PreserveCargoAndRecoverLaterChannel,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PublicationStopReason {
+    UnpublishedInternalDependency,
+    MismatchedImmutableContract {
+        version: String,
+        expected_sha256: String,
+        actual_sha256: String,
+    },
+    PropagationTimeout {
+        version: String,
+    },
+}
+
+/// Evaluate the two-crate Cargo publication transaction (#14792).
+#[cfg(test)]
+pub(crate) fn evaluate_two_crate_publication(
+    contract_state: ContractRegistryState,
+    product_attempted_first: bool,
+    cargo_both_published: bool,
+    later_channel_failed: bool,
+) -> Result<PublicationDisposition, PublicationStopReason> {
+    if cargo_both_published && later_channel_failed {
+        return Ok(PublicationDisposition::PreserveCargoAndRecoverLaterChannel);
+    }
+    match contract_state {
+        ContractRegistryState::MismatchedImmutable {
+            version,
+            expected_sha256,
+            actual_sha256,
+        } => Err(PublicationStopReason::MismatchedImmutableContract {
+            version,
+            expected_sha256,
+            actual_sha256,
+        }),
+        ContractRegistryState::PropagationTimeout { version } => {
+            Err(PublicationStopReason::PropagationTimeout { version })
+        }
+        ContractRegistryState::Absent => {
+            if product_attempted_first {
+                Err(PublicationStopReason::UnpublishedInternalDependency)
+            } else {
+                Ok(PublicationDisposition::PublishContractThenProduct)
+            }
+        }
+        ContractRegistryState::MatchingImmutable { version, sha256 } => {
+            Ok(PublicationDisposition::ResumeProductOnly {
+                version,
+                contract_sha256: sha256,
+            })
+        }
+    }
 }
 
 fn run_cargo(
@@ -355,6 +579,157 @@ mod tests {
         assert_eq!(pick_crate_file(&dir, "ripr", "0.11.0")?, file);
         assert!(matches!(pick_crate_file(&dir, "ripr", "0.10.0"), Err(e) if !e.is_empty()));
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn lockstep_contract_edge_accepts_exact_pin_and_rejects_drift() -> Result<(), String> {
+        let root_manifest =
+            fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.toml"))
+                .map_err(|e| format!("read root Cargo.toml: {e}"))?;
+        let root_doc: toml::Value =
+            toml::from_str(&root_manifest).map_err(|e| format!("parse root Cargo.toml: {e}"))?;
+        let workspace_version = root_doc
+            .get("workspace")
+            .and_then(|w| w.get("package"))
+            .and_then(|p| p.get("version"))
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| "missing workspace.package.version".to_string())?;
+
+        let ripr_manifest = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/ripr/Cargo.toml"
+        ))
+        .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+        let contract_manifest = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/ripr-contract/Cargo.toml"
+        ))
+        .map_err(|e| format!("read ripr-contract Cargo.toml: {e}"))?;
+
+        verify_lockstep_contract_edge(&ripr_manifest, &contract_manifest, workspace_version)?;
+
+        let weakened = ripr_manifest.replace(
+            &format!("={workspace_version}"),
+            &format!("^{workspace_version}"),
+        );
+        let Err(err) =
+            verify_lockstep_contract_edge(&weakened, &contract_manifest, workspace_version)
+        else {
+            return Err("non-exact ripr-contract version requirement must fail".to_string());
+        };
+        assert!(err.contains("!="), "unexpected error: {err}");
+        Ok(())
+    }
+
+    #[test]
+    fn two_crate_publication_state_machine_enforces_order_and_recovery() {
+        assert_eq!(
+            evaluate_two_crate_publication(ContractRegistryState::Absent, false, false, false),
+            Ok(PublicationDisposition::PublishContractThenProduct)
+        );
+        // Negative control: attempting ripr before ripr-contract is rejected.
+        assert_eq!(
+            evaluate_two_crate_publication(ContractRegistryState::Absent, true, false, false),
+            Err(PublicationStopReason::UnpublishedInternalDependency)
+        );
+        // Contract-only partial completion: resume product-only publish.
+        assert_eq!(
+            evaluate_two_crate_publication(
+                ContractRegistryState::MatchingImmutable {
+                    version: "0.11.0".to_string(),
+                    sha256: "abc".to_string(),
+                },
+                false,
+                false,
+                false,
+            ),
+            Ok(PublicationDisposition::ResumeProductOnly {
+                version: "0.11.0".to_string(),
+                contract_sha256: "abc".to_string(),
+            })
+        );
+        // Mismatched immutable contract: stop and bump coordinated version.
+        assert_eq!(
+            evaluate_two_crate_publication(
+                ContractRegistryState::MismatchedImmutable {
+                    version: "0.11.0".to_string(),
+                    expected_sha256: "abc".to_string(),
+                    actual_sha256: "def".to_string(),
+                },
+                false,
+                false,
+                false,
+            ),
+            Err(PublicationStopReason::MismatchedImmutableContract {
+                version: "0.11.0".to_string(),
+                expected_sha256: "abc".to_string(),
+                actual_sha256: "def".to_string(),
+            })
+        );
+        // Propagation timeout: stop, do not publish around edge.
+        assert_eq!(
+            evaluate_two_crate_publication(
+                ContractRegistryState::PropagationTimeout {
+                    version: "0.11.0".to_string(),
+                },
+                false,
+                false,
+                false,
+            ),
+            Err(PublicationStopReason::PropagationTimeout {
+                version: "0.11.0".to_string(),
+            })
+        );
+        // Later channel failed after Cargo succeeded: preserve Cargo publication.
+        assert_eq!(
+            evaluate_two_crate_publication(
+                ContractRegistryState::MatchingImmutable {
+                    version: "0.11.0".to_string(),
+                    sha256: "abc".to_string(),
+                },
+                false,
+                true,
+                true,
+            ),
+            Ok(PublicationDisposition::PreserveCargoAndRecoverLaterChannel)
+        );
+    }
+
+    #[test]
+    fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
+        let ripr_manifest = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/ripr/Cargo.toml"
+        ))
+        .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+        let release_doc =
+            fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
+                .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
+
+        if ripr_manifest.contains("ripr-contract") {
+            // Standalone product dry-run must not appear as an instruction line.
+            for line in release_doc.lines() {
+                assert_ne!(
+                    line.trim(),
+                    "cargo publish -p ripr --dry-run",
+                    "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
+                );
+            }
+            for required in [
+                "cargo xtask publish-dry-run",
+                "cargo search ripr-contract",
+                "crates/ripr-contract",
+                "cargo publish -p ripr-contract --locked",
+                "cargo publish -p ripr --locked",
+                "Partial-publication recovery",
+            ] {
+                assert!(
+                    release_doc.contains(required),
+                    "docs/RELEASE.md missing lockstep publication requirement `{required}`"
+                );
+            }
+        }
         Ok(())
     }
 }
