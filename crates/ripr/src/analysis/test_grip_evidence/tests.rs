@@ -24941,6 +24941,23 @@ fn a_let_in_a_closed_test_block_does_not_bind_the_asserted_value() -> Result<(),
     Ok(())
 }
 
+/// #14569 review: a brace inside a char literal or a comment does not keep
+/// a closed nested block open, so the outer binding is still the one read.
+#[test]
+fn a_brace_in_a_char_literal_or_comment_does_not_reopen_a_closed_block() -> Result<(), String> {
+    for filler in ["let _c = '{';", "// {"] {
+        let test_body = format!(
+            "    let got = discounted_total(100, 50);\n    {{\n        let got = discounted_total(50, 100);\n        let _ = got;\n        {filler}\n    }}\n    assert_eq!(got, 90);\n"
+        );
+        assert_eq!(
+            discounted_total_seam_state(DISCOUNT_BODY, "amount - 10", &test_body)?,
+            StageState::Yes,
+            "{filler}: the outer binding's call reaches the then-branch return"
+        );
+    }
+    Ok(())
+}
+
 /// #14569: an owner `let` inside a nested block that closes before the seam's
 /// `if` shadows nothing the condition reads, so it no longer keeps credit for
 /// a call that takes the other branch.

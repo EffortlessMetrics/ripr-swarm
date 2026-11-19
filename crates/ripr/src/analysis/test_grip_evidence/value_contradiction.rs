@@ -1183,6 +1183,9 @@ fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
         return None;
     }
     let anchor = single_occurrence(body, assertion.trim());
+    // Braces inside comments, strings and char literals (`'{'`, `// }`) do
+    // not open or close a block; the mask keeps byte offsets.
+    let masked = anchor.map(|_| crate::analysis::mask_comments_and_strings(body));
     let mut found = None;
     let mut reaching = None;
     for (at, _) in body.match_indices("let ") {
@@ -1220,7 +1223,10 @@ fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
         let initializer = init[..end].trim().to_string();
         if let Some(anchor) = anchor
             && at < anchor
-            && block_stays_open(&body[at..anchor])
+            && masked
+                .as_deref()
+                .and_then(|masked| masked.get(at..anchor))
+                .is_some_and(block_stays_open)
         {
             reaching = Some(initializer.clone());
         }
@@ -1247,24 +1253,13 @@ fn single_occurrence(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 /// Whether the block open at the start of `text` is still open at its end:
-/// no `}` outside string and char literals closes it. A `let` in a nested
-/// block that ends before the assertion does not bind what it reads.
+/// no `}` closes it. `text` is already masked, so every brace is code. A
+/// `let` in a nested block that ends before the assertion does not bind what
+/// it reads.
 fn block_stays_open(text: &str) -> bool {
     let mut depth = 0i64;
-    let mut chars = text.chars();
-    while let Some(ch) = chars.next() {
+    for ch in text.chars() {
         match ch {
-            '"' => {
-                while let Some(inner) = chars.next() {
-                    match inner {
-                        '\\' => {
-                            chars.next();
-                        }
-                        '"' => break,
-                        _ => {}
-                    }
-                }
-            }
             '{' => depth += 1,
             '}' => {
                 depth -= 1;
