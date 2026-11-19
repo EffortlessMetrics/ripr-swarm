@@ -101,7 +101,25 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             }
         }
     }
-    let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let root_explicit = root.is_some();
+    let mut root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // #15304: diagnose the root `ripr check` would analyze from here. Without
+    // `--root`, check widens to the enclosing workspace, package or Git top
+    // level (#4610, #8767), so a doctor that stayed at the invocation
+    // directory detected languages and suggested an `enabled` list for a
+    // tree check never analyzes. The shared resolver prints the same stderr
+    // disclosure as check; `--root .` still diagnoses this directory alone.
+    if let Err(error) = super::check::resolve_implicit_command_root(&mut root, root_explicit) {
+        // Doctor diagnoses rather than refuses: report on the current
+        // directory, whose own checks name what is wrong with it.
+        eprintln!(
+            "{}",
+            crate::output::human::terminal_safe(format!(
+                "ripr: could not resolve the root `ripr check` would analyze ({error}); diagnosing the current directory"
+            ))
+        );
+        root = PathBuf::from(".");
+    }
     // #8540: one clock for the whole run, shared by both surfaces, so the
     // total the human screen prints is the total the JSON document carries.
     let run_started = std::time::Instant::now();

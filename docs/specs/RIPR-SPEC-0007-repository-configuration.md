@@ -149,6 +149,15 @@ and a usable output location adds no check. While any `!` check blocks, the
 verbose start-here block gives that recovery instead of packet refresh advice,
 as the compact screen already does.
 
+Without `--root`, doctor diagnoses the root `ripr check` would analyze from the
+invocation directory (#15304): the enclosing Cargo workspace, package,
+JavaScript or Python workspace, or Git top level. It uses the same shared
+resolver and stderr disclosure as check. Language detection, the `enabled`
+tip and `Root:` therefore describe the tree check analyzes, and a run from a
+Python subdirectory of a Rust workspace is not told to replace `rust` with
+`python`. `--root .` diagnoses the invocation directory alone. If that resolver
+fails, doctor says so on stderr and diagnoses the invocation directory.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with

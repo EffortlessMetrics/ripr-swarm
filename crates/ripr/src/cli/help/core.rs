@@ -798,7 +798,9 @@ pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --root PATH   Workspace to diagnose. Defaults to the root `ripr check` would
+                use: the current directory, then the enclosing workspace or
+                package, or the git top level; `--root .` pins this directory.
   --json        Emit the core checks as stable JSON and use the same exit status.
   --timings     With --json, include the volatile timing fields (elapsed_ms,
                 segments). Default --json output is byte-stable across runs
