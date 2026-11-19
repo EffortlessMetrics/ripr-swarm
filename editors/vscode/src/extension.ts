@@ -109,6 +109,11 @@ export async function handleWorkspaceFoldersChanged(
     // A removal can leave an ambiguous multi-root window with one folder;
     // re-resolve so the status does not stay on "Select one workspace folder".
     // No-op unless the controller is awaiting a root that now resolves.
+    // Gate on awaitingWorkspaceRoot so an unrelated removal never restarts a
+    // running server onto the active editor's folder.
+    if (!currentController?.awaitingWorkspaceRoot()) {
+      return;
+    }
     try {
       await synchronizeWorkspaceRootOnce(currentController);
     } catch (error) {

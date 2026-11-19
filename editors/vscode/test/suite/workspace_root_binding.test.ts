@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { State } from 'vscode-languageclient/node';
 import { RiprClientController, RiprClientRuntime, RiprWorkspaceRootState } from '../../src/client';
 import { RiprConfig } from '../../src/config';
 import { CRASH_RECOVERY_SESSION_BUDGET, CrashRecoveryController } from '../../src/crashRecovery';
@@ -12,6 +13,7 @@ import { compatibleLspEvidence } from './testCompatibility';
 
 const alpha = { name: 'alpha', index: 0, uri: vscode.Uri.file('/ws/alpha') };
 const beta = { name: 'beta', index: 1, uri: vscode.Uri.file('/ws/beta') };
+const gamma = { name: 'gamma', index: 2, uri: vscode.Uri.file('/ws/gamma') };
 const config: RiprConfig = {
   enabled: true, serverPath: '/sentinel/binding/ripr', serverArgs: ['lsp', '--stdio'],
   autoDownload: false, serverVersion: 'binding-test', downloadBaseUrl: 'https://sentinel.invalid',
@@ -31,6 +33,7 @@ function harness() {
   let gatedRoot: string | undefined;
   let onStart: () => void = () => undefined;
   let request: () => Promise<unknown> = async () => undefined;
+  let clientState: State | undefined;
   const runtime: RiprClientRuntime = {
     getConfig: () => ({ ...config, enabled }),
     workspaceRootState: (): RiprWorkspaceRootState => ({
@@ -50,6 +53,7 @@ function harness() {
       return {
         onNotification: () => ({ dispose: () => { events.push(`dispose:${cwd}`); } }),
         sendRequest: () => request(), setTrace: () => undefined,
+        get state() { return clientState; },
         start: async () => {
           events.push(`start:${cwd}`);
           if (cwd === gatedRoot) { onStart(); await startGate; }
@@ -77,6 +81,7 @@ function harness() {
     controller, events, infos, runtime,
     setRequest: (handler: () => Promise<unknown>) => { request = handler; },
     disable: () => { enabled = false; },
+    setClientState: (next: State | undefined) => { clientState = next; },
     select: (selected: string | undefined) => { root = selected; },
     removeBeta: () => { folders = [alpha]; root = alpha.uri.fsPath; },
     holdStop: () => {
@@ -454,6 +459,37 @@ suite('Workspace Root Binding Controller', () => {
     assert.match(message, /requires a running server/);
     assert.match(message, /Restart Server/);
     assert.doesNotMatch(message, /not completed an analysis snapshot/);
+  });
+
+  test('removing an unrelated folder never restarts a running server onto the active folder', async () => {
+    const h = harness();
+    try {
+      await startServerOnce(h.controller);
+      assert.deepStrictEqual(h.events, [`start:${alpha.uri.fsPath}`]);
+      h.select(beta.uri.fsPath);
+      await handleWorkspaceFoldersChanged(h.controller, { added: [], removed: [gamma] }, { appendLine: () => undefined });
+      assert.deepStrictEqual(h.events, [`start:${alpha.uri.fsPath}`], 'an unrelated removal is not a root switch');
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('Show Top Limitation treats a bound but stopped client as a stopped server', async () => {
+    const h = harness();
+    let requested = false;
+    h.setRequest(async () => { requested = true; return { status: 'static_unknown_limit' }; });
+    try {
+      await startServerOnce(h.controller);
+      h.setClientState(State.Stopped);
+      await h.controller.showTopLimitation();
+      assert.strictEqual(requested, false, 'no request goes to a stopped client');
+      assert.match(h.infos.at(-1) ?? '', /server is not running.*Restart Server/);
+    } finally { h.setClientState(undefined); await stopServerOnce(h.controller); }
+  });
+
+  test('Show Top Limitation while disabled names the enable step before the restart', async () => {
+    const h = harness();
+    h.disable();
+    await h.controller.showTopLimitation();
+    assert.match(h.infos.at(-1) ?? '', /ripr is disabled\. Set ripr\.enabled to true, then run ripr: Restart Server\./);
   });
 
   test('Show Top Limitation humanizes snake_case status tokens', async () => {
