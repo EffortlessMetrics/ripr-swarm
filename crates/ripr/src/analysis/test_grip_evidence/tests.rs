@@ -1617,6 +1617,80 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
     Ok(())
 }
 
+/// #14487: a test line that calls a free owner twice supplies both inputs to
+/// the seam, as it already does to the diff-scoped probe path (#13373).
+/// `assert_eq!(ok(12), true); assert_eq!(ok(11), false);` on one line covers `n > 11` at its
+/// equality boundary, so `ripr check` reads the probe `exposed`; the seam
+/// used to read only the line's first call, name `11 (equality boundary)`
+/// missing, and send a weak-grip gap to the gate. The negatives keep the
+/// expansion bounded: a line without the boundary input still names it, and
+/// a same-line call that resolves to a rival module's `ok` lends no input.
+#[test]
+fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_reads_it()
+-> Result<(), String> {
+    // (test file source, expected missing equality boundary)
+    let cases = [
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(11), false); }\n",
+            false,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(11), false); assert_eq!(ok(12), true); }\n",
+            false,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(13), true); }\n",
+            true,
+        ),
+        (
+            "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(other::ok(11), false); }\n",
+            true,
+        ),
+    ];
+    for (tests_src, expect_missing) in cases {
+        let prod_src = "pub fn ok(n: u32) -> bool { n > 11 }\n";
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), prod_src),
+            (PathBuf::from("tests/t.rs"), tests_src),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "expected a predicate seam for `n > 11`".to_string())?;
+        if predicate.expression().trim() != "n > 11" {
+            return Err(format!(
+                "fixture parsed the wrong subject: `{}`",
+                predicate.expression()
+            ));
+        }
+        let evidence = evidence_for_seam(predicate, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("fixture should relate test `b`: {tests_src}"));
+        }
+        let missing: Vec<&str> = evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect();
+        let class = classify_seam(predicate, &evidence);
+        if expect_missing {
+            if missing != ["11 (equality boundary)"] || class == SeamGripClass::StronglyGripped {
+                return Err(format!(
+                    "{tests_src:?} must keep `11 (equality boundary)` missing, got {} {missing:?}",
+                    class.as_str()
+                ));
+            }
+        } else if !missing.is_empty() || class != SeamGripClass::StronglyGripped {
+            return Err(format!(
+                "{tests_src:?} should be strongly gripped with nothing missing, got {} {missing:?}",
+                class.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// #4228: a reversed literal (`100 < amount`) or a local boundary
 /// (`let limit = 100;`) names its boundary and closes only when a test
 /// passes the boundary value. The same shapes close in `check`

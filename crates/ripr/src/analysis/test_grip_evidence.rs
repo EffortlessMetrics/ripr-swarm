@@ -49,8 +49,8 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, is_ignored, owner_call_text,
-    predicate_line_arms_all_agree, predicate_line_bool_guards,
+    direct_collection_mutation_receiver, is_ignored, owner_call_argument_rows, owner_call_text,
+    predicate_line_arms_all_agree, predicate_line_bool_guards, qualified_owner_calls_resolve,
     reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
     relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
     test_counts_pushed_collection_argument, whole_signature_parameters,
@@ -3568,16 +3568,22 @@ fn observed_value_facts_for_test(
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
+    let mut expanded_lines: Vec<usize> = Vec::new();
     for call in indexed.test.body_calls() {
-        if call.name != owner_name {
+        if call.name != owner_name || expanded_lines.contains(&call.line) {
             continue;
         }
-        let Some(args) =
-            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
+        let Some(argument_rows) = owner_call_rows_for_seam(call, indexed.test, context, owner_fn)
         else {
             continue;
         };
-        for (arg_index, arg) in args.into_iter().enumerate() {
+        if argument_rows.len() > 1 {
+            expanded_lines.push(call.line);
+        }
+        let arguments = argument_rows
+            .into_iter()
+            .flat_map(|row| row.into_iter().enumerate());
+        for (arg_index, arg) in arguments {
             let argument_operand = match observed_argument_selection {
                 ObservedArgumentSelection::ArgumentOperands(operands) => operands
                     .iter()
@@ -3643,6 +3649,37 @@ fn observed_value_facts_for_test(
         fact.file = Some(indexed.test.file.clone());
     }
     observed
+}
+
+/// The owner-call argument rows one captured call line contributes to the
+/// seam's observed activation values. A line that calls a free owner more
+/// than once (`assert!(ok(12)); assert!(!ok(11));`) yields one row per call,
+/// the same reading the diff-scoped probe path takes (#13373), so the seam
+/// model does not see only the first input on the line and name the second
+/// one as a missing discriminator (#14487). The expansion keeps the probe
+/// path's fail-closed identity guard: when the line's calls do not all
+/// resolve to the owner, the historic first-call reading stands and no
+/// additional input is credited.
+fn owner_call_rows_for_seam(
+    call: &CallFact,
+    test: &TestSummary,
+    context: &CompactGripContext<'_>,
+    owner_fn: &FunctionSummary,
+) -> Option<Vec<Vec<String>>> {
+    let owner_name = owner_fn.name.as_str();
+    let first =
+        owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))?;
+    if owner_fn.impl_context != FunctionImplContext::Free {
+        return Some(vec![first]);
+    }
+    let rows = owner_call_argument_rows(&call.text, owner_name, true);
+    if rows.len() > 1
+        && qualified_owner_calls_resolve(context.index, owner_fn, test, &call.text, call.line)
+    {
+        Some(rows)
+    } else {
+        Some(vec![first])
+    }
 }
 
 fn field_assignment_value_unresolved_for_test(
