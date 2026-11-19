@@ -15039,6 +15039,7 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         "use alloc::vec;",
         "use std::assert_eq;",
         "use core::assert_eq;",
+        "use std::{vec, fmt};",
     ] {
         assert_eq!(refusal_under(&plain, import), None, "{import}");
     }
@@ -15052,6 +15053,9 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         "use std::assert_eq as vec;",
         "use other as std;\n    use std::vec;",
         "mod std {}\n    use std::vec;",
+        "mod alloc {}\n    use alloc::vec;",
+        "extern crate other as alloc;\n    use alloc::vec;",
+        "use crate::alloc::vec;",
     ] {
         assert!(rebound(refusal_under(&plain, import)), "{import}");
     }
