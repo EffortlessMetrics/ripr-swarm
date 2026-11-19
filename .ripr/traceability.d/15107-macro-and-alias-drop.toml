@@ -12,3 +12,20 @@ fixtures = [
   "fixtures/rust_returned_type_drop_alias_exit",
   "fixtures/rust_returned_type_drop_alias_plain",
 ]
+outputs = [
+  "fixtures/rust_returned_type_drop_macro_exit/expected/check.json",
+  "fixtures/rust_returned_type_drop_macro_exit/expected/human.txt",
+  "fixtures/rust_returned_type_drop_macro_exit/expected/human-full.txt",
+  "fixtures/rust_returned_type_drop_macro_plain/expected/check.json",
+  "fixtures/rust_returned_type_drop_macro_plain/expected/human.txt",
+  "fixtures/rust_returned_type_drop_macro_plain/expected/human-full.txt",
+  "fixtures/rust_returned_type_drop_alias_exit/expected/check.json",
+  "fixtures/rust_returned_type_drop_alias_exit/expected/human.txt",
+  "fixtures/rust_returned_type_drop_alias_exit/expected/human-full.txt",
+  "fixtures/rust_returned_type_drop_alias_plain/expected/check.json",
+  "fixtures/rust_returned_type_drop_alias_plain/expected/human.txt",
+  "fixtures/rust_returned_type_drop_alias_plain/expected/human-full.txt",
+]
+code = [
+  "crates/ripr/src/analysis/classify/element_field_pin.rs",
+]
