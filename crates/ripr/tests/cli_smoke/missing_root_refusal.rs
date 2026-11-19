@@ -29,6 +29,9 @@ const CASES: &[(&str, &[&str])] = &[
     ),
     ("first-pr", &["first-pr"]),
     ("start-here", &["start-here"]),
+    // `--check` takes the directory-only check (it writes nothing), but the
+    // refusal wording is the same.
+    ("start-here", &["start-here", "--check"]),
     ("gate check", &["gate", "check", "--base", "HEAD"]),
     (
         "reports ts-false-actionable",
@@ -132,5 +135,35 @@ fn a_file_root_is_refused_by_the_same_wording() -> TestResult {
         stderr.contains(&format!("start-here root {file_text} is not a directory;")),
         "{stderr}"
     );
+    Ok(())
+}
+
+#[test]
+fn diff_json_refuses_a_missing_root_with_a_json_envelope() -> TestResult {
+    let base = unique_temp_workspace("missing-root-diff-json");
+    std::fs::create_dir_all(&base)?;
+    let _cleanup = Cleanup(base.clone());
+    let missing = base.join("nonexistent");
+    let missing_text = missing.to_str().ok_or("fixture root is not UTF-8")?;
+    let output = spawn_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&base),
+        &["diff", "--json", "--root", missing_text],
+        &[],
+        None,
+        Some(b""),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|error| format!("diff --json refusal is one JSON document ({error}): {stdout}"))?;
+    let text = document.to_string();
+    assert!(text.contains("repository_root_unusable"), "{stdout}");
+    assert!(
+        text.contains(&format!("diff root {missing_text} is not a directory")),
+        "{stdout}"
+    );
+    assert!(!text.contains("default base"), "{stdout}");
     Ok(())
 }

@@ -30,9 +30,6 @@ pub(crate) struct FirstPrOptions {
     pub(crate) run_chain: bool,
     /// Test-only ceiling for `GIT_CEILING_DIRECTORIES`; `None` in production.
     pub(crate) git_ceiling: Option<PathBuf>,
-    /// The spelling the caller ran (`first-pr` or its `start-here` alias), so
-    /// a refusal names the command actually run (#15249).
-    pub(crate) command: &'static str,
 }
 
 impl FirstPrOptions {
@@ -87,7 +84,6 @@ impl Default for FirstPrOptions {
             preflight: false,
             run_chain: false,
             git_ceiling: None,
-            command: "first-pr",
         }
     }
 }

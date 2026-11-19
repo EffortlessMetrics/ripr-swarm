@@ -19,14 +19,18 @@ fn run_named(args: &[String], command: &'static str) -> Result<(), String> {
         print_help();
         return Ok(());
     }
-    let mut options = parse_options(args)?;
-    options.command = command;
+    let options = parse_options(args)?;
     // #15249: a missing or non-directory `--root` is the shared root refusal,
     // naming the command actually run, before any disclosure or write.
-    crate::cli::commands_context::ensure_command_root(
-        std::path::Path::new(&options.root),
-        command,
-    )?;
+    // `--check` only reads an existing packet, so it takes the directory
+    // check alone: the output-containment gate canonicalizes `target` links
+    // and registers an ignore file, neither of which a read-only check needs.
+    let root = std::path::Path::new(&options.root);
+    if options.check {
+        crate::cli::commands_context::ensure_command_root_dir(root, command)?;
+    } else {
+        crate::cli::commands_context::ensure_command_root(root, command)?;
+    }
     first_pr_with_options(options)
 }
 
