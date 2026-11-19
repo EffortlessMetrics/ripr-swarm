@@ -5,7 +5,7 @@
 //! without naming it. A same-file test that parses a string literal into the
 //! impl's type reaches the changed method exactly as `Version::from_str("")`
 //! does, so the two spellings of one test read the same. A receiver ripr
-//! cannot type, another target type, a redeclared type, a local `FromStr` trait
+//! cannot type, a byte string, another target type, a redeclared type, a local `FromStr` trait
 //! or a file that may generate impls relates nothing.
 
 use ripr::domain::{ExposureClass, RelationReason};
@@ -267,6 +267,12 @@ fn a_parse_ripr_cannot_tie_to_the_impl_stays_unrelated() -> Result<(), String> {
             "commented",
             "// \"\".parse::<Version>()\n        assert_eq!(Error::Empty, Error::Empty);",
         ),
+        Case {
+            label: "byte_string_with_its_own_parse",
+            extra_items: "\npub trait BytesParse {\n    fn parse<T>(&self) -> Result<T, Error>;\n}\n\nimpl BytesParse for [u8; 0] {\n    fn parse<T>(&self) -> Result<T, Error> {\n        Err(Error::Empty)\n    }\n}\n",
+            test_body: "assert_eq!(b\"\".parse::<Version>(), Err(Error::Empty));",
+            ..PARSED
+        },
         Case {
             label: "type_redeclared_in_the_test_module",
             test_module_items: "\n    #[derive(Debug, PartialEq)]\n    struct Version;\n",

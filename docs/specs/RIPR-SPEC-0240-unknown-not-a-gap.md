@@ -1096,9 +1096,11 @@ closed. All of these hold, or the test is not related:
   another `T`, the owner's file defines no `macro_rules!`, and no workspace
   `macro_rules!` expands to an `impl` the index never sees;
 - the call is `.parse::<T>()` with the bare type name as its only generic
-  argument and no arguments, and its receiver is a plain or raw string
+  argument and no arguments, and its receiver is a whole plain or raw string
   literal. A literal is a `&str`, whose inherent `parse` wins over any trait
-  method of that name, so the call is `str::parse`.
+  method of that name, so the call is `str::parse`. A byte or C string
+  (`b".."`, `br".."`, `c".."`) is no `&str`, and a user trait may give it a
+  `parse` method, so it is refused.
 
 A receiver ripr cannot type (`text.parse::<T>()`), an annotated binding
 (`let v: Result<T, E> = "1".parse();`), another target type, a call through a

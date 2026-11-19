@@ -19,7 +19,8 @@
 //! - the call is `.parse::<T>()` with the bare type name as its only generic
 //!   argument and no arguments, outside property-test macros and
 //!   `stringify!`;
-//! - the receiver is a string literal (plain or raw). A literal is a `&str`,
+//! - the receiver is a string literal (plain or raw, never a byte or C
+//!   string, which a user trait may give a `parse`). A literal is a `&str`,
 //!   whose inherent `parse` wins over any trait method of that name, so the
 //!   call is `str::parse` and runs `<T as FromStr>::from_str`. A receiver
 //!   ripr cannot type (`text.parse::<T>()`) relates nothing, and neither does
@@ -148,7 +149,7 @@ fn literal_parse_sites(raw: &str, masked: &str, impl_type: &str) -> Vec<usize> {
         if !turbofish_names_only(&masked[name_end..], impl_type) {
             continue;
         }
-        if receiver_is_string_literal(raw, masked, dot) {
+        if receiver_is_string_literal(raw, dot) {
             sites.push(dot);
         }
     }
@@ -176,28 +177,40 @@ fn turbofish_names_only(after: &str, impl_type: &str) -> bool {
     rest.trim_start().starts_with(')')
 }
 
-/// Whether the receiver that ends just before byte `dot` is a string literal:
-/// the last non-space byte of the raw text is a closing `"` (followed only by
-/// the `#`s of a raw string), and that quote is masked, so it closes a string
-/// rather than a character literal or code.
-fn receiver_is_string_literal(raw: &str, masked: &str, dot: usize) -> bool {
+/// Whether the receiver that ends just before byte `dot` is a whole plain or
+/// raw string literal of `raw`, read from the shared masking scan's literal
+/// spans. A byte or C string (`b".."`, `br".."`, `c".."`) is masked the same
+/// way but is no `&str`: a user trait may give it a `parse` method, so a
+/// literal with any prefix but a raw `r` is refused.
+fn receiver_is_string_literal(raw: &str, dot: usize) -> bool {
     let Some(head) = raw.get(..dot) else {
         return false;
     };
-    let trimmed = head.trim_end();
-    let unhashed = trimmed.trim_end_matches('#');
-    let Some(quote) = unhashed.len().checked_sub(1) else {
-        return false;
-    };
-    if raw.as_bytes().get(quote) != Some(&b'"') {
-        return false;
-    }
-    // A raw string's closing hashes need its opening `r#`; a plain string has
-    // none, so hashes after a plain quote are not a literal's.
-    if unhashed.len() != trimmed.len() && !raw[..quote].contains("r#") {
-        return false;
-    }
-    masked.as_bytes().get(quote) == Some(&b' ')
+    let receiver_end = head.trim_end().len();
+    let bytes = raw.as_bytes();
+    crate::analysis::extract::string_literal_spans(raw)
+        .into_iter()
+        .any(|(open, close, is_raw)| {
+            let (start, end) = if is_raw {
+                // `r#"..."#`: the hashes between `r` and the opening quote
+                // also close the literal.
+                let hashes = bytes[..open]
+                    .iter()
+                    .rev()
+                    .take_while(|&&byte| byte == b'#')
+                    .count();
+                let Some(r_at) = open.checked_sub(hashes + 1) else {
+                    return false;
+                };
+                if bytes[r_at] != b'r' {
+                    return false;
+                }
+                (r_at, close + 1 + hashes)
+            } else {
+                (open, close + 1)
+            };
+            end == receiver_end && (start == 0 || !is_ident_byte(bytes[start - 1]))
+        })
 }
 
 #[cfg(test)]
@@ -226,6 +239,10 @@ mod tests {
         assert_eq!(sites("// \"1\".parse::<Version>()"), 0);
         assert_eq!(sites("let s = \"\\\"1\\\".parse::<Version>()\";"), 0);
         assert_eq!(sites("let v = '\"'.parse::<Version>();"), 0);
+        assert_eq!(sites("let v = b\"1\".parse::<Version>();"), 0);
+        assert_eq!(sites("let v = br\"1\".parse::<Version>();"), 0);
+        assert_eq!(sites("let v = br#\"1\"#.parse::<Version>();"), 0);
+        assert_eq!(sites("let v = c\"1\".parse::<Version>();"), 0);
     }
 
     #[test]
