@@ -405,7 +405,10 @@ fn main_drift_and_independent_matching_edits_use_the_merge_base() -> TestResult 
     let fixture = Fixture::new()?;
     let original = fixture.ledger()?;
     let fork = fixture.git(&["rev-parse", "HEAD"])?;
-    let main_ledger = original.replace("|243|", "|244|");
+    let main_ledger = original.replace(
+        ".github/workflows/python-wheel-qualification.yml|243|",
+        ".github/workflows/python-wheel-qualification.yml|244|",
+    );
     assert_ne!(main_ledger, original, "wheel budget fixture value changed");
     let main = fixture.change(LEDGER, &main_ledger)?;
     fixture.git(&["checkout", "-b", "candidate", &fork])?;
