@@ -6821,6 +6821,8 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         "tools/ci/test_shard_verifier_artifact.py",
         "tools/ci/main-qualification.py",
         "tools/ci/test_main_qualification.py",
+        "tools/ci/nextest-discovery.py",
+        "tools/ci/test_nextest_discovery.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -6874,6 +6876,8 @@ fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> 
         "tools/python/installed-provider-recovery/other.py",
         "tools/python/other.py",
         "tools/ci/main-qualification-extra.py",
+        "tools/ci/nextest-discovery-extra.py",
+        "tools/ci/nested/nextest-discovery.py",
         "tools/ci/test_main_qualification_extra.py",
         "tools/ci/nested/main-qualification.py",
         "tools/ci/main-qualification.py.extra.py",

@@ -1415,3 +1415,21 @@ surface = "ci"
 classification = "test"
 reason = "#14500: native-fact fixtures exercise the production observer and actual tracker shell, including current-attempt, source identity and late recovery races; the existing sentinel Rust test runs these bounded controls on Linux."
 covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+
+[[allow]]
+glob = "tools/ci/nextest-discovery.py"
+kind = "nextest_discovery_tooling"
+owner = "ci/nextest-discovery"
+surface = "ci"
+classification = "tooling"
+reason = "#14906: runner-provided POSIX stdlib supervisor bounds discovery before test execution; Linux repo-policy controls exercise deadline, cancellation, metadata-only export and the actual workflow shell without Nextest or a workspace build."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+
+[[allow]]
+glob = "tools/ci/test_nextest_discovery.py"
+kind = "nextest_discovery_test"
+owner = "ci/nextest-discovery"
+surface = "ci"
+classification = "test"
+reason = "#14906: runner-provided POSIX stdlib supervisor bounds discovery before test execution; Linux repo-policy controls exercise deadline, cancellation, metadata-only export and the actual workflow shell without Nextest or a workspace build."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
