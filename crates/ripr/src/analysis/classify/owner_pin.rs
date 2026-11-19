@@ -52,6 +52,7 @@ pub(super) mod result_map;
 pub(super) mod returned_closure;
 mod shared_macro_scan;
 pub(super) mod short_circuit;
+mod unseen_member;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 use shared_macro_scan::ScanPart;
 pub(in crate::analysis) use shared_macro_scan::SharedMacroScans;
@@ -3102,8 +3103,9 @@ fn placement_include_explains(
             .is_some_and(|placed| placed.is_disjoint(&roots.tainted))
         // The include must be the whole reason placement is off: a lexical
         // fallback, unknown `#[path]` or unseen member elsewhere keeps it off
-        // after the include is removed.
+        // after the include is removed, and a mounted file stays unplaced.
         && !roots.non_include_disabled
+        && !roots.is_mounted(path)
         // And the glob must be ambiguous only because placement is off. With
         // placement on it is confined to the test's module subtree, so it
         // would still refuse if it reaches the assertion from an ancestor
@@ -3307,6 +3309,11 @@ struct TargetRoots {
     /// under these roots are unplaced while every other crate keeps
     /// placement.
     tainted: BTreeSet<PathBuf>,
+    /// #14116: indexed files, relative to the workspace root, that an
+    /// unindexed member mounts through `#[path]`. Each is also compiled in a
+    /// crate the index does not hold, so it is unplaced while every other
+    /// file keeps placement ([`unseen_member`]).
+    mounted: BTreeSet<PathBuf>,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
@@ -3317,161 +3324,7 @@ struct TargetRoots {
     binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
-/// Draft/Fast indexes omit members that are not the changed package or its
-/// reverse path-dependents. An omitted member is an unseen compilation
-/// *target* of indexed files only when it may mount them (`include!` or
-/// `#[path]`): that is the #10149 generated-B case. A namesake sibling
-/// with no such mount is not a target of the receiver, so indexed members
-/// across packages stay placeable.
-fn unindexed_member_is_unseen_compilation_target(index: &RustIndex) -> bool {
-    let Some(root) = index
-        .workspace_authority
-        .as_ref()
-        .map(|authority| authority.root.as_path())
-    else {
-        return false;
-    };
-    index.workspace_member_dirs.iter().any(|member_dir| {
-        let member_canon = member_dir
-            .canonicalize()
-            .unwrap_or_else(|_| member_dir.to_path_buf());
-        let Some(relative) = member_canon.strip_prefix(root).ok() else {
-            return false;
-        };
-        let indexed = index.files().iter().any(|(path, _)| {
-            let path = path.as_path();
-            let path = path.strip_prefix("./").unwrap_or(path);
-            path.starts_with(relative)
-        });
-        !indexed && unindexed_member_may_mount_foreign_files(&member_canon)
-    })
-}
-
-const UNINDEXED_MEMBER_ROOTS: &[&str] =
-    &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
 const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
-
-/// The most `#[path]`-named files one unindexed member's walk follows before
-/// it fails closed. Crate roots, including every explicitly declared target,
-/// are not counted.
-const UNINDEXED_MEMBER_PATH_FILES: usize = 64;
-
-/// Whether an unindexed member's crate-root sources look like they could
-/// compile another crate's files. Unreadable, oversized, or missing crate
-/// roots fail closed: the member exists and its compilation effect is
-/// unknown. A readable crate root with no `include!` / `#[path]` is not a
-/// mount, so a namesake dependency of an indexed test crate does not
-/// disable placement.
-///
-/// #14260: a literal `#[path]` on a top-level `mod name;` whose target is a
-/// file inside the member's own directory names the member's own file, as a
-/// plain `mod name;` would. That file is read under the same rule instead
-/// of failing closed; a missing or unreadable one still fails closed.
-fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
-    let Some((inspected, saw_path)) = walk_unindexed_member(member_dir, false) else {
-        return true;
-    };
-    // Once a `#[path]` is accepted the member is no longer the plain layout
-    // the roots above describe, so the walk repeats strictly: Cargo's
-    // auto-discovered roots are read and no file may declare a default-layout
-    // child this walk would not read.
-    if saw_path && walk_unindexed_member(member_dir, true).is_none() {
-        return true;
-    }
-    !inspected
-}
-
-/// Crate roots Cargo discovers without a manifest entry: `src/bin/*.rs`,
-/// `src/bin/*/main.rs`, and the same shapes under `tests`, `examples` and
-/// `benches`. `None` when a directory cannot be listed.
-fn auto_discovered_roots(member_dir: &Path) -> Option<Vec<PathBuf>> {
-    let mut roots = Vec::new();
-    for directory in ["src/bin", "tests", "examples", "benches"] {
-        let entries = match std::fs::read_dir(member_dir.join(directory)) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return None,
-        };
-        for entry in entries {
-            let path = entry.ok()?.path();
-            if path.is_dir() {
-                roots.push(path.join("main.rs"));
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                roots.push(path);
-            }
-        }
-    }
-    Some(roots)
-}
-
-/// One walk of an unindexed member's sources. `None` when something may
-/// compile a file outside the member; otherwise `(inspected, saw_path)`:
-/// whether any source was read and whether any own-file `#[path]` was seen.
-/// `strict` adds the auto-discovered roots and refuses default-layout
-/// children in every file, not only in files reached through `#[path]`.
-fn walk_unindexed_member(member_dir: &Path, strict: bool) -> Option<(bool, bool)> {
-    let mut pending: Vec<(PathBuf, bool)> = UNINDEXED_MEMBER_ROOTS
-        .iter()
-        .map(|candidate| (member_dir.join(candidate), false))
-        .collect();
-    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
-        Ok(manifest) => {
-            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
-                pending.push((member_dir.join(relative), false));
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return None,
-    }
-    if strict {
-        pending.extend(
-            auto_discovered_roots(member_dir)?
-                .into_iter()
-                .map(|root| (root, false)),
-        );
-    }
-    let mut seen = BTreeSet::new();
-    let mut followed = 0;
-    let mut inspected = false;
-    let mut saw_path = false;
-    // `required`: a `#[path]` named the file, so its absence is not a guess
-    // that missed but a module whose source ripr cannot read.
-    while let Some((path, required)) = pending.pop() {
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        if required {
-            followed += 1;
-            if followed > UNINDEXED_MEMBER_PATH_FILES {
-                return None;
-            }
-        }
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                // A root that links outside the member is another file's
-                // compilation context, not the member's own source.
-                if !path
-                    .canonicalize()
-                    .is_ok_and(|target| target.starts_with(member_dir))
-                {
-                    return None;
-                }
-                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
-                    return None;
-                }
-                let source = std::str::from_utf8(&bytes).ok()?;
-                inspected = true;
-                for literal in own_path_literals(source, required || strict)? {
-                    saw_path = true;
-                    pending.push((member_own_file(&path, &literal, member_dir)?, true));
-                }
-            }
-            Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return None,
-        }
-    }
-    Some((inspected, saw_path))
-}
 
 /// The `#[path]` literals of `source` when they are all it could mount
 /// through: no `include!`, no inner `#![path]`, and every `#[path` in the
@@ -3543,15 +3396,6 @@ fn cfg_attr_may_introduce_path(compact: &str) -> bool {
         rest = body;
     }
     false
-}
-
-/// The existing file a `#[path = "literal"]` in `declaring` names, when it
-/// lies inside `member_dir` (canonical). A non-inline `#[path]` is relative
-/// to the declaring file's directory. Symlinks are followed first, so a link
-/// out of the member is not the member's own file.
-fn member_own_file(declaring: &Path, literal: &str, member_dir: &Path) -> Option<PathBuf> {
-    let target = declaring.parent()?.join(literal).canonicalize().ok()?;
-    (target.is_file() && target.starts_with(member_dir)).then_some(target)
 }
 
 /// #14116: how far one include limitation reaches.
@@ -3723,7 +3567,10 @@ impl TargetRoots {
                 IncludeReach::Roots(roots) => tainted.extend(roots),
             }
         }
-        let non_include_disabled = unindexed_member_is_unseen_compilation_target(index)
+        // #14116: an unindexed member that mounts indexed files withholds
+        // only those files; one whose effect is unbounded disables all.
+        let mounted = unseen_member::unseen_member_mounts(index);
+        let non_include_disabled = mounted.is_none()
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
@@ -3736,14 +3583,23 @@ impl TargetRoots {
             non_include_disabled,
             workspace_include,
             tainted,
+            mounted: mounted.unwrap_or_default(),
             src_dirs,
             memo: SyncMemo::default(),
             binary_macro_roots: SyncMemo::default(),
         }
     }
 
+    /// Whether an unindexed member mounts `file` (#14116).
+    fn is_mounted(&self, file: &Path) -> bool {
+        !self.mounted.is_empty()
+            && self
+                .mounted
+                .contains(file.strip_prefix("./").unwrap_or(file))
+    }
+
     fn roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
-        if self.disabled {
+        if self.disabled || self.is_mounted(file) {
             return None;
         }
         if let Some(roots) = self.memo.borrow().get(file) {
@@ -3770,7 +3626,7 @@ impl TargetRoots {
         site: &MacroBindingSite,
         index: &RustIndex,
     ) -> Option<BTreeSet<PathBuf>> {
-        if self.disabled {
+        if self.disabled || self.is_mounted(file) {
             return None;
         }
         if site.crate_local {
@@ -3792,7 +3648,7 @@ impl TargetRoots {
     }
 
     fn binary_roots(&self, file: &Path, index: &RustIndex) -> Option<BTreeSet<PathBuf>> {
-        if self.disabled {
+        if self.disabled || self.is_mounted(file) {
             return None;
         }
         if let Some(roots) = self.binary_macro_roots.borrow().get(file) {
@@ -3832,7 +3688,7 @@ impl TargetRoots {
         root: &Path,
         index: &RustIndex,
     ) -> bool {
-        if self.disabled {
+        if self.disabled || self.is_mounted(file) {
             return false;
         }
         index.execution_context(file).is_some_and(|context| {
@@ -4803,7 +4659,7 @@ fn macro_root_verified_in_contexts(
     index: &RustIndex,
     roots: &TargetRoots,
 ) -> bool {
-    if roots.disabled {
+    if roots.disabled || roots.is_mounted(path) {
         return false;
     }
     let Some(context) = index.execution_context(path) else {
@@ -9503,6 +9359,7 @@ fn test_crate_may_bind(
         // Missing ancestry/placement keeps possible shadows, rather than
         // borrowing this namespace exclusion from a representative chain.
         let private_helper = !roots.disabled
+            && !roots.is_mounted(path)
             && index.execution_context(path).is_some_and(|context| {
                 !context.edges.is_empty()
                     && context.roots.iter().all(|root| {

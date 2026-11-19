@@ -1,0 +1,6 @@
+# Registers the mounted-file placement narrowing for unindexed members (#14116) under RIPR-SPEC-0352.
+[[extend]]
+id = "RIPR-SPEC-0352"
+tests = [
+  "crates/ripr/tests/unindexed_member_own_path.rs::a_member_mounting_one_indexed_file_keeps_placement_for_the_others",
+]
