@@ -30,9 +30,7 @@ mod python;
 mod read_limit_disclosure;
 mod router;
 mod rust;
-pub(in crate::analysis) use rust::oracles::{
-    apply_complete_proximity_macro_limit, first_unread_assertion_like_macro,
-};
+pub(in crate::analysis) use rust::oracles::apply_complete_proximity_macro_limit;
 pub(crate) use rust::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 #[cfg(feature = "lang-typescript")]
 mod typescript;

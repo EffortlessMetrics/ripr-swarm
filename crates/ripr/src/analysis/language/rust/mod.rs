@@ -1883,6 +1883,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a

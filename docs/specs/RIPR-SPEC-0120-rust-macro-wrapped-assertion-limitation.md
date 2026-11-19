@@ -187,8 +187,10 @@ macro not read:" and names the test and the macro. strsim's
 `assert_delta!(0.767, jaro("dixon", "dicksonx"), 0.001)`, whose body is
 `if ($x - $y).abs() > $d { panic!(..) }`, is the motivating case.
 
-Only the false absence claim is withdrawn. This grants no oracle, strength,
-class or static limit, and the observe and discriminate stage summaries keep
+Only the false absence claim is withdrawn. The rewrite runs after every
+limit and gap decision of the Rust post-classify pass, so the refusal miss
+never reads as an assertion ripr judged to the #7089 limit or a withhold gate.
+This grants no oracle, strength, class or static limit, and the observe and discriminate stage summaries keep
 their wording: unlike a #9981 forwarded callback or a returned QuickCheck
 property, these rows never count toward replacing those summaries. A test with
 no macro, a non-assertion macro (`vec!`, `println!`), or the spelling only in
@@ -337,7 +339,7 @@ a comment or string keeps `no_assertion`.
 |---|---|
 | Static limit enum and text | `crates/ripr-contract/src/domain/language.rs` |
 | Rust post-classification selection | `crates/ripr/src/analysis/language/rust/oracles.rs` |
-| Unread-macro row miss (#15237) | `crates/ripr/src/analysis/classify/refusal_miss.rs` |
+| Unread-macro row miss (#15237) | `crates/ripr/src/analysis/language/rust/oracles.rs::name_unread_assertion_macro_rows` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Static limit docs | `docs/STATIC_LIMITS.md` |

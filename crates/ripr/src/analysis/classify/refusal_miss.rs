@@ -242,7 +242,6 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
     // Recorded by this producer loop as it rewrites, so the `only_limits`
     // decision below reads these facts rather than re-reading the miss.
     let mut rows_clear = true;
-    let mut unread_macro_rows = false;
     for row in related_tests.iter_mut() {
         if row.oracle.is_some() {
             rows_clear = false;
@@ -269,20 +268,6 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
                 "{QUICKCHECK_PROPERTY_PREFIX}`{}` reports failure through the value it returns; ripr does not read that returned check",
                 row.name
             )
-        } else if let Some(macro_name) = context
-            .related_tests
-            .iter()
-            .find(|(test, _)| {
-                test.file == row.file && test.start_line == row.line && test.name == row.name
-            })
-            .and_then(|(test, _)| unread_assertion_like_macro(test))
-        {
-            // Not a forwarded or returned check: never widens `only_limits`.
-            unread_macro_rows = true;
-            format!(
-                "{UNREAD_ASSERTION_MACRO_PREFIX}`{}` checks through `{macro_name}!`, an assertion-like macro ripr does not read, so whether it observes the changed behavior is not established",
-                row.name
-            )
         } else {
             rows_clear = false;
             continue;
@@ -300,7 +285,6 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
     let credits = super::oracle_crediting_relations(&context.related_tests);
     named.only_limits = !named.evidence.is_empty()
         && rows_clear
-        && !unread_macro_rows
         && context
             .related_tests
             .iter()
@@ -387,19 +371,6 @@ fn is_property_result_type(returned: &str) -> bool {
     )
 }
 
-/// #15237: a Rust test whose only check is an assertion-like macro ripr does
-/// not read (`assert_delta!`, a test-local `macro_rules!` whose body is
-/// `if bad { panic!(..) }`) has an assertion; what it observes is unknown. The
-/// row is rewritten like a forwarded helper's, granting nothing. It is
-/// deliberately left out of `only_limits`, so the stage summaries keep their
-/// existing wording.
-fn unread_assertion_like_macro(test: &TestSummary) -> Option<String> {
-    if test.file.extension().is_none_or(|ext| ext != "rs") {
-        return None;
-    }
-    crate::analysis::language::first_unread_assertion_like_macro(&test.body)
-}
-
 /// What [`name_forwarded_callback_limits`] rewrote.
 #[derive(Default)]
 pub(in crate::analysis) struct ForwardedCallbackLimits {
@@ -411,10 +382,6 @@ pub(in crate::analysis) struct ForwardedCallbackLimits {
 
 /// Evidence prefix of a [`name_forwarded_callback_limits`] line.
 pub(in crate::analysis) const FORWARDED_CALLBACK_PREFIX: &str = "closure forwarded by helper: ";
-
-/// Evidence prefix of an unread assertion-like macro line (#15237).
-pub(in crate::analysis) const UNREAD_ASSERTION_MACRO_PREFIX: &str =
-    "assertion-like macro not read: ";
 
 /// Evidence prefix of a returned QuickCheck property line (#6643).
 pub(in crate::analysis) const QUICKCHECK_PROPERTY_PREFIX: &str =

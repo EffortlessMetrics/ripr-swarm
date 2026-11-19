@@ -766,16 +766,57 @@ fn unresolved_assertion_macro_invocations(
     unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
-/// The first assertion-like macro a test body invokes that ripr does not
-/// classify as an oracle (`assert_delta!(..)`, an `assert_*` spelling that is
-/// not a recognized std macro), read from comment- and string-masked text
-/// (#15237). The same name predicate as the #7089 witness. It never grades an
-/// oracle: the caller only withdraws a false "has no assertion" claim.
-pub(crate) fn first_unread_assertion_like_macro(body: &str) -> Option<String> {
-    unresolved_assertion_macro_invocations_among(body, 0, None, &[], &[])
-        .into_iter()
-        .min_by_key(|(_, line)| *line)
-        .map(|(name, _)| name)
+/// Evidence prefix of an unread assertion-like macro row line (#15237).
+pub(crate) const UNREAD_ASSERTION_MACRO_PREFIX: &str = "assertion-like macro not read: ";
+
+/// #15237: a related-test row read as `no_assertion` whose test body invokes
+/// an assertion-like macro ripr does not classify (`assert_delta!`, a
+/// test-local `macro_rules!` built from `if bad { panic!(..) }`) does have a
+/// check; what it observes is unknown. The row becomes the analyzer-limit miss
+/// `assertion_admission_unproven` and the finding names the test and macro.
+///
+/// This runs after every limit and gap decision of the post-classify pass, so
+/// it never feeds one: a refusal miss reads as "an assertion ripr judged" to
+/// those decisions (#7089), which this macro is not. It grants no oracle,
+/// strength, class or limit, and leaves the stage summaries alone; only the
+/// false absence claim is withdrawn. Macros are read from comment- and
+/// string-masked text with the #7089 witness's spelling rule.
+pub(super) fn name_unread_assertion_macro_rows(finding: &mut Finding, index: &RustIndex) {
+    let mut lines = Vec::new();
+    for row in &mut finding.related_tests {
+        if row.oracle.is_some()
+            || row.miss != Some(crate::domain::RelatedTestMiss::NoAssertion)
+            || row.file.extension().is_none_or(|ext| ext != "rs")
+        {
+            continue;
+        }
+        let Some(macro_name) = index
+            .tests()
+            .iter()
+            .chain(index.files().values().flat_map(|file| file.tests.iter()))
+            .find(|test| {
+                test.name == row.name && test.file == row.file && test.start_line == row.line
+            })
+            .and_then(|test| {
+                unresolved_assertion_macro_invocations_among(&test.body, 0, None, &[], &[])
+                    .into_iter()
+                    .min_by_key(|(_, line)| *line)
+                    .map(|(name, _)| name)
+            })
+        else {
+            continue;
+        };
+        row.miss = Some(crate::domain::RelatedTestMiss::AssertionAdmissionUnproven);
+        lines.push(format!(
+            "{UNREAD_ASSERTION_MACRO_PREFIX}`{}` checks through `{macro_name}!`, an assertion-like macro ripr does not read, so whether it observes the changed behavior is not established",
+            row.name
+        ));
+    }
+    for line in lines {
+        if !finding.evidence.contains(&line) {
+            finding.evidence.push(line);
+        }
+    }
 }
 
 fn unresolved_assertion_macro_invocations_among(
