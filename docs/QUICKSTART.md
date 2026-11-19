@@ -34,7 +34,7 @@ f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
 echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
-  && mkdir -p ripr-bin && tar xzf $f -C ripr-bin \
+  && mkdir ripr-bin && tar xzf $f -C ripr-bin \
   && export PATH="$PWD/ripr-bin:$PATH"   # ripr-bin/ripr is now first on PATH for this shell
 ```
 
