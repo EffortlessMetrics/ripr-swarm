@@ -153,6 +153,25 @@ fn goldens_pass_line(fixtures: usize) -> String {
     format!("goldens check-with-fixtures: pass ({fixtures} fixtures compared)")
 }
 
+/// The clean-run verdict, or `None` when this is not the joint command. The
+/// plain `goldens check` path and every failing path must stay silent.
+fn goldens_clean_verdict(fixtures_report: bool, fixtures: usize) -> Option<String> {
+    fixtures_report.then(|| goldens_pass_line(fixtures))
+}
+
+/// Write the clean-run verdict when there is one. Split from the caller so a
+/// test can prove the guard and the count without running the fixture sweep.
+fn write_goldens_clean_verdict(
+    out: &mut impl std::io::Write,
+    fixtures_report: bool,
+    fixtures: usize,
+) -> std::io::Result<()> {
+    if let Some(line) = goldens_clean_verdict(fixtures_report, fixtures) {
+        writeln!(out, "{line}")?;
+    }
+    Ok(())
+}
+
 /// What a `goldens check` run established, before the caller decides how to
 /// treat violations.
 enum GoldenCheckRun {
@@ -208,9 +227,12 @@ fn golden_check_run_with_fixture_report(fixtures_report: bool) -> Result<GoldenC
     }
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
-        if fixtures_report {
-            println!("{}", goldens_pass_line(run_set.fixtures.len()));
-        }
+        write_goldens_clean_verdict(
+            &mut std::io::stdout(),
+            fixtures_report,
+            run_set.fixtures.len(),
+        )
+        .map_err(|error| format!("write goldens pass verdict: {error}"))?;
         Ok(GoldenCheckRun::Clean)
     } else {
         let message = goldens_check_failure_message(&entries, &run_set.violations, &provenance);
@@ -3582,11 +3604,18 @@ mod tests {
     }
 
     #[test]
-    fn goldens_pass_line_names_the_compared_fixture_count() {
+    fn goldens_clean_verdict_writes_only_for_the_joint_command() {
+        let mut out = Vec::new();
+        super::write_goldens_clean_verdict(&mut out, true, 3).expect("joint verdict");
         assert_eq!(
-            super::goldens_pass_line(3),
-            "goldens check-with-fixtures: pass (3 fixtures compared)"
+            String::from_utf8(out).expect("utf8"),
+            "goldens check-with-fixtures: pass (3 fixtures compared)\n"
         );
+
+        // Plain `goldens check` passes the flag as false and must stay silent.
+        let mut out = Vec::new();
+        super::write_goldens_clean_verdict(&mut out, false, 3).expect("plain check");
+        assert!(out.is_empty());
     }
 
     #[test]
