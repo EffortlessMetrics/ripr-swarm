@@ -4535,6 +4535,28 @@ pub(crate) fn module_declaration_unestablished_gate(
     line: usize,
     declaration: &str,
 ) -> Option<bool> {
+    // Classification asks this once per (probe, related test, assertion), and
+    // the parent is usually the same large `mod.rs`/`lib.rs` each time, so
+    // every call re-parsed it and walked all descendants (#15290). The answer
+    // is a pure function of the text, the line and the declaration, so a run
+    // scope computes each query once. Keyed per query (not a per-file index)
+    // because callers ask about one or a few declarations per parent.
+    super::run_memo::memoize_with(
+        super::run_memo::Product::ModuleDeclarationGate,
+        line,
+        declaration,
+        source,
+        || module_declaration_unestablished_gate_uncached(source, line, declaration),
+    )
+}
+
+fn module_declaration_unestablished_gate_uncached(
+    source: &str,
+    line: usize,
+    declaration: &str,
+) -> Option<bool> {
+    #[cfg(test)]
+    MODULE_GATE_PARSES.with(|count| count.set(count.get() + 1));
     let name = declaration
         .strip_prefix("mod ")
         .and_then(|rest| rest.strip_suffix(';'))?;
@@ -4567,6 +4589,87 @@ pub(crate) fn module_declaration_unestablished_gate(
         }
     }
     Some(gated)
+}
+
+#[cfg(test)]
+thread_local! {
+    static MODULE_GATE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod module_gate_memo_tests {
+    use super::*;
+
+    fn take_parses() -> usize {
+        MODULE_GATE_PARSES.with(|count| count.replace(0))
+    }
+
+    /// #15290: a run scope answers a repeated module gate query from the memo
+    /// with the unmemoized answer, parsing once per distinct query.
+    #[test]
+    fn a_run_scope_answers_repeated_module_gate_queries_once() {
+        let source = "mod a;\n#[cfg(test)]\nmod b;\n#[cfg(feature = \"x\")]\nmod c;\n#[cfg(any())]\nmod d;\nmod e;\nmod e;\n#[cfg(feature = \"x\")] mod f; mod g;\n";
+        let queries = [
+            (1, "mod a;"),
+            (3, "mod b;"),
+            (5, "mod c;"),
+            (7, "mod d;"),
+            (8, "mod e;"),
+            (9, "mod e;"),
+            (10, "mod f;"),
+            (10, "mod g;"),
+            (2, "mod a;"),
+        ];
+        let expected: Vec<_> = queries
+            .iter()
+            .map(|(line, declaration)| {
+                module_declaration_unestablished_gate_uncached(source, *line, declaration)
+            })
+            .collect();
+        // Premises: plain, cfg(test), unknown cfg, provably off, a missing
+        // line, and a gated sibling next to a plain one on the same line.
+        assert_eq!(
+            expected,
+            vec![
+                Some(false),
+                Some(false),
+                Some(true),
+                None,
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+                None,
+            ]
+        );
+        let _ = take_parses();
+        for _ in 0..3 {
+            for ((line, declaration), want) in queries.iter().zip(&expected) {
+                assert_eq!(
+                    &module_declaration_unestablished_gate(source, *line, declaration),
+                    want
+                );
+            }
+        }
+        assert_eq!(take_parses(), 27, "without a scope every query parses");
+        let _scope = super::super::run_memo::enter();
+        let before = super::super::run_memo::memo_stats();
+        for _ in 0..3 {
+            for ((line, declaration), want) in queries.iter().zip(&expected) {
+                assert_eq!(
+                    &module_declaration_unestablished_gate(source, *line, declaration),
+                    want
+                );
+            }
+        }
+        assert_eq!(
+            take_parses(),
+            9,
+            "inside a scope each distinct query parses once"
+        );
+        let delta = super::super::run_memo::memo_stats().since(before);
+        assert_eq!((delta.misses, delta.hits), (9, 18));
+    }
 }
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
