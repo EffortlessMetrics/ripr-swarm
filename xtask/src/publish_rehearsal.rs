@@ -20,8 +20,8 @@
 //! copy of the workspace whose `crates/ripr/src` has its inline
 //! `#[cfg(test)]` modules removed, so the archive fits the crates.io upload
 //! limit. A passing rehearsal leaves that stage at `target/publish-stage`;
-//! the real `cargo publish` runs from there, so the published bytes are the
-//! rehearsed ones.
+//! the real `cargo publish` runs from there, so it packages the rehearsed,
+//! verified source tree (`publish_stage::verify_stage`).
 
 use std::fs;
 use std::io::Read as _;
@@ -118,9 +118,14 @@ pub(crate) fn vendored_ripr_crate(
     let lock_backup = fs::read(&lock_path).ok();
     let packaged = package_from_stage(&scratch, &stage, version);
     if let Some(bytes) = lock_backup {
-        let _ = fs::write(&lock_path, bytes);
+        fs::write(&lock_path, bytes)
+            .map_err(|e| format!("cannot restore {}: {e}", lock_path.display()))?;
     }
-    packaged
+    let crates = packaged?;
+    // The packaged bytes are only as trustworthy as the stage they came from;
+    // prove it is still HEAD plus the strip before anyone consumes them.
+    crate::publish_stage::verify_stage(&stage)?;
+    Ok(crates)
 }
 
 fn package_from_stage(

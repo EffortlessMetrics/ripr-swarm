@@ -186,7 +186,7 @@ cargo xtask check-generated-clean
 cargo xtask release-readiness --version 0.11.0   # the version you are cutting
 cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarball contents
 ```
 
 For the #1609-qualified path, the existing corpus also accepts the complete
@@ -384,7 +384,7 @@ the local install path, the extension package, and the published server assets:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke
 target/ripr/install-smoke/bin/ripr --version
 target/ripr/install-smoke/bin/ripr first-pr --help
@@ -449,8 +449,16 @@ cargo publish --allow-dirty -p ripr-contract
 cargo publish --allow-dirty -p ripr
 ```
 
-`--allow-dirty` is required because the strip modifies the checked-out
-`ripr` sources; the stage holds nothing else that differs from `HEAD`.
+Run the rehearsal immediately before publishing, on the release commit, and
+check that the kept stage is that commit
+(`git -C target/publish-stage rev-parse HEAD`): `cargo publish` packages the
+stage again rather than uploading the rehearsed `.crate`, so a stage left by
+an earlier rehearsal would publish that earlier commit. `--allow-dirty` is
+required because the strip modifies the checked-out `ripr` sources. The
+rehearsal verifies, after staging and again after packaging, that the stage
+differs from `HEAD` only by the marker and by `.rs` files under
+`crates/ripr/src` that are exactly their `HEAD` content with inline test
+modules stripped, and fails otherwise.
 
 Cargo may time out while polling the registry index after upload. If that
 happens, check crates.io manually before retrying.

@@ -68,11 +68,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_publish_stage_marker_name_is_the_one_the_stage_writes() {
+        // `xtask/src/publish_stage.rs` writes this file name and the package
+        // `include` list carries it; a rename must change all three.
+        assert_eq!(PUBLISH_STAGE_MARKER, ".ripr-publish-stage");
+    }
+
+    #[test]
     fn a_publish_stage_marker_naming_the_commit_clears_only_that_dirty_flag() {
         let sha = || SHA.to_string();
         let marker = format!("{SHA}\n");
         assert_eq!(
             publish_stage_identity(sha(), true, Some(&marker)),
+            (sha(), false)
+        );
+        // Surrounding whitespace is ignored.
+        assert_eq!(
+            publish_stage_identity(sha(), true, Some(&format!("  {SHA}\r\n"))),
             (sha(), false)
         );
         // No marker, a marker for another commit, or an empty marker: dirty.

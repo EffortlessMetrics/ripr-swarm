@@ -107,6 +107,13 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
     let marker = stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER);
     fs::write(&marker, format!("{commit}\n"))
         .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+    let verified = verify_stage(stage)?;
+    if verified != report.stripped_files {
+        return Err(format!(
+            "publish stage verification saw {verified} stripped files, the strip wrote {}",
+            report.stripped_files
+        ));
+    }
     Ok(report)
 }
 
@@ -143,9 +150,22 @@ fn strip_tree(stage: &Path, dir: &Path, report: &mut StageReport) -> Result<(), 
 
 /// Run `git` with fixed arguments in `dir` and return its trimmed stdout.
 fn git_output(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_raw(dir, args).map(|text| text.trim().to_string())
+}
+
+/// Run `git` with fixed arguments in `dir` and return its stdout unchanged.
+/// An inherited `GIT_DIR`-style variable (set by a hook or wrapper) would
+/// point every command here at the caller's repository instead of `dir`, and
+/// the sparse checkout would then rewrite the real checkout, so they are
+/// cleared.
+fn git_raw(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
         .output()
         .map_err(|e| format!("git {} failed to start: {e}", args.join(" ")))?;
     if !output.status.success() {
@@ -157,8 +177,63 @@ fn git_output(dir: &Path, args: &[&str]) -> Result<String, String> {
         ));
     }
     String::from_utf8(output.stdout)
-        .map(|text| text.trim().to_string())
         .map_err(|e| format!("git {} printed non-UTF-8 output: {e}", args.join(" ")))
+}
+
+/// Prove that `stage` is its `HEAD` with only the publish-stage edits: every
+/// change Git reports is either the marker (untracked, holding `HEAD`) or a
+/// modified `.rs` file under `crates/ripr/src` whose content is exactly the
+/// strip of that file at `HEAD`. Anything else (a hand edit, a rewritten
+/// lockfile, a stray file) is an error, because the marker would otherwise
+/// identify such a package as a clean build of the commit. Returns the number
+/// of stripped files.
+pub(crate) fn verify_stage(stage: &Path) -> Result<usize, String> {
+    let head = git_output(stage, &["rev-parse", "--verify", "HEAD"])?;
+    let status = git_raw(
+        stage,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    let marker_path = format!("crates/ripr/{PUBLISH_STAGE_MARKER}");
+    let mut marker_seen = false;
+    let mut stripped = 0;
+    for entry in status.split('\0').filter(|entry| !entry.is_empty()) {
+        let (code, path) = entry
+            .split_at_checked(3)
+            .ok_or_else(|| format!("publish stage has an unreadable status entry `{entry}`"))?;
+        match code {
+            "?? " if path == marker_path => {
+                let text = fs::read_to_string(stage.join(path))
+                    .map_err(|e| format!("cannot read {path}: {e}"))?;
+                if text != format!("{head}\n") {
+                    return Err(format!("publish-stage marker does not name HEAD {head}"));
+                }
+                marker_seen = true;
+            }
+            " M " if path.starts_with(STRIPPED_SOURCE_ROOT) && path.ends_with(".rs") => {
+                let original = git_raw(stage, &["show", &format!("HEAD:{path}")])?;
+                let expected =
+                    strip_inline_test_modules(&original).map_err(|e| format!("{path}: {e}"))?;
+                let actual = fs::read_to_string(stage.join(path))
+                    .map_err(|e| format!("cannot read {path}: {e}"))?;
+                if expected.modules == 0 || expected.text != actual {
+                    return Err(format!(
+                        "publish stage file {path} is not its HEAD content with inline test modules stripped"
+                    ));
+                }
+                stripped += 1;
+            }
+            _ => {
+                return Err(format!(
+                    "publish stage differs from HEAD beyond the strip: `{}` {path}",
+                    code.trim_end()
+                ));
+            }
+        }
+    }
+    if !marker_seen {
+        return Err("publish stage has no marker".to_string());
+    }
+    Ok(stripped)
 }
 
 /// One source file after the strip.
@@ -390,6 +465,25 @@ mod tests {
             fs::read_to_string(stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER)).map_err(io)?,
             format!("{head}\n")
         );
+        assert_eq!(verify_stage(&stage)?, 2);
+        // Any other difference from HEAD fails verification: a hand edit of a
+        // stripped file, an edit outside the stripped source, a stray file.
+        let lib = stage.join("crates/ripr/src/lib.rs");
+        fs::write(&lib, "pub fn live() {}\npub fn extra() {}\n").map_err(io)?;
+        assert!(matches!(verify_stage(&stage), Err(e) if e.contains("is not its HEAD content")));
+        fs::write(&lib, "pub fn live() {}\n\n").map_err(io)?;
+        assert_eq!(verify_stage(&stage)?, 2);
+        fs::write(stage.join("Cargo.toml"), "[workspace]\nmembers = []\n").map_err(io)?;
+        assert!(matches!(verify_stage(&stage), Err(e) if e.contains("beyond the strip")));
+        fs::write(stage.join("Cargo.toml"), "[workspace]\n").map_err(io)?;
+        fs::write(stage.join("crates/ripr/src/stray.rs"), "pub fn s() {}\n").map_err(io)?;
+        assert!(matches!(verify_stage(&stage), Err(e) if e.contains("beyond the strip")));
+        fs::remove_file(stage.join("crates/ripr/src/stray.rs")).map_err(io)?;
+        let marker = stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER);
+        fs::write(&marker, "0000000000000000000000000000000000000000\n").map_err(io)?;
+        assert!(matches!(verify_stage(&stage), Err(e) if e.contains("does not name HEAD")));
+        fs::remove_file(&marker).map_err(io)?;
+        assert!(matches!(verify_stage(&stage), Err(e) if e.contains("no marker")));
         // An existing stage is never staged over.
         assert!(
             matches!(stage_workspace(&workspace, &stage), Err(e) if e.contains("already exists"))

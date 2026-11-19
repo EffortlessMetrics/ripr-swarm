@@ -4962,17 +4962,44 @@ mod tests {
         if result? != VERSION_COMMIT {
             return Err("publish-stage archive did not yield its commit".to_string());
         }
+        // The marker may follow the record: the decision is order-independent.
+        let archive = version_identity_archive(&[
+            (name, &dirty, tar::EntryType::Regular),
+            (marker_name, &marker, tar::EntryType::Regular),
+        ])?;
+        let result = packaged_archive_commit(&archive, "0.11.0");
+        fs::remove_file(&archive).map_err(|err| format!("remove reordered archive: {err}"))?;
+        if result? != VERSION_COMMIT {
+            return Err("marker after the record did not yield its commit".to_string());
+        }
         let other = "b".repeat(40);
-        let oversized = " ".repeat(4097);
-        for (case, marker) in [
-            ("another commit", other.as_str()),
-            ("empty", ""),
-            ("oversized", oversized.as_str()),
+        // The right commit padded past the byte budget: only the budget refuses it.
+        let oversized = format!("{VERSION_COMMIT}{}", " ".repeat(4097));
+        for (case, entries) in [
+            (
+                "another commit",
+                vec![(marker_name, other.as_str(), tar::EntryType::Regular)],
+            ),
+            ("empty", vec![(marker_name, "", tar::EntryType::Regular)]),
+            (
+                "oversized",
+                vec![(marker_name, oversized.as_str(), tar::EntryType::Regular)],
+            ),
+            (
+                "duplicate",
+                vec![
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                ],
+            ),
+            (
+                "nonregular",
+                vec![(marker_name, "", tar::EntryType::Directory)],
+            ),
         ] {
-            let archive = version_identity_archive(&[
-                (marker_name, marker, tar::EntryType::Regular),
-                (name, &dirty, tar::EntryType::Regular),
-            ])?;
+            let mut entries = entries;
+            entries.push((name, &dirty, tar::EntryType::Regular));
+            let archive = version_identity_archive(&entries)?;
             let result = packaged_archive_commit(&archive, "0.11.0");
             fs::remove_file(&archive).map_err(|err| format!("remove {case} archive: {err}"))?;
             if result.is_ok() {
