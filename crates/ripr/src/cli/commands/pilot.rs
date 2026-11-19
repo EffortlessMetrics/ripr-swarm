@@ -182,7 +182,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
-        run_pilot_analysis_with_timeout(
+        run_pilot_inventory_with_deadline(
+            progress.as_deref(),
             options.timeout_ms,
             extension_ms,
             || {
@@ -265,7 +266,6 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         pilot_complete_summary_timeout(options.timeout_ms, extension_ms, deadline_extended.get());
     let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
     else {
-        close_timed_out_progress(progress.as_deref());
         // #7425: a timeout overwrites only the two summaries. Remove leftover
         // repo-exposure and seam-packet files from an earlier complete run so
         // the packet directory does not present them as this run's outputs.
@@ -807,7 +807,8 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
     )))
 }
 
-/// Close the progress run of a pilot analysis that hit its deadline (#5444).
+/// Run the main pilot analysis under its deadline, and close its progress
+/// run when the deadline wins (#5444).
 ///
 /// The controller owns the timed-out run's terminal. The detached worker
 /// reaches its own `cancelled` only when it hits a cancellation checkpoint
@@ -815,10 +816,24 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
 /// timeout print it on some runs and not others. Exactly one
 /// `cancelled [repo]` line now ends the run, and a worker that wakes later
 /// cannot add to it.
-fn close_timed_out_progress(progress: Option<&CliProgressSink>) {
-    if let Some(sink) = progress {
+fn run_pilot_inventory_with_deadline<T, F>(
+    progress: Option<&CliProgressSink>,
+    timeout_ms: u64,
+    extension_ms: Option<u64>,
+    on_extend: impl FnOnce(),
+    runner: F,
+) -> Result<PilotAnalysisResult<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let result = run_pilot_analysis_with_timeout(timeout_ms, extension_ms, on_extend, runner)?;
+    if matches!(result, PilotAnalysisResult::TimedOut)
+        && let Some(sink) = progress
+    {
         sink.abandon_with_scope(crate::app::AnalysisProgressScope::Repo);
     }
+    Ok(result)
 }
 
 /// Run the pilot repo inventory through the shared app-layer
@@ -1889,7 +1904,8 @@ mod tests {
         let worker_sink = std::sync::Arc::clone(&sink);
         let (release_tx, release_rx) = mpsc::channel::<()>();
         let (done_tx, done_rx) = mpsc::channel();
-        let result = run_pilot_analysis_with_timeout::<(), _>(
+        let result = run_pilot_inventory_with_deadline::<(), _>(
+            Some(&*sink),
             20,
             None,
             || {},
@@ -1904,13 +1920,9 @@ mod tests {
                 Ok(())
             },
         );
+        // The worker is still blocked, so the only possible source of the
+        // terminal is the controller path pilot itself runs.
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        assert!(
-            !buffer.text().contains("cancelled"),
-            "precondition: the stuck worker projected no terminal: {}",
-            buffer.text()
-        );
-        close_timed_out_progress(Some(&*sink));
         let closed = buffer.text();
         assert_eq!(
             closed.matches("ripr progress: cancelled [repo]").count(),
