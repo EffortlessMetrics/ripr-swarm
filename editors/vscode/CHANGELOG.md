@@ -172,12 +172,12 @@ shows through its diagnostics and commands, are in the
 
 ## 0.10.0
 
-- Version aligned with ripr 0.10.0. Editor notes for this release are in the
+- Version aligned with ripr 0.10.0. Notes for this release are in the
   [ripr changelog](https://github.com/EffortlessMetrics/ripr/blob/main/CHANGELOG.md).
 
 ## 0.9.0
 
-- Version aligned with ripr 0.9.0. Editor notes for this release are in the
+- Version aligned with ripr 0.9.0. Notes for this release are in the
   [ripr changelog](https://github.com/EffortlessMetrics/ripr/blob/main/CHANGELOG.md).
 
 ## 0.8.0
