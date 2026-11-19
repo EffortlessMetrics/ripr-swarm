@@ -86,18 +86,14 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
                 .map_err(|error| format!("{error} (in the `{branch}` branch)"))?;
         }
     }
-    if let Some(number) = value.as_i64()
-        && let Some(minimum) = schema.get("minimum").and_then(Value::as_i64)
-        && number < minimum
-    {
-        return Err(format!("{location}: {number} is below minimum {minimum}"));
-    }
-    if let Some(number) = value.as_i64()
-        && let Some(maximum) = schema.get("maximum").and_then(Value::as_i64)
-        && number > maximum
-    {
-        return Err(format!("{location}: {number} is above maximum {maximum}"));
-    }
+    check_bound(value, schema, "minimum", std::cmp::Ordering::Less, location)?;
+    check_bound(
+        value,
+        schema,
+        "maximum",
+        std::cmp::Ordering::Greater,
+        location,
+    )?;
     if let Some(object) = value.as_object() {
         check_object(object, schema, root, location)?;
     }
@@ -106,6 +102,52 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
     }
     if let Some(text) = value.as_str() {
         check_string(text, schema, location)?;
+    }
+    Ok(())
+}
+
+/// `minimum` / `maximum` over every JSON number, failing closed: integers
+/// compare exactly across the signed and unsigned ranges, anything else as
+/// `f64`, and a bound that is not a number is an error rather than a skip.
+fn check_bound(
+    value: &Value,
+    schema: &Value,
+    keyword: &str,
+    violation: std::cmp::Ordering,
+    location: &str,
+) -> Result<(), String> {
+    let Some(bound) = schema.get(keyword) else {
+        return Ok(());
+    };
+    if !bound.is_number() {
+        return Err(format!("{location}: unsupported `{keyword}` value {bound}"));
+    }
+    if !value.is_number() {
+        return Ok(());
+    }
+    let exact = |number: &Value| {
+        number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from))
+    };
+    let ordering = match (exact(value), exact(bound)) {
+        (Some(number), Some(limit)) => number.cmp(&limit),
+        _ => {
+            let number = value.as_f64().unwrap_or(f64::NAN);
+            let limit = bound.as_f64().unwrap_or(f64::NAN);
+            number.partial_cmp(&limit).ok_or_else(|| {
+                format!("{location}: cannot compare {value} with `{keyword}` {bound}")
+            })?
+        }
+    };
+    if ordering == violation {
+        let side = if keyword == "minimum" {
+            "below"
+        } else {
+            "above"
+        };
+        return Err(format!("{location}: {value} is {side} {keyword} {bound}"));
     }
     Ok(())
 }

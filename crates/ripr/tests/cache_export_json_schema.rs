@@ -267,7 +267,7 @@ fn published_cache_export_schema_rejects_documents_it_forbids() -> Result<(), St
     let (report, out) = exported("negative")?;
     let _ = std::fs::remove_dir_all(&out);
     conforms(&report, &schema)?;
-    let cases: [(&str, Mutation); 9] = [
+    let cases: [(&str, Mutation); 10] = [
         ("unknown field", |doc| doc["status"] = json!("ok")),
         ("another version", |doc| {
             doc["schema_version"] = json!("0.2")
@@ -277,6 +277,9 @@ fn published_cache_export_schema_rejects_documents_it_forbids() -> Result<(), St
         }),
         ("more classified families than exist", |doc| {
             doc["classified_entries"] = json!(3)
+        }),
+        ("a classified count past the signed 64-bit range", |doc| {
+            doc["classified_entries"] = json!(u64::MAX)
         }),
         ("a negative count", |doc| {
             doc["file_fact_entries"] = json!(-1)
