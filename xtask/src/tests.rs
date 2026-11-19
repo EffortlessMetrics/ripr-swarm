@@ -49183,7 +49183,9 @@ fn vsix_inventory_rejects_extension_development_tests() -> Result<(), String> {
             vsix_entry(name, 10),
         ];
         let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
-            return Err(format!("{name} must be rejected as an extension test entry"));
+            return Err(format!(
+                "{name} must be rejected as an extension test entry"
+            ));
         };
         assert!(error.contains(name), "{error}");
         assert!(error.contains("1 extension test entries"), "{error}");

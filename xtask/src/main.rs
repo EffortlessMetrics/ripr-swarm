@@ -2181,20 +2181,27 @@ fn is_extension_test_input(name: &str) -> bool {
     if own.starts_with("node_modules/") {
         return false;
     }
-    let mut segments: Vec<&str> = own.split('/').collect();
-    let file = segments.pop().unwrap_or_default();
-    if segments.iter().any(|segment| {
-        matches!(
-            *segment,
-            "test" | "tests" | "__tests__" | "test-fixtures" | "fixtures"
-        )
-    }) {
-        return true;
+    match own.rsplit_once('/') {
+        Some((dir, file)) => {
+            if dir.split('/').any(|segment| {
+                matches!(
+                    segment,
+                    "test" | "tests" | "__tests__" | "test-fixtures" | "fixtures"
+                )
+            }) {
+                return true;
+            }
+            [".test.", ".spec."]
+                .iter()
+                .any(|marker| file.contains(marker))
+        }
+        None => {
+            (own.starts_with("tsconfig") && own.ends_with(".json"))
+                || [".test.", ".spec."]
+                    .iter()
+                    .any(|marker| own.contains(marker))
+        }
     }
-    if segments.is_empty() && file.starts_with("tsconfig") && file.ends_with(".json") {
-        return true;
-    }
-    [".test.", ".spec."].iter().any(|marker| file.contains(marker))
 }
 
 /// `vsce package` ships `editors/vscode/LICENSE` as this archive member.
