@@ -478,6 +478,22 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["limited_partial_scope"],
     },
+    // `ripr check --format check-findings-json` is the check document plus a
+    // leading `artifact` envelope (#9103). Before #15376 the closed top-level
+    // object had no `artifact` property, so every such document failed the
+    // published schema. The fixture is a capture of `ripr check --root
+    // fixtures/helper_chain_controls/input --diff
+    // fixtures/helper_chain_controls/diff.patch --format check-findings-json`
+    // with `RIPR_GENERATED_AT` pinned and the checkout root and head
+    // replaced by neutral values; its `base_revision` is null (a --diff run).
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-findings.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["check_findings_artifact"],
+    },
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
@@ -4097,6 +4113,100 @@ mod tests {
             !violations_of(&malformed).is_empty(),
             "the schema must reject a refusal block missing `message`/`next`"
         );
+        Ok(())
+    }
+
+    /// #15376: the check-findings capture validates, a plain check document
+    /// without `artifact` still validates, and each envelope drift a consumer
+    /// relies on is rejected. The nullable `base_revision` and the
+    /// `unavailable` clock disclosure are admitted because the producer
+    /// emits them.
+    #[test]
+    fn check_schema_admits_and_closes_the_check_findings_artifact() -> Result<(), String> {
+        type Mutation = fn(&mut Value);
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-findings.valid.json"))?;
+        let violations_of = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "check-findings fixture".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(
+            fixture["artifact"]["kind"], "check_findings",
+            "premise: the fixture is a check-findings document"
+        );
+        assert_eq!(
+            fixture["artifact"]["analysis"]["base_revision"],
+            Value::Null,
+            "premise: the capture carries the null base revision of a --diff run"
+        );
+        let found = violations_of(&fixture);
+        assert!(found.is_empty(), "{found:#?}");
+
+        let mut plain = fixture.clone();
+        if let Some(object) = plain.as_object_mut() {
+            object.remove("artifact");
+        }
+        let found = violations_of(&plain);
+        assert!(found.is_empty(), "plain check document: {found:#?}");
+
+        let admitted: [(&str, Mutation); 2] = [
+            ("string base revision", |doc| {
+                doc["artifact"]["analysis"]["base_revision"] = Value::from("origin/main")
+            }),
+            ("unavailable clock", |doc| {
+                doc["artifact"]["generated_at"] = Value::from("unavailable")
+            }),
+        ];
+        for (label, mutate) in admitted {
+            let mut document = fixture.clone();
+            mutate(&mut document);
+            let found = violations_of(&document);
+            assert!(found.is_empty(), "{label}: {found:#?}");
+        }
+
+        let rejected: [(&str, Mutation); 7] = [
+            ("repo-exposure kind", |doc| {
+                doc["artifact"]["kind"] = Value::from("repo_exposure")
+            }),
+            ("unknown envelope field", |doc| {
+                doc["artifact"]["verdict"] = Value::Bool(true)
+            }),
+            ("malformed content digest", |doc| {
+                doc["artifact"]["content_sha256"] = Value::from("sha256:nope")
+            }),
+            ("numeric generated_at", |doc| {
+                doc["artifact"]["generated_at"] = Value::from(123)
+            }),
+            ("another analysis format", |doc| {
+                doc["artifact"]["analysis"]["format"] = Value::from("json")
+            }),
+            ("undisclosed worktree state", |doc| {
+                doc["artifact"]["analysis"]["worktree"] = Value::from("unknown")
+            }),
+            ("missing snapshot identity", |doc| {
+                if let Some(object) = doc["artifact"].as_object_mut() {
+                    object.remove("snapshot_identity");
+                }
+            }),
+        ];
+        for (label, mutate) in rejected {
+            let mut document = fixture.clone();
+            mutate(&mut document);
+            assert_ne!(document, fixture, "{label}: the mutation changed nothing");
+            assert!(
+                !violations_of(&document).is_empty(),
+                "the check schema accepted a forbidden check-findings document: {label}"
+            );
+        }
         Ok(())
     }
 

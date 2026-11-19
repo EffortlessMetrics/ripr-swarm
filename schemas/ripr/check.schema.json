@@ -222,7 +222,7 @@
         "kind": { "const": "check_findings" },
         "schema_version": { "const": "1" },
         "canonicalization": { "const": "raw_json_placeholder_v1" },
-        "generated_at": { "type": "string", "pattern": "^unix_ms:[0-9]+$" },
+        "generated_at": { "type": "string", "pattern": "^(unix_ms:[0-9]+|unavailable)$" },
         "producer": {
           "type": "object",
           "additionalProperties": false,
@@ -248,11 +248,11 @@
           "properties": {
             "format": { "const": "check-findings-json" },
             "mode": { "type": "string", "minLength": 1 },
-            "base_revision": { "type": "string" },
+            "base_revision": { "$ref": "#/$defs/nullable_string" },
             "input_identity": { "type": "string", "minLength": 1 },
             "command": { "const": "ripr check --format check-findings-json" },
             "profile": { "type": "string", "minLength": 1 },
-            "worktree": { "type": "string", "minLength": 1 }
+            "worktree": { "enum": ["clean", "dirty", "unavailable"] }
           }
         },
         "snapshot_identity": { "type": "string", "pattern": "^snapshot:" },

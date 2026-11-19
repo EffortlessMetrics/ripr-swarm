@@ -5259,7 +5259,7 @@ generic renderer rather than the navigation-aware `--format json` adapter, it
 carries neither `finding_routes` nor `canonical_next_action`; every other
 member of the check document is present under the same conditions as in
 `--format json`. `schemas/ripr/check.schema.json` admits `artifact` as an
-optional member (`$defs.check_findings_artifact`), so both documents validate
+optional member (the `check_findings_artifact` definition), so both documents validate
 against it. The envelope is the same shared
 projection `repo-exposure-json` carries with these token differences: `kind`
 is `"check_findings"` and `analysis.format` / `analysis.command` name
