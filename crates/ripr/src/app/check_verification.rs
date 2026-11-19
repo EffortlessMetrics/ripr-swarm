@@ -85,7 +85,8 @@ impl CheckVerification {
 /// - only the three unknown classes, never `no_static_path` (an uncalled
 ///   owner is a test-side gap, #14820) and never a `weakly_exposed` /
 ///   `reachable_unrevealed` finding, even behind a named limit;
-/// - only candidate-current, non-preview evidence;
+/// - only candidate-current, non-preview evidence whose related-test rows
+///   were all retained (none packed away past the bounded list);
 /// - never when a contributing related test that is not proximity-only
 ///   asserts only weakly (`weak` / `smoke`): strengthening it is still work
 ///   the agent can do (#11825);
@@ -120,6 +121,9 @@ fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> 
                 | ExposureClass::PropagationUnknown
         )
         && finding.language_status != Some(LanguageStatus::Preview)
+        // Rows packed away by the bounded related-test list could hide a weak
+        // assertion the veto below must see (#14821 review).
+        && finding.related_tests_total() <= finding.related_tests.len()
         && !contributing().any(|test| {
             !test
                 .relation_reason
@@ -140,19 +144,21 @@ fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> 
                                 owner.0.as_str(),
                                 test.file.as_path(),
                                 test.name.as_str(),
+                                test.line,
                             ))
                         })
                 }
         })
 }
 
-/// (owner, test file, test name) for each test that is a contributing,
-/// reaching `strong` / `medium` row on a non-withheld finding of that owner
-/// in the run. Keyed by owner so a test that pins one function exactly never
-/// vouches for an unasserted call to another (#14821 review). Two same-named
-/// tests in different modules of one file share a key; both must reach the
-/// same owner for that to matter.
-type ExactTests<'a> = std::collections::BTreeSet<(&'a str, &'a std::path::Path, &'a str)>;
+/// (owner, test file, test name, test start line) for each test that is a
+/// contributing, reaching `strong` / `medium` row on a non-withheld,
+/// candidate-current, non-preview finding of that owner in the run. Keyed by
+/// owner so a test that pins one function exactly never vouches for an
+/// unasserted call to another, and by the producer's full test identity
+/// (name, file, start line) so same-named tests in different inline modules
+/// stay distinct (#14821 review).
+type ExactTests<'a> = std::collections::BTreeSet<(&'a str, &'a std::path::Path, &'a str, usize)>;
 
 fn reaches(test: &crate::domain::RelatedTest, owner_is_function: bool) -> bool {
     test.relation_reason
@@ -224,14 +230,18 @@ impl CheckOutput {
         let exact_tests: ExactTests<'_> = self
             .findings
             .iter()
-            .filter(|finding| !withheld.contains(finding.id.as_str()))
+            .filter(|finding| {
+                !withheld.contains(finding.id.as_str())
+                    && finding.is_candidate_actionable()
+                    && finding.language_status != Some(LanguageStatus::Preview)
+            })
             .filter_map(|finding| Some((finding.probe.owner.as_ref()?.0.as_str(), finding)))
             .flat_map(|(owner, finding)| {
                 finding
                     .related_tests
                     .iter()
                     .filter(|test| pins_exactly(test) && reaches(test, true))
-                    .map(move |test| (owner, test.file.as_path(), test.name.as_str()))
+                    .map(move |test| (owner, test.file.as_path(), test.name.as_str(), test.line))
             })
             .collect();
         let mut exposed = 0usize;
@@ -665,6 +675,32 @@ mod tests {
         let mut other_owner = examined_only("test_c");
         other_owner[2].probe.owner = Some(crate::domain::SymbolId("crate::g".to_string()));
         refuses(other_owner)?;
+        // The vouching test must be the same test: a same-named test at
+        // another start line (another inline module) is a different test.
+        let mut namesake = examined_only("test_c");
+        namesake[1].related_tests[0].line += 100;
+        refuses(namesake)?;
+        // A base-side or preview finding cannot vouch for a current limit:
+        // the exposed finding `a` is the only voucher for `test_a`.
+        let mut stale_voucher = examined_only("test_a");
+        stale_voucher[0].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        refuses(stale_voucher)?;
+        let mut preview_voucher = examined_only("test_a");
+        preview_voucher[0].language_status = Some(crate::domain::LanguageStatus::Preview);
+        refuses(preview_voucher)?;
+        // Related-test rows packed away past the bounded list might hide a
+        // weak assertion: no completion.
+        let mut packed = limits_only();
+        packed[1].related_tests_matched_total = Some(9);
+        refuses(packed)?;
+        let mut all_kept = limits_only();
+        all_kept[1].related_tests_matched_total = Some(1);
+        assert!(
+            complete_with(all_kept)?
+                .verification()
+                .closable_limits
+                .is_some()
+        );
         // A limit with no owner has nothing to bind a vouching test to.
         let mut ownerless = examined_only("test_c");
         ownerless[1].probe.owner = None;
