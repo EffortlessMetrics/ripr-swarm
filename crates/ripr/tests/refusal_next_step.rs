@@ -413,24 +413,28 @@ fn without_test_items(source: &str) -> String {
             at = next;
             continue;
         }
-        // Walk to the end of the item: the first `;` at depth 0, or the close
-        // of the first `{ .. }` block.
+        // Walk to the end of the item: the first `;` outside every brace,
+        // paren and bracket (so `[u8; 4]` in a signature does not end it), or
+        // the close of the first top-level `{ .. }` block.
         let mut depth = 0usize;
+        let mut nest = 0usize;
         let mut end = at + MARKER.len();
         let mut closed = false;
         while end < bytes.len() {
             let (lexeme, next) = lex_at(bytes, end);
             end = next;
             match lexeme {
+                Lexeme::Code(b'(' | b'[') => nest += 1,
+                Lexeme::Code(b')' | b']') => nest = nest.saturating_sub(1),
                 Lexeme::Code(b'{') => depth += 1,
                 Lexeme::Code(b'}') => {
                     depth = depth.saturating_sub(1);
-                    if depth == 0 {
+                    if depth == 0 && nest == 0 {
                         closed = true;
                         break;
                     }
                 }
-                Lexeme::Code(b';') if depth == 0 => {
+                Lexeme::Code(b';') if depth == 0 && nest == 0 => {
                     closed = true;
                     break;
                 }
@@ -926,6 +930,32 @@ fn after_tests() -> Result<(), String> {
             "gadget is not a directory".to_string(),
             "widget requires --size <n>".to_string(),
         ]
+    );
+}
+
+#[test]
+fn scan_hides_a_test_only_item_whose_signature_holds_a_semicolon() {
+    // A `;` inside `[u8; 4]` or a call's parens is not the end of the item,
+    // so the test-only body below it stays hidden from the production scan.
+    let source = r#"
+#[cfg(test)]
+fn helper(_bytes: [u8; 4]) -> Result<(), String> {
+    Err("test-only helper message is not found".to_string())
+}
+
+#[cfg(test)]
+const TABLE: [&str; 2] = [
+    "test-only table entry",
+    { let _x = 1; "test-only block entry" },
+];
+
+fn after() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
     );
 }
 
