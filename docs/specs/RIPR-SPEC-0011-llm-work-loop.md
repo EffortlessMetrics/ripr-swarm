@@ -873,6 +873,19 @@ separate: the receipt's `verification.status` remains `verification_not_run`
 found, so a reported failure can sit beside `improved`. The receipt-owned
 `next:` line is unchanged. MCP documents do not project the record yet.
 
+
+## Amendment (#14146): the aggregate test-run reading names its attempt
+
+Aggregate `ripr status` and `ripr agent status` (and the after-phase `--json`
+envelope that embeds them) read the test-run axis of every finished attempt
+whose issued receipt records `verification_not_run`, not only the first in
+attempt order. With one such attempt the line is unchanged. With several, the
+Markdown form prints one `Test run (attempt `<id>`): ...` line per attempt,
+most telling first: a caller-reported failure, then `none recorded`, then a
+caller-reported pass, attempt order within each. The JSON `test_run` object is
+the most telling reading and adds `attempt_id`. A reported failure on any
+finished attempt is therefore never hidden behind another attempt's reading.
+`ripr agent status --attempt <id>` keeps reporting only that attempt.
 ## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
 
 ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
@@ -1218,6 +1231,7 @@ is not decided here.
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)
+- `crates/ripr/src/app/agent_status.rs::tests::aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure` (#14146)
 - `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
