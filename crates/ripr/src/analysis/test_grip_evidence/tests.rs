@@ -24779,3 +24779,68 @@ fn probe_while_let_shadow_stale_environment() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #15026: among otherwise equal same-file tests, the one that reaches the
+/// owner through a caller chain is named first instead of the name-order
+/// neighbour, so the repair refusal's "closest related test" points at the
+/// test that runs the code. Returns the related test names in rank order and
+/// each row's oracle strength.
+fn related_rows_for_clamp(z_assertion: &str) -> Result<Vec<(String, OracleStrength)>, String> {
+    let source = format!(
+        "fn clamp_score(x: i32) -> i32 {{\n    if x >= 10 {{ 10 }} else {{ x }}\n}}\n\
+         fn mid(x: i32) -> i32 {{\n    clamp_score(x)\n}}\n\
+         pub fn score(x: i32) -> i32 {{\n    mid(x) * 2\n}}\n\
+         pub fn bump(x: i32) -> i32 {{\n    x + 1\n}}\n\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n\
+         #[test]\n    fn a_bump() {{\n        assert_eq!(bump(1), 2);\n    }}\n\
+         #[test]\n    fn b_bump() {{\n        assert_eq!(bump(2), 3);\n    }}\n\
+         #[test]\n    fn z_score() {{\n        {z_assertion}\n    }}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), source.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    // Fixture premise: three same-file rows (the two-hop chain keeps
+    // `z_score` off the one-hop helper relation).
+    if evidence.related_tests.len() != 3
+        || evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason != RelationReason::SameTestFile)
+    {
+        let rows: Vec<_> = evidence
+            .related_tests
+            .iter()
+            .map(|test| (test.test_name.clone(), test.relation_reason))
+            .collect();
+        return Err(format!("unexpected related rows: {rows:?}"));
+    }
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| (test.test_name.clone(), test.oracle_strength.clone()))
+        .collect())
+}
+
+#[test]
+fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Result<(), String> {
+    let near = related_rows_for_clamp("assert_eq!(score(3), 6);")?;
+    assert!(
+        near.iter()
+            .all(|(_, strength)| *strength == OracleStrength::Strong),
+        "{near:?}"
+    );
+    assert_eq!(near[0].0, "z_score", "{near:?}");
+    // Discriminating negative: when that test calls nothing on the owner's
+    // caller chain, name order stands.
+    let far = related_rows_for_clamp("assert_eq!(bump(3), 4);")?;
+    assert_eq!(far[0].0, "a_bump", "{far:?}");
+    // Nearness only breaks ties: a stronger oracle still leads.
+    let weaker = related_rows_for_clamp("assert!(score(3) > 0);")?;
+    assert_ne!(weaker[0].0, "z_score", "{weaker:?}");
+    Ok(())
+}
