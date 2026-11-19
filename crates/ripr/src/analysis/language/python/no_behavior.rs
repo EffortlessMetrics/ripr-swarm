@@ -216,7 +216,7 @@ pub(super) fn bare_string_statement_text(
     // part of it either.
     let bare = without_trailing_comment(line_text)?.trim_end();
     let bare = bare.strip_suffix(',').unwrap_or(bare);
-    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
+    if bare.trim().is_empty() {
         return None;
     }
     let lines: Vec<&str> = source?
@@ -225,7 +225,18 @@ pub(super) fn bare_string_statement_text(
         .take(close.checked_sub(open)? + 1)
         .map(str::trim)
         .collect();
-    (!lines.is_empty()).then(|| lines.join(" "))
+    if lines.is_empty() {
+        return None;
+    }
+    // A non-literal argument (an f-string, `msg % x`, a name) on a
+    // continuation line of a multi-line `raise E(` resolves to the raise too
+    // (#15246): classified alone it fell to the predicate default and any
+    // success test's exact value oracle credited it. Only `raise` is widened;
+    // other statements keep classifying the line alone.
+    if !is_python_no_behavior_line_at(bare, false) && !lines[0].starts_with("raise ") {
+        return None;
+    }
+    Some(lines.join(" "))
 }
 
 /// `line_text` without its trailing `#` comment, cut at the end of the last

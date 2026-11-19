@@ -4448,6 +4448,183 @@ fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(
     Ok(())
 }
 
+/// Classify the changed continuation line of a multi-line `raise` (#15246)
+/// against `test_source`. `raise_lines` is the whole `raise` statement
+/// (opening line first); `changed` is `(new, old)` for its 2nd line.
+fn classify_raise_continuation(
+    raise_lines: [&str; 3],
+    changed: (&str, &str),
+    test_source: &str,
+) -> Result<Finding, String> {
+    let source = format!(
+        "def check(name, n):\n    if n < 0:\n{}\n{}\n{}\n    return name\n",
+        raise_lines[0], raise_lines[1], raise_lines[2]
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, &source);
+    let tests = extract_tests(Path::new("tests/test_check.py"), test_source);
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    classify_change_with_context(
+        file,
+        4,
+        changed.0,
+        Some(changed.1),
+        &owners,
+        &tests,
+        context,
+        Some(&source),
+    )
+    .ok_or_else(|| "a changed raise argument must carry a probe".to_string())
+}
+
+const RAISE_OPEN: &str = "        raise ValueError(";
+const RAISE_CLOSE: &str = "        )";
+const SUCCESS_ONLY_TEST: &str =
+    "from pkg import check\n\n\ndef test_check():\n    assert check(\"a\", 2) == \"a\"\n";
+
+#[test]
+fn an_f_string_raise_argument_on_a_continuation_line_is_an_error_path_not_exposed()
+-> Result<(), String> {
+    // #15246: a changed f-string message on its own line of a multi-line
+    // raise was classified alone (predicate) and a success-only exact test
+    // was credited `exposed`. It takes the raise's error-path family.
+    let finding = classify_raise_continuation(
+        [
+            RAISE_OPEN,
+            "            f\"Bad thing: {name!r}\"",
+            RAISE_CLOSE,
+        ],
+        (
+            "            f\"Bad thing: {name!r}\"",
+            "            f\"Invalid thing: {name!r}\"",
+        ),
+        SUCCESS_ONLY_TEST,
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_f_string_raise_argument_stays_weak_under_a_bare_pytest_raises() -> Result<(), String> {
+    let finding = classify_raise_continuation(
+        [
+            RAISE_OPEN,
+            "            f\"Bad thing: {name!r}\"",
+            RAISE_CLOSE,
+        ],
+        (
+            "            f\"Bad thing: {name!r}\"",
+            "            f\"Invalid thing: {name!r}\"",
+        ),
+        "import pytest\n\nfrom pkg import check\n\n\ndef test_check():\n    assert check(\"a\", 2) == \"a\"\n\n\ndef test_rejects():\n    with pytest.raises(ValueError):\n        check(\"a\", -1)\n",
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_f_string_raise_argument_matches_the_one_line_verdict_under_a_match_pin() -> Result<(), String>
+{
+    // The multi-line shape must agree with the one-line shape of the same
+    // edit under a `match=` that the old text fails and the new text passes.
+    let test_source = "import pytest\n\nfrom pkg import check\n\n\ndef test_check():\n    assert check(\"a\", 2) == \"a\"\n\n\ndef test_rejects():\n    with pytest.raises(ValueError, match=\"Bad thing\"):\n        check(\"a\", -1)\n";
+    let multi = classify_raise_continuation(
+        [
+            RAISE_OPEN,
+            "            f\"Bad thing: {name!r}\"",
+            RAISE_CLOSE,
+        ],
+        (
+            "            f\"Bad thing: {name!r}\"",
+            "            f\"Invalid thing: {name!r}\"",
+        ),
+        test_source,
+    )?;
+    let one_line_source = "def check(name, n):\n    if n < 0:\n        raise ValueError(f\"Bad thing: {name!r}\")\n    return name\n";
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, one_line_source);
+    let tests = extract_tests(Path::new("tests/test_check.py"), test_source);
+    let one = classify_change_with_context(
+        file,
+        3,
+        "        raise ValueError(f\"Bad thing: {name!r}\")",
+        Some("        raise ValueError(f\"Invalid thing: {name!r}\")"),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext::default(),
+        Some(one_line_source),
+    )
+    .ok_or_else(|| "the one-line raise must carry a probe".to_string())?;
+    assert_eq!(multi.class, one.class, "{multi:?} vs {one:?}");
+    assert_eq!(multi.probe.family, one.probe.family);
+    Ok(())
+}
+
+#[test]
+fn a_non_literal_percent_raise_argument_on_a_continuation_line_is_not_exposed() -> Result<(), String>
+{
+    let finding = classify_raise_continuation(
+        [
+            RAISE_OPEN,
+            "            \"Bad thing: %r\" % name",
+            RAISE_CLOSE,
+        ],
+        (
+            "            \"Bad thing: %r\" % name",
+            "            \"Invalid thing: %r\" % name",
+        ),
+        SUCCESS_ONLY_TEST,
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_non_raise_continuation_argument_keeps_its_own_shape() -> Result<(), String> {
+    // The #15246 widening is `raise` only: a continuation line of another
+    // statement is still classified alone.
+    let source = concat!(
+        "def check(name, n):\n",
+        "    return make(\n",
+        "        f\"Bad {name}\"\n",
+        "    )\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_check.py"), SUCCESS_ONLY_TEST);
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((2, 4)),
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        3,
+        "        f\"Bad {name}\"",
+        Some("        f\"Good {name}\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed argument must carry a probe".to_string())?;
+    assert_ne!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    Ok(())
+}
+
 #[test]
 fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result<(), String> {
     // #13875: `"msg",` inside `raise E(` is the same bare string argument as
