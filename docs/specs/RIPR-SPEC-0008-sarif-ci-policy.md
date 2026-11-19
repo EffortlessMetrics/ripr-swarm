@@ -187,7 +187,7 @@ Every SARIF result should include:
 - `ruleId` matching the tables above;
 - `level` from configured severity;
 - one primary physical location when file and line are known;
-- a short message that uses static exposure vocabulary; finding results (not seam results) lead with the first missing check when one exists and bound that evidence head to 240 characters (the reconciled next step is appended whole per RIPR-SPEC-0088), with full evidence kept in `properties` (#11219);
+- a short, single-line, plain-language message, because code scanning shows `message.text` verbatim (#11219, #15374). Finding results lead with the first missing check when one exists (bounded to 160 characters), then quote the changed code whitespace-collapsed and bounded to 120 characters with what the static evidence suggests in the human summary's words (for example "Changed code `amount >= limit` is only partly noticed by tests."), then the reconciled next step whole per RIPR-SPEC-0088 except the internal analyzer-routing sentence. Seam results use the seam rule title and the same bounded changed-code quote. A cut ends in a single `...`, never `....`. Class and probe-family tokens stay in `ruleId` and `properties`, and full evidence (including the routing sentence in `suggested_next_action`) stays in `properties`. Message text never feeds a fingerprint;
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.tool = "ripr"`;
 - `properties.kind = "finding"` or `"seam"`;

@@ -835,3 +835,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`

@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "no_static_path static exposure for return_value probe:     return payload.strip() == \"ok\". Next step: Python preview: no statically linked test calls `validate(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding."
+            "text": "Changed code `return payload.strip() == \"ok\"` has no test path that static analysis could find. Next step: Python preview: no statically linked test calls `validate(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_handler.py:python_preview:c48883f0|probe:src_handler.py:python_preview:c48883f0|src/handler.py"

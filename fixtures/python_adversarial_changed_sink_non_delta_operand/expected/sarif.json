@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "static_unknown static exposure for return_value probe:         return max(0, self._balance)"
+            "text": "Changed code `return max(0, self._balance)` could not be judged by static analysis."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|src/account.py"

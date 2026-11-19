@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: changed Python equality-boundary at line 2 lacks a concrete repair discriminator. weakly_exposed static exposure for predicate probe:     if amount >= threshold:. Next step: Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == threshold`."
+            "text": "Missing check: changed Python equality-boundary at line 2 lacks a concrete repair discriminator. Changed code `if amount >= threshold:` is only partly noticed by tests. Next step: Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == threshold`."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|src/discount.py"

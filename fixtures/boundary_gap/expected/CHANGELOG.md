@@ -1632,3 +1632,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_gap (39)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`

@@ -5098,7 +5098,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
       "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
-      "message": "weakly_gripped seam grip for predicate_boundary"
+      "message": "Tests only weakly grip this code: `amount >= discount_threshold`."
     }
   ]
 }

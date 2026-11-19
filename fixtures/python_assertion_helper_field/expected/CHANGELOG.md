@@ -275,3 +275,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_field (22)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_field --reason "..."`
+
+Updated:
+- `expected/sarif.json`

@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "exposed static exposure for error_path probe:     throw \"TOKEN_REQUIRED\";. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
+            "text": "Changed code `throw \"TOKEN_REQUIRED\";` appears noticed by tests. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|src/load.ts"
@@ -201,7 +201,7 @@
             }
           ],
           "message": {
-            "text": "infection_unknown static exposure for return_value probe:   return \"ready\";. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+            "text": "Changed code `return \"ready\";` may be reached by tests, but their inputs are not visible to static analysis. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|src/load.ts"
