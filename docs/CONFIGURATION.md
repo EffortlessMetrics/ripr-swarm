@@ -1042,7 +1042,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
-| Unknown fields rejected | Catches typos. |
+| Unknown fields and table headers rejected | Catches typos. A near-miss field, `kind` or header (`[[suppression]]`, `[suppressions]`) names the valid spelling; keys under an unknown header are not reported again. `[[ suppressions ]]` and a trailing `# comment` after the header are accepted. |
 | Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
 | Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`, or `(path, function)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |

@@ -28,6 +28,9 @@ mod python;
 #[cfg(test)]
 mod schema_parity_tests;
 mod suggest;
+/// Near-miss spelling hints, shared with the hand-parsed policy manifests
+/// (`.ripr/suppressions.toml`) so their typos read like `ripr.toml` ones.
+pub(crate) use suggest::did_you_mean;
 mod toolchain_file;
 #[cfg(test)]
 mod value_hint_tests;
