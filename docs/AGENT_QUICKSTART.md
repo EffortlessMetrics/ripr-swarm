@@ -185,11 +185,14 @@ subset:
   (#14821) means every condition above holds except equal counts, and every
   unexposed finding is an analyzer limit no test edit can close: a
   candidate-current, non-preview `static_unknown`, `infection_unknown` or
-  `propagation_unknown` finding with no owner-bound related test that asserts
-  only weakly (`weak` or `smoke`). The loop may end in DONE; report the
-  `limits=` as unproven, not as exposed. Any gap, `no_static_path`, weak
-  related test, preview finding or suppressed unexposed finding keeps
-  `verify=refused`.
+  `propagation_unknown` finding that a test calls and that some exact test
+  pins: a related test reaches it and is `strong`/`medium` there, or is a
+  test ripr reads as `strong`/`medium` on another finding of the same run.
+  No related test bound to it may assert only weakly (`weak` or `smoke`).
+  The loop may end in DONE; report the `limits=` as unproven, not as
+  exposed. Any gap, `no_static_path`, weak or smoke-only related test, test
+  without an exact assertion, preview finding or suppressed unexposed
+  finding keeps `verify=refused`.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
   `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,

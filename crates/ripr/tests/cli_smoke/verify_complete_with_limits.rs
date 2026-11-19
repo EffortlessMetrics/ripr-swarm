@@ -1,7 +1,8 @@
 //! #14821: when exact tests leave only analyzer limits, the agent record ends
 //! `verify=complete_with_limits|...|limits=...`, so the documented loop can
 //! finish in DONE with those limits disclosed. The same diff under tests that
-//! only smoke-check (`is_ok()`) or assert nothing keeps `verify=refused`.
+//! only smoke-check (`is_ok()`), assert nothing, or assert something unrelated
+//! (`assert!(true)`) keeps `verify=refused`.
 use super::{ignore_remove_dir_all, run_command, run_git, unique_temp_workspace};
 use std::path::{Path, PathBuf};
 
@@ -92,6 +93,17 @@ fn calls_only() {
 }
 "#;
 
+const UNRELATED_ASSERT_TESTS: &str = r#"use ratelimit::Bucket;
+
+#[test]
+fn asserts_nothing_about_the_change() {
+    let mut b = Bucket::new(5);
+    let _ = b.try_take(1);
+    b.refill(10);
+    assert!(true);
+}
+"#;
+
 /// A committed `main` with `LIB_BASE` and `tests`, then a `feature` commit
 /// that fixes the refill precision (`/ 100` -> `/ 1000`) and the drain
 /// boundary (`<=` -> `<`): the two changed lines read `static_unknown` and
@@ -171,10 +183,11 @@ fn exact_tests_leaving_only_analyzer_limits_complete_with_limits() -> TestResult
 }
 
 #[test]
-fn smoke_or_assertion_free_tests_over_the_same_limits_still_refuse() -> TestResult {
+fn smoke_unrelated_or_assertion_free_tests_over_the_same_limits_still_refuse() -> TestResult {
     for (label, tests) in [
         ("verify-limits-smoke", SMOKE_TESTS),
         ("verify-limits-calls-only", CALL_ONLY_TESTS),
+        ("verify-limits-unrelated-assert", UNRELATED_ASSERT_TESTS),
     ] {
         let root = fixture(label, tests)?;
         let result = agent_report(&root);

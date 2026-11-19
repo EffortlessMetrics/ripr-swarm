@@ -89,16 +89,21 @@ impl CheckVerification {
 /// - never when a contributing related test that is not proximity-only
 ///   asserts only weakly (`weak` / `smoke`): strengthening it is still work
 ///   the agent can do (#11825);
-/// - and only with positive evidence that a test runs the owner and asserts
-///   something: at least one related test whose relation establishes reach
-///   ([`crate::domain::RelationReason::establishes_reach`]) and that carries
-///   an assertion. Examined-only rows count here (a static limit's reaching
-///   test is often examined-only, `assertion_not_observing`, because ripr
-///   could not match its assertion to the change), but they never supply the
-///   weak-oracle veto above, which reads the decision set. A limit no test
-///   reaches, or reached only by tests that assert nothing, is not a
-///   finished workflow.
-fn is_test_unclosable_limit(finding: &Finding) -> bool {
+/// - and only with positive evidence that a test runs the owner and pins
+///   behavior exactly: at least one related test whose relation establishes
+///   reach ([`crate::domain::RelationReason::establishes_reach`]) and that
+///   either is a contributing row of `strong` or `medium` strength here, or
+///   is an examined-only row (ripr ran its assertions against this change
+///   and matched none, `assertion_not_observing`) of a test that is a
+///   contributing, reaching `strong` / `medium` row on some finding in the
+///   same run. An examined-only row alone proves nothing: its oracle text is
+///   just the test's first assertion, which may be a smoke `is_ok()`. A
+///   static limit's reaching test is often examined-only, so the run-wide
+///   cross-check is what lets a known exact test vouch for it. A limit no
+///   test reaches, reached only by tests that assert nothing, or whose
+///   assertion ripr refused to credit (`assertion_not_credited`, strength
+///   `none`), is not a finished workflow.
+fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> bool {
     let owner_is_function = finding.probe.owner.is_some();
     let contributing = || {
         finding
@@ -124,14 +129,31 @@ fn is_test_unclosable_limit(finding: &Finding) -> bool {
                 )
         })
         && finding.related_tests.iter().any(|test| {
-            test.relation_reason
-                .is_some_and(|reason| reason.establishes_reach(owner_is_function))
-                && test.miss != Some(RelatedTestMiss::NoAssertion)
-                && test
-                    .oracle
-                    .as_deref()
-                    .is_some_and(|oracle| !oracle.trim().is_empty())
+            reaches(test, owner_is_function)
+                && if test.is_contributing() {
+                    pins_exactly(test)
+                } else {
+                    test.miss == Some(RelatedTestMiss::AssertionNotObserving)
+                        && exact_tests.contains(&(test.file.as_path(), test.name.as_str()))
+                }
         })
+}
+
+/// Tests (file, name) that are a contributing, reaching `strong` / `medium`
+/// row on at least one finding of the run.
+type ExactTests<'a> = std::collections::BTreeSet<(&'a std::path::Path, &'a str)>;
+
+fn reaches(test: &crate::domain::RelatedTest, owner_is_function: bool) -> bool {
+    test.relation_reason
+        .is_some_and(|reason| reason.establishes_reach(owner_is_function))
+}
+
+fn pins_exactly(test: &crate::domain::RelatedTest) -> bool {
+    test.is_contributing()
+        && matches!(
+            test.oracle_strength,
+            OracleStrength::Strong | OracleStrength::Medium
+        )
 }
 
 impl CheckOutput {
@@ -188,6 +210,19 @@ impl CheckOutput {
     /// finding never completes, so a policy cannot legitimize a gap.
     fn test_unclosable_limits(&self) -> Option<Vec<(ExposureClass, usize)>> {
         let withheld = self.withheld_finding_ids();
+        let exact_tests: ExactTests<'_> = self
+            .findings
+            .iter()
+            .filter(|finding| !withheld.contains(finding.id.as_str()))
+            .flat_map(|finding| {
+                let owner_is_function = finding.probe.owner.is_some();
+                finding
+                    .related_tests
+                    .iter()
+                    .filter(move |test| pins_exactly(test) && reaches(test, owner_is_function))
+            })
+            .map(|test| (test.file.as_path(), test.name.as_str()))
+            .collect();
         let mut exposed = 0usize;
         let mut limits: Vec<(ExposureClass, usize)> = Vec::new();
         for finding in &self.findings {
@@ -198,7 +233,7 @@ impl CheckOutput {
                 }
                 continue;
             }
-            if is_withheld || !is_test_unclosable_limit(finding) {
+            if is_withheld || !is_test_unclosable_limit(finding, &exact_tests) {
                 return None;
             }
             match limits.iter_mut().find(|(class, _)| *class == finding.class) {
@@ -444,6 +479,7 @@ mod tests {
             test.oracle_strength = strength.clone();
             test.relation_reason = Some(RelationReason::DirectOwnerCall);
             test.oracle = Some("assert_eq!(f(1), 2);".to_string());
+            test.name = format!("test_{id}");
         }
         finding
     }
@@ -472,30 +508,42 @@ mod tests {
             ])
         );
 
-        // A reaching test whose assertion ripr could not match to the limit
-        // (`none` strength, as static_unknown rows carry) still counts.
-        let mut unmatched = limits_only();
-        unmatched[1].related_tests[0].oracle_strength = OracleStrength::None;
-        unmatched[1].related_tests[0].miss =
-            Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
-        assert!(
-            complete_with(unmatched)?
-                .verification()
-                .completes_with_limits()
-        );
-
         // The repro 1 static_unknown shape: the only reaching row is
-        // examined-only, its assertion unmatched to the change.
-        let mut examined_only = limits_only();
-        examined_only[1].related_tests[0].role = crate::domain::RelatedTestRole::ExaminedOnly;
-        examined_only[1].related_tests[0].oracle_strength = OracleStrength::None;
-        examined_only[1].related_tests[0].miss =
-            Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        // examined-only (its assertion matched nothing in this change), but
+        // the same test pins another finding of the run exactly.
+        let examined_only = |name: &str| {
+            let mut findings = limits_only();
+            let row = &mut findings[1].related_tests[0];
+            row.role = crate::domain::RelatedTestRole::ExaminedOnly;
+            row.oracle_strength = OracleStrength::None;
+            row.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+            row.name = name.to_string();
+            findings
+        };
         assert!(
-            complete_with(examined_only)?
+            complete_with(examined_only("test_c"))?
                 .verification()
                 .closable_limits
                 .is_some()
+        );
+        // An exposed finding's exact test vouches too.
+        assert!(
+            complete_with(examined_only("test_a"))?
+                .verification()
+                .closable_limits
+                .is_some()
+        );
+
+        // propagation_unknown is a limit like the other two.
+        let mut propagation = limits_only();
+        propagation[3].class = ExposureClass::PropagationUnknown;
+        assert_eq!(
+            complete_with(propagation)?.verification().closable_limits,
+            Some(vec![
+                (ExposureClass::InfectionUnknown, 1),
+                (ExposureClass::PropagationUnknown, 1),
+                (ExposureClass::StaticUnknown, 1),
+            ])
         );
 
         // A weak test related only by proximity is not bound to the owner.
@@ -507,7 +555,8 @@ mod tests {
         assert!(
             complete_with(nearby)?
                 .verification()
-                .completes_with_limits()
+                .closable_limits
+                .is_some()
         );
         Ok(())
     }
@@ -574,6 +623,40 @@ mod tests {
         let mut no_relation = limits_only();
         no_relation[1].related_tests[0].relation_reason = None;
         refuses(no_relation)?;
+        // An examined-only row of a test that pins nothing exactly anywhere
+        // in the run: its oracle text is only the test's first assertion,
+        // which may be a smoke `assert!(r.is_ok())` (#14821 review).
+        let mut examined_alone = limits_only();
+        {
+            let row = &mut examined_alone[1].related_tests[0];
+            row.role = crate::domain::RelatedTestRole::ExaminedOnly;
+            row.oracle_strength = OracleStrength::None;
+            row.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+            row.oracle = Some("assert!(r.is_ok());".to_string());
+        }
+        refuses(examined_alone)?;
+        // The vouching test must reach its own finding's owner.
+        let mut far = limits_only();
+        {
+            let row = &mut far[1].related_tests[0];
+            row.role = crate::domain::RelatedTestRole::ExaminedOnly;
+            row.oracle_strength = OracleStrength::None;
+            row.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+            row.name = "test_c".to_string();
+        }
+        far[2].related_tests[0].relation_reason = Some(RelationReason::OwnerNamedTest);
+        refuses(far)?;
+        // Contributing rows that pin nothing: an unmatched or refused
+        // assertion (`none` strength) is not exact evidence.
+        for miss in [
+            crate::domain::RelatedTestMiss::AssertionNotObserving,
+            crate::domain::RelatedTestMiss::AssertionNotCredited,
+        ] {
+            let mut unpinned = limits_only();
+            unpinned[1].related_tests[0].oracle_strength = OracleStrength::None;
+            unpinned[1].related_tests[0].miss = Some(miss);
+            refuses(unpinned)?;
+        }
         let mut calls_only = limits_only();
         calls_only[1].related_tests[0].oracle_strength = OracleStrength::None;
         calls_only[1].related_tests[0].oracle = Some(String::new());

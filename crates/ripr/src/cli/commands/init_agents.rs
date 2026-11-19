@@ -512,6 +512,7 @@ mod tests {
             "DONE",
             "STOP and report",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "exits 2 or 3",
             "ripr repair",
         ] {
@@ -543,6 +544,7 @@ mod tests {
         for condition in [
             "same report",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -677,6 +679,7 @@ mod tests {
             "same report",
             "require exit 0",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -789,10 +792,12 @@ mod tests {
         );
         for needle in [
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "empty scope, no changed behavior, partial analysis",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "after 3 exact-assert tests",
             "exits 2 or 3",
             "commit it, or pass `--worktree` to both FIND and VERIFY",

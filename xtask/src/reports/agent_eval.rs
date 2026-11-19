@@ -11,7 +11,8 @@
 //! 2. **Usefulness of the loop.** Does `check --format agent` report exactly
 //!    the keyed gaps (no misses, no extra gaps), stay silent on a control
 //!    change the tests already pin, keep flagging after a weak test, and
-//!    finish with `verify=complete` after the reference test? With cargo
+//!    finish with `verify=complete` (or `verify=complete_with_limits`, which
+//!    the loop also accepts as DONE, #14821) after the reference test? With cargo
 //!    available the eval also confirms each key: the reference test passes at
 //!    head and fails at base, the weak test passes at both.
 //!
@@ -817,10 +818,13 @@ fn gaps_header_count(agent_report: &str) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
+/// Whether the report ends the documented loop in DONE: `verify=complete|`
+/// or `verify=complete_with_limits|` (#14821). Matched by the exact record
+/// names, so a future `verify=complete...` variant does not read as DONE.
 fn verify_complete(agent_report: &str) -> bool {
-    agent_report
-        .lines()
-        .any(|line| line.starts_with("verify=complete"))
+    agent_report.lines().any(|line| {
+        line.starts_with("verify=complete|") || line.starts_with("verify=complete_with_limits|")
+    })
 }
 
 /// What one `cargo test` run established.
@@ -1621,6 +1625,10 @@ verify=refused|outcome=complete_with_findings\n";
         assert_eq!(gaps_header_count(report), Some(2));
         assert!(!verify_complete(report));
         assert!(verify_complete("verify=complete|outcome=x\n"));
+        assert!(verify_complete(
+            "verify=complete_with_limits|outcome=x|limits=static_unknown:1\n"
+        ));
+        assert!(!verify_complete("verify=completed|outcome=x\n"));
     }
 
     #[test]
