@@ -1205,7 +1205,20 @@ fn doctor_start_here_lines(
     // first commands on one screen, one of which bounces straight back to the
     // other, is not a route.
     let md = root.join("target/ripr/reports/start-here.md");
-    if md.is_file() {
+    // A blocking recovery outranks packet advice, as on the compact screen:
+    // opening or refreshing the packet cannot help while a `!` check (for
+    // example a refused output location, #14114) stops every command.
+    let packet_recovery = md
+        .is_file()
+        .then(|| output::doctor::safe_next_action_recovery_line(report, first, root))
+        .flatten();
+    if let Some(line) = packet_recovery {
+        lines.push(
+            "- Start-here packet: target/ripr/reports/start-here.md (present; refresh it after the `!` checks pass)"
+                .to_string(),
+        );
+        lines.push(line.to_string());
+    } else if md.is_file() {
         lines.extend(doctor_packet_status_lines(root));
         if root
             .canonicalize()
@@ -9271,6 +9284,42 @@ mod tests {
         assert!(!is_workspace_relative_value("../tmp"));
         assert!(!is_workspace_relative_value("a/../../tmp"));
         assert!(!is_workspace_relative_value("/var/tmp"));
+    }
+
+    /// #14114: the verbose start-here block follows the same rule as the
+    /// compact screen. A present packet is the next artifact only while no
+    /// `!` check blocks every command; a refused output location gets the
+    /// recovery line, not packet-opening or refresh advice.
+    #[test]
+    fn verbose_packet_advice_yields_to_a_refused_output_location() -> Result<(), String> {
+        let root = unique_command_test_dir("packet-refused-output");
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+        std::fs::write(reports.join("start-here.md"), "# start here\n")
+            .map_err(|error| error.to_string())?;
+
+        let healthy = doctor_start_here_lines(&root, &passing_report(), None).join("\n");
+        let mut refused_report = passing_report();
+        refused_report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some("`ripr check` and `ripr pilot` refuse to run here: refused".to_string()),
+        );
+        let refused = doctor_start_here_lines(&root, &refused_report, None).join("\n");
+
+        assert!(healthy.contains("ripr first-pr --root"), "{healthy}");
+        assert!(!refused.contains("ripr first-pr"), "{refused}");
+        assert!(!refused.contains("open that packet"), "{refused}");
+        assert!(
+            refused.contains("- Safe next action: fix the `!` checks above"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("refresh it after the `!` checks pass"),
+            "{refused}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     /// #14114: when `ripr check` refuses the output location, the screen

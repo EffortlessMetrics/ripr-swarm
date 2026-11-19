@@ -61,21 +61,29 @@ pub(crate) const OUTPUT_LOCATION_CHECK: &str = "output_location";
 /// `ripr check` for a root where that command exits 2. The guard is the single
 /// owner of the rule; `cache_dir_env` is the `RIPR_CACHE_DIR` value, which
 /// waives it exactly as it does for `ripr check`.
+#[cfg(test)]
 pub(crate) fn add_output_location_check(
     report: &mut DoctorReport,
     root: &Path,
     cache_dir_env: Option<&str>,
 ) {
-    let Err(refusal) =
-        crate::atomic_file::ensure_default_output_contained_with(root, cache_dir_env)
-    else {
-        return;
-    };
+    if let Some(refusal) = output_location_refusal(root, cache_dir_env) {
+        record_output_location_refusal(report, &refusal);
+    }
+}
+
+/// The guard's refusal for this root's default output location, or `None`
+/// when `ripr check` and `ripr pilot` would accept it (#14114).
+fn output_location_refusal(root: &Path, cache_dir_env: Option<&str>) -> Option<String> {
+    crate::atomic_file::ensure_default_output_contained_with(root, cache_dir_env).err()
+}
+
+fn record_output_location_refusal(report: &mut DoctorReport, refusal: &str) {
     // The human screen splits evidence into state and fix at the first
     // `; `. One guard refusal carries its recovery after `Next step:`.
     let refusal = refusal
         .strip_prefix("refusing to write ripr output: ")
-        .unwrap_or(&refusal)
+        .unwrap_or(refusal)
         .replacen(". Next step: ", "; ", 1);
     report.add_check(
         OUTPUT_LOCATION_CHECK,
@@ -84,6 +92,28 @@ pub(crate) fn add_output_location_check(
             "`ripr check` and `ripr pilot` refuse to run here: {refusal}"
         )),
     );
+}
+
+/// Evidence for a root outside a Git work tree. It names the whole-repository
+/// pilot route only when the output location lets pilot run (#14114).
+fn outside_work_tree_evidence(root: &Path, output_location_refused: bool) -> String {
+    let state = format!(
+        "not inside a Git work tree at {}; the diff-scoped commands read committed history \
+         and cannot run here.",
+        human_path(root)
+    );
+    if output_location_refused {
+        format!(
+            "{state} Whole-repository exploration with `ripr pilot` is refused here too until \
+             the output location below is fixed"
+        )
+    } else {
+        format!(
+            "{state} For whole-repository exploration without Git history, run `ripr pilot \
+             --root {}`",
+            crate::agent::loop_commands::shell_arg(&human_path(root))
+        )
+    }
 }
 
 /// First command doctor prints after the checks. Git-backed routes are only
@@ -1998,6 +2028,11 @@ fn evaluate_doctor_core_with_probe_for_profile(
     let root_started = std::time::Instant::now();
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
+    // #14114: decided once, before the Git checks, so the outside-work-tree
+    // evidence does not offer a pilot command the same guard refuses.
+    let output_refusal = (root_status == DoctorStatus::Pass)
+        .then(|| output_location_refusal(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref()))
+        .flatten();
     report.add_check("root_directory", root_status, Some(root_evidence));
     report.mark_check_elapsed("root_directory", root_started.elapsed());
     if let RustToolchainScope::NotInScope(reason) = &rust_scope {
@@ -2073,13 +2108,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(WorkTreeProbe::Outside) => report.add_check(
                 "git_repository",
                 DoctorStatus::Fail,
-                Some(format!(
-                    "not inside a Git work tree at {}; the diff-scoped commands read committed \
-                     history and cannot run here. For whole-repository exploration without Git \
-                     history, run `ripr pilot --root {}`",
-                    human_path(root),
-                    crate::agent::loop_commands::shell_arg(&human_path(root))
-                )),
+                Some(outside_work_tree_evidence(root, output_refusal.is_some())),
             ),
             None => report.add_check(
                 "git_repository",
@@ -2093,12 +2122,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
         },
     }
     report.mark_check_elapsed("git_repository", git_started.elapsed());
-    if root_status == DoctorStatus::Pass {
-        add_output_location_check(
-            &mut report,
-            root,
-            std::env::var("RIPR_CACHE_DIR").ok().as_deref(),
-        );
+    if let Some(refusal) = &output_refusal {
+        record_output_location_refusal(&mut report, refusal);
     }
     match &config {
         Ok(config) => report.add_check(
@@ -7185,6 +7210,25 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// #14114: outside a Git work tree, the `git_repository` evidence names
+    /// `ripr pilot` only while pilot can run. The usable case keeps the
+    /// shell-quoted pilot command as the control.
+    #[test]
+    fn outside_work_tree_evidence_withholds_pilot_when_output_is_refused() {
+        let root = Path::new("/work/my app");
+        let usable = outside_work_tree_evidence(root, false);
+        let refused = outside_work_tree_evidence(root, true);
+        assert!(usable.contains("not inside a Git work tree"), "{usable}");
+        assert!(
+            usable.contains("ripr pilot --root '/work/my app'"),
+            "{usable}"
+        );
+        assert!(refused.contains("not inside a Git work tree"), "{refused}");
+        assert!(refused.contains("cannot run here"), "{refused}");
+        assert!(!refused.contains("ripr pilot --root"), "{refused}");
+        assert!(refused.contains("output location below"), "{refused}");
     }
 
     /// #14114: a regular file named `target` is refused on Unix because

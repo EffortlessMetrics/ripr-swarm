@@ -145,7 +145,9 @@ because `target` is a regular file or a link that dangles, loops or leaves the
 workspace, doctor fails an `output_location` check with the guard's reason,
 recommends no analysis command, including whole-repository pilot, and drops its
 `✓ Cache` line. `RIPR_CACHE_DIR` waives the check exactly as it waives the guard,
-and a usable output location adds no check.
+and a usable output location adds no check. While any `!` check blocks, the
+verbose start-here block gives that recovery instead of packet refresh advice,
+as the compact screen already does.
 
 ### Doctor blocking and advisory marks (#9033)
 
