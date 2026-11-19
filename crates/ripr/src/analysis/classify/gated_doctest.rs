@@ -18,12 +18,13 @@
 //!
 //! - the owner's own or enclosing `#[cfg(..)]` gates, as
 //!   `unestablished_cfg_gates_of_fn` reads them (gates provably on in a test
-//!   build are not among them), require an atom on (one under `not(..)` is
-//!   compiled in the other build); and
-//! - a runnable fenced doc example in the same doctested library was refused
-//!   by an attribute between the comment and its item whose cfg predicate
-//!   names that atom (`RustIndex::refused_doctest_gate_atoms`). The match is
-//!   library-wide, not per item: anyhow's examples sit on
+//!   build are not among them), require a custom cfg name on: not under
+//!   `any(..)` or an odd number of `not(..)`, and not a `key = "value"` pair
+//!   or a built-in name such as `unix` (`facts::doctests::gated`); and
+//! - a runnable fenced doc example in the same doctested library is gated by
+//!   that name (`RustIndex::refused_doctest_gate_atoms`). The match is
+//!   library-wide, not per item, which is why only custom names count:
+//!   anyhow's examples sit on
 //!   `into_boxed_dyn_error` in `error.rs` and exercise `provide` in
 //!   `context.rs` through std's provider dispatch, which no call edge shows.
 //!

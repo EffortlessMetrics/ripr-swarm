@@ -1219,20 +1219,38 @@ exercise. A changed `provide` read `reachable_unrevealed` from name-token and
 same-file relations alone, and the anyhow diff-mode receipt scored four caught
 mutants as false gaps.
 
-Doctest registration now records, per doctested library root, the cfg atoms
-(bare names and `key = "value"` pairs of the predicate; `all`, `any`, `not`,
-`test` and `doctest` are not atoms) of every attribute that refused a doc
-example from a `///` run holding a fence line. When a `reachable_unrevealed`
-finding has reach `weak` (no indexed test is seen calling the owner) and the
-owner's own or enclosing `#[cfg(..)]` gates, as `unestablished_cfg_gates_of_fn`
-reads them, name one of those atoms in the same library, the finding is
-rewritten through `withhold_gap` to `static_unknown` under
+Doctest registration now records, per doctested library root, the custom cfg
+names that gate a refused runnable fenced example (plain, `rust` or an edition
+fence):
+
+- a `#[cfg_attr(P, doc = "..")]` line inside an open runnable fence gives
+  every name in `P`, either polarity (`not(x)` stubs the example when `x` is
+  off, so it runs when `x` is on);
+- an unprovable `#[cfg(P)]` between a document holding a runnable fence and
+  its item gives the names `P` requires on.
+
+A name is required on when it sits under no `any(..)` and an even number of
+`not(..)`. Only custom names count, the ones a build script or `RUSTFLAGS`
+sets. `key = "value"` pairs (`feature`, `target_os`) and built-in names
+(`unix`, `windows`, `debug_assertions`, `miri`, `target_*`, `test`, `doctest`,
+`docsrs`, ..) gate ordinary code everywhere, and the match is library-wide,
+not per item: anyhow's examples sit on `into_boxed_dyn_error` in `error.rs`
+and exercise `provide` in `context.rs` through std's provider dispatch, which
+no call edge shows.
+
+When a `reachable_unrevealed` finding has reach `weak` (no indexed test is
+seen calling the owner) and the owner's own or enclosing `#[cfg(..)]` gates,
+as `unestablished_cfg_gates_of_fn` reads them, require one of those names on,
+the finding is rewritten through `withhold_gap` to `static_unknown` under
 `rust_gated_doctest_unread`. Reach, related tests and stages are unchanged.
 
-A test seen calling the owner, a gate on another atom, an example that is not
-refused, a `weakly_exposed` finding, an owner whose gates do not read and an
-owner outside a doctested library keep today's reading. A gate on an enclosing
-`mod` or `impl` of the example is not collected. Nothing is credited.
+A test seen calling the owner, a gate on another name, an owner behind
+`not(x)` or `any(x, y)`, a shared built-in or `feature` gate, an example that
+is not refused, a `cfg_attr` that adds no doc text, an example item behind
+`cfg(not(x))`, a `weakly_exposed` finding, an owner whose gates do not read
+and an owner outside a doctested library keep today's reading. A gate on an
+enclosing `mod` or `impl` of the example is not collected. Nothing is
+credited.
 
 ## Scope boundary
 

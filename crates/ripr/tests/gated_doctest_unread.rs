@@ -54,6 +54,13 @@ fn refused_example(atom: &str) -> String {
     )
 }
 
+/// An example whose item is gated by a plain `#[cfg(..)]` after the fence.
+fn item_gated_example(gate: &str) -> String {
+    format!(
+        "/// ```\n/// assert_eq!(gated_lib::boxed(2), 4);\n/// ```\n#[cfg({gate})]\npub fn boxed(x: u32) -> u32 {{\n    x * 2\n}}\n"
+    )
+}
+
 /// The same example with nothing that refuses it. It asserts nothing, so its
 /// admission adds no weak oracle and the class stays comparable.
 const ADMITTED_EXAMPLE: &str = "/// ```\n/// let _ = gated_lib::boxed(2);\n/// ```\npub fn boxed(x: u32) -> u32 {\n    x * 2\n}\n";
@@ -179,7 +186,23 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
                 "",
             ),
         ),
+        (
+            "owner compiled when either of two names is on",
+            source(
+                &refused_example("nightly_api"),
+                "#[cfg(any(nightly_api, other_api))]\n    ",
+                "",
+            ),
+        ),
         ("example not refused", source(ADMITTED_EXAMPLE, gated, "")),
+        (
+            "example item compiled with the name off",
+            source(&item_gated_example("not(nightly_api)"), gated, ""),
+        ),
+        (
+            "built-in target name shared",
+            source(&item_gated_example("unix"), "#[cfg(unix)]\n    ", ""),
+        ),
         (
             "example cfg_attr adds no doc text",
             source(&no_doc_text, gated, ""),
@@ -198,6 +221,25 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
         wrong.is_empty(),
         "cases that left the reachable_unrevealed reading: {wrong:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn an_item_gated_example_or_an_impl_gate_withholds_too() -> Result<(), String> {
+    // A plain `#[cfg(nightly_api)]` item gate refuses its example as the
+    // `cfg_attr` stub does, and compiles it only with that name on.
+    let item_gated = provide_finding(&source(
+        &item_gated_example("nightly_api"),
+        "#[cfg(nightly_api)]\n    ",
+        "",
+    ))?;
+    assert_eq!(limit(&item_gated), Some(LIMIT), "{item_gated}");
+    // A gate on the enclosing `impl` gates the owner as its own gate does.
+    let impl_gated = provide_finding(
+        &source(&refused_example("nightly_api"), "", "")
+            .replace("impl Request {", "#[cfg(nightly_api)]\nimpl Request {"),
+    )?;
+    assert_eq!(limit(&impl_gated), Some(LIMIT), "{impl_gated}");
     Ok(())
 }
 
