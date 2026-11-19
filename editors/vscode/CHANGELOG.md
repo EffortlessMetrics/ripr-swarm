@@ -157,8 +157,8 @@ shows through its diagnostics and commands, are in the
   shutdown with the capabilities the extension needs; a server that offers
   unsupported document sync options is refused with the field that failed
   ([#3191](https://github.com/EffortlessMetrics/ripr-swarm/issues/3191), [#4173](https://github.com/EffortlessMetrics/ripr-swarm/issues/4173)).
-- Copied first-PR, gap-queue and agent-loop commands must match the server's
-  rendering and stay inside the workspace ([#4222](https://github.com/EffortlessMetrics/ripr-swarm/issues/4222), [#4236](https://github.com/EffortlessMetrics/ripr-swarm/issues/4236), [#4272](https://github.com/EffortlessMetrics/ripr-swarm/issues/4272)).
+- Copied agent-loop commands must equal the server's rendering, and
+  first-PR, gap-queue and agent-loop redirects must stay inside the workspace ([#4222](https://github.com/EffortlessMetrics/ripr-swarm/issues/4222), [#4236](https://github.com/EffortlessMetrics/ripr-swarm/issues/4236), [#4272](https://github.com/EffortlessMetrics/ripr-swarm/issues/4272)).
 
 ### Security
 
@@ -167,8 +167,8 @@ shows through its diagnostics and commands, are in the
   workspaces ([#1825](https://github.com/EffortlessMetrics/ripr-swarm/issues/1825), [#1867](https://github.com/EffortlessMetrics/ripr-swarm/issues/1867)).
 - Before extracting a managed server archive, the extension lists it and
   refuses absolute or `..` member paths, symlinks, hard links, reparse points,
-  unsafe Windows names and archives over 1000 members, for both the tar and
-  the Windows zip downloads ([#13656](https://github.com/EffortlessMetrics/ripr-swarm/issues/13656), [#13904](https://github.com/EffortlessMetrics/ripr-swarm/issues/13904)).
+  unsafe Windows names and oversized member counts (over 1000 for tar), for
+  both the tar and the Windows zip downloads ([#13656](https://github.com/EffortlessMetrics/ripr-swarm/issues/13656), [#13904](https://github.com/EffortlessMetrics/ripr-swarm/issues/13904)).
 
 ## 0.10.0
 
