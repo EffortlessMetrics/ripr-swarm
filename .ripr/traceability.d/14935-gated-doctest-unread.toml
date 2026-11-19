@@ -1,0 +1,11 @@
+# Registers the owner-gated-like-an-unread-doc-example withholding (#14935)
+# under RIPR-SPEC-0240.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/gated_doctest_unread.rs::an_owner_gated_like_a_refused_example_is_withheld",
+  "crates/ripr/tests/gated_doctest_unread.rs::each_missing_link_keeps_the_gap_reading",
+  "crates/ripr/tests/gated_doctest_unread.rs::a_credited_weak_oracle_keeps_its_weakly_exposed_reading",
+  "crates/ripr/tests/gated_doctest_unread.rs::a_credited_weak_oracle_keeps_its_weakly_exposed_reading",
+  "crates/ripr/tests/gated_doctest_unread.rs::a_test_seen_calling_the_owner_keeps_its_own_reading",
+]

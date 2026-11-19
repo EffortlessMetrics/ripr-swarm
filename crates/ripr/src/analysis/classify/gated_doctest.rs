@@ -18,18 +18,24 @@
 //!
 //! - the owner's own or enclosing `#[cfg(..)]` gates, as
 //!   `unestablished_cfg_gates_of_fn` reads them (gates provably on in a test
-//!   build are not among them), name an atom; and
-//! - a fenced doc example in the same doctested library was refused by an
-//!   attribute between the comment and its item whose cfg predicate names
-//!   that atom (`RustIndex::refused_doctest_gate_atoms`).
+//!   build are not among them), require an atom on (one under `not(..)` is
+//!   compiled in the other build); and
+//! - a runnable fenced doc example in the same doctested library was refused
+//!   by an attribute between the comment and its item whose cfg predicate
+//!   names that atom (`RustIndex::refused_doctest_gate_atoms`). The match is
+//!   library-wide, not per item: anyhow's examples sit on
+//!   `into_boxed_dyn_error` in `error.rs` and exercise `provide` in
+//!   `context.rs` through std's provider dispatch, which no call edge shows.
 //!
-//! A finding a test is seen calling (reach `yes`), an owner whose gates do not
-//! read, and an owner outside a doctested library keep today's reading. Like
+//! A finding a test is seen calling (reach `yes`), a `weakly_exposed` finding
+//! (a credited weak oracle is read evidence, RIPR-SPEC-0240's scope
+//! boundary), an owner whose gates do not read, and an owner outside a
+//! doctested library keep today's reading. Like
 //! every RIPR-SPEC-0240 rule this only withholds: nothing is credited and the
 //! actionability flip stays fail-closed.
 
 use super::gap_admission::withhold_gap;
-use crate::analysis::facts::attribute_gate_atoms;
+use crate::analysis::facts::owner_gate_atoms;
 use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
 use std::collections::BTreeSet;
@@ -37,7 +43,7 @@ use std::collections::BTreeSet;
 const LIMIT: StaticLimitKind = StaticLimitKind::RustGatedDoctestUnread;
 const FIRST_UNRESOLVED_EDGE: &str = "whether a doc example ripr did not read, gated by the owner's own cfg, checks the changed line";
 
-/// Withhold a `weakly_exposed` or `reachable_unrevealed` gap whose owner is
+/// Withhold a `reachable_unrevealed` gap whose owner is
 /// compiled only under a cfg that also gates an unread doc example. Returns
 /// `true` when the finding was rewritten to `static_unknown`.
 pub(in crate::analysis) fn withhold_gated_doctest_gap(
@@ -45,10 +51,7 @@ pub(in crate::analysis) fn withhold_gated_doctest_gap(
     index: &RustIndex,
 ) -> bool {
     if finding.static_limit_kind.is_some()
-        || !matches!(
-            finding.class,
-            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-        )
+        || finding.class != ExposureClass::ReachableUnrevealed
         || finding.ripr.reach.state != StageState::Weak
     {
         return false;
@@ -79,7 +82,7 @@ pub(in crate::analysis) fn withhold_gated_doctest_gap(
     };
     let shared: BTreeSet<String> = gates
         .iter()
-        .flat_map(|gate| attribute_gate_atoms(gate))
+        .flat_map(|gate| owner_gate_atoms(gate))
         .filter(|atom| refused.contains(atom))
         .collect();
     if shared.is_empty() {

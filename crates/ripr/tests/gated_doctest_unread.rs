@@ -45,7 +45,7 @@ const MANIFEST: &str =
     "[package]\nname = \"gated_lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
 /// An admitted example on `plain` in the owner's file.
-const PLAIN: &str = "/// ```\n/// assert_eq!(gated_lib::plain(2), 3);\n/// ```\npub fn plain(x: u32) -> u32 {\n    x + 1\n}\n";
+const PLAIN: &str = "/// ```\n/// let _ = gated_lib::plain(2);\n/// ```\npub fn plain(x: u32) -> u32 {\n    x + 1\n}\n";
 
 /// The nightly-style example, refused by its `cfg_attr` lines.
 fn refused_example(atom: &str) -> String {
@@ -54,12 +54,19 @@ fn refused_example(atom: &str) -> String {
     )
 }
 
-/// The same example with nothing that refuses it.
-const ADMITTED_EXAMPLE: &str = "/// ```\n/// assert_eq!(gated_lib::boxed(2), 4);\n/// ```\npub fn boxed(x: u32) -> u32 {\n    x * 2\n}\n";
+/// The same example with nothing that refuses it. It asserts nothing, so its
+/// admission adds no weak oracle and the class stays comparable.
+const ADMITTED_EXAMPLE: &str = "/// ```\n/// let _ = gated_lib::boxed(2);\n/// ```\npub fn boxed(x: u32) -> u32 {\n    x * 2\n}\n";
 
-/// An integration test that shares only a name token with `provide`, so the
-/// owner has a related test and reads reach `weak`, as anyhow's did.
+/// An integration test that shares only a name token with `provide` and
+/// asserts nothing, so the owner reads reach `weak` and `reachable_unrevealed`,
+/// as anyhow's did.
 const NAME_TOKEN_TEST: &str =
+    "#[test]\nfn provide_plain_value() {\n    let _ = gated_lib::plain(2);\n}\n";
+
+/// The same test with an exact assertion: a credited weak oracle reads
+/// `weakly_exposed`, which this rule leaves alone.
+const NAME_TOKEN_ASSERTING_TEST: &str =
     "#[test]\nfn provide_plain_value() {\n    assert_eq!(gated_lib::plain(2), 3);\n}\n";
 
 const CHANGED: &str = "        x + 7";
@@ -76,6 +83,10 @@ fn source(example: &str, gate: &str, tail: &str) -> String {
 
 /// The finding on the changed `provide` line, with that line's number.
 fn provide_finding(source: &str) -> Result<Value, String> {
+    provide_finding_with(source, NAME_TOKEN_TEST)
+}
+
+fn provide_finding_with(source: &str, token_test: &str) -> Result<Value, String> {
     let line = source
         .lines()
         .position(|text| text == CHANGED)
@@ -85,8 +96,7 @@ fn provide_finding(source: &str) -> Result<Value, String> {
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("tests/t.rs"), NAME_TOKEN_TEST)
-        .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("tests/t.rs"), token_test).map_err(|error| error.to_string())?;
     let diff = format!(
         "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        x + 1\n+{CHANGED}\n"
     );
@@ -115,11 +125,6 @@ fn class(finding: &Value) -> &str {
     finding["classification"].as_str().unwrap_or("")
 }
 
-/// A class that claims a gap: what the withheld reading moves off.
-fn is_gap(finding: &Value) -> bool {
-    matches!(class(finding), "reachable_unrevealed" | "weakly_exposed")
-}
-
 fn limit(finding: &Value) -> Option<&str> {
     finding["static_limit_kind"].as_str()
 }
@@ -143,11 +148,15 @@ fn an_owner_gated_like_a_refused_example_is_withheld() -> Result<(), String> {
 #[test]
 fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
     // Premise: without the gate the owner reads as a gap from the weak
-    // same-file relation, so the withheld case above moved off that reading.
+    // name-token relation, so the withheld case above moved off that reading.
     let ungated = provide_finding(&source(&refused_example("nightly_api"), "", ""))?;
-    assert!(is_gap(&ungated), "{ungated}");
+    assert_eq!(class(&ungated), "reachable_unrevealed", "{ungated}");
     assert_eq!(ungated["ripr"]["reach"]["state"], "weak", "{ungated}");
 
+    let no_doc_text = refused_example("nightly_api")
+        .replace("doc = \"# _ = stringify! {\"", "allow(unused)")
+        .replace("doc = \"# };\"", "allow(unused)");
+    let gated = "#[cfg(nightly_api)]\n    ";
     let mut wrong = Vec::new();
     for (case, text) in [
         (
@@ -163,12 +172,21 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
             ),
         ),
         (
-            "example not refused",
-            source(ADMITTED_EXAMPLE, "#[cfg(nightly_api)]\n    ", ""),
+            "owner compiled with the atom off",
+            source(
+                &refused_example("nightly_api"),
+                "#[cfg(not(nightly_api))]\n    ",
+                "",
+            ),
+        ),
+        ("example not refused", source(ADMITTED_EXAMPLE, gated, "")),
+        (
+            "example cfg_attr adds no doc text",
+            source(&no_doc_text, gated, ""),
         ),
     ] {
         let finding = provide_finding(&text)?;
-        if !is_gap(&finding) || limit(&finding) == Some(LIMIT) {
+        if class(&finding) != "reachable_unrevealed" || limit(&finding) == Some(LIMIT) {
             wrong.push((
                 case,
                 class(&finding).to_string(),
@@ -178,8 +196,23 @@ fn each_missing_link_keeps_the_gap_reading() -> Result<(), String> {
     }
     assert!(
         wrong.is_empty(),
-        "cases that left the gap reading: {wrong:?}"
+        "cases that left the reachable_unrevealed reading: {wrong:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_credited_weak_oracle_keeps_its_weakly_exposed_reading() -> Result<(), String> {
+    let finding = provide_finding_with(
+        &source(
+            &refused_example("nightly_api"),
+            "#[cfg(nightly_api)]\n    ",
+            "",
+        ),
+        NAME_TOKEN_ASSERTING_TEST,
+    )?;
+    assert_eq!(class(&finding), "weakly_exposed", "{finding}");
+    assert_ne!(limit(&finding), Some(LIMIT), "{finding}");
     Ok(())
 }
 

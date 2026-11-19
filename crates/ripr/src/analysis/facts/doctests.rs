@@ -48,7 +48,7 @@ mod enclosing;
 mod gated;
 
 use self::enclosing::enclosing_gate_refuses;
-pub(crate) use self::gated::attribute_gate_atoms;
+pub(crate) use self::gated::owner_gate_atoms;
 use super::cfg_predicates::rust_ident_name;
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;

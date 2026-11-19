@@ -1206,6 +1206,34 @@ closure whose body drops the call as a statement
 and is named. Nothing is credited, no runtime is chosen,
 and repair still does not start.
 
+### Owner gated like an unread doc example (#14935)
+
+The doctest admission (RIPR-SPEC-0279) refuses a fenced doc example whose
+item carries a `#[cfg(..)]` it cannot prove true, or any `#[cfg_attr(..)]`,
+between the comment and the item. anyhow's nightly-only examples wrap
+themselves in
+`#[cfg_attr(not(error_generic_member_access), doc = "# _ = stringify! {")]`
+and run for real only with that cfg on, which is also the only build that
+compiles the `#[cfg(error_generic_member_access)]` `provide` methods they
+exercise. A changed `provide` read `reachable_unrevealed` from name-token and
+same-file relations alone, and the anyhow diff-mode receipt scored four caught
+mutants as false gaps.
+
+Doctest registration now records, per doctested library root, the cfg atoms
+(bare names and `key = "value"` pairs of the predicate; `all`, `any`, `not`,
+`test` and `doctest` are not atoms) of every attribute that refused a doc
+example from a `///` run holding a fence line. When a `reachable_unrevealed`
+finding has reach `weak` (no indexed test is seen calling the owner) and the
+owner's own or enclosing `#[cfg(..)]` gates, as `unestablished_cfg_gates_of_fn`
+reads them, name one of those atoms in the same library, the finding is
+rewritten through `withhold_gap` to `static_unknown` under
+`rust_gated_doctest_unread`. Reach, related tests and stages are unchanged.
+
+A test seen calling the owner, a gate on another atom, an example that is not
+refused, a `weakly_exposed` finding, an owner whose gates do not read and an
+owner outside a doctested library keep today's reading. A gate on an enclosing
+`mod` or `impl` of the example is not collected. Nothing is credited.
+
 ## Scope boundary
 
 - Rust check findings, the TypeScript truncated-discovery and byte-read-limit

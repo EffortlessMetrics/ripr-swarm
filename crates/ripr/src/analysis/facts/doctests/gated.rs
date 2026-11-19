@@ -12,13 +12,16 @@
 //!
 //! This pass records, per doctested library root, the cfg atoms (bare names
 //! and `key = "value"` pairs) of every refusing attribute that sits between a
-//! fenced doc example and its item. It reads only what the admission refuses
-//! for a cfg reason; a gate on an enclosing `mod` or `impl` is not collected
-//! here (that refusal keeps today's reading).
+//! runnable fenced doc example and its item: an unprovable `#[cfg(..)]`, or a
+//! `#[cfg_attr(..)]` that adds a `doc = ".."` fragment (the shape that rewrites
+//! the example per configuration). A `cfg_attr` that adds anything else
+//! (`derive(Serialize)`, `doc(cfg(..))` under `docsrs`) does not change what the
+//! example runs, so its atoms are not recorded. A gate on an enclosing `mod`
+//! or `impl` is not collected here (that refusal keeps today's reading).
 
 use super::{
     AttributeCfgFamily, attribute_cfg_family, attribute_path_and_optional_args,
-    between_doc_and_item_cfg_refuses, is_between_doc_and_item, outer_doc_text,
+    between_doc_and_item_cfg_refuses, is_between_doc_and_item, outer_doc_text, runnable_fence,
     split_top_level_operands,
 };
 use std::collections::BTreeSet;
@@ -30,9 +33,10 @@ const COMBINATORS: [&str; 3] = ["all", "any", "not"];
 /// configuration of the owner.
 const MODELED_FLAGS: [&str; 2] = ["test", "doctest"];
 
-/// The cfg atoms of every attribute that refuses a fenced doc example in
-/// `source`: each `///` run that holds a fence line, followed by the
-/// attribute, blank and comment lines up to its item.
+/// The cfg atoms of every attribute that refuses a runnable fenced doc
+/// example in `source`. A document is the `///` runs and the attribute,
+/// blank and comment lines between them, up to its item; an attribute counts
+/// once a runnable fence (plain, `rust` or an edition) has opened in it.
 pub(super) fn refused_example_gate_atoms(
     source: &str,
     defaults: Option<&BTreeSet<String>>,
@@ -41,67 +45,113 @@ pub(super) fn refused_example_gate_atoms(
     if !source.contains("```") {
         return atoms;
     }
-    let lines: Vec<&str> = source.lines().collect();
-    let mut index = 0;
-    while index < lines.len() {
-        if outer_doc_text(lines[index]).is_none() {
-            index += 1;
-            continue;
-        }
-        let mut fenced = false;
-        while index < lines.len()
-            && let Some(text) = outer_doc_text(lines[index])
-        {
-            fenced |= text.trim_start().starts_with("```");
-            index += 1;
-        }
-        if !fenced {
-            continue;
-        }
-        for line in lines[index..]
-            .iter()
-            .take_while(|line| is_between_doc_and_item(line))
-        {
-            let trimmed = line.trim_start();
-            if between_doc_and_item_cfg_refuses(trimmed, defaults) {
-                atoms.extend(attribute_gate_atoms(trimmed));
+    let (mut in_document, mut fence_open, mut runnable) = (false, false, false);
+    for line in source.lines() {
+        if let Some(text) = outer_doc_text(line) {
+            in_document = true;
+            if let Some(info) = text.trim_start().strip_prefix("```") {
+                if !fence_open {
+                    runnable |= runnable_fence(info.trim());
+                }
+                fence_open = !fence_open;
             }
+            continue;
         }
+        if in_document && is_between_doc_and_item(line) {
+            let trimmed = line.trim_start();
+            if runnable && between_doc_and_item_cfg_refuses(trimmed, defaults) {
+                atoms.extend(example_gate_atoms(trimmed));
+            }
+            continue;
+        }
+        // The item line, or code outside any document, ends the document.
+        (in_document, fence_open, runnable) = (false, false, false);
     }
     atoms
 }
 
-/// The configuration atoms of a `#[cfg(P)]` or `#[cfg_attr(P, ..)]`
-/// attribute's predicate `P`: each bare name (`error_generic_member_access`)
-/// and each `key = "value"` pair (`feature="std"`, spaces removed). Any other
-/// attribute, or text that does not read, has none.
-pub(crate) fn attribute_gate_atoms(attribute: &str) -> BTreeSet<String> {
+/// The atoms of a refusing attribute on the example side, either polarity:
+/// `cfg_attr(not(x), doc = "# _ = stringify! {")` stubs the example when `x`
+/// is off and runs it when `x` is on.
+fn example_gate_atoms(attribute: &str) -> BTreeSet<String> {
     let trimmed = attribute.trim();
     let Some((_, Some(args))) = attribute_path_and_optional_args(trimmed) else {
         return BTreeSet::new();
     };
     let predicate = match attribute_cfg_family(trimmed) {
         AttributeCfgFamily::Cfg => Some(args),
-        AttributeCfgFamily::CfgAttr => {
-            split_top_level_operands(args).and_then(|operands| operands.first().copied())
-        }
+        AttributeCfgFamily::CfgAttr => split_top_level_operands(args).and_then(|operands| {
+            let adds_doc_text = operands.iter().skip(1).any(|operand| {
+                let compact: String = operand.split_whitespace().collect();
+                compact.starts_with("doc=")
+            });
+            adds_doc_text.then(|| operands.first().copied()).flatten()
+        }),
         AttributeCfgFamily::Other => None,
     };
-    predicate.map(predicate_atoms).unwrap_or_default()
+    predicate
+        .map(|predicate| {
+            predicate_atoms(predicate)
+                .into_iter()
+                .map(|(atom, _)| atom)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-fn predicate_atoms(predicate: &str) -> BTreeSet<String> {
-    let mut atoms = BTreeSet::new();
+/// The atoms a `#[cfg(P)]` gate on an owner requires on: each bare name
+/// (`error_generic_member_access`) and `key = "value"` pair (`feature="std"`,
+/// spaces removed) of `P` that is not under an odd number of `not(..)`. An
+/// owner behind `#[cfg(not(x))]` is compiled when `x` is off, not in the
+/// build that runs an example needing `x`, so `x` is not one of its atoms.
+/// Any other attribute, or text that does not read, has none.
+pub(crate) fn owner_gate_atoms(attribute: &str) -> BTreeSet<String> {
+    let trimmed = attribute.trim();
+    let Some((_, Some(args))) = attribute_path_and_optional_args(trimmed) else {
+        return BTreeSet::new();
+    };
+    if !matches!(attribute_cfg_family(trimmed), AttributeCfgFamily::Cfg) {
+        return BTreeSet::new();
+    }
+    predicate_atoms(args)
+        .into_iter()
+        .filter(|(_, negated)| !negated)
+        .map(|(atom, _)| atom)
+        .collect()
+}
+
+/// Each atom of `predicate` with whether an odd number of `not(..)` encloses
+/// it.
+fn predicate_atoms(predicate: &str) -> Vec<(String, bool)> {
+    let mut atoms = Vec::new();
     let chars: Vec<char> = predicate.chars().collect();
+    // One entry per open parenthesis: whether it opened a `not(`.
+    let mut parens: Vec<bool> = Vec::new();
+    let mut after_not = false;
     let mut at = 0;
     while at < chars.len() {
         let ch = chars[at];
         if ch == '"' {
             // A literal outside `key = ".."` belongs to no atom; skip it.
             at = skip_literal(&chars, at);
+            after_not = false;
+            continue;
+        }
+        if ch == '(' {
+            parens.push(after_not);
+            after_not = false;
+            at += 1;
+            continue;
+        }
+        if ch == ')' {
+            parens.pop();
+            at += 1;
             continue;
         }
         if !(ch.is_alphabetic() || ch == '_') {
+            if !ch.is_whitespace() {
+                after_not = false;
+            }
             at += 1;
             continue;
         }
@@ -110,6 +160,8 @@ fn predicate_atoms(predicate: &str) -> BTreeSet<String> {
             at += 1;
         }
         let name: String = chars[start..at].iter().collect();
+        after_not = name == "not";
+        let negated = parens.iter().filter(|opened_not| **opened_not).count() % 2 == 1;
         let mut next = at;
         while next < chars.len() && chars[next].is_whitespace() {
             next += 1;
@@ -122,13 +174,13 @@ fn predicate_atoms(predicate: &str) -> BTreeSet<String> {
             if chars.get(value) == Some(&'"') {
                 let end = skip_literal(&chars, value);
                 let literal: String = chars[value..end].iter().collect();
-                atoms.insert(format!("{name}={literal}"));
+                atoms.push((format!("{name}={literal}"), negated));
                 at = end;
                 continue;
             }
         }
         if !COMBINATORS.contains(&name.as_str()) && !MODELED_FLAGS.contains(&name.as_str()) {
-            atoms.insert(name);
+            atoms.push((name, negated));
         }
     }
     atoms
@@ -156,29 +208,49 @@ mod tests {
     }
 
     #[test]
-    fn gate_atoms_read_names_and_key_value_pairs_of_the_predicate_only() {
+    fn owner_gate_atoms_read_the_positive_names_and_pairs_of_a_cfg() {
         assert_eq!(
-            attribute_gate_atoms("#[cfg(error_generic_member_access)]"),
+            owner_gate_atoms("#[cfg(error_generic_member_access)]"),
             atoms(&["error_generic_member_access"])
         );
         assert_eq!(
-            attribute_gate_atoms(
+            owner_gate_atoms("#[cfg(any(feature = \"std\", not(anyhow_no_core_error)))]"),
+            atoms(&["feature=\"std\""]),
+            "an atom under `not(..)` is compiled in the other build"
+        );
+        assert_eq!(
+            owner_gate_atoms("#[cfg(not(not(nightly_api)))]"),
+            atoms(&["nightly_api"])
+        );
+        assert!(owner_gate_atoms("#[cfg(not(nightly_api))]").is_empty());
+        assert_eq!(
+            owner_gate_atoms("#[cfg(all(test, doctest, unix))]"),
+            atoms(&["unix"])
+        );
+        assert!(owner_gate_atoms("#[cfg_attr(nightly_api, inline)]").is_empty());
+        assert!(owner_gate_atoms("#[must_use]").is_empty());
+        assert!(owner_gate_atoms("#[doc(hidden)]").is_empty());
+        assert!(owner_gate_atoms("#[cfg(unbalanced").is_empty());
+    }
+
+    #[test]
+    fn example_atoms_come_from_doc_text_cfg_attrs_and_unprovable_cfgs() {
+        assert_eq!(
+            example_gate_atoms(
                 "#[cfg_attr(not(error_generic_member_access), doc = \"# _ = stringify! {\")]"
             ),
             atoms(&["error_generic_member_access"]),
-            "only the cfg_attr predicate is read, not the attribute it adds"
+            "only the predicate is read, either polarity"
         );
+        assert!(
+            example_gate_atoms("#[cfg_attr(feature = \"serde\", derive(Serialize))]").is_empty(),
+            "a cfg_attr that adds no doc text does not change the example"
+        );
+        assert!(example_gate_atoms("#[cfg_attr(docsrs, doc(cfg(feature = \"x\")))]").is_empty());
         assert_eq!(
-            attribute_gate_atoms("#[cfg(any(feature = \"std\", not(anyhow_no_core_error)))]"),
-            atoms(&["feature=\"std\"", "anyhow_no_core_error"])
+            example_gate_atoms("#[cfg(custom_gate)]"),
+            atoms(&["custom_gate"])
         );
-        assert_eq!(
-            attribute_gate_atoms("#[cfg(all(test, doctest, unix))]"),
-            atoms(&["unix"])
-        );
-        assert!(attribute_gate_atoms("#[must_use]").is_empty());
-        assert!(attribute_gate_atoms("#[doc(hidden)]").is_empty());
-        assert!(attribute_gate_atoms("#[cfg(unbalanced").is_empty());
     }
 
     #[test]
@@ -197,10 +269,17 @@ pub fn f() -> bool { true }\n";
     }
 
     #[test]
-    fn an_unfenced_doc_run_or_an_admitted_gate_records_nothing() {
+    fn a_non_example_document_or_an_admitted_gate_records_nothing() {
         // No fence: a doc comment with a gate is not an example.
         let plain = "/// Plain docs.\n#[cfg(custom_gate)]\npub fn f() {}\n";
         assert!(refused_example_gate_atoms(plain, None).is_empty());
+        // A `text` block is not run, and its closing fence opens nothing.
+        let text = "/// ```text\n/// f()\n/// ```\n#[cfg(custom_gate)]\npub fn f() {}\n";
+        assert!(refused_example_gate_atoms(text, None).is_empty());
+        // A gate after the item line belongs to the next item, not the example.
+        let next =
+            "/// ```\n/// lib::f();\n/// ```\npub fn f() {}\n#[cfg(custom_gate)]\npub fn g() {}\n";
+        assert!(refused_example_gate_atoms(next, None).is_empty());
         // `cfg(doctest)` admits the example, so nothing was left unread.
         let doctest = "/// ```\n/// lib::f();\n/// ```\n#[cfg(doctest)]\npub fn f() {}\n";
         assert!(refused_example_gate_atoms(doctest, None).is_empty());
