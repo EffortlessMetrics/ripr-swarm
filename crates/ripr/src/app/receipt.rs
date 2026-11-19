@@ -500,10 +500,10 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
         let found = &value[field];
         if found.as_str() != Some(expected) {
             return Err(format!(
-                "receipt at {} is not a ripr receipt this version reads: `{field}` is {}, expected {expected:?}; {}",
+                "receipt at {} is not a ripr receipt this version reads: `{field}` is {}, expected {expected:?}; {}; check the path, or rewrite the receipt with `ripr receipt write`",
                 path.display(),
                 describe_untrusted_value(found),
-                identity_next_step(field)
+                identity_refusal_reason(field)
             ));
         }
     }
@@ -581,14 +581,12 @@ fn describe_untrusted_value(value: &serde_json::Value) -> String {
     }
 }
 
-/// What to do about a receipt whose identity field names another record.
-fn identity_next_step(field: &str) -> &'static str {
+/// Why a receipt whose identity field names another record is refused.
+fn identity_refusal_reason(field: &str) -> &'static str {
     match field {
-        "schema_version" => {
-            "this ripr reads only that schema; rewrite the receipt with this version's `ripr receipt write`"
-        }
+        "schema_version" => "this ripr reads only that schema",
         _ => {
-            "check the path names a `ripr receipt write` receipt (an agent repair receipt is checked with `ripr agent receipt`), or rewrite it with `ripr receipt write`"
+            "`receipt check` reads only receipts written by `ripr receipt write`, not an agent repair receipt or another tool's record"
         }
     }
 }
@@ -1203,6 +1201,17 @@ mod tests {
                     }
                 }
             }
+        }
+        // A receipt missing `current_head` keeps the #4737 explanation even
+        // when an identity field is also wrong.
+        let mut pre_head = base.clone();
+        pre_head["kind"] = serde_json::json!("agent_receipt");
+        if let Some(object) = pre_head.as_object_mut() {
+            object.remove("current_head");
+        }
+        match check("pre_head", &pre_head)? {
+            Err(err) if err.contains("missing required field `current_head`") => {}
+            other => failures.push(format!("pre-HEAD receipt: {other:?}")),
         }
         // Control: the writer's own receipt still checks as valid.
         let written = write_receipt(&write_opts("gap:demo", "passed"))?;
