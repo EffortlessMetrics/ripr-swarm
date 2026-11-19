@@ -661,7 +661,8 @@ const MACRO_DROP_TARGET: &str = "$";
 /// (generics dropped) each yield `(Cfg, Config)`.
 fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
     // A plain path's last segment (`guard::Cfg<T>` reads `Cfg`); anything
-    // else (`(Cfg, u8)`, `&Cfg`, `<Cfg as T>::Out`, `self`) names no type.
+    // else (`<Cfg as T>::Out`, `self`) names no type. An alias's tuple or
+    // reference type (`(Cfg, u8)`, `&Cfg`) is not a path and is not read.
     let last_segment = |text: &str| -> Option<String> {
         let text = squeeze(text);
         let text = text.split('<').next().unwrap_or(&text);
@@ -694,13 +695,25 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
                 .and_then(ast::AssocItemList::cast)
                 .is_none()
             && let Some(name) = alias.name()
-            && let Some(ty) = alias.ty()
+            && let Some(ast::Type::PathType(ty)) = alias.ty().map(unparenthesized)
             && let Some(original) = last_segment(&ty.syntax().text().to_string())
         {
             pairs.push((original, ident(name.text())));
         }
     }
     pairs
+}
+
+/// `ty` with any grouping parentheses removed (`(Cfg)` reads `Cfg`); a
+/// tuple (`(Cfg, u8)`) is not a parenthesized type and is kept.
+fn unparenthesized(mut ty: ast::Type) -> ast::Type {
+    while let ast::Type::ParenType(paren) = &ty {
+        let Some(inner) = paren.ty() else {
+            break;
+        };
+        ty = inner;
+    }
+    ty
 }
 
 /// #15107: the types a `Drop` impl written inside a macro definition or
@@ -743,7 +756,9 @@ fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet
                 continue;
             }
             let mut target = None;
-            for token in rest.take(16) {
+            // A path's tokens are read to its end however long it is, so a
+            // truncated prefix is never recorded as the target.
+            for token in rest {
                 match token.kind() {
                     SyntaxKind::DOLLAR => {
                         target = Some(MACRO_DROP_TARGET.to_string());
@@ -791,11 +806,7 @@ struct DropSourceScan {
 /// [`non_plain_drop_types`] and [`same_type_name_pairs`] from one parse.
 fn scan_drop_source(source: &str) -> Option<DropSourceScan> {
     let parse = parse_clean_source_file(source)?;
-    let same_type_names = if source.contains(" as ") || source.contains("type ") {
-        same_type_name_pairs(&parse.tree())
-    } else {
-        Vec::new()
-    };
+    let same_type_names = same_type_name_pairs(&parse.tree());
     let mut types = BTreeSet::new();
     if !source.contains("Drop") {
         return Some(DropSourceScan {
@@ -2173,6 +2184,12 @@ mod tests {
                 false,
                 false,
             ),
+            // A long target path is read to its last segment.
+            (
+                "wrap! { impl Drop for crate::a::b::c::d::e::f::g::h::Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
             // `Drop` as a bound on the impl's generics is not the trait.
             (
                 "macro_rules! describe { ($t:ident) => { impl<T: Drop> Describe for $t<T> {} }; }\ndescribe!(Row);\n",
@@ -2236,6 +2253,33 @@ mod tests {
             (
                 "mod guard;\npub struct Row;\nimpl Iterator for Row { type Item = guard::Cfg; fn next(&mut self) -> Option<guard::Cfg> { None } }\npub struct Two;\nimpl Iterator for Two { type Item = Row; fn next(&mut self) -> Option<Row> { None } }\n",
                 "Row",
+                true,
+            ),
+            // Grouping parentheses and line breaks around `as`/`type`.
+            (
+                "mod guard;\npub type Config = (guard::Cfg);\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type\nConfig = ((Cfg));\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub use guard::Cfg\nas\nConfig;\n",
+                "Config",
+                false,
+            ),
+            // A tuple or reference alias names no single type.
+            (
+                "mod guard;\npub type Config = (guard::Cfg, u8);\n",
+                "Config",
+                true,
+            ),
+            (
+                "mod guard;\npub type Config = &'static guard::Cfg;\n",
+                "Config",
                 true,
             ),
             // An unrelated rename stays plain.
