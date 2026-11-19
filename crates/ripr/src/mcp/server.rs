@@ -1732,8 +1732,24 @@ async fn answer_initialize_session_ping(
     Ok(result)
 }
 
-impl rmcp::Service<RoleServer> for InitializeSessionService {
-    async fn handle_request(
+/// The pinned SDK answers a method it can type but this server does not
+/// serve (`prompts/get`, `logging/setLevel`, `resources/subscribe`, the task
+/// methods, a discovery-session `ping`) with a `-32601` whose whole message is
+/// the bare method name. Give those the same `Method not found: <method>`
+/// wording as a method the SDK cannot type (#14186). Only that exact SDK
+/// shape is rewritten: the code is unchanged, and an error that already
+/// carries a message or data of its own passes through.
+fn name_missing_method(error: ErrorData, method: &str) -> ErrorData {
+    if error.code == ErrorCode::METHOD_NOT_FOUND && error.message == method && error.data.is_none()
+    {
+        unknown_method_error(method)
+    } else {
+        error
+    }
+}
+
+impl InitializeSessionService {
+    async fn route_request(
         &self,
         request: ClientRequest,
         context: RequestContext<RoleServer>,
@@ -1758,6 +1774,19 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
             context,
         ))
         .await
+    }
+}
+
+impl rmcp::Service<RoleServer> for InitializeSessionService {
+    async fn handle_request(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ServerResult, ErrorData> {
+        let method = request.method().to_owned();
+        self.route_request(request, context)
+            .await
+            .map_err(|error| name_missing_method(error, &method))
     }
 
     async fn handle_notification(

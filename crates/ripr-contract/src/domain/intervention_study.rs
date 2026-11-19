@@ -1315,3 +1315,531 @@ mod tests {
         assert_code(study.validate(), codes::COMPENSATING_OUTCOME_SCORE)
     }
 }
+
+#[cfg(test)]
+mod single_field_refusal_tests {
+    use super::*;
+
+    type Edit = fn(&mut RiprInterventionStudyV1);
+
+    /// The code and message a study is refused with after one edit to the
+    /// valid example, or `None` when the edited study is still accepted.
+    fn refusal(edit: Edit) -> Option<(&'static str, String)> {
+        let mut study = example_preregistered_study();
+        edit(&mut study);
+        study
+            .validate()
+            .err()
+            .map(|error| (error.code, error.message))
+    }
+
+    fn assert_each_refused(code: &'static str, message: &str, edits: &[(&str, Edit)]) {
+        for (name, edit) in edits {
+            assert_eq!(refusal(*edit), Some((code, message.to_string())), "{name}");
+        }
+    }
+
+    #[test]
+    fn condition_tokens_and_error_display_are_stable() {
+        assert_eq!(ConditionId::Control.as_str(), "control");
+        assert_eq!(ConditionId::RiprAssisted.as_str(), "ripr_assisted");
+        assert_eq!(
+            error(codes::MISSING_FIELD, "study_id must be non-empty").to_string(),
+            "missing_field: study_id must be non-empty"
+        );
+    }
+
+    #[test]
+    fn the_envelope_must_name_this_schema_kind_and_state() {
+        assert_eq!(
+            refusal(|study| study.schema_version = "2".into()),
+            Some((
+                codes::UNSUPPORTED_SCHEMA,
+                format!("schema_version must be {RIPR_INTERVENTION_STUDY_SCHEMA_VERSION}")
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.kind = "study".into()),
+            Some((
+                codes::UNSUPPORTED_SCHEMA,
+                format!("kind must be {RIPR_INTERVENTION_STUDY_KIND}")
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.implementation_state = "pilot_complete".into()),
+            Some((
+                codes::UNSUPPORTED_SCHEMA,
+                format!(
+                    "implementation_state must be {RIPR_INTERVENTION_STUDY_IMPLEMENTATION_STATE}"
+                )
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.non_claims.clear()),
+            Some((
+                codes::MISSING_FIELD,
+                "non_claims must name at least one excluded claim".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn each_blank_identity_field_is_named() {
+        let blanks: [(&str, Edit); 12] = [
+            ("study_id", |s| s.study_id.clear()),
+            ("protocol_version", |s| s.protocol_version = " ".into()),
+            ("parent_issue", |s| s.parent_issue.clear()),
+            ("sequence", |s| s.sequence = "\t".into()),
+            ("repository_id", |s| s.repository.repository_id.clear()),
+            ("clone_url", |s| s.repository.clone_url.clear()),
+            ("task_series_id", |s| s.task_series.task_series_id.clear()),
+            ("task_id", |s| s.tasks[0].task_id.clear()),
+            ("pair_id", |s| s.assignment.pairs[0].pair_id = " ".into()),
+            ("model_id", |s| s.shared_budget.model_id.clear()),
+            ("operator_profile", |s| {
+                s.shared_budget.operator_profile.clear();
+            }),
+            ("runtime_id", |s| s.shared_budget.runtime_id = " ".into()),
+        ];
+        for (field, edit) in blanks {
+            assert_eq!(
+                refusal(edit),
+                Some((codes::MISSING_FIELD, format!("{field} must be non-empty"))),
+                "{field}"
+            );
+        }
+        assert_eq!(
+            refusal(|study| study.shared_budget.tool_ids.clear()),
+            Some((
+                codes::MISSING_FIELD,
+                "shared tool_ids must be named".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn the_protocol_digest_and_analyzed_head_must_be_lowercase_hex_of_full_length() {
+        assert_eq!(
+            refusal(|study| study.protocol_digest = "0".repeat(64)),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "protocol_digest must use sha256:<64-hex>".to_string()
+            ))
+        );
+        assert_each_refused(
+            codes::MALFORMED_IDENTITY,
+            "protocol_digest must be 64 lowercase hexadecimal characters",
+            &[
+                ("short", |s| {
+                    s.protocol_digest = format!("sha256:{}", "0".repeat(63));
+                }),
+                ("long", |s| {
+                    s.protocol_digest = format!("sha256:{}", "0".repeat(65));
+                }),
+                ("not hex", |s| {
+                    s.protocol_digest = format!("sha256:{}g", "0".repeat(63));
+                }),
+                ("uppercase", |s| {
+                    s.protocol_digest = format!("sha256:{}A", "0".repeat(63));
+                }),
+            ],
+        );
+        assert_each_refused(
+            codes::MALFORMED_IDENTITY,
+            "analyzed_head_sha must be a 40-character lowercase git SHA",
+            &[
+                ("short", |s| s.repository.analyzed_head_sha = "a".repeat(39)),
+                ("long", |s| s.repository.analyzed_head_sha = "a".repeat(41)),
+                ("not hex", |s| {
+                    s.repository.analyzed_head_sha = format!("{}g", "a".repeat(39));
+                }),
+                ("uppercase", |s| {
+                    s.repository.analyzed_head_sha = format!("{}A", "a".repeat(39));
+                }),
+            ],
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.protocol_digest = format!("sha256:{}", "0123456789abcdef".repeat(4));
+                study.repository.analyzed_head_sha =
+                    "0123456789abcdef0123456789abcdef01234567".into();
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn strata_tasks_and_pairs_must_be_selected_unique_and_consistent() {
+        assert_each_refused(
+            codes::MISSING_FIELD,
+            "matched strata and tasks must be selected before outcomes",
+            &[
+                ("no strata", |s| s.strata.clear()),
+                ("no tasks", |s| s.tasks.clear()),
+            ],
+        );
+        assert_eq!(
+            refusal(|study| {
+                let twin = study.strata[0].clone();
+                study.strata.push(twin);
+            }),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "stratum_id values must be unique".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.tasks[1].task_id = study.tasks[0].task_id.clone()),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "task_id values must be unique".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.tasks[0].stratum_id = "stratum:other".into()),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "task task:boundary-oracle-a names unknown stratum stratum:other".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.assignment.pairs.pop();
+            }),
+            Some((
+                codes::MISSING_FIELD,
+                "every selected task must appear in exactly one assignment pair".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.assignment.pairs[1].pair_id = "pair:b".into();
+                study.assignment.pairs[1].task_id = "task:elsewhere".into();
+            }),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "assignment pair pair:b names unknown task task:elsewhere".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.assignment.pairs[1].task_id = study.assignment.pairs[0].task_id.clone();
+            }),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "task task:boundary-oracle-a is assigned more than once".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.assignment.selected_before_outcomes = false)
+                .map(|(code, _)| code),
+            Some(codes::ASSIGNMENT_AFTER_OUTCOME)
+        );
+    }
+
+    #[test]
+    fn every_pair_runs_both_conditions_and_the_order_is_counterbalanced() {
+        for condition in [ConditionId::Control, ConditionId::RiprAssisted] {
+            let mut study = example_preregistered_study();
+            study.assignment.pairs[0].pair_id = "pair:a".into();
+            study.assignment.pairs[0].first_condition = condition;
+            study.assignment.pairs[0].second_condition = condition;
+            assert_eq!(
+                study
+                    .validate()
+                    .err()
+                    .map(|error| (error.code, error.message)),
+                Some((
+                    codes::MALFORMED_IDENTITY,
+                    "pair pair:a must counterbalance control and ripr_assisted".to_string()
+                )),
+                "{condition:?}"
+            );
+        }
+        assert_eq!(
+            refusal(|study| {
+                for pair in &mut study.assignment.pairs {
+                    pair.first_condition = ConditionId::Control;
+                    pair.second_condition = ConditionId::RiprAssisted;
+                }
+            }),
+            Some((
+                codes::MALFORMED_IDENTITY,
+                "matched pairs must counterbalance condition order".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn exactly_the_two_conditions_are_declared_with_equal_budgets() {
+        assert_each_refused(
+            codes::MISSING_FIELD,
+            "protocol must declare exactly control and ripr_assisted",
+            &[
+                ("a third condition", |s| {
+                    let extra = s.conditions[0].clone();
+                    s.conditions.push(extra);
+                }),
+                ("control twice", |s| {
+                    s.conditions[1].condition_id = s.conditions[0].condition_id;
+                }),
+                ("one condition", |s| {
+                    s.conditions.pop();
+                }),
+            ],
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.condition_budget_overlays.remove("ripr_assisted");
+            }),
+            Some((
+                codes::MISSING_FIELD,
+                "condition ripr_assisted is missing a budget overlay".to_string()
+            ))
+        );
+        fn overlay(study: &mut RiprInterventionStudyV1) -> Option<&mut BudgetOverlay> {
+            study.condition_budget_overlays.get_mut("ripr_assisted")
+        }
+        assert_each_refused(
+            codes::UNEQUAL_CONDITION_BUDGETS,
+            "control and ripr_assisted must share model, operator, runtime, tool, time, token, and retry budgets except for the declared intervention",
+            &[
+                ("wall clock", |s| {
+                    if let Some(overlay) = overlay(s) {
+                        overlay.additional_wall_clock_ms = 1;
+                    }
+                }),
+                ("tokens", |s| {
+                    if let Some(overlay) = overlay(s) {
+                        overlay.additional_token_budget = 1;
+                    }
+                }),
+                ("retries", |s| {
+                    if let Some(overlay) = overlay(s) {
+                        overlay.additional_retries = 1;
+                    }
+                }),
+                ("tools", |s| {
+                    if let Some(overlay) = overlay(s) {
+                        overlay.additional_tools.push("extra".into());
+                    }
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn control_reads_no_ripr_surface_and_assisted_names_at_least_one() {
+        assert_each_refused(
+            codes::CONTROL_CAN_READ_RIPR_OUTPUTS,
+            "control attempts must not read RIPR receipts, views, or commands",
+            &[
+                ("flag", |s| {
+                    s.intervention_surface.control.may_read_ripr_outputs = true;
+                }),
+                ("receipts", |s| {
+                    s.intervention_surface
+                        .control
+                        .allowed_ripr_receipts
+                        .push("receipt".into());
+                }),
+                ("views", |s| {
+                    s.intervention_surface
+                        .control
+                        .allowed_ripr_views
+                        .push("view".into());
+                }),
+                ("commands", |s| {
+                    s.intervention_surface
+                        .control
+                        .allowed_ripr_commands
+                        .push("ripr check".into());
+                }),
+            ],
+        );
+
+        fn only(
+            study: &mut RiprInterventionStudyV1,
+            receipts: &[&str],
+            views: &[&str],
+            commands: &[&str],
+        ) {
+            let owned = |items: &[&str]| items.iter().map(|item| (*item).to_string()).collect();
+            let assisted = &mut study.intervention_surface.ripr_assisted;
+            assisted.allowed_ripr_receipts = owned(receipts);
+            assisted.allowed_ripr_views = owned(views);
+            assisted.allowed_ripr_commands = owned(commands);
+        }
+        assert_eq!(
+            refusal(|study| only(study, &[], &[], &[])),
+            Some((
+                codes::MISSING_FIELD,
+                "ripr_assisted must name exact receipts, views, or commands rather than summarizing use RIPR".to_string()
+            ))
+        );
+        // Any one named surface is enough.
+        assert_eq!(refusal(|study| only(study, &["receipt"], &[], &[])), None);
+        assert_eq!(refusal(|study| only(study, &[], &["view"], &[])), None);
+        assert_eq!(
+            refusal(|study| only(study, &[], &[], &["ripr check"])),
+            None
+        );
+
+        assert_each_refused(
+            codes::ASSISTED_UNDECLARED_EXTRA_CONTEXT,
+            "a RIPR-assisted attempt cannot receive undeclared extra repository context",
+            &[
+                ("assisted", |s| {
+                    s.intervention_surface
+                        .ripr_assisted
+                        .undeclared_repository_context
+                        .push("notes".into());
+                }),
+                ("control", |s| {
+                    s.intervention_surface
+                        .control
+                        .undeclared_repository_context
+                        .push("notes".into());
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn every_kind_of_incomplete_attempt_stays_in_the_denominator() {
+        assert_each_refused(
+            codes::DROP_INVALID_FROM_DENOMINATOR,
+            "timeouts, cancellations, invalid attempts, missing evidence, and instrument failures remain in the denominator",
+            &[
+                ("drop timeouts", |s| {
+                    s.invalid_attempt_rules.drop_timeouts = true
+                }),
+                ("drop invalid", |s| {
+                    s.invalid_attempt_rules.drop_invalid_attempts = true;
+                }),
+                ("timeouts", |s| {
+                    s.invalid_attempt_rules.retain_timeouts = false
+                }),
+                ("cancellations", |s| {
+                    s.invalid_attempt_rules.retain_cancellations = false;
+                }),
+                ("invalid attempts", |s| {
+                    s.invalid_attempt_rules.retain_invalid_attempts = false;
+                }),
+                ("missing evidence", |s| {
+                    s.invalid_attempt_rules.retain_missing_evidence = false;
+                }),
+                ("instrument failures", |s| {
+                    s.invalid_attempt_rules.retain_instrument_failures = false;
+                }),
+            ],
+        );
+    }
+
+    #[test]
+    fn adjudication_needs_each_of_graders_rubric_and_blinding() {
+        assert_each_refused(
+            codes::GRADER_OR_RUBRIC_ABSENT,
+            "independent adjudication requires grader identity, a rubric version, and condition blinding",
+            &[
+                ("graders", |s| s.adjudication.grader_identities.clear()),
+                ("rubric id", |s| s.adjudication.rubric_id = " ".into()),
+                ("rubric version", |s| s.adjudication.rubric_version.clear()),
+                ("grader count", |s| {
+                    s.adjudication.min_independent_graders = 0
+                }),
+                ("blinding", |s| s.adjudication.blinded_to_condition = false),
+            ],
+        );
+        assert_eq!(
+            refusal(|study| {
+                study
+                    .outcome_axes
+                    .retain(|axis| axis.axis_id != "change_scope_and_churn");
+            }),
+            Some((
+                codes::MISSING_FIELD,
+                "outcome axis change_scope_and_churn must be preregistered".to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| study.outcome_axes[0].independently_observable = false)
+                .map(|(code, _)| code),
+            Some(codes::COMPENSATING_OUTCOME_SCORE)
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.non_authoritative_summary = Some(NonAuthoritativeSummary {
+                    name: "overall".into(),
+                    authoritative: true,
+                });
+            }),
+            Some((
+                codes::COMPENSATING_OUTCOME_SCORE,
+                "a combined score is allowed only when explicitly declared non-authoritative"
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            refusal(|study| {
+                study.non_authoritative_summary = Some(NonAuthoritativeSummary {
+                    name: "overall".into(),
+                    authoritative: false,
+                });
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn stopping_lock_and_claim_ceiling_hold_on_every_field() {
+        assert_each_refused(
+            codes::STOPPING_ON_FAVORABLE_INTERIM,
+            "the stopping rule cannot depend on a favorable interim estimate",
+            &[
+                ("kind", |s| {
+                    s.stopping_rule.kind = StoppingKind::StopOnFavorableInterim;
+                }),
+                ("interim estimate", |s| {
+                    s.stopping_rule.may_depend_on_interim_estimate = true;
+                }),
+                ("favorable stop", |s| {
+                    s.stopping_rule.favorable_interim_stop = FavorableInterimStop::Allowed;
+                }),
+            ],
+        );
+        assert_each_refused(
+            codes::PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID,
+            "protocol mutation after the first attempt requires a new study_id",
+            &[
+                ("immutability", |s| {
+                    s.protocol_lock.immutable_after_first_attempt = false;
+                }),
+                ("mutation policy", |s| {
+                    s.protocol_lock.mutation_without_new_study_id = MutationPolicy::Allowed;
+                }),
+            ],
+        );
+        assert_each_refused(
+            codes::MISSING_FIELD,
+            "public conclusions are bounded to the exact task series, model/operator profile, and intervention form",
+            &[
+                ("proves value", |s| {
+                    s.claim_ceiling.preregistration_proves_intervention_value = true;
+                }),
+                ("task series", |s| {
+                    s.claim_ceiling.bounded_to_task_series = false
+                }),
+                ("model profile", |s| {
+                    s.claim_ceiling.bounded_to_model_operator_profile = false;
+                }),
+                ("intervention form", |s| {
+                    s.claim_ceiling.bounded_to_intervention_form = false;
+                }),
+                ("exact counts", |s| {
+                    s.planned_analysis.reports_exact_numerators_and_denominators = false;
+                }),
+            ],
+        );
+    }
+}
