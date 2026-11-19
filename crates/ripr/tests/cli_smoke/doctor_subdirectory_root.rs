@@ -109,9 +109,20 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
                 "tip differs between py/ and the root:\npy/:\n{from_subdir}\nroot:\n{at_root}"
             ));
         }
-        if from_subdir.contains("enabled = [\"python\"]") {
+        // Equal tips could both be absent: require the actual list, with both
+        // the configured Rust and the detected Python.
+        let tip = tip_line(&from_subdir)
+            .ok_or_else(|| format!("doctor from py/ printed no tip:\n{from_subdir}"))?;
+        if !tip.contains("Set `enabled = [\"rust\", \"python\"]`") {
             return Err(format!(
-                "doctor from py/ must not suggest a list that drops Rust:\n{from_subdir}"
+                "doctor from py/ must suggest the workspace list with Rust kept: {tip}"
+            ));
+        }
+        if detected_line(&from_subdir)
+            != Some("- Detected languages: rust (stable), python (preview)")
+        {
+            return Err(format!(
+                "doctor from py/ must detect both languages at the resolved root:\n{from_subdir}"
             ));
         }
 
