@@ -13,7 +13,7 @@ Start here:
 - Current evidence strength: Static evidence found related test context, but the current check is weak because the discriminator is missing.
 - Missing discriminator: amount == discount_threshold
 - Focused proof intent: assert_eq!(discounted_total(/* boundary input where amount == discount_threshold */), /* expected */)
-  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code returns now, not the pre-change value)
+  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now, not the pre-change value)
 - Suggested focused test: add amount == discount_threshold boundary assertion
 - Related test: above_threshold_gets_discount
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`

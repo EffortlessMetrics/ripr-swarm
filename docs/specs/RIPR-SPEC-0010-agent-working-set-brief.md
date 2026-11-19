@@ -519,9 +519,9 @@ focused next action without reading the full repo report:
   same-line rule (#14683). It is omitted when not read; `expression` stays
   the head;
 - `why_now` reason and confidence;
-- when any seam is named, one top-level `value_basis` note saying the seam
-  values are the changed code's current behavior, which a new test pins
-  instead of the pre-change value (#12078);
+- when any seam is named, one top-level `value_basis` note saying
+  `expression` and `arm_result` are read from the changed code, so a new test
+  asserts what that code does now instead of the pre-change value (#15361);
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;

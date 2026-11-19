@@ -76,7 +76,7 @@ Loop (max 3 rounds per gap):
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
            Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Pin what the changed code does now:
-           ripr's values are the new behavior; a test of the pre-change value fails. Use
+           ripr reads the changed code, so assert its values, not the pre-change ones. Use
            assert_eq! on exact values: every changed field, branch and boundary (below, equal,
            above). Not `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`

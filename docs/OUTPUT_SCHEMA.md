@@ -18710,6 +18710,10 @@ Field contract:
 - `working_set.source` — `"diff"`, `"base"`, `"files"`, or `"seam_id"`.
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
+- `value_basis` — optional top-level note, present only when `top_seams` is
+  non-empty. It says `expression` and `arm_result` are read from the changed
+  code, so a new test asserts what that code does now rather than the
+  pre-change value, and that `candidate_values` are inputs to try (#15361).
 - `top_seams[]` — ranked seam summaries, intentionally smaller than full agent
   seam packets.
 - `top_seams[].why_now.reason` — one of
@@ -18717,10 +18721,6 @@ Field contract:
   `changed_test_for_related_seam`, `changed_assertion_near_related_test`,
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
-- `value_basis` — optional top-level note, present only when `top_seams` is
-  non-empty. It says the seam values (`expression`, `arm_result`,
-  `candidate_values`) are what the changed code does now, so a new test pins
-  them and a test of the pre-change value fails on the diff (#12078).
 - `top_seams[].arm_result` — optional. Present only on a match-arm seam whose
   `expression` is a single arm head (`Size::Medium =>`) and whose result sits on
   the same line in the current file. It names the value a test must pin, for

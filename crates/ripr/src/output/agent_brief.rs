@@ -23,7 +23,7 @@ const WORKFLOW_DIR: &str = "target/ripr/workflow";
 /// trial an agent read `arm_result: "450"`, doubted the change and pinned the
 /// pre-change `400`, so its test failed on the changed code (#12078). Stated
 /// once per brief, only when it names a seam.
-pub(crate) const VALUE_BASIS_NOTE: &str = "Seam values (expression, arm_result, candidate_values) are what the changed code does now. A new test pins them; a test asserting the pre-change value fails on this diff. If the change itself looks wrong, report that instead of testing the old value.";
+pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now, not the pre-change value. `candidate_values` are inputs. If the change looks wrong, report it.";
 
 pub(crate) fn render_agent_brief_json(
     root: &Path,
@@ -625,12 +625,17 @@ mod tests {
     /// are the changed code's behavior to pin; an empty brief adds nothing.
     #[test]
     fn agent_brief_names_seam_values_as_changed_behavior_to_pin() -> Result<(), String> {
-        let seams = vec![classified()];
+        let named_seams = vec![classified()];
+        let no_seams: Vec<ClassifiedSeam> = Vec::new();
         let config = RiprConfig::default();
-        let render = |working_set: &AgentBriefResolvedWorkingSet| {
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let render = |seams: &[ClassifiedSeam]| {
             let selection = select_agent_brief_seams(
-                &seams,
-                working_set,
+                seams,
+                &working_set,
                 3,
                 AgentBriefPolicy::from_config(&config),
             );
@@ -638,30 +643,24 @@ mod tests {
                 Path::new("repo"),
                 &Mode::Draft,
                 &config,
-                working_set,
+                &working_set,
                 &selection,
             )
             .and_then(|rendered| {
                 serde_json::from_str::<Value>(&rendered).map_err(|err| err.to_string())
             })
         };
-        let named = render(&AgentBriefResolvedWorkingSet::diff(
-            "change.diff",
-            vec![AgentBriefLine::new("src/pricing.rs", 88)],
-        ))?;
+        let named = render(&named_seams)?;
         assert_eq!(
             named["top_seams"].as_array().map(Vec::len),
             Some(1),
             "{named}"
         );
         assert_eq!(named["value_basis"], VALUE_BASIS_NOTE, "{named}");
-        assert!(VALUE_BASIS_NOTE.contains("changed code does now"));
-        assert!(VALUE_BASIS_NOTE.contains("pre-change value fails"));
+        assert!(VALUE_BASIS_NOTE.contains("assert what it does now"));
+        assert!(VALUE_BASIS_NOTE.contains("not the pre-change value"));
 
-        let empty = render(&AgentBriefResolvedWorkingSet::diff(
-            "change.diff",
-            vec![AgentBriefLine::new("src/elsewhere.rs", 1)],
-        ))?;
+        let empty = render(&no_seams)?;
         assert_eq!(
             empty["top_seams"].as_array().map(Vec::len),
             Some(0),

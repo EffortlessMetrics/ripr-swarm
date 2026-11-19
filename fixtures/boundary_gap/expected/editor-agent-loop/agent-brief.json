@@ -96,6 +96,7 @@
       }
     }
   ],
+  "value_basis": "`expression` and `arm_result` come from the changed code: assert what it does now, not the pre-change value. `candidate_values` are inputs. If the change looks wrong, report it.",
   "warnings": [],
   "working_set": {
     "base": null,
