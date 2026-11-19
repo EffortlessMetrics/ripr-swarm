@@ -670,7 +670,7 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
                 .and_then(|use_tree| use_tree.path())
             && let Some(original) = last_segment(&path.syntax().text().to_string())
         {
-            pairs.push((original, ident(&name.text())));
+            pairs.push((original, ident(name.text())));
         } else if let Some(alias) = ast::TypeAlias::cast(node)
             // An associated type (`type Output = Guard;`) binds a name per
             // impl, not one workspace type.
@@ -683,7 +683,7 @@ fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
             && let Some(ty) = alias.ty()
             && let Some(original) = last_segment(&ty.syntax().text().to_string())
         {
-            pairs.push((ident(&name.text()), original));
+            pairs.push((ident(name.text()), original));
         }
     }
     pairs
