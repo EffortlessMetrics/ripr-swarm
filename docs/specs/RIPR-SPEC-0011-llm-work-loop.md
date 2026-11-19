@@ -551,7 +551,17 @@ exclusively created them and their captured bytes and executable state still
 match its receipt. Baseline, authored, forbidden, and non-operational paths
 never receive this backup exception. Cleanup of these exact temporary copies
 must not invalidate the just-finished attempt; another attempt's bound manifest
-remains identity-sensitive. One bound compatibility receipt may be replaced
+remains identity-sensitive. The finish also omits the one fixed-name derived
+analysis cache file, the module-tree scan bundle at
+`target/ripr/cache/repo-module-tree-scans/<schema>/scans.json`, which every
+check rewrites in place: only an unstaged, non-renamed change of that exact
+path, and only when it is an expected operational write that is not tracked,
+selected, authored or forbidden. Currentness applies the same omission to the
+live delta and to each missing-projection reconstruction, and keeps a staged
+copy bound, so an ordinary re-check after the finish does not stale the attempt
+while staging the bundle or editing any bound path still does. With
+`RIPR_CACHE_DIR` set the default path gets no exception. A receipt whose bound
+verdict already lists the bundle keeps its earlier reading (#15060). One bound compatibility receipt may be replaced
 by the next issued receipt without staling that producer: an optional
 `receipt_projection_predecessor` records only a different, validated issued
 attempt in the same store, plus the captured path kind and executable state.

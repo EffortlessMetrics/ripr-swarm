@@ -1930,8 +1930,20 @@ pub(crate) fn omit_owned_workflow_backups(
 /// new names, so the later-write filter already drops them; this exception is
 /// that single file, not the cache directory. It never applies to a tracked,
 /// selected, authored or forbidden path, nor to a staged copy, so staging the
-/// bundle after the finish still moves the recomputed delta.
+/// bundle after the finish still moves the recomputed delta. With
+/// `RIPR_CACHE_DIR` set, checks write the bundle elsewhere, so the default
+/// path is an ordinary file and keeps its binding.
 pub(crate) fn derived_cache_bundle_path(baseline: &AttemptBaseline) -> Option<String> {
+    derived_cache_bundle_path_with(
+        baseline,
+        crate::analysis::seam_cache::cache_base_is_relocated(),
+    )
+}
+
+fn derived_cache_bundle_path_with(baseline: &AttemptBaseline, relocated: bool) -> Option<String> {
+    if relocated {
+        return None;
+    }
     let path = crate::analysis::seam_cache::module_tree_scan_bundle_default_relative_path();
     let policy = baseline.policy();
     if baseline.index_entry(&path).is_some()
@@ -1958,9 +1970,12 @@ pub(crate) fn derived_cache_bundle_path(baseline: &AttemptBaseline) -> Option<St
 /// [`derived_cache_bundle_path`]) from `delta`. A staged or renamed change of
 /// that path stays, so it still breaks the binding.
 pub(crate) fn omit_derived_cache_bundle(delta: &mut AttemptDelta, baseline: &AttemptBaseline) {
-    let Some(path) = derived_cache_bundle_path(baseline) else {
-        return;
-    };
+    if let Some(path) = derived_cache_bundle_path(baseline) {
+        omit_unstaged_change_at(delta, &path);
+    }
+}
+
+fn omit_unstaged_change_at(delta: &mut AttemptDelta, path: &str) {
     delta.changes.retain(|change| {
         let derived = change.kind != AttemptPathChangeKind::Renamed
             && change.previous_path.is_none()

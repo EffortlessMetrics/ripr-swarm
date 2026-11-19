@@ -357,13 +357,21 @@ fn only_the_unstaged_derived_scan_bundle_leaves_the_delta() -> Result<(), String
         state.index_entry = Some("100644 staged".to_string());
     }
     let base = baseline("target/ripr/repair-attempts")?;
-    assert_eq!(derived_cache_bundle_path(&base), Some(bundle.clone()));
+    assert_eq!(
+        derived_cache_bundle_path_with(&base, false),
+        Some(bundle.clone())
+    );
+    assert_eq!(
+        derived_cache_bundle_path_with(&base, true),
+        None,
+        "a relocated cache leaves the default path bound"
+    );
     let mut delta = captured_delta(vec![
         captured_change(&bundle, "rewritten"),
         captured_change(neighbor, "neighbor"),
         captured_change("tests/focused.rs", "edit"),
     ]);
-    omit_derived_cache_bundle(&mut delta, &base);
+    omit_unstaged_change_at(&mut delta, &bundle);
     let paths: Vec<_> = delta
         .changes
         .iter()
@@ -375,7 +383,7 @@ fn only_the_unstaged_derived_scan_bundle_leaves_the_delta() -> Result<(), String
     );
 
     let mut delta = captured_delta(vec![staged.clone()]);
-    omit_derived_cache_bundle(&mut delta, &base);
+    omit_unstaged_change_at(&mut delta, &bundle);
     assert_eq!(delta.changes, vec![staged], "a staged bundle stays bound");
 
     let mut tracked = baseline("target/ripr/repair-attempts")?;
@@ -385,7 +393,11 @@ fn only_the_unstaged_derived_scan_bundle_leaves_the_delta() -> Result<(), String
     if let Some(state) = tracked.paths.get_mut(&bundle) {
         state.index_entry = Some("100644 tracked".to_string());
     }
-    assert_eq!(derived_cache_bundle_path(&tracked), None, "tracked bundle");
+    assert_eq!(
+        derived_cache_bundle_path_with(&tracked, false),
+        None,
+        "tracked bundle"
+    );
 
     let mut authored = baseline("target/ripr/repair-attempts")?;
     authored
@@ -393,7 +405,7 @@ fn only_the_unstaged_derived_scan_bundle_leaves_the_delta() -> Result<(), String
         .allowed_edit_surface
         .push(CagePathRule::subtree("target/ripr/cache")?);
     assert_eq!(
-        derived_cache_bundle_path(&authored),
+        derived_cache_bundle_path_with(&authored, false),
         None,
         "authored bundle"
     );
