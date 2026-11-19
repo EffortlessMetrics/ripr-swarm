@@ -42,6 +42,9 @@ mod check_artifact_stdin;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/check_work_budget.rs"]
+mod check_work_budget;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
@@ -37801,6 +37804,62 @@ fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
     assert!(
         !quiet.contains("no source file ripr reads yet"),
         "a root with source must stay quiet: {quiet}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #15195: in a monorepo whose Rust and TypeScript projects sit below the
+/// root, the shallow doctor marker scan finds nothing at the root. With the
+/// `ripr.toml` that `init` writes there, doctor names the languages the config
+/// enables instead of "none detected"; without a config the ordinary line
+/// stays.
+#[test]
+fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
+    let repo = unique_temp_workspace("doctor-monorepo-languages");
+    for dir in ["backend/src", "frontend/src"] {
+        std::fs::create_dir_all(repo.join(dir)).map_err(|e| format!("mkdir {dir}: {e}"))?;
+    }
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    let files = [
+        (
+            "backend/Cargo.toml",
+            "[package]\nname = \"be\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("backend/src/lib.rs", "pub fn g(x: i32) -> i32 { x }\n"),
+        ("frontend/package.json", "{\"name\": \"fe\"}\n"),
+        ("frontend/src/a.ts", "export const f = (x: number) => x;\n"),
+    ];
+    for (path, body) in files {
+        std::fs::write(repo.join(path), body).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    let repo_arg = repo.display().to_string();
+    let detected_line = |output: &std::process::Output| -> Result<String, String> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .lines()
+            .find(|line| line.starts_with("- Detected languages:"))
+            .map(str::to_string)
+            .ok_or_else(|| format!("doctor must print a detected-languages line: {stdout}"))
+    };
+
+    // Fixture check: without a config the shallow scan finds no marker.
+    let bare = run_ripr(&["doctor", "--root", &repo_arg]);
+    let bare_line = detected_line(&bare)?;
+    assert_eq!(bare_line, "- Detected languages: none detected", "{bare:?}");
+
+    let init = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&init);
+    let config = std::fs::read_to_string(repo.join("ripr.toml")).map_err(|e| e.to_string())?;
+    assert!(
+        config.contains("\nenabled = [\"rust\", \"typescript\"]\n"),
+        "fixture: init must enable both languages: {config}"
+    );
+    let doctor = run_ripr(&["doctor", "--root", &repo_arg]);
+    let line = detected_line(&doctor)?;
+    assert!(
+        !line.contains("none detected") && line.ends_with("ripr.toml enables rust, typescript"),
+        "doctor must name the configured languages: {line}"
     );
     let _ = std::fs::remove_dir_all(&repo);
     Ok(())
