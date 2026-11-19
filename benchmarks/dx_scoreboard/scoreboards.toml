@@ -187,12 +187,15 @@ heavy = true
 # Ratchet ceilings, not goals. Set just above what main measures today so the
 # row stops creeping: warm check 49.8 s / 1,275 MB and cold pilot 269 s /
 # 1,446 MB hosted (run 41750179854); 35.5 s warm / 59.6 s cold / 1.3 GB local
-# on a 3,280-file checkout. Ratchet goals for this repository (not the global metric targets
+# on a 3,280-file checkout. The warm-check memory ceiling was lowered to
+# 1,200 MB on 2026-11-15 after the #13703 cuts: hosted nightly warm checks
+# measured 1,026 / 1,028 / 1,045 / 1,017 MB (runs 43174479995, 43384966041,
+# 43570546262, 43689405672), about 15% headroom over the highest. Ratchet goals for this repository (not the global metric targets
 # below): warm check 10 s / 768 MB, cold pilot 60 s (RSS 1,024 MB). Lower these in the PR that earns the gain; never
 # raise them.
-ceilings = { "speed.warm_check_ms" = 60000, "speed.warm_check_peak_rss_mb" = 1536, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 2048 }
+ceilings = { "speed.warm_check_ms" = 60000, "speed.warm_check_peak_rss_mb" = 1200, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 2048 }
 size_tier = "medium"
-memory_ratchet = "2026-11-04: ceiling 1536 MB, ladder bar 1024 MB (hard cap); hosted warm check measured 1,275 MB (run 41750179854); ratchet goal 768 MB"
+memory_ratchet = "2026-11-15: ceiling 1200 MB, ladder bar 1024 MB (hard cap); hosted warm check measured 1,017-1,045 MB over four nightlies (runs 43174479995 to 43689405672); ratchet goal 768 MB"
 
 # No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
 # should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
@@ -655,17 +658,40 @@ runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
+# The bar sits on the avoidable rate below (RIPR-SPEC-0219, #12766). This
+# total also counts abstentions a spec example asks for (39/862 = 0.0452 of
+# the corpus once `[abstain]`-marked examples counted; 0.0128 when the split
+# landed), so its target is the avoidable bar plus that share, rounded down;
+# it stays here so the total remains visible and ratcheted.
 [[metric]]
 id = "trust.verdict_corpus_abstention"
 board = "trust"
-title = "Hand-checked edits where ripr gives no specific verdict"
+title = "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.24
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+# Abstentions analyzer work can remove: a row whose tests catch the change,
+# whose case cites only spec examples that require an abstention (an
+# `[abstain]` marker, or a `Reject` example that pins the outcome as
+# unresolved), and which accepts `limited` abstains because its spec asks it
+# to, so it is left out of this numerator (RIPR-SPEC-0219).
+[[metric]]
+id = "trust.verdict_corpus_avoidable_abstention"
+board = "trust"
+title = "Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.2
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
@@ -1402,6 +1428,237 @@ source = "ingest:agent-stub"
 # 35 s to 11 min on large repositories at 245e133, because each call
 # rebuilds the seam inventory (#5459); not measured until the stub
 # evaluation reports per-call seconds per repository.
+
+# Muse plugin v1: one canonical record per invocation, never a population rate.
+# Only optional structured observations produce numbers; sparse context does not.
+# The zero-floor higher-is-better convention on resource rows is context-only:
+# it is NOT a recommendation to consume more, an efficiency target or a baseline.
+# Missing measurements stay not_measured. See docs/verification/muse-plugin-eval.md.
+
+[[metric]]
+id = "agent.muse_setup_passed"
+board = "agent"
+title = "Observed plugin load and MCP availability"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_static_exposed_after"
+board = "agent"
+title = "Supplied after report class is exposed (static only)"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_durable_ready_reported"
+board = "agent"
+title = "Supplied durable attempt is current, compliant and ready_to_finish"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_original_test_passed"
+board = "agent"
+title = "Named test passed on the intended implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_wrong_control_test_failed"
+board = "agent"
+title = "Named test failed by assertion on the deliberately wrong implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_restored_test_passed"
+board = "agent"
+title = "Named test passed after restoring the intended implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_executed_discrimination"
+board = "agent"
+title = "All three supplied test executions demonstrate the named discrimination"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_model_calls"
+board = "agent"
+title = "Observed model calls in this Muse trial (context only)"
+unit = "calls"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_tool_calls"
+board = "agent"
+title = "Observed tool calls in this Muse trial (context only)"
+unit = "calls"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_elapsed_ms"
+board = "agent"
+title = "Observed Muse trial elapsed time (context only)"
+unit = "ms"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = true
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_peak_rss_bytes"
+board = "agent"
+title = "Observed Muse trial peak RSS (context only)"
+unit = "bytes"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = true
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_input_tokens"
+board = "agent"
+title = "Observed input tokens including cached input (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_cached_input_tokens"
+board = "agent"
+title = "Observed cached input tokens (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_uncached_input_tokens"
+board = "agent"
+title = "Observed input tokens minus cached input (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_output_tokens"
+board = "agent"
+title = "Observed output tokens (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_total_tokens"
+board = "agent"
+title = "Observed input plus output tokens in this trial (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
 
 # --------------------------------------------------------------- corpus ----
 #

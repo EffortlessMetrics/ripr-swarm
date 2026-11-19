@@ -487,3 +487,64 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (39)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (40)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (41)
+
+Reason:
+RIPR-SPEC-0147: human verify-command wording (Verify command (Bash)) now rendered by main; fixture goldens predate it, main-health recovery
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (42)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (43)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

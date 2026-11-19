@@ -325,6 +325,8 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -441,6 +443,8 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -1559,6 +1563,42 @@ fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), Stri
     let arguments = argument_map(serde_json::json!({ format!("{allowed_name}x"): true }));
     assert!(reject_unknown_arguments(&arguments, &[allowed_name.as_str()]).is_err());
     Ok(())
+}
+
+/// #14186: only the SDK's bare-name `-32601` is rewritten. Every other error
+/// passes through untouched, so the rewrite cannot rename a real diagnostic.
+#[test]
+fn only_the_sdk_bare_method_not_found_is_renamed() {
+    use rmcp::model::{ErrorCode, ErrorData};
+    let bare = ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "prompts/get", None);
+    let renamed = name_missing_method(bare, "prompts/get");
+    assert_eq!(renamed.code, ErrorCode::METHOD_NOT_FOUND);
+    assert_eq!(renamed.message.as_ref(), "Method not found: prompts/get");
+    assert!(renamed.data.is_none());
+
+    for untouched in [
+        // Another code whose message happens to equal the method.
+        ErrorData::new(ErrorCode::INVALID_PARAMS, "prompts/get", None),
+        // A method-not-found that already explains itself.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "Method not found: prompts/get",
+            None,
+        ),
+        // A bare-name message that carries data of its own.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "prompts/get",
+            Some(serde_json::json!({"method": "prompts/get"})),
+        ),
+        // A bare name that is not this request's method.
+        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "tasks/get", None),
+    ] {
+        assert_eq!(
+            name_missing_method(untouched.clone(), "prompts/get"),
+            untouched
+        );
+    }
 }
 
 /// #13220: preserve the protocol category and ordinary message while making

@@ -360,18 +360,45 @@ impl ClosedOwner {
             parameters: &parameters,
         };
         let mut guards = Vec::new();
+        let mut tail = None;
         while parser.eat_ident("if") {
             let cond = parser.cond()?;
-            if !(parser.eat_sym("{") && parser.eat_ident("return")) {
+            if !parser.eat_sym("{") {
                 return None;
             }
+            if parser.eat_ident("return") {
+                let ret = parser.ret()?;
+                if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+                    return None;
+                }
+                guards.push((cond, ret));
+                continue;
+            }
+            // #14387: a tail `if C { A } else if D { B } else { E }` runs as
+            // the guards `C -> A`, `D -> B` and the tail `E`: each branch
+            // block holds only its value, and the chain ends the body.
             let ret = parser.ret()?;
-            if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+            if !(parser.eat_sym("}") && parser.eat_ident("else")) {
                 return None;
             }
             guards.push((cond, ret));
+            if parser.peek() == Some(&Token::Ident("if".to_string())) {
+                continue;
+            }
+            if !parser.eat_sym("{") {
+                return None;
+            }
+            let last = parser.ret()?;
+            if !parser.eat_sym("}") {
+                return None;
+            }
+            tail = Some(last);
+            break;
         }
-        let tail = parser.ret()?;
+        let tail = match tail {
+            Some(tail) => tail,
+            None => parser.ret()?,
+        };
         (parser.at == body.len()).then_some(Self {
             parameters,
             range,
@@ -555,6 +582,67 @@ impl ClosedChange {
         })
     }
 
+    /// #12808: both versions of a one-field integer tuple struct owner whose
+    /// changed tail is `T(e)` / `Self(e)`, lowered to the scalar subset: every
+    /// `T`-typed parameter (and `self`) becomes the field's integer, `p.0`
+    /// becomes `p`, and the constructor wrapper is dropped. Anything else in
+    /// the owner stays outside the subset and answers `None`.
+    pub(super) fn read_tuple(
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+        tuple: &TupleOwner<'_>,
+    ) -> Option<Self> {
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
+        let mut lines: Vec<&str> = definition.lines().collect();
+        *lines.get_mut(changed_line)? = before.trim_end();
+        Some(Self {
+            after: ClosedOwner::read(&lower_tuple_owner(definition, name, tuple)?, name)?,
+            before: ClosedOwner::read(&lower_tuple_owner(&lines.join("\n"), name, tuple)?, name)?,
+        })
+    }
+
+    /// Whether the two versions return different values for some small
+    /// operand vector, so the change is a real behavior change a test could
+    /// notice with other operands, not a rewrite equal on every input
+    /// (`a + b` to `b + a`), which the corpus labels credited.
+    pub(super) fn versions_differ_somewhere(&self) -> bool {
+        const PROBES: [i128; 5] = [1, 2, 3, 5, -2];
+        let arity = self.after.parameters.len();
+        if arity == 0 || arity > 3 || self.before.parameters.len() != arity {
+            return false;
+        }
+        let total = PROBES.len().pow(arity as u32);
+        (0..total).any(|mut code| {
+            let arguments: Vec<i128> = (0..arity)
+                .map(|_| {
+                    let value = PROBES[code % PROBES.len()];
+                    code /= PROBES.len();
+                    value
+                })
+                .collect();
+            matches!(
+                (self.after.run(&arguments), self.before.run(&arguments)),
+                (Some(after), Some(before)) if after != before
+            )
+        })
+    }
+
+    /// Whether both versions provably return the same value for `call` (the
+    /// lowered `name(0, 0)`): a test cannot tell them apart whatever it pins.
+    pub(super) fn versions_agree(&self, name: &str, call: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        matches!(
+            (self.after.run(&arguments), self.before.run(&arguments)),
+            (Some(after), Some(before)) if after == before
+        )
+    }
+
     /// The owner as it stands, standing in for both versions when there is no
     /// diff (the repo-wide audit, #12394 item 3): a literal the current owner
     /// provably does not return is unpinned.
@@ -564,6 +652,31 @@ impl ClosedChange {
             before: owner.clone(),
             after: owner,
         })
+    }
+
+    /// #14387: whether an exact pin of `expected` on `call` provably tells the
+    /// two versions apart: both run on the call's literal arguments, they
+    /// return different values, and `expected` is one of the two, so the pin
+    /// passes on one version and fails on the other. `false` is "no
+    /// evidence": an argument or the pinned value outside the subset, an
+    /// unevaluated `Err(..)` payload, or versions that agree.
+    pub(super) fn pin_discriminates(&self, name: &str, call: &str, expected: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        let (Some(after), Some(before), Some(pinned)) = (
+            self.after.run(&arguments),
+            self.before.run(&arguments),
+            literal_outcome(expected),
+        ) else {
+            return false;
+        };
+        // An `Err(..)` payload is not evaluated, so two `Err` exits may still
+        // differ, and an `Err` pin cannot be matched to either one.
+        if [after, before, pinned].contains(&Outcome::Err) {
+            return false;
+        }
+        after != before && (pinned == after || pinned == before)
     }
 
     /// Whether `expected` is a value neither version provably returns for
@@ -809,6 +922,159 @@ fn literal_outcome(expected: &str) -> Option<Outcome> {
         },
         other => signed(other).map(Outcome::Plain),
     }
+}
+
+/// The tuple struct an owner is lowered over (#12808).
+pub(super) struct TupleOwner<'a> {
+    /// The struct's name, as the owner's tail and parameters spell it.
+    pub(super) type_name: &'a str,
+    /// The field's built-in integer type.
+    pub(super) inner: &'a str,
+    /// Whether `Self` and a bare `self` receiver name `type_name`.
+    pub(super) self_is_type: bool,
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// `text` with each `word` followed by `suffix` (and not part of a longer
+/// path or identifier) replaced by `replacement`.
+fn replace_word(text: &str, word: &str, suffix: &str, replacement: &str) -> String {
+    let needle = format!("{word}{suffix}");
+    let bytes = text.as_bytes();
+    let mut out = String::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find(&needle) {
+        let start = from + offset;
+        let end = start + needle.len();
+        let before_ok = start == 0
+            || !(is_word_byte(bytes[start - 1]) || matches!(bytes[start - 1], b'.' | b':'));
+        let after_ok = suffix.ends_with('(') || end >= bytes.len() || !is_word_byte(bytes[end]);
+        out.push_str(&text[from..start]);
+        out.push_str(if before_ok && after_ok {
+            replacement
+        } else {
+            &needle
+        });
+        from = end;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+/// The owner as `fn name(p: int, ..) -> int { <body> }`.
+fn lower_tuple_owner(definition: &str, name: &str, tuple: &TupleOwner<'_>) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(definition);
+    let item = masked.find(&format!("fn {name}"))?;
+    let masked = &masked[item..];
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    if close <= open {
+        return None;
+    }
+    let signature = &masked[..open];
+    let params_open = signature.find('(')?;
+    let params_close = signature.rfind(')')?;
+    if params_close < params_open || signature[..params_open].trim() != format!("fn {name}") {
+        return None;
+    }
+    let returned = signature[params_close + 1..]
+        .trim()
+        .strip_prefix("->")?
+        .trim();
+    let names_type = |ty: &str| ty == tuple.type_name || (tuple.self_is_type && ty == "Self");
+    if !names_type(returned) {
+        return None;
+    }
+    let mut body = masked[open + 1..close].to_string();
+    let mut lowered = Vec::new();
+    let mut lowered_names: Vec<&str> = Vec::new();
+    for parameter in signature[params_open + 1..params_close].split(',') {
+        let parameter = parameter.trim();
+        if parameter.is_empty() {
+            continue;
+        }
+        let (parameter_name, replacement) = if parameter == "self" {
+            if !tuple.self_is_type {
+                return None;
+            }
+            ("self", "self_")
+        } else {
+            let (parameter_name, ty) = parameter.split_once(':')?;
+            let parameter_name = parameter_name.trim();
+            if !names_type(ty.trim())
+                || parameter_name.is_empty()
+                || !parameter_name.bytes().all(is_word_byte)
+            {
+                return None;
+            }
+            (parameter_name, parameter_name)
+        };
+        body = replace_word(&body, parameter_name, ".0", replacement);
+        // `self` lowers to `self_`: a parameter already named `self_`, or a
+        // repeated name, would alias two operands.
+        if parameter_name == "self_" || lowered_names.contains(&replacement) {
+            return None;
+        }
+        lowered_names.push(replacement);
+        lowered.push(format!("{replacement}: {}", tuple.inner));
+    }
+    body = replace_word(&body, "Self", "(", "(");
+    body = replace_word(&body, tuple.type_name, "(", "(");
+    Some(format!(
+        "fn {name}({}) -> {} {{{body}}}",
+        lowered.join(", "),
+        tuple.inner
+    ))
+}
+
+/// The call `Money(0).add(Money(1))` or `plus(Money(0), Money(1))` of owner
+/// `name` as the scalar call `name(0, 1)`, when every operand is a literal
+/// `type_name(<literal>)`.
+pub(super) fn lower_tuple_call(call: &str, name: &str, type_name: &str) -> Option<String> {
+    let call = call.trim();
+    let masked = crate::analysis::extract::mask_comments_and_strings(call);
+    let literal = |operand: &str| -> Option<String> {
+        let rest = operand.trim().strip_prefix(type_name)?.trim_start();
+        let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
+        Some(inner.trim().to_string())
+    };
+    let split = |text: &str| -> Vec<String> {
+        let mut items = Vec::new();
+        let (mut depth, mut start) = (0usize, 0usize);
+        for (at, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                b',' if depth == 0 => {
+                    items.push(text[start..at].to_string());
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+        if !text[start..].trim().is_empty() {
+            items.push(text[start..].to_string());
+        }
+        items
+    };
+    let mut operands = Vec::new();
+    let arguments = if let Some(rest) = masked.strip_prefix(&format!("{name}(")) {
+        rest.strip_suffix(')')?
+    } else {
+        let marker = format!(".{name}(");
+        let at = masked.find(&marker)?;
+        if masked[at + 1..].contains(&marker) {
+            return None;
+        }
+        operands.push(literal(&masked[..at])?);
+        masked[at + marker.len()..].strip_suffix(')')?
+    };
+    for operand in split(arguments) {
+        operands.push(literal(&operand)?);
+    }
+    Some(format!("{name}({})", operands.join(", ")))
 }
 
 #[cfg(test)]
@@ -1131,5 +1397,60 @@ mod tests {
                 .is_none()
         );
         assert!(ClosedChange::read(DIV, "checked_div", 4, "  ").is_none());
+    }
+
+    /// #14387: an exact pin tells the versions apart only at an input where
+    /// they differ, and only when it names one of the two results.
+    #[test]
+    fn a_pin_discriminates_only_where_the_versions_differ_and_it_names_one() {
+        let after = "pub fn discount(total: u32) -> u32 {\n    if total > 500 {\n        return 1;\n    }\n    if total >= 100 {\n        return total / 5;\n    }\n    0\n}\n";
+        let change = ClosedChange::read(after, "discount", 5, "        return total / 10;");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // 200 takes the changed guard: 20 before, 40 after.
+        assert!(change.pin_discriminates("discount", "discount(200)", "20"));
+        assert!(change.pin_discriminates("discount", "discount(200)", "40"));
+        // A value neither version returns, an earlier guard, the tail.
+        assert!(!change.pin_discriminates("discount", "discount(200)", "99"));
+        assert!(!change.pin_discriminates("discount", "discount(600)", "1"));
+        assert!(!change.pin_discriminates("discount", "discount(50)", "0"));
+        // Arguments the subset does not read, and an out-of-range one.
+        assert!(!change.pin_discriminates("discount", "discount(n)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(100 + 100)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(-1)", "0"));
+        // An `Err` exit's payload is not evaluated, so it never discriminates.
+        let errs = ClosedChange::read(DIV, "checked_div", 2, "        return Err(1);");
+        assert!(errs.is_some_and(|errs| !errs.pin_discriminates(
+            "checked_div",
+            "checked_div(4, 0)",
+            "Err(())"
+        )));
+    }
+
+    /// #14387: a tail `if`/`else if`/`else` chain reads as guards and a tail,
+    /// so a changed branch value discriminates where its branch runs.
+    #[test]
+    fn a_tail_if_else_chain_reads_as_guards_and_a_tail() {
+        let after = "pub fn rate(t: u32) -> u32 {\n    if t > 500 {\n        1\n    } else if t >= 100 {\n        t / 5\n    } else {\n        0\n    }\n}\n";
+        let change = ClosedChange::read(after, "rate", 4, "        t / 10");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.pin_discriminates("rate", "rate(200)", "40"));
+        assert!(change.pin_discriminates("rate", "rate(200)", "20"));
+        assert!(!change.pin_discriminates("rate", "rate(600)", "1"));
+        assert!(!change.pin_discriminates("rate", "rate(50)", "0"));
+        // A chain without a final `else`, or a branch holding more than its
+        // value, is outside the subset.
+        for outside in [
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else if t > 2 {\n        2\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        t;\n        1\n    } else {\n        0\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else {\n        0\n    }\n    2\n}\n",
+        ] {
+            assert!(ClosedOwner::read(outside, "rate").is_none(), "{outside}");
+        }
     }
 }

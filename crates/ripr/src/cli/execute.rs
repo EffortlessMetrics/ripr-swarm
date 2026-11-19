@@ -45,7 +45,8 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         }
         CliCommand::FirstPr(args) => commands::first_pr(&args).map_err(CommandError::from),
         CliCommand::FirstAction(args) => commands::first_action(&args).map_err(CommandError::from),
-        CliCommand::Reports(args) => commands::reports(&args).map_err(CommandError::from),
+        // A blocked gate inside `reports ci-packet` keeps the Decision variant (exit 3).
+        CliCommand::Reports(args) => commands::reports_command(&args),
         CliCommand::Calibrate(args) => commands::calibrate(&args).map_err(CommandError::from),
         CliCommand::Receipt(args) => commands::receipt(&args).map_err(CommandError::from),
         CliCommand::Feedback(args) => commands::feedback(&args).map_err(CommandError::from),

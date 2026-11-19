@@ -2158,7 +2158,7 @@ suite('Extension Smoke', () => {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         failure: { kind: 'analysis_error', message: 'temporary timeout' }
       });
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
       assert.ok(!String(context.status.tooltip).includes('Restart Server'));
 
       context.client.emitNotification('ripr/analysisStatus', {
@@ -2167,7 +2167,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
-      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Full Analysis'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2192,7 +2192,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
       });
       assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2202,9 +2202,9 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
       for (const [retryCommand, expectedCommand] of [
-        ['ripr.refresh', 'ripr: Refresh Diagnostics'],
-        ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
-        ['   ', 'ripr: Refresh Diagnostics'],
+        ['ripr.refresh', 'ripr: Refresh Full Analysis'],
+        ['ripr.refreshDiagnostics', 'ripr: Refresh Full Analysis'],
+        ['   ', 'ripr: Refresh Full Analysis'],
         ['server-owned recovery', 'server-owned recovery']
       ]) {
         context.client.emitNotification('ripr/analysisStatus', {
@@ -2339,7 +2339,7 @@ suite('Extension Smoke', () => {
         'ripr analysis completed with limited evidence.',
         'for example a git invocation timeout',
         'findings may be missing',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
 
       emitSucceededWithRunStatus('cache_limited');
@@ -2360,7 +2360,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed with incomplete input.',
         'The run input was incomplete',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
     } finally {
       await context.dispose();
@@ -2466,7 +2466,7 @@ suite('Extension Smoke', () => {
         tooltip.includes('Next safe action: Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
-      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics'), tooltip);
+      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -2554,7 +2554,7 @@ suite('Extension Smoke', () => {
       // No degraded component carries a recovery, and the deferred component's
       // recovery must not be promoted: the canned refresh step is the fallback.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2594,7 +2594,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Full Analysis. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
@@ -2634,7 +2634,7 @@ suite('Extension Smoke', () => {
       // The canned tail prescribes a refresh after raising the budget; the
       // running sidecar still reads the old environment, so it must be gone.
       assert.ok(
-        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Full Analysis'),
         tooltip
       );
     } finally {
@@ -2663,7 +2663,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
       const tooltip = String(context.status.tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2693,7 +2693,7 @@ suite('Extension Smoke', () => {
       assert.ok(tooltip.includes('ripr analysis completed; spot and gap evidence is deferred.'), tooltip);
       assert.ok(tooltip.includes('Interactive saves defer the spot inventory'), tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full spot inventory.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to compute the full spot inventory.'),
         tooltip
       );
     } finally {
@@ -3099,6 +3099,8 @@ suite('Extension Smoke', () => {
     };
     for (const verify of [
       'python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      '.venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      'venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
@@ -3119,6 +3121,11 @@ suite('Extension Smoke', () => {
       'npm test -- --watch tests/math.test.ts',
       'node --test /tmp/outside.test.js',
       'python -m pytest ..',
+      '.venv/bin/python -m pip install requests',
+      '.venv/bin/python -m pytest -p plugin tests/test_pricing.py',
+      '.venv/bin/python -m pytest ../outside/test_pricing.py',
+      '/opt/venv/bin/python -m pytest tests/test_pricing.py',
+      'venv/bin/python3 -m pytest tests/test_pricing.py',
       // Built at runtime so the local-context policy does not read the
       // fixture as a machine path.
       `npx --no-install jest ${'C'}:/outside/discount.test.ts`
@@ -3304,6 +3311,9 @@ suite('Extension Smoke', () => {
     };
     assert.notStrictEqual(await queueVerifyState('npx --no-install jest tests/discount.test.ts'), 'unsafeCommand');
     assert.notStrictEqual(await queueVerifyState('python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.notStrictEqual(await queueVerifyState('.venv/bin/python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pip install requests'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pytest -p plugin tests/test_pricing.py'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx jest tests/discount.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('bunx vitest run src/util.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx --no-install jest ../outside/discount.test.ts'), 'unsafeCommand');
@@ -6369,7 +6379,7 @@ interface ControllerTestOptions {
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
   workspaceRootState?: RiprWorkspaceRootState;
-  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'http' | 'checksum' | 'manifest' | 'other' };
+  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'network' | 'http' | 'checksum' | 'manifest' | 'other' };
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;
@@ -6892,7 +6902,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       return undefined;
     },
   };
-  const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime, status, options.attemptStatusBar);
+  // The fixture's server reports `ripr 0.8.0+test`, so the context names the
+  // matching extension version instead of inheriting the shipped one (#14647).
+  const extensionContext = { extension: { packageJSON: { version: '0.8.0' } } } as unknown as vscode.ExtensionContext;
+  const controller = new RiprClientController(extensionContext, output, runtime, status, options.attemptStatusBar);
   return {
     client,
     controller,

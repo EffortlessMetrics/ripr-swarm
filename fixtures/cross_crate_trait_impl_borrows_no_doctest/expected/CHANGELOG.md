@@ -181,6 +181,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_borrows_no_doctest (14)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
 
 Command:
@@ -194,6 +195,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_borrows_no_doctest (15)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 Unreferenced-in-workspace marker withheld: the index does not span the workspace (RIPR-SPEC-0219, Devin finding on #13691); class unchanged
 
 Command:
@@ -202,4 +204,52 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (16)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (17)
+
+Reason:
+RIPR-SPEC-0108: a doctest in io/take.rs shares only the leaf file name with the changed stream/take.rs, so it is no longer related as same_test_file (#7527)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (18)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (19)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
 - `expected/human-full.txt`

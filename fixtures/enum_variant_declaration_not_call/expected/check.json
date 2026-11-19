@@ -29,6 +29,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches unknown sink (line 2)"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
@@ -53,8 +60,8 @@
       "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -78,6 +85,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches unknown sink (line 3)"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":3}
@@ -102,8 +116,8 @@
       "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -127,6 +141,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches unknown sink (line 6)"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":6}
@@ -151,8 +172,8 @@
       "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -188,6 +209,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation yes: Changed behavior appears to influence call effect: Subject::Invalid(message.clone())", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches call effect: Subject::Invalid(message.clone()) (line 9)"],
       "flow_sinks": [
         {"kind":"call_effect","text":"Subject::Invalid(message.clone())","line":9}
@@ -249,6 +277,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation yes: Changed behavior appears to influence call effect: record(message.trim())", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches call effect: record(message.trim()) (line 13)"],
       "flow_sinks": [
         {"kind":"call_effect","text":"record(message.trim())","line":13}

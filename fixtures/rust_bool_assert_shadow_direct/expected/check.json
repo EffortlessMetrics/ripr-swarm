@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach can_ship: ships", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "related test tests/api.rs:10 ships uses no oracle", "source assertion argument value true at line 11", "source function argument value in_stock = true at line 11", "source function argument value paid = true at line 11", "source assertion argument value false at line 12", "source function argument value in_stock = false at line 12", "source function argument value paid = true at line 12", "source assertion argument value false at line 13", "source function argument value in_stock = true at line 13"],
       "flow_sinks": [
       ],
@@ -169,8 +176,8 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -206,6 +213,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach can_ship: ships", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches unknown sink (line 2)", "related test tests/api.rs:10 ships uses no oracle", "source assertion argument value true at line 11", "source function argument value in_stock = true at line 11", "source function argument value paid = true at line 11", "source assertion argument value false at line 12", "source function argument value in_stock = false at line 12", "source function argument value paid = true at line 12", "source assertion argument value false at line 13", "source function argument value in_stock = true at line 13"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
@@ -335,8 +349,8 @@
       "stop_reasons": ["propagation_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

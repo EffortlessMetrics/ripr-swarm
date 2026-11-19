@@ -1,0 +1,64 @@
+Kani Rust Verifier 0.68.0 (standalone)
+CBMC 6.11.0
+Checking harness cover_undetermined_compact...
+CBMC 6.11.0 (cbmc-6.11.0)
+CBMC version 6.11.0 (cbmc-6.11.0) 64-bit x86_64 linux
+Reading GOTO program from file /tmp/ripr-kani-cover-controls/cover_undetermined_compact__RNvCs8AjgdNgz8ki_26cover_undetermined_compact26cover_undetermined_compact.out
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 16 object bits, 48 offset bits (user-specified)
+Starting Bounded Model Checking
+Unwinding loop _RNvCs8AjgdNgz8ki_26cover_undetermined_compact26cover_undetermined_compact.0 iteration 1 file cover-undetermined-compact.rs line 5 column 5 function cover_undetermined_compact thread 0
+Not unwinding loop _RNvCs8AjgdNgz8ki_26cover_undetermined_compact26cover_undetermined_compact.0 iteration 2 file cover-undetermined-compact.rs line 5 column 5 function cover_undetermined_compact thread 0
+Runtime Symex: 0.00173733s
+size of program expression: 135 steps
+slicing removed 81 assignments
+Generated 5 VCC(s), 3 remaining after simplification
+Runtime Postprocess Equation: 0.000129809s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 8.3291e-05s
+Running propositional reduction
+Post-processing
+Runtime Post-process: 8.641e-06s
+Solving with CaDiCaL 3.0.0
+1 variables, 0 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 5.5864e-05s
+Runtime decision procedure: 0.000182315s
+
+RESULTS:
+Check 1: cover_undetermined_compact.assertion.1
+	 - Status: UNDETERMINED
+	 - Description: "attempt to add with overflow"
+	 - Location: cover-undetermined-compact.rs:6:9 in function cover_undetermined_compact
+
+Check 2: cover_undetermined_compact.cover.1
+	 - Status: UNDETERMINED
+	 - Description: "the loop must finish before the witness"
+	 - Location: cover-undetermined-compact.rs:8:5 in function cover_undetermined_compact
+
+Check 3: cover_undetermined_compact.unwind.0
+	 - Status: FAILURE
+	 - Description: "unwinding assertion loop 0"
+	 - Location: cover-undetermined-compact.rs:5:5 in function cover_undetermined_compact
+
+
+SUMMARY:
+ ** 1 of 2 failed (1 undetermined)
+
+ ** 0 of 1 cover properties satisfied (1 undetermined)
+
+Failed Checks: unwinding assertion loop 0
+ File: "cover-undetermined-compact.rs", line 5, in cover_undetermined_compact
+
+VERIFICATION:- FAILED
+[Kani] info: Verification output shows one or more unwinding failures.
+[Kani] tip: Consider increasing the unwinding value or disabling `--unwinding-assertions`.
+Verification Time: 0.0250324s
+
+Manual Harness Summary:
+Verification failed for - cover_undetermined_compact
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.

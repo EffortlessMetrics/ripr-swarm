@@ -237,6 +237,7 @@ Updated:
 ## Pending — rust_commented_module_orphan (19)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
 
 Command:
@@ -245,4 +246,61 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_commented_module_orphan (20)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless rust_commented_module_orphan --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_commented_module_orphan (21)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless rust_commented_module_orphan --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_commented_module_orphan (22)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_commented_module_orphan --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_commented_module_orphan (23)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_commented_module_orphan --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_commented_module_orphan (24)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_commented_module_orphan --reason "..."`
+
+Updated:
 - `expected/human-full.txt`
