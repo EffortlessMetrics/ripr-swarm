@@ -2261,11 +2261,7 @@ mod tests {
                 "Config",
                 false,
             ),
-            (
-                "mod guard;\npub type\nConfig = ((Cfg));\n",
-                "Config",
-                false,
-            ),
+            ("mod guard;\npub type\nConfig = ((Cfg));\n", "Config", false),
             (
                 "mod guard;\npub use guard::Cfg\nas\nConfig;\n",
                 "Config",
