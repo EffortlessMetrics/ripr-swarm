@@ -167,7 +167,7 @@ new file under tests/ that would catch it if that changed behavior were wrong.
 Do not modify src/ or tests/existing.rs. Make sure `cargo test` passes." The
 ripr arms add one line naming `ripr agent brief --base HEAD~1 --json`.
 
-| arm | 4 scenarios × 3 runs | `match_arm_value`, 5 runs |
+| arm | 4 scenarios × 3 runs | `match_arm_value`, those 3 runs plus 2 more |
 |---|---:|---:|
 | without ripr | 11/12 | 4/5 |
 | ripr before the wording change | 12/12 | 5/5 |
@@ -175,7 +175,7 @@ ripr arms add one line naming `ripr agent brief --base HEAD~1 --json`.
 
 The scenarios are `match_arm_value`, `inclusive_range`, `private_helper` and
 `changed_constant_return`; each run cost about 53k to 57k subagent tokens and
-3 to 6 tool calls. The one miss is a without-ripr run that pinned `400` and
+3 to 6 tool calls. The one miss (counted in both columns) is a without-ripr run that pinned `400` and
 left the suite red, so pinning the old value is a task-reading failure, not
 only a ripr one. The trials reach the ceiling in every ripr arm and do not
 measure an effect of the wording; one ripr-arm agent cited `value_basis` as
