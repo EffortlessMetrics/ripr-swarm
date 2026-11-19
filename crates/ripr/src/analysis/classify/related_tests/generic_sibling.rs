@@ -853,7 +853,7 @@ mod tests {
                 false,
             ),
             (
-                "#[cfg(test)]\n#[allow(dead_code)]\npub mod tests { use super::*; }\nuse aliases::*;",
+                "#[cfg(test)]\n#[doc(hidden)]\npub mod tests { use super::*; }\nuse aliases::*;",
                 true,
             ),
             ("#[cfg(test)]\nmod tests;\nuse aliases::*;", true),
