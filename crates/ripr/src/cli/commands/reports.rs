@@ -1,5 +1,6 @@
 //! CLI adapter for `ripr reports` index, gap-ledger, and TypeScript routes (#4854).
 
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
@@ -13,6 +14,18 @@ use super::ci_summary;
 use super::kani_report;
 use super::{non_empty_path_arg, non_empty_string_arg};
 use super::{read_optional_text_for_report, write_text_file};
+
+/// The binary's `ripr reports` entry. `ci-packet` keeps the gate's decision
+/// exit (`3` when the gate blocked); every other route maps its error to `2`.
+pub(in crate::cli) fn reports_command(args: &[String]) -> Result<(), crate::cli::CommandError> {
+    let wants_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+    match args.split_first() {
+        Some((subcommand, rest)) if subcommand == "ci-packet" && !wants_help => {
+            ci_packet::ci_packet_command(rest)
+        }
+        _ => reports(args).map_err(crate::cli::CommandError::from),
+    }
+}
 
 pub(in crate::cli) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -49,6 +62,7 @@ pub(in crate::cli) fn reports(args: &[String]) -> Result<(), String> {
 
 fn report_packet_index(args: &[String]) -> Result<(), String> {
     let options = parse_report_packet_index_options(args)?;
+    ensure_command_root(Path::new(&options.root), "reports index")?;
     let input = output::report_packet_index::ReportPacketIndexInput {
         root: options.root,
         generated_at: report_packet_index_generated_at()?,
@@ -506,7 +520,10 @@ fn parse_typescript_limitations_options(
     }
 
     let Some(check_output) = check_output else {
-        return Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--check-output",
+            "reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`",
+        ));
     };
 
     super::refuse_output_naming_input(
@@ -574,7 +591,10 @@ fn parse_typescript_false_actionable_options(
     }
 
     let Some(corpus) = corpus else {
-        return Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--corpus",
+            "reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)",
+        ));
     };
 
     super::refuse_output_naming_input(
@@ -1284,6 +1304,7 @@ mod tests {
                 None,
                 None,
                 &[],
+                crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");

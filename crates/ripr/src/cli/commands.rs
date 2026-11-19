@@ -170,7 +170,9 @@ pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
@@ -634,6 +636,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -755,7 +761,7 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_report_input_plain("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
@@ -1125,8 +1131,12 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
-    let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
+    let before = before.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--before", OUTCOME_BEFORE_REFUSAL)
+    })?;
+    let after = after.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--after", OUTCOME_AFTER_REFUSAL)
+    })?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "outcome",
@@ -1932,10 +1942,10 @@ fn parse_coverage_grip_frontier_options(
     }
 
     if ledger.is_none() && baseline_delta.is_none() && zero_status.is_none() {
-        return Err(
-            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--ledger",
+            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status",
+        ));
     }
 
     refuse_output_naming_input(
@@ -1993,6 +2003,28 @@ fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
             output::baseline_delta::display_path(path),
             crate::bounded_input::read_failure_detail(&err)
         )
+    })
+}
+
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
     })
 }
 
@@ -2085,7 +2117,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2302,10 +2336,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)
@@ -2766,28 +2806,39 @@ pub(super) fn drill_in_scope_conflict(
     from_artifact: bool,
 ) -> Result<(), String> {
     if committed && worktree {
-        return Err(format!(
-            "{command} --committed and --worktree select different diff sources; pass one"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --committed and --worktree select different diff sources; pass one"
+            ),
         ));
     }
     if committed && diff_file {
-        return Err(format!(
-            "{command} --committed cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!("{command} --committed cannot be combined with --diff"),
         ));
     }
     if committed && from_artifact {
-        return Err(format!(
-            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!(
+                "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     if worktree && diff_file {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!("{command} --worktree cannot be combined with --diff"),
         ));
     }
     if worktree && from_artifact {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     Ok(())
@@ -6172,11 +6223,16 @@ language = "rust"
         for line in workflow.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with(&format!("{name}:")) {
+                // #5409: a setting's comment can trail its entry on the
+                // same line.
+                if let Some((_, trailing)) = trimmed.split_once(" # ") {
+                    comment.push(trailing);
+                }
                 // An empty block means the comment moved away from the entry
                 // (a blank line between them also lands here). Fail with that
                 // as the reason rather than running `contains` on "".
                 if comment.is_empty() {
-                    return Err(format!("`{name}:` has no comment directly above it"));
+                    return Err(format!("`{name}:` has no comment above or beside it"));
                 }
                 return Ok(comment.join("\n"));
             }
@@ -6416,10 +6472,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \
@@ -6807,8 +6869,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 216,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 150,
+            "generated workflow is {line_count} lines; #5409 set 150 and brought it back there by installing through the release's ripr-check action instead of an inline installer"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -6836,10 +6898,9 @@ language = "rust"
         // the cleanup was meant to remove.
         let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
         assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
-        let install = workflow_step(&workflow, "Install ripr");
-        assert!(
-            install.contains(r#"echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV""#)
-        );
+        // #5409: the analysis step names the restored cache directory itself.
+        let run = workflow_step(&workflow, "Run RIPR");
+        assert!(run.contains("          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n"));
         let cache = workflow
             .split("\n\n")
             .find(|block| {
@@ -6864,7 +6925,7 @@ language = "rust"
         let run_at = workflow.find("      - name: Run RIPR\n").unwrap_or(0);
         assert!(
             install_at < cache_at && cache_at < run_at,
-            "the cache restores after the install sets RIPR_CACHE_DIR and before the first analysis"
+            "the cache restores after the install and before the first analysis"
         );
         assert_step_before(
             &workflow,
@@ -6889,16 +6950,21 @@ language = "rust"
         assert!(summary.contains("github.actor != 'dependabot[bot]'"));
         assert!(summary.contains("continue-on-error: true"));
         assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
-        assert!(summary.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(summary.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
-        assert!(summary.contains("REPO: ${{ github.repository }}"));
+        // #4452, #5409: the pull request values reach shell through job env,
+        // never as `${{ }}` inside `run:`; the repository is the runner's own
+        // GITHUB_REPOSITORY.
+        assert!(workflow.contains(
+            "    env:\n      PR_NUMBER: ${{ github.event.pull_request.number }}\n      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n    steps:\n"
+        ));
+        assert!(!workflow.contains("REPO: ${{ github.repository }}"));
+        assert!(summary.contains("\"repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments\""));
         assert!(summary.contains("--pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""));
         assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
         assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
-        let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(
-            run, "      - name: Run RIPR\n        run: ripr reports ci-packet --root .",
+            run,
+            "      - name: Run RIPR\n        env:\n          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n        run: ripr reports ci-packet --root .",
             "the packet step has no condition or continue-on-error: a required \
              step's failure must fail the job"
         );
@@ -6914,11 +6980,6 @@ language = "rust"
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
         assert!(existing_comments.contains("GH_TOKEN: ${{ github.token }}"));
         assert!(existing_comments.contains("gh api --paginate --slurp"));
-        assert!(existing_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            existing_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(existing_comments.contains("REPO: ${{ github.repository }}"));
         assert!(existing_comments.contains("pulls/$PR_NUMBER/comments"));
         // The command's default output is the file the packet's plan reads.
         assert!(include_str!("commands/pr_comments_github.rs").contains(
@@ -6932,14 +6993,9 @@ language = "rust"
         assert!(
             publish_comments.contains("hashFiles('target/ripr/review/comment-publish-plan.json')")
         );
-        assert!(publish_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            publish_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(publish_comments.contains("REPO: ${{ github.repository }}"));
         assert!(publish_comments.contains("--head-sha \"$PR_HEAD_SHA\""));
         assert!(publish_comments.contains(
-            "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\""
+            "gh api --method \"$method\" \"repos/$GITHUB_REPOSITORY/$endpoint\" --input \"$request\""
         ));
 
         // The packet writes the plan the publish step reads, and the comment

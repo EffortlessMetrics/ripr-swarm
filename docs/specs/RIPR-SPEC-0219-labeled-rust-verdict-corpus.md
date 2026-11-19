@@ -287,6 +287,52 @@ analyzer execution, retained-byte validation or independent re-adjudication of
 jointly changed definitions and observations. The scoreboard retains its
 additional source-byte, oracle and comparison-identity validation.
 
+The report splits abstentions into abstention-expected and avoidable
+(#12766). A case expects its abstention when its tests catch the change
+(truth `discriminated`, ideal `credited`), it cites at least one spec
+example, every example it cites requires an abstention, and its
+`acceptable_verdicts` include `limited`. An example requires an abstention
+when its `## Acceptance Examples` item opens with the structured marker
+`[abstain]` (`3. [abstain] Accept: ...`, or ``- example `slug`: [abstain]
+...``), or when it is an abstaining `Reject` item. The marker is the spec
+author's statement that every row the example describes must abstain (a
+named limitation, an `*_unknown` stop, or zero findings for code that is not
+production); it counts only as the item's first token. An example that
+describes both an abstaining row and a credited one is split first, so each
+example pins one outcome (#12766: RIPR-SPEC-0153 examples 6 and 7 gained
+examples 10 and 11, and RIPR-SPEC-0154 example 3 gained example 7). A case
+whose cited examples all require an abstention but reads `credited` fails
+`verdict-corpus check` and the committed-row load: either the analyzer broke
+the spec or the example has to be split. An abstaining Reject item's `##
+Acceptance Examples` entry opens with the word `Reject` followed by `:`, a
+space or `(`, and its text (continuation lines included) pins the outcome as
+unresolved with one of a fixed set of phrases: `stays unresolved`, ``stays
+`infection_unknown` ``, ``stays `propagation_unknown` ``, ``stays
+`static_unknown` ``, `keeps the operand unknown`, `does not resolve` or
+`earlier stop is kept`. A Reject item that only forbids one route to credit
+(`the relation through a comment/string-only use`) does not count, because
+the tests may still catch the change through another route (#13940 review).
+An example that requires an abstention withholds the credit that would resolve the
+row, and with credit ruled out only `limited`/`silent` remain, so analyzer
+work can only remove that abstention by breaking the spec. When the tests miss the change, a gap still
+obeys the example, so that abstention stays avoidable. The row then
+carries `abstention_expected: true`, and `avoidable_abstention_rate` counts
+the abstained rows without it over all cases. Because the denominator is the
+same, the abstention-expected share is `abstention_rate` minus
+`avoidable_abstention_rate`. Truth labels and scoring do not change: such a
+row still scores `abstained`, and the flag never makes an abstention ideal.
+The dx scoreboard re-derives the flag from the case and the specs when it
+loads the rows. Its per-case identity for the avoidable rate binds the flag,
+so a case whose citation comes to require an abstention reads as a changed
+definition, not as an analyzer improvement.
+The dx scoreboard puts the abstention bar on the avoidable rate
+(`trust.verdict_corpus_avoidable_abstention`, target 0.2). It keeps the total
+(`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
+the avoidable bar plus the abstention-expected share, rounded down: 0.0128
+when the split landed (0.21), and 39/862 = 0.0452 once `[abstain]`-marked
+examples counted (#12766, so 0.24). A change to that share recomputes the
+total's target the same way; the avoidable bar does not move with it.
+
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
 self-contradicting finding anywhere is an internal inconsistency.
@@ -826,6 +872,10 @@ Oracle-accuracy tests live in
 - `verdict_corpus_false_verdict_rate`
 - `verdict_corpus_false_actionable_rate`
 - `verdict_corpus_contradiction_rate`
+- `verdict_corpus_avoidable_abstention_rate` (dx-scoreboard
+  `trust.verdict_corpus_avoidable_abstention`, target 0.2, lower is better);
+  the total `verdict_corpus_abstention_rate` stays reported
+  (`trust.verdict_corpus_abstention`, target 0.24)
 - `verdict_corpus_spec_example_coverage` (dx-scoreboard
   `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
   margin 0)

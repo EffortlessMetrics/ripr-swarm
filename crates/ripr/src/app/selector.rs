@@ -263,6 +263,19 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
         || wanted.ends_with(&format!("/{stored}"))
 }
 
+/// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
+/// case-sensitive; only miss wording reads this, so the explain cause and the
+/// location hint agree on which files a wrong-case selector names (#14676).
+pub(in crate::app) fn locator_paths_match_ignoring_ascii_case(
+    stored_file: &str,
+    selector_file: &str,
+) -> bool {
+    locator_paths_match(
+        &stored_file.to_ascii_lowercase(),
+        &selector_file.to_ascii_lowercase(),
+    )
+}
+
 /// What is known about whether the run behind a finding set analyzed its
 /// whole scope, for the location-miss hint's empty-scope and other-file
 /// wording.
@@ -307,14 +320,16 @@ pub(in crate::app) fn location_miss_hint(
         return None;
     }
     // `file:line:column` splits as file `file:line`; matching is per line.
-    let (selector_file, column_given) = match selector_file.rsplit_once(':') {
-        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => {
-            (file, true)
-        }
-        _ => (selector_file, false),
+    let (selector_file, column_given) = match location_column_form_file(selector_file) {
+        Some(file) => (file, true),
+        None => (selector_file, false),
     };
     let wanted = normalize_locator_path(selector_file);
-    if wanted.is_empty() || !(wanted.contains(['/', '.'])) {
+    // A bare `word:N` may be an opaque id, so it needs a path shape; the
+    // three-part `file:N:M` form is location-shaped by itself, and the
+    // explain cause defers to this hint for it, so an extensionless file
+    // (`Makefile:3:5`) must still get one (#14511).
+    if wanted.is_empty() || !(column_given || wanted.contains(['/', '.'])) {
         return None;
     }
     let column_note = if column_given {
@@ -346,11 +361,17 @@ pub(in crate::app) fn location_miss_hint(
     // files never mixes their lines under one name.
     let mut same_file =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    // #14416: paths that match only when ASCII case is ignored. Resolution
+    // stays case-sensitive; the hint names the correctly cased file instead.
+    let mut case_folded =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
     let mut other_files = std::collections::BTreeSet::<String>::new();
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         // The same "same file" rule selection uses (#14077's shared helper).
         let matches = locator_paths_match(file.as_ref(), &wanted);
+        // #14416: the same rule ignoring ASCII case, for the hint only.
+        let matches_folded = locator_paths_match_ignoring_ascii_case(&file, &wanted);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.
@@ -364,9 +385,21 @@ pub(in crate::app) fn location_miss_hint(
                 .or_default()
                 .insert(finding.probe.location.line);
         } else {
+            if matches_folded {
+                case_folded
+                    .entry(stored.clone())
+                    .or_default()
+                    .insert(finding.probe.location.line);
+            }
             other_files.insert(stored);
         }
     }
+    let case_note = if same_file.is_empty() && !case_folded.is_empty() {
+        same_file = case_folded;
+        " Paths match case-sensitively."
+    } else {
+        ""
+    };
     // An exact path match leads; otherwise the first matching file.
     if let Some((file, lines)) = same_file
         .get_key_value(&wanted)
@@ -402,13 +435,18 @@ pub(in crate::app) fn location_miss_hint(
             String::new()
         };
         let noun = if lines.len() == 1 { "line" } else { "lines" };
+        let matching = if case_note.is_empty() {
+            "matching that path"
+        } else {
+            "matching that path ignoring case"
+        };
         let others = match same_file.len().saturating_sub(1) {
             0 => String::new(),
-            1 => " 1 other file matching that path also has findings.".to_string(),
-            n => format!(" {n} other files matching that path also have findings."),
+            1 => format!(" 1 other file {matching} also has findings."),
+            n => format!(" {n} other files {matching} also have findings."),
         };
         return Some(format!(
-            " Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
+            "{case_note} Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
         ));
     }
     let files = other_files
@@ -431,6 +469,17 @@ pub(in crate::app) fn location_miss_hint(
     Some(format!(
         " No finding in this scope is in {wanted:?}; findings are in {files}{more}.{column_note}"
     ))
+}
+
+/// The one `file:line:column` detector (#14511). `selector_file` is the text
+/// before a selector's last `:`; when it ends in `:<digits>` the selector is
+/// the column form and this returns the file part. The explain miss cause
+/// and the location hint both read it, so they never disagree on which
+/// selectors are column forms.
+pub(in crate::app) fn location_column_form_file(selector_file: &str) -> Option<&str> {
+    selector_file.rsplit_once(':').and_then(|(file, line)| {
+        (!line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())).then_some(file)
+    })
 }
 
 /// Normalize a path for locator matching: convert `\` to `/`, drop a leading
@@ -879,6 +928,57 @@ mod tests {
                 std::path::Path::new(""),
                 "src/lib.rs:9999",
                 ScopeCompleteness::Complete
+            )
+        );
+        // #14416: a selector differing only in letter case is told so and
+        // pointed at the correctly cased file; resolution stays exact.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "SRC/Lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9."
+            )
+        );
+        assert!(matches!(
+            select_finding(&findings, "SRC/Lib.rs:9"),
+            FindingSelection::NoMatch
+        ));
+        assert!(matches!(
+            select_finding(&findings, "src/lib.rs:9"),
+            FindingSelection::Unique(_)
+        ));
+        // An exact-case file wins over a case-folded one, with no case note.
+        let mut upper = finding("probe:u", 5, None);
+        upper.probe.location = SourceLocation::new("SRC/Lib.rs", 5, 1);
+        let mixed = vec![finding("probe:a", 3, None), upper];
+        assert_eq!(
+            location_miss_hint(
+                &mixed,
+                std::path::Path::new(""),
+                "SRC/Lib.rs:9999",
+                ScopeCompleteness::Complete
+            )
+            .as_deref(),
+            Some(" Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5.")
+        );
+        // Several case-folded files: one is listed and the rest counted;
+        // the column note applies, and the incomplete flag adds nothing in
+        // the file-match branch, as for exact-case matches.
+        assert_eq!(
+            location_miss_hint(
+                &mixed,
+                std::path::Path::new(""),
+                "src/LIB.rs:9:1",
+                ScopeCompleteness::Incomplete
+            )
+            .as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5. 1 other file matching that path ignoring case also has findings. Selectors are file:line; drop the column."
             )
         );
         // A Windows verbatim finding path under a plain-drive root is shown

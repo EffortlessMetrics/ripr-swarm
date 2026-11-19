@@ -16,7 +16,8 @@ use super::super::rust_index::{
 use super::text::is_rust_whitespace;
 use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
-    mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
+    mask_comments_and_strings, string_literal_spans, test_body_defines_callee_fn,
+    test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext, OracleFact};
 use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
@@ -31,6 +32,7 @@ use std::path::Path;
 
 mod drop_dispatch;
 mod equality_dispatch;
+mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
@@ -150,6 +152,14 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Changed single-line constants with their old and new declarations
     /// (RIPR-SPEC-0048), for the value-flow check.
     changed_consts: super::ChangedConsts,
+    /// #14852: whether the diff's base side may rebind `vec` or a standard
+    /// assertion macro ([`super::base_side_may_rebind_trusted_macros`]).
+    /// `None` (not computed) reads as yes.
+    base_may_rebind_trusted_macros: Option<bool>,
+    /// #14852: the run's out-of-line `mod` declarations and the diff's
+    /// changes to them, for the shared base-owner identity. Unread (every
+    /// owner refuses) unless the run read them.
+    module_declarations: Option<crate::analysis::diff::ModuleDeclarations>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -318,6 +328,40 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn changed_consts(&self) -> &super::ChangedConsts {
         &self.changed_consts
+    }
+
+    /// Record the diff-wide base-side macro rebinding answer (#14852).
+    pub(in crate::analysis) fn with_base_may_rebind_trusted_macros(
+        mut self,
+        rebinds: bool,
+    ) -> Self {
+        self.base_may_rebind_trusted_macros = Some(rebinds);
+        self
+    }
+
+    /// Record the run's module declaration reading (#14852).
+    pub(in crate::analysis) fn with_module_declarations(
+        mut self,
+        modules: crate::analysis::diff::ModuleDeclarations,
+    ) -> Self {
+        self.module_declarations = Some(modules);
+        self
+    }
+
+    /// The run's module declaration reading; an unread one when the run did
+    /// not compute it.
+    pub(in crate::analysis) fn module_declarations(
+        &self,
+    ) -> &crate::analysis::diff::ModuleDeclarations {
+        static UNREAD: std::sync::LazyLock<crate::analysis::diff::ModuleDeclarations> =
+            std::sync::LazyLock::new(crate::analysis::diff::ModuleDeclarations::unread);
+        self.module_declarations.as_ref().unwrap_or(&UNREAD)
+    }
+
+    /// Whether the diff's base side may rebind `vec` or a standard assertion
+    /// macro; yes when the run did not compute it.
+    pub(in crate::analysis) fn base_may_rebind_trusted_macros(&self) -> bool {
+        self.base_may_rebind_trusted_macros.unwrap_or(true)
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -1026,6 +1070,12 @@ fn find_related_tests_with_candidates<'a>(
         .filter(|t| !common_tokens.assertion_tokens.contains(t.as_str()))
         .map(String::as_str)
         .collect();
+    // #13843: a word that occurs in the probe only inside a string literal
+    // is prose, not an identifier. Help text such as `summary: "Show
+    // capability status per language"` shares `language` or `status` with
+    // thousands of unrelated assertions, so such a word relates a test only
+    // when its assertion quotes one of the probe's literals whole.
+    let probe_literals = ProbeLiterals::new(&probe.expression);
 
     let candidate_indices = match candidates {
         RelatedTestCandidates::Indexed(candidate_index) => {
@@ -1041,8 +1091,12 @@ fn find_related_tests_with_candidates<'a>(
     // for an owner that may be reached unseen (trait method, named caller).
     let mut substring_only_fallback = Vec::new();
     let owner_name_lc = owner_name.to_ascii_lowercase();
+    // #13843: for a module-level probe (no named owner), a word found only
+    // inside a string literal is prose; a test name that shares it (`status`,
+    // `language`) is no tie, so it does not seed the name-token relation.
     let test_name_words: Vec<String> = probe_tokens
         .iter()
+        .filter(|token| owner_fn.is_some() || probe_literals.code_tokens.contains(token.as_str()))
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
     // #9260: the context depends only on (index, owner); the run-level memo
@@ -1390,6 +1444,24 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
+        // #14087: with or without a rival, a bare call that a test-local
+        // `const`, `static` or tuple `struct` of the owner's name binds runs
+        // that item, not the owner. A test that also calls another hop
+        // caller of the helper chain keeps its relation; the test's own
+        // name-only hop (its body spells the owner's name) is not one.
+        if calls_owner
+            && owner_fn.is_some_and(|owner| {
+                super::call_identity::test_calls_only_a_local_value_item(index, owner, test)
+            })
+            && !helper_chain.is_some_and(|chain| {
+                chain.hops.iter().any(|hop| {
+                    !(hop.caller.file == test.file && hop.caller.start_line == test.start_line)
+                        && test.calls.iter().any(|call| call.name == hop.caller.name)
+                })
+            })
+        {
+            continue;
+        }
 
         // Token text discarded by a property macro cannot re-enter through
         // raw-body, test-name or file-name affinity. An independent ordinary
@@ -1462,6 +1534,7 @@ fn find_related_tests_with_candidates<'a>(
                     obs_tok.len() >= ASSERTION_TOKEN_MIN_LEN
                         && long_probe_tokens.contains(&obs_tok.as_str())
                         && !is_declaration_only_token(&oracle.text, obs_tok)
+                        && probe_literals.admits(obs_tok, &oracle.text)
                 })
             });
 
@@ -1631,12 +1704,19 @@ fn find_related_tests_with_candidates<'a>(
         {
             let substring_named = (!file_name.is_empty()
                 && normalize_path(&test.file).contains(&file_name))
-                || probe_tokens.iter().any(|token| {
-                    // The fallback applies the same generic/common-word gate as
-                    // the word-boundary path (#9172).
-                    test_name_word_token(token, common_words)
-                        .is_some_and(|word| test_name.contains(&word))
-                });
+                || probe_tokens
+                    .iter()
+                    .filter(|token| {
+                        probe.owner.is_some() || probe_literals.code_tokens.contains(token.as_str())
+                    })
+                    .any(|token| {
+                        // The fallback applies the same generic/common-word and
+                        // literal-only gates as the word-boundary path (#9172,
+                        // #13843). Probe ownership, not owner resolution, keeps
+                        // the named-owner fallback unchanged (#13896).
+                        test_name_word_token(token, common_words)
+                            .is_some_and(|word| test_name.contains(&word))
+                    });
             if substring_named {
                 substring_only_fallback.push((test, RelationReason::WeakTokenSubstring));
             }
@@ -1886,29 +1966,41 @@ fn dependency_edge_admits_owner_call(
     if callable_dependency_names.is_empty() {
         return false;
     }
+    // Only `[dependencies]` are visible to the test crate's library code,
+    // where a re-export chain lives (#4905).
+    let library_dependency_names: BTreeSet<String> = declarations
+        .iter()
+        .filter(|(section, _)| matches!(section, PathDependencySection::Dependencies))
+        .map(|(_, name)| name.replace('-', "_"))
+        .collect();
     let stripped_body = strip_comments_and_strings(&test.body);
     // Imports are module-scoped and visible file-wide: scan the test's
     // stripped file source, not the function body, so a file-level `use` is
     // seen (#3619 review). Only file-level imports count — a `use` inside a
     // nested module is invisible to tests outside it, so it must not
     // credit them (#3619 review, second round).
-    let stripped_file = context
-        .index
-        .files()
-        .get(&test.file)
-        .map(|facts| strip_comments_and_strings(&facts.source))
-        .unwrap_or_else(|| stripped_body.clone());
-    let file_level_imports = file_level_use_text(&stripped_file);
+    let file_text = match context.index.files().get(&test.file) {
+        Some(facts) => stripped_file_and_imports(&facts.source),
+        None => {
+            let imports = file_level_use_text(&stripped_body);
+            std::rc::Rc::new((stripped_body.clone(), imports))
+        }
+    };
+    let file_level_imports = file_text.1.as_str();
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
     if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
         && type_path_call_admits_owner(
             context,
-            &owner_manifest,
             owner,
             test,
             &callable_dependency_names,
-            &stripped_file,
+            &ReexportChain {
+                owner_manifest: &owner_manifest,
+                test_manifest: &test_manifest,
+                library_dependency_names: &library_dependency_names,
+            },
+            &file_text,
             same_name.definitions,
         )
     {
@@ -1959,7 +2051,7 @@ fn dependency_edge_admits_owner_call(
             return true;
         }
         bare_call_captured
-            && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
+            && imports_owner_from_dependency(file_level_imports, dependency_name, owner_name)
     })
 }
 
@@ -2008,15 +2100,15 @@ fn type_path_index_covers_competitors(
 /// rebinds (#7067), so a relation through one could not be credited.
 fn type_path_call_admits_owner(
     context: &DependencyEdgeContext<'_>,
-    owner_manifest: &str,
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    stripped_file: &str,
+    reexport: &ReexportChain<'_>,
+    file_text: &(String, String),
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
-    let file_level_imports = file_level_use_text(stripped_file);
-    let file_level_imports = file_level_imports.as_str();
+    let owner_manifest = reexport.owner_manifest;
+    let (stripped_file, file_level_imports) = (file_text.0.as_str(), file_text.1.as_str());
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -2055,9 +2147,361 @@ fn type_path_call_admits_owner(
                     dependency_name,
                     self_type,
                 ))
+    }) || (imported_type_call && {
+        // File-fact lookups return an owned view. Retain its shared source
+        // after the view is released instead of returning a borrow from it.
+        let test_source = context
+            .index
+            .files()
+            .get(&test.file)
+            .map(|facts| std::sync::Arc::clone(&facts.source));
+        type_reexported_from_owner_dependency(
+            context,
+            reexport,
+            test_source.as_deref().unwrap_or(test.body.as_ref()),
+            self_type,
+        )
     });
     spelled_through_dependency
         && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
+}
+
+/// The test crate's side of a re-export chain (#4905).
+struct ReexportChain<'a> {
+    /// Manifest identity of the package holding the owner.
+    owner_manifest: &'a str,
+    /// Manifest identity of the package holding the calling test.
+    test_manifest: &'a str,
+    /// Normal `[dependencies]` of the test package on the owner's package
+    /// (the only ones its library code can name), `-` folded to `_`.
+    library_dependency_names: &'a BTreeSet<String>,
+}
+
+/// #4905: the test imports `T` through its own crate's library
+/// (`use test_lib::module::T;`) and that library re-exports it from the
+/// owner's package: `pub use dep::...::T;` in the module, or one crate-local
+/// hop first (`pub use self::level::T;` then, in the mounted `level`
+/// module, `pub use dep::...::T;`, the tracing-subscriber shape).
+///
+/// Fail-closed: the test crate's library name and root must be established
+/// from its manifest (`[lib] path` default); `T` must be imported by one
+/// plain named path and named by no other `use` anywhere in the test file
+/// (no rename, no glob, no `extern crate`, nothing binding the library
+/// name); every module on the chain must be mounted by an out-of-line
+/// `mod` from the library root and found at exactly one layout file, with
+/// no `#[path]`/`include!` in the library; across the library every `use`
+/// naming `T` is a hop of the chain, no source declares an item named `T`,
+/// and no glob is rooted outside the crate or the standard library. The
+/// terminal hop must root at a declared `[dependencies]` entry on the
+/// owner's package; the caller still applies the competitor scan and the
+/// owner-crate foreign-import guard.
+fn type_reexported_from_owner_dependency(
+    context: &DependencyEdgeContext<'_>,
+    reexport: &ReexportChain<'_>,
+    test_source: &str,
+    self_type: &str,
+) -> bool {
+    // A partially indexed test package may hold a competing definition or
+    // a second import of `T` the scans below cannot see.
+    if reexport.library_dependency_names.is_empty()
+        || reexport.test_manifest == reexport.owner_manifest
+        || context.unindexed_manifests.contains(reexport.test_manifest)
+    {
+        return false;
+    }
+    let crate_dir = reexport
+        .test_manifest
+        .strip_suffix("Cargo.toml")
+        .unwrap_or("");
+    let Some(library) = crate::analysis::facts::manifest_library_name(
+        &context.root.join(crate_dir.trim_end_matches('/')),
+    ) else {
+        return false;
+    };
+    // Re-export admission must see every competing binding after a character
+    // literal, not only extern declarations. Keep this masking local to the
+    // re-export fallback so direct dependency-import admission is unchanged.
+    let masked_test_source = mask_comments_and_strings(test_source);
+    let stripped_file = masked_test_source.as_str();
+    let file_level_imports = file_level_use_text(stripped_file);
+    // The test's import: `use <library>::m1::..::T;` and nothing else names
+    // or binds the library identifier or `T` in the test file.
+    let imports = super::reveal::flattened_use_paths(&file_level_imports);
+    let named: Vec<&super::reveal::UsePath> = imports
+        .iter()
+        .filter(|import| {
+            import.path.rsplit("::").next() == Some(self_type)
+                || import.alias.as_deref() == Some(self_type)
+        })
+        .collect();
+    let [import] = named.as_slice() else {
+        return false;
+    };
+    // Scope-blind: a function-local `use other::T;` shadows the file-level
+    // import for the calls in its scope, so any second statement naming `T`
+    // anywhere in the file refuses.
+    let statements_naming_type = use_statement_paths(stripped_file)
+        .iter()
+        .filter(|statement| {
+            statement
+                .split(|character: char| !is_ident_char(character))
+                .any(|word| word == self_type)
+        })
+        .count();
+    if statements_naming_type != 1
+        || import.alias.is_some()
+        || import.path.contains('*')
+        || file_may_bind_name(stripped_file, &library)
+        || file_may_bind_name(stripped_file, self_type)
+        || use_statement_paths(stripped_file)
+            .iter()
+            .any(|statement| statement.contains('*'))
+        || has_reexport_guard_tokens(test_source, "extern", "crate")
+        || super::reveal::flattened_use_paths(stripped_file)
+            .iter()
+            .any(|other| {
+                // `use external as crate_c;` (or any import ending in the
+                // library name) rebinds the root the test's path starts at.
+                other.alias.as_deref() == Some(library.as_str())
+                    || (other.alias.is_none()
+                        && other.path.rsplit("::").next() == Some(library.as_str()))
+            })
+    {
+        return false;
+    }
+    let mut segments: Vec<String> = import.path.split("::").map(str::to_string).collect();
+    if segments.len() < 2 || segments.first() != Some(&library) {
+        return false;
+    }
+    segments.remove(0);
+    segments.pop();
+    let src_dir = format!("{crate_dir}src/");
+    let mut sources: BTreeMap<String, String> = BTreeMap::new();
+    let mut naming_imports = 0usize;
+    for (file, facts) in context.index.files().iter() {
+        let normalized = normalize_path(file);
+        if !normalized.starts_with(&src_dir)
+            || nearest_manifest_identity(context.manifest_dir_prefixes, file).as_deref()
+                != Some(reexport.test_manifest)
+        {
+            continue;
+        }
+        let stripped = mask_comments_and_strings(&facts.source);
+        // Share the path-remapping authority with call identity. Literal
+        // spelling misses whitespace, comments and conditional attributes.
+        if super::call_identity::has_path_attribute(&stripped)
+            || has_reexport_guard_tokens(&facts.source, "include", "!")
+        {
+            return false;
+        }
+        // No item named `T`, and no glob that could bring names in from
+        // outside the crate: a glob rooted in the crate only re-exposes
+        // items and imports this scan already sees.
+        if file_may_bind_name(&stripped, self_type)
+            || use_statement_paths(&stripped).iter().any(|statement| {
+                statement.contains('*')
+                    && !matches!(
+                        path_root(statement),
+                        "self" | "super" | "crate" | "std" | "core" | "alloc"
+                    )
+            })
+        {
+            return false;
+        }
+        let library_imports = super::reveal::flattened_use_paths(&stripped);
+        // A library-local binding of a dependency key (`use x::y as crate_a;`,
+        // `mod crate_a`, `extern crate`) would rebind the terminal hop's root.
+        if has_reexport_guard_tokens(&facts.source, "extern", "crate")
+            || reexport.library_dependency_names.iter().any(|dependency| {
+                file_may_bind_name(&stripped, dependency)
+                    || library_imports.iter().any(|import| {
+                        import.alias.as_deref() == Some(dependency.as_str())
+                            || (import.alias.is_none()
+                                && import.path.contains("::")
+                                && import.path.rsplit("::").next() == Some(dependency.as_str()))
+                    })
+            })
+        {
+            return false;
+        }
+        naming_imports += library_imports
+            .iter()
+            .filter(|import| {
+                import.path.rsplit("::").next() == Some(self_type)
+                    || import.alias.as_deref() == Some(self_type)
+            })
+            .count();
+        sources.insert(normalized, stripped);
+    }
+    // Follow at most two hops: a crate-local `pub use self::m::T;` (or
+    // `super::` / `crate::`) to a sibling module, then the terminal
+    // `pub use dep::...::T;`. Every import naming `T` in the library must be
+    // one of these hops.
+    let mut hops = 0usize;
+    loop {
+        let Some(module_file) = mounted_module_file(&sources, &src_dir, &segments) else {
+            return false;
+        };
+        let Some(module_source) = sources.get(&module_file) else {
+            return false;
+        };
+        let Some(hop) = public_named_import(module_source, self_type, hops == 0) else {
+            return false;
+        };
+        hops += 1;
+        let mut path: Vec<String> = hop.split("::").map(str::to_string).collect();
+        path.pop();
+        let root = path.first().cloned().unwrap_or_default();
+        if reexport.library_dependency_names.contains(&root) {
+            return naming_imports == hops;
+        }
+        if hops >= 2 {
+            return false;
+        }
+        let rest = path.get(1..).unwrap_or_default().to_vec();
+        segments = match root.as_str() {
+            "self" => segments.into_iter().chain(rest).collect(),
+            "super" if !segments.is_empty() => {
+                let mut parent = segments;
+                parent.pop();
+                parent.into_iter().chain(rest).collect()
+            }
+            "crate" => rest,
+            _ => return false,
+        };
+        if segments
+            .iter()
+            .any(|segment| matches!(segment.as_str(), "self" | "super" | "crate"))
+        {
+            return false;
+        }
+    }
+}
+
+/// The file of the library module at `segments` (empty: the root
+/// `src/lib.rs`), walking from the root: every segment must be mounted by
+/// exactly one out-of-line `mod seg;` in its parent (no inline
+/// `mod seg { .. }`, which a stray layout file cannot override) and resolve
+/// to exactly one of `seg.rs` / `seg/mod.rs`.
+fn mounted_module_file(
+    sources: &BTreeMap<String, String>,
+    src_dir: &str,
+    segments: &[String],
+) -> Option<String> {
+    let mut module_file = format!("{src_dir}lib.rs");
+    for (depth, segment) in segments.iter().enumerate() {
+        let parent = sources.get(&module_file)?;
+        if !declares_one_out_of_line_module(parent, segment) {
+            return None;
+        }
+        let prefix = segments[..=depth].join("/");
+        let candidates: Vec<String> = [
+            format!("{src_dir}{prefix}.rs"),
+            format!("{src_dir}{prefix}/mod.rs"),
+        ]
+        .into_iter()
+        .filter(|candidate| sources.contains_key(candidate))
+        .collect();
+        let [only] = candidates.as_slice() else {
+            return None;
+        };
+        module_file = only.clone();
+    }
+    Some(module_file)
+}
+
+/// The path of the one module-level `use` in `module_source` that imports
+/// `name` unrenamed, when that statement is public: `pub use` when
+/// `plain_pub` (the hop a test outside the crate reads), else any `pub`
+/// form (`pub(crate)`, `pub(super)`). Brace lists are read item by item.
+/// `None` when no or several statements import `name`.
+fn public_named_import(module_source: &str, name: &str, plain_pub: bool) -> Option<String> {
+    let file_level = file_level_use_text(module_source);
+    let mut found: Vec<(String, &str)> = Vec::new();
+    for statement in file_level.lines() {
+        for import in super::reveal::flattened_use_paths(statement) {
+            if import.path.rsplit("::").next() == Some(name)
+                || import.alias.as_deref() == Some(name)
+            {
+                found.push((import.path.clone(), statement));
+                if import.alias.is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+    let [(path, statement)] = found.as_slice() else {
+        return None;
+    };
+    // The statement text is copied verbatim from the source; read the
+    // visibility written before it. A statement repeated verbatim is
+    // ambiguous and refused.
+    let at = module_source.find(statement)?;
+    if module_source[at + statement.len()..].contains(statement) {
+        return None;
+    }
+    let before = module_source[..at].trim_end();
+    let public = if plain_pub {
+        before.ends_with("pub") && !before[..before.len() - 3].ends_with(is_ident_char)
+    } else {
+        (before.ends_with("pub") && !before[..before.len() - 3].ends_with(is_ident_char))
+            || (before.ends_with(')') && {
+                let open = before.rfind("pub(");
+                open.is_some_and(|open| {
+                    !before[..open].ends_with(is_ident_char) && !before[open..].contains(';')
+                })
+            })
+    };
+    public.then(|| path.clone())
+}
+
+/// Whether comment-and-string-stripped `parent` declares module `name`
+/// exactly once, out of line (`mod name;`, any visibility), and never inline
+/// (`mod name { .. }`).
+fn declares_one_out_of_line_module(parent: &str, name: &str) -> bool {
+    let bytes = parent.as_bytes();
+    let (mut out_of_line, mut inline) = (0usize, 0usize);
+    let mut search_from = 0usize;
+    let mut depth = 0usize;
+    let mut depth_scanned = 0usize;
+    while let Some(relative) = parent[search_from..].find("mod") {
+        let at = search_from + relative;
+        search_from = at + 3;
+        // Only module-level declarations mount a child of this file: a
+        // `mod seg;` inside `mod inner { .. }` mounts `inner::seg`.
+        for byte in &bytes[depth_scanned..at] {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth_scanned = at;
+        if depth != 0 {
+            continue;
+        }
+        let starts_word = at == 0
+            || bytes
+                .get(at - 1)
+                .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        let rest = &parent[at + 3..];
+        if !starts_word || !rest.starts_with(|character: char| character.is_whitespace()) {
+            continue;
+        }
+        let rest = rest.trim_start();
+        let Some(after) = rest.strip_prefix(name) else {
+            continue;
+        };
+        if after.starts_with(is_ident_char) {
+            continue;
+        }
+        match after.trim_start().chars().next() {
+            Some(';') => out_of_line += 1,
+            Some('{') => inline += 1,
+            _ => {}
+        }
+    }
+    out_of_line == 1 && inline == 0
 }
 
 /// #9619: whether the file's one glob import is rooted at `dependency_name`
@@ -2230,6 +2674,42 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         previous_is_mod = word == "mod";
         found
     })
+}
+
+/// Inspect original parser tokens for re-export refusals. A character such
+/// as `'"'` must not let a lossy string stripper hide subsequent code. In
+/// addition to a direct `include!`, an `include` token inside a macro token
+/// tree may be forwarded to a metavariable invocation (`$i!`), and an import
+/// may alias the builtin (`use std::include as mount`). Without expansion or
+/// macro import resolution, either possible splice refuses the re-export hop.
+/// Unrelated macros and include text inside literals/comments remain allowed.
+fn has_reexport_guard_tokens(source: &str, first: &str, second: &str) -> bool {
+    use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxToken, ast};
+    if !source.contains(first) {
+        return false;
+    }
+    if crate::analysis::syntax::rust_nesting_refusal(source).is_some() {
+        return true;
+    }
+    let file = SourceFile::parse(source, Edition::CURRENT).tree();
+    let mut previous: Option<SyntaxToken> = None;
+    file.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .any(|token| {
+            let is_first = |token: &SyntaxToken| {
+                token.text() == first || first == "include" && token.text() == "r#include"
+            };
+            let found = previous.as_ref().is_some_and(is_first) && token.text() == second;
+            let unresolved_include = first == "include"
+                && is_first(&token)
+                && token.parent_ancestors().any(|node| {
+                    ast::TokenTree::can_cast(node.kind()) || ast::UseTree::can_cast(node.kind())
+                });
+            previous = Some(token);
+            found || unresolved_include
+        })
 }
 
 /// Whether comment-and-string-stripped `source` may bind `name` to something
@@ -2921,11 +3401,41 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;
     }
+    // #15073: a lone `use <lib>::*;` glob delivers a crate-root entry the way
+    // `use <lib>::<entry>;` does: the entry is defined in `src/lib.rs`, or the
+    // root re-exports it exactly once, and no other glob in the test file or
+    // body could also bring a same-named item in.
+    let globs = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .into_iter()
+            .filter(|import| import.path.ends_with('*'))
+            .collect::<Vec<_>>()
+    };
+    // The test file's text already holds the test body, so its globs are
+    // counted once from the file.
+    let all_globs = globs(&facts.source);
+    let root_glob_delivers_entry = matches!(all_globs.as_slice(), [only] if {
+        let segments: Vec<String> = only
+            .path
+            .trim_start_matches("::")
+            .split("::")
+            .map(unraw)
+            .collect();
+        only.alias.is_none()
+            && !in_src_unit_test
+            && segments.len() == 2
+            && segments[0] == crate_name
+            && segments[1] == "*"
+    }) && entry_module
+        .as_deref()
+        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)))
+        && !test_file_declares_item_named(&facts.source, &caller.name)
+        && glob_and_test_share_the_file_scope(&facts.source, &test.name);
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                import.path.ends_with('*')
+                (import.path.ends_with('*') && !root_glob_delivers_entry)
                     || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
@@ -2938,6 +3448,84 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the test file's one glob import is a top-level item of the file
+/// and the test `test_name` is a top-level function of the same file, so the
+/// glob is in scope at the test's calls. A glob in a sibling module, a nested
+/// block or the test's own body, a test inside a module, or a second `fn`
+/// of the test's name anywhere in the file, declines (#15073).
+fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut top_level_globs = 0usize;
+    let mut top_level_test = false;
+    for item in parse.tree().items() {
+        match &item {
+            ast::Item::Use(use_item) => {
+                top_level_globs +=
+                    super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
+                        .iter()
+                        .filter(|import| import.path.ends_with('*'))
+                        .count();
+            }
+            ast::Item::Fn(function) => {
+                top_level_test |= function
+                    .name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == test_name);
+            }
+            _ => {}
+        }
+    }
+    // The bare name is the only identity the test carries here, so a
+    // same-named function anywhere else in the file (a decoy beside a nested
+    // test) could be the one matched: the name must name exactly one `fn`.
+    let functions_so_named = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == test_name)
+        })
+        .count();
+    top_level_globs == 1 && top_level_test && functions_so_named == 1
+}
+
+/// Whether the test file declares any item named `name` at any depth (a `fn`,
+/// a tuple or unit `struct`, an enum, a `const`/`static`, a module, a macro),
+/// or does not parse cleanly. A file item beats a glob import, so a root glob
+/// delivers the library's entry only when no such item exists (#15073).
+fn test_file_declares_item_named(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    parse.tree().syntax().descendants().any(|node| {
+        let Some(item) = ast::Item::cast(node) else {
+            return false;
+        };
+        let named = match &item {
+            ast::Item::Fn(i) => i.name(),
+            ast::Item::Const(i) => i.name(),
+            ast::Item::Static(i) => i.name(),
+            ast::Item::Struct(i) => i.name(),
+            ast::Item::Enum(i) => i.name(),
+            ast::Item::Union(i) => i.name(),
+            ast::Item::Trait(i) => i.name(),
+            ast::Item::TypeAlias(i) => i.name(),
+            ast::Item::Module(i) => i.name(),
+            ast::Item::MacroRules(i) => i.name(),
+            ast::Item::MacroDef(i) => i.name(),
+            _ => None,
+        };
+        named.is_some_and(|found| found.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Whether the test file declares a `const` or `static` named `name` anywhere
@@ -3147,6 +3735,24 @@ fn has_callable_forward_dependency(
                 )
             })
         })
+}
+
+/// The comment-and-string-stripped `source` and its file-level `use` text.
+/// The dependency-edge rule asks for this pair once per candidate test per
+/// probe, so a check that classifies many probes against one test file
+/// rescanned the whole file each time; the run memo keeps one pair per
+/// source text for the scope.
+fn stripped_file_and_imports(source: &str) -> std::rc::Rc<(String, String)> {
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::StrippedFileImports,
+        0,
+        source,
+        || {
+            let stripped = strip_comments_and_strings(source);
+            let imports = file_level_use_text(&stripped);
+            std::rc::Rc::new((stripped, imports))
+        },
+    )
 }
 
 /// Whether the stripped body imports the owner name from the declaring
@@ -4091,6 +4697,121 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
         .skip(1)
         .step_by(2)
         .filter_map(|id| id.parse().ok())
+}
+
+/// The string literals of a probe expression, split from its code (#13843).
+///
+/// `code_tokens` are the identifier tokens outside every string literal and
+/// comment, plus the `{name}` captures of format strings; `literals` are the
+/// contents of each terminated string literal, read by the shared lexical
+/// scan ([`string_literal_spans`]), so a quote in a comment, a character
+/// literal or an escape never opens one.
+struct ProbeLiterals {
+    code_tokens: BTreeSet<String>,
+    literals: Vec<String>,
+}
+
+impl ProbeLiterals {
+    fn new(expression: &str) -> Self {
+        let masked = mask_comments_and_strings(expression);
+        let mut code_tokens: BTreeSet<String> =
+            extract_identifier_tokens(&masked).into_iter().collect();
+        let literals = literal_contents(expression);
+        // A `{name}` or `{name:…}` capture in a formatting macro's template
+        // names a live binding (Rust 2021 inline arguments). The same braces
+        // in an ordinary string are data and stay out of `code_tokens`.
+        for (open, close, _) in string_literal_spans(expression) {
+            if opens_format_template(masked.get(..open).unwrap_or_default()) {
+                code_tokens.extend(format_captures(&expression[open + 1..close]));
+            }
+        }
+        Self {
+            code_tokens,
+            literals,
+        }
+    }
+
+    /// Whether `token` may tie an assertion with `oracle_text` to the probe:
+    /// always for a code token, and for a literal-only word only when one of
+    /// the assertion's own string literals equals a probe literal holding
+    /// that word. Substring containment is not enough: a one-word literal
+    /// (`name: "status"`) must not relate every assertion naming `status`.
+    fn admits(&self, token: &str, oracle_text: &str) -> bool {
+        if self.code_tokens.contains(token) {
+            return true;
+        }
+        let quoted = literal_contents(oracle_text);
+        self.literals.iter().any(|literal| {
+            extract_identifier_tokens(literal)
+                .iter()
+                .any(|word| word == token)
+                && quoted.iter().any(|candidate| candidate == literal)
+        })
+    }
+}
+
+/// Whether masked code before a literal's quote directly opens the template
+/// argument of a formatting macro. Raw-string prefixes are already outside the
+/// literal and are ignored along with whitespace and any delimiter spelling.
+fn opens_format_template(before: &str) -> bool {
+    let before = before.trim_end_matches('#');
+    let before = before.strip_suffix('r').unwrap_or(before).trim_end();
+    let Some(before) = before.strip_suffix(['(', '[', '{']) else {
+        return false;
+    };
+    let Some(name) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    let name = name.trim_end();
+    // #14089: Unicode `XID_Continue` keeps a name with a mark such as the
+    // virama U+094D whole, and the found char's width keeps the slice on a
+    // char boundary.
+    let leaf_start = name
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(*ch == '_' || unicode_ident::is_xid_continue(*ch)))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    matches!(
+        &name[leaf_start..],
+        "format" | "format_args" | "print" | "println" | "eprint" | "eprintln" | "panic"
+    )
+}
+
+/// The unprocessed contents of every terminated string literal in `text`.
+fn literal_contents(text: &str) -> Vec<String> {
+    string_literal_spans(text)
+        .into_iter()
+        .filter_map(|(open, close, _)| text.get(open + 1..close))
+        .filter(|contents| !contents.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Identifier captures in a format string: `{name}`, `{name:?}`, `{name:>8}`.
+/// Escaped `{{` and positional or empty captures yield nothing.
+fn format_captures(literal: &str) -> Vec<String> {
+    let mut captures = Vec::new();
+    let mut rest = literal;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        if let Some(escaped) = after.strip_prefix('{') {
+            rest = escaped;
+            continue;
+        }
+        let name: String = after
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect();
+        let tail = &after[name.len()..];
+        if !name.is_empty()
+            && !name.starts_with(|ch: char| ch.is_ascii_digit())
+            && (tail.starts_with('}') || tail.starts_with(':'))
+        {
+            captures.push(name);
+        }
+        rest = after;
+    }
+    captures
 }
 
 /// Weak declaration introducers that are not reserved words: `union` and
@@ -5374,6 +6095,31 @@ fn qualified_self_type_matches(
         && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
 }
 
+/// Byte range of the first argument of the call whose name ends at
+/// `after_name`: from just past the `(` to the first top-level `,` or the
+/// closing `)`. `None` when no `(` follows the name or the list never closes.
+fn first_argument_span(text: &str, after_name: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return Some((open + 1, index)),
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => return Some((open + 1, index)),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether the first argument of the call whose name ends at `after_name`
 /// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
 /// typed as `impl_type`, or a struct, tuple-struct or variant literal
@@ -5387,35 +6133,10 @@ fn first_argument_has_type(
     scope_body: &str,
     call_at: usize,
 ) -> bool {
-    let bytes = text.as_bytes();
-    let mut open = after_name;
-    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
-        open += 1;
-    }
-    if bytes.get(open) != Some(&b'(') {
-        return false;
-    }
-    let mut depth = 0usize;
-    let mut end = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            b')' | b']' | b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            _ => {}
-        }
-    }
-    let Some(end) = end else {
+    let Some((start, end)) = first_argument_span(text, after_name) else {
         return false;
     };
-    let arg = text[open + 1..end].trim();
+    let arg = text[start..end].trim();
     let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
     let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
     let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
@@ -7631,6 +8352,19 @@ pub(in crate::analysis) fn owner_impl_identity_shadowed(
     impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
+/// Whether every call of `owner`'s name in `test` provably selects a sibling
+/// impl of the same generic trait on the same type (#14074), so the test
+/// cannot run `owner`. The seam-side relation applies the same refusal the
+/// finding-level relation applies to a direct owner call. Fails open: any
+/// part that is not established keeps the credit.
+pub(in crate::analysis) fn owner_call_selects_generic_sibling(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+}
+
 /// Whether a same-named `trait` declared in the test's own module scope (or at
 /// the root of an out-of-line parent module) shadows a trait-declaration
 /// default-method owner (#7123, #7087). The trait name comes from the
@@ -7774,6 +8508,15 @@ fn owner_call_relation_reason_gated(
         {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14270: a test that reaches the name only through a module its
+        // own file declares and defines the same-named function in names
+        // that test-local rival, not the production owner — the same
+        // refusal the repo-exposure grip path applies (#13999). The rival
+        // sits in another crate class, so no call identity exists above
+        // to settle it.
+        if super::call_identity::test_calls_only_through_local_rival_module(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         return RelationReason::DirectOwnerCall;
     };
     // #6951: when the test's own module scope declares the owner's impl
@@ -7789,6 +8532,15 @@ fn owner_call_relation_reason_gated(
     // rebinds the receiver too (#7067), in either spelling, exactly as it
     // refuses the owner pin.
     if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
+        return RelationReason::WeakTokenSubstring;
+    }
+    // #14074: one type implementing a generic trait twice (`From<u32>` and
+    // `From<&str>`) shares a self type and a method name across both impls,
+    // so nothing below tells them apart. A test whose every call passes a
+    // value written as a sibling's trait argument cannot run this owner.
+    if indexed_same_name_count > 1
+        && generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+    {
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
@@ -8476,6 +9228,20 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 /// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
+    /// #14089: the macro name before `!(` was cut with `+ 1` after a
+    /// Unicode predicate, so a non-alphanumeric multibyte char sliced
+    /// inside itself.
+    #[test]
+    fn format_template_reads_a_name_ending_in_a_multibyte_mark() {
+        assert!(!super::opens_format_template("क्!("));
+        assert!(!super::opens_format_template("e\u{301}!("));
+        assert!(super::opens_format_template("x\u{301}::println!("));
+        assert!(super::opens_format_template("std::format!("));
+        assert!(!super::opens_format_template("formats!("));
+        // A mark inside the name keeps it whole: `xक्format` is not `format`.
+        assert!(!super::opens_format_template("xक्format!("));
+    }
+
     /// #11738: one walk of a source answers every name inside a run memo
     /// scope, and the answers are the unscoped ones.
     #[test]
@@ -8523,6 +9289,46 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stripped_file_and_imports_is_computed_once_per_source_in_a_run_scope() {
+        let source = "// use hidden::x;\nuse dep::Owner;\nmod inner {\n    use dep::Nested;\n}\nfn f() { let s = \"use quoted::y;\"; }\n";
+        let other = "use dep::Other;\n";
+        let expected_stripped = strip_comments_and_strings(source);
+        let expected_imports = file_level_use_text(&expected_stripped);
+        // Fixture construction: only the file-level import survives.
+        assert!(
+            expected_imports.contains("dep::Owner"),
+            "{expected_imports}"
+        );
+        assert!(!expected_imports.contains("Nested"), "{expected_imports}");
+        assert!(!expected_imports.contains("hidden"), "{expected_imports}");
+        assert!(!expected_imports.contains("quoted"), "{expected_imports}");
+
+        // Outside a scope every call recomputes, with the same answer.
+        let unscoped = stripped_file_and_imports(source);
+        assert_eq!(
+            *unscoped,
+            (expected_stripped.clone(), expected_imports.clone())
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &unscoped,
+            &stripped_file_and_imports(source)
+        ));
+
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        let first = stripped_file_and_imports(source);
+        let second = stripped_file_and_imports(source);
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "the scope must reuse the pair"
+        );
+        assert_eq!(*first, (expected_stripped, expected_imports));
+        // A different source text never shares the entry.
+        let other_pair = stripped_file_and_imports(other);
+        assert!(!std::rc::Rc::ptr_eq(&first, &other_pair));
+        assert!(other_pair.1.contains("dep::Other"), "{}", other_pair.1);
+    }
 
     #[test]
     fn a_crate_qualified_struct_literal_receiver_asks_the_crate_authority() {
@@ -9191,6 +9997,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -9305,6 +10112,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -9363,6 +10171,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -14241,6 +15050,892 @@ fn crate_c_score_test() {
         assert!(level_filter_related(&index, &owner).is_empty());
     }
 
+    /// #4905: related tests with the test crate's manifest on disk so its
+    /// library name is established; `crate_c` names its dependency on
+    /// `crate_a` under `[dependencies]` unless `dev` is set.
+    fn reexport_related(
+        body: &str,
+        crate_c_files: &[(&str, &str)],
+        manifest: &str,
+    ) -> Result<Vec<RelationReason>, String> {
+        reexport_related_with(
+            body,
+            crate_c_files,
+            manifest,
+            PathDependencySection::Dependencies,
+            false,
+        )
+    }
+
+    /// [`reexport_related`] with the dependency section of `crate_c`'s edge
+    /// to `crate_a`, and whether `crate_c` is left partially unindexed.
+    fn reexport_related_with(
+        body: &str,
+        crate_c_files: &[(&str, &str)],
+        manifest: &str,
+        section: PathDependencySection,
+        crate_c_unindexed: bool,
+    ) -> Result<Vec<RelationReason>, String> {
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = temp_dir("reexport")?;
+        let _cleanup = RemoveOnDrop(root.clone());
+        std::fs::create_dir_all(root.join("crates/crate_c")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("crates/crate_c/Cargo.toml"), manifest)
+            .map_err(|e| e.to_string())?;
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let mut index = level_filter_index(body, Vec::new());
+        // The library root mounts `filter` unless the case supplies its own.
+        if !crate_c_files
+            .iter()
+            .any(|(file, _)| *file == "crates/crate_c/src/lib.rs")
+        {
+            with_source(&mut index, "crates/crate_c/src/lib.rs", "pub mod filter;\n");
+        }
+        for (file, source) in crate_c_files {
+            with_source(&mut index, file, source);
+        }
+        let adjacency = adjacency_with(
+            "complete",
+            &[(
+                "crates/crate_c/Cargo.toml",
+                "crates/crate_a",
+                section,
+                "crate-a",
+            )],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let unindexed: BTreeSet<String> = if crate_c_unindexed {
+            BTreeSet::from(["crates/crate_c/Cargo.toml".to_string()])
+        } else {
+            BTreeSet::new()
+        };
+        let mut context = edge_context(&adjacency, &prefixes, &index);
+        context.root = &root;
+        context.unindexed_manifests = &unindexed;
+        let probe = probe("crates/crate_a/src/metadata.rs", "Self::WARN");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context))
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect();
+        Ok(related)
+    }
+
+    /// A real, complete parsed workspace. The unrelated free `current` forces
+    /// the dependency-edge route; the external dependency stays outside the index.
+    fn assert_parsed_reexport_case(
+        library_source: &str,
+        test_prefix: &str,
+        foreign_source: &str,
+        admits: bool,
+    ) -> Result<(), String> {
+        assert_parsed_reexport_case_with_body(
+            library_source,
+            test_prefix,
+            foreign_source,
+            "std::assert_eq!(LevelFilter::current(), 7);",
+            admits,
+        )
+    }
+
+    fn assert_parsed_reexport_case_with_body(
+        library_source: &str,
+        test_prefix: &str,
+        foreign_source: &str,
+        test_body: &str,
+        admits: bool,
+    ) -> Result<(), String> {
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let scratch = temp_dir("reexport-path-remap")?;
+        let _cleanup = RemoveOnDrop(scratch.clone());
+        let root = scratch.join("workspace");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        write(
+            &scratch,
+            "foreign_dep/Cargo.toml",
+            "[package]\nname='foreign_dep'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+        )?;
+        write(
+            &scratch,
+            "foreign_dep/src/lib.rs",
+            "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 7 } }\npub mod filter { pub use crate::LevelFilter; }\npub mod metadata { pub use crate::LevelFilter; }\n",
+        )?;
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers=['crates/crate_a','crates/crate_b','crates/crate_c']\nresolver='2'\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_a/Cargo.toml",
+            "[package]\nname='crate-a'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_c/Cargo.toml",
+            "[package]\nname='crate-c'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ncrate-a={path='../crate_a'}\nforeign_dep={path='../../../foreign_dep'}\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_b/Cargo.toml",
+            "[package]\nname='crate-b'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        let test_source = format!(
+            "use crate_c::filter::LevelFilter;\n{test_prefix}\n#[test]\nfn observes_current() {{ {test_body} }}\n"
+        );
+        let mut files = vec![
+            write(
+                &root,
+                "crates/crate_b/src/lib.rs",
+                "pub fn current() -> u32 { 0 }\n",
+            )?,
+            write(&root, "crates/crate_a/src/lib.rs", "pub mod metadata;\n")?,
+            write(
+                &root,
+                "crates/crate_a/src/metadata.rs",
+                "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 2 } }\n",
+            )?,
+            write(
+                &root,
+                "crates/crate_c/src/filter.rs",
+                "pub use crate_a::metadata::LevelFilter;\n",
+            )?,
+            write(&root, "crates/crate_c/foreign.rs", foreign_source)?,
+            write(&root, "crates/crate_c/tests/check.rs", &test_source)?,
+        ];
+        let lib = PathBuf::from("crates/crate_c/src/lib.rs");
+        write(&root, &lib.to_string_lossy(), library_source)?;
+        files.push(lib);
+        let prefixes = crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&root);
+        let adjacency = PathDependencyAdjacency::build(
+            &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(&root),
+        );
+        assert_eq!(adjacency.status(), PathDependencyGraphStatus::Complete);
+        assert!(
+            adjacency
+                .forward_dependency_declarations(
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_a/Cargo.toml"
+                )
+                .is_some()
+        );
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(index.files().len(), files.len());
+        assert!(
+            index
+                .files()
+                .contains_key(&PathBuf::from("crates/crate_c/foreign.rs"))
+        );
+        let indexed_files: Vec<_> = index.files().iter().map(|(path, _)| path.clone()).collect();
+        let unindexed = manifests_with_unindexed_files(&prefixes, &files, &indexed_files);
+        assert!(unindexed.is_empty());
+        assert_eq!(index.tests().len(), 1);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| {
+                function.name == "current"
+                    && function.file == std::path::Path::new("crates/crate_a/src/metadata.rs")
+            })
+            .ok_or("missing owner")?;
+        assert!(matches!(
+            owner.item.container,
+            FunctionContainer::Inherent { .. }
+        ));
+        assert_eq!(
+            index
+                .functions()
+                .iter()
+                .filter(|function| function.name == "current")
+                .count(),
+            2
+        );
+        let context = DependencyEdgeContext {
+            adjacency: &adjacency,
+            manifest_dir_prefixes: &prefixes,
+            index: &index,
+            unindexed_manifests: &unindexed,
+            root: &root,
+        };
+        let test = &index.tests()[0];
+        let test_source = &index
+            .files()
+            .get(&test.file)
+            .ok_or("missing test source")?
+            .source;
+        let dependencies = BTreeSet::from(["crate_a".to_string()]);
+        let reexport = ReexportChain {
+            owner_manifest: "crates/crate_a/Cargo.toml",
+            test_manifest: "crates/crate_c/Cargo.toml",
+            library_dependency_names: &dependencies,
+        };
+        // Assert the guard itself before the full relation, so an unrelated
+        // refusal cannot make a negative vacuously pass.
+        assert_eq!(
+            type_reexported_from_owner_dependency(&context, &reexport, test_source, "LevelFilter",),
+            admits,
+            "guard: library={library_source:?}, test={test_prefix:?}"
+        );
+        let related = find_related_tests(
+            &probe("crates/crate_a/src/metadata.rs", "2"),
+            Some(owner),
+            &index,
+            true,
+            None,
+            Some(&context),
+        );
+        assert_eq!(
+            !related.is_empty(),
+            admits,
+            "relation: library={library_source:?}, test={test_prefix:?}"
+        );
+        if admits {
+            assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_path_remaps_with_complete_index() -> Result<(), String> {
+        for (attribute, admits) in [
+            ("", true),
+            ("#[path = \"../foreign.rs\"]", false),
+            ("#[ path = \"../foreign.rs\"]", false),
+            ("#[cfg_attr(all(), path = \"../foreign.rs\")]", false),
+            ("#[/*comment*/path = \"../foreign.rs\"]", false),
+            (
+                "#[cfg_attr(all(), cfg_attr(all(), path = \"../foreign.rs\"))]",
+                false,
+            ),
+        ] {
+            assert_parsed_reexport_case(
+                &format!("{attribute}\n pub mod filter;\n"),
+                "",
+                "pub use foreign_dep::*;\n",
+                admits,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_include_token_spacing_with_complete_index() -> Result<(), String> {
+        assert_parsed_reexport_case("pub mod filter;", "", "pub use foreign_dep::*;", true)?;
+        for invocation in ["include!", "include !", "include /*gap*/ !", "include\n!"] {
+            assert_parsed_reexport_case(
+                &format!("#[cfg(any())] pub mod filter;\n{invocation}(\"../foreign.rs\");"),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        assert_parsed_reexport_case(
+            "macro_rules! mount { () => { include !(\"../foreign.rs\"); }; }\n#[cfg(any())] pub mod filter;\nmount!();",
+            "",
+            "pub mod filter { pub use foreign_dep::*; }",
+            false,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_forwarded_include_identifiers() -> Result<(), String> {
+        // Every case retains a complete, plausible owner re-export in filter.rs.
+        // Only the macro expansion selects the external type instead.
+        for (definition, invocation) in [
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount!(include);",
+            ),
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount! { r#include }",
+            ),
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount![/*gap*/ include];",
+            ),
+            (
+                "($i:path) => { $i!(\"../foreign.rs\"); }",
+                "mount!(include);",
+            ),
+        ] {
+            assert_parsed_reexport_case(
+                &format!(
+                    "macro_rules! mount {{ {definition}; }}\n#[cfg(any())] pub mod filter;\n{invocation}"
+                ),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_guards_after_character_literals() -> Result<(), String> {
+        for literal in ["'\"'", "'\\\"'", "b'\"'", "'\\u{22}'"] {
+            let ty = if literal.starts_with('b') {
+                "u8"
+            } else {
+                "char"
+            };
+            assert_parsed_reexport_case(
+                &format!("const QUOTE: {ty} = {literal};\npub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                true,
+            )?;
+            for invocation in ["include!", "include /*gap*/ !", "r#include !"] {
+                assert_parsed_reexport_case(
+                    &format!(
+                        "#[cfg(any())] pub mod filter;\nconst QUOTE: {ty} = {literal};\n{invocation}(\"../foreign.rs\");"
+                    ),
+                    "",
+                    "pub mod filter { pub use foreign_dep::*; }",
+                    false,
+                )?;
+            }
+            assert_parsed_reexport_case(
+                &format!(
+                    "const QUOTE: {ty} = {literal};\nextern /*gap*/ crate foreign_dep as crate_a;\npub mod filter;"
+                ),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+            assert_parsed_reexport_case(
+                &format!(
+                    "const QUOTE: {ty} = {literal};\n#[path = \"../foreign.rs\"] pub mod filter;"
+                ),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_aliased_include_imports() -> Result<(), String> {
+        for import in [
+            "use std::include as mount;",
+            "use core::include as mount;",
+            "use std::{include as mount};",
+            "use std::include /*gap*/ as mount;",
+        ] {
+            assert_parsed_reexport_case(
+                &format!("{import}\n#[cfg(any())] pub mod filter;\nmount!(\"../foreign.rs\");"),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_all_test_bindings_after_character_literals() -> Result<(), String> {
+        for quote in ["const QUOTE: char = '\"';", "const QUOTE: char = '\\\"';"] {
+            for (binding, body, admits) in [
+                ("", "std::assert_eq!(LevelFilter::current(), 2);", true),
+                (
+                    "type Unrelated = foreign_dep::filter::LevelFilter;",
+                    "std::assert_eq!(LevelFilter::current(), 2);",
+                    true,
+                ),
+                (
+                    "use foreign_dep as crate_c;",
+                    "std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "mod crate_c { pub use foreign_dep::filter; }",
+                    "std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "",
+                    "type LevelFilter = foreign_dep::filter::LevelFilter; std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "",
+                    "use foreign_dep::filter::*; std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+            ] {
+                assert_parsed_reexport_case_with_body(
+                    "pub mod filter;",
+                    &format!("{quote}\n{binding}"),
+                    "pub use foreign_dep::*;",
+                    body,
+                    admits,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_test_extern_after_character_literal() -> Result<(), String> {
+        // The helper writes the LevelFilter import before this prefix. Losing
+        // the extern declaration must not leave that import falsely admitted.
+        let quote = "const QUOTE: char = '\"';";
+        assert_parsed_reexport_case("pub mod filter;", quote, "pub use foreign_dep::*;", true)?;
+        for keywords in ["extern crate", "extern /*gap*/ crate", "extern\ncrate"] {
+            assert_parsed_reexport_case(
+                "pub mod filter;",
+                &format!("{quote}\n{keywords} foreign_dep as crate_c;"),
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_extern_crate_token_spacing_with_complete_index() -> Result<(), String> {
+        assert_parsed_reexport_case("pub mod filter;", "", "pub use foreign_dep::*;", true)?;
+        for keywords in [
+            "extern crate",
+            "extern\ncrate",
+            "extern\tcrate",
+            "extern /*gap*/ crate",
+        ] {
+            assert_parsed_reexport_case(
+                "pub mod filter;",
+                &format!("{keywords} foreign_dep as crate_c;"),
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_library_extern_crate_token_spacing() -> Result<(), String> {
+        for keywords in [
+            "extern crate",
+            "extern\ncrate",
+            "extern\tcrate",
+            "extern /*gap*/ crate",
+        ] {
+            assert_parsed_reexport_case(
+                &format!("{keywords} foreign_dep as crate_a;\npub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_ignores_quoted_lexical_guard_text() -> Result<(), String> {
+        assert_parsed_reexport_case(
+            "const NOTE: &str = \"include !\"; /* include ! */ pub mod filter;",
+            "const NOTE: &str = \"extern\ncrate\"; // extern crate",
+            "pub use foreign_dep::*;",
+            true,
+        )
+    }
+
+    #[test]
+    fn reexport_hop_preserves_unrelated_macro_definitions() -> Result<(), String> {
+        for library_source in [
+            "macro_rules! marker { ($value:expr) => { const MARKER: u32 = $value; }; }\nmarker!(2);\nmacro_rules! harmless { () => { \"include\" }; }\npub mod filter;",
+            "use std::stringify as marker;\nconst LABEL: &str = marker!(2);\npub mod filter;",
+        ] {
+            assert_parsed_reexport_case(library_source, "", "pub use foreign_dep::*;", true)?;
+        }
+        Ok(())
+    }
+
+    const CRATE_C_MANIFEST: &str = "[package]\nname='crate-c'\nversion='0.1.0'\n";
+    const TRACING_BODY: &str =
+        "use crate_c::filter::LevelFilter; assert_eq!(LevelFilter::current(), LevelFilter::DEBUG)";
+
+    /// #4905 positive: `crate_c::filter::LevelFilter` is one named
+    /// `pub use crate_a::...::LevelFilter;` away from the owner's type.
+    #[test]
+    fn type_path_call_follows_one_named_reexport_hop() -> Result<(), String> {
+        for module_file in [
+            "crates/crate_c/src/filter.rs",
+            "crates/crate_c/src/filter/mod.rs",
+        ] {
+            let related = reexport_related(
+                TRACING_BODY,
+                &[(module_file, "pub use crate_a::metadata::LevelFilter;\n")],
+                CRATE_C_MANIFEST,
+            )?;
+            assert_eq!(
+                related,
+                vec![RelationReason::DirectOwnerCall],
+                "{module_file}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #4905 negatives: each leaves the chain unresolved.
+    #[test]
+    fn type_path_call_refuses_unresolved_reexport_chains() -> Result<(), String> {
+        let hop = "pub use crate_a::metadata::LevelFilter;\n";
+        let filter = "crates/crate_c/src/filter.rs";
+        type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>, &'a str);
+        let cases: Vec<Case<'_>> = vec![
+            // No re-export file at all.
+            (TRACING_BODY, vec![], CRATE_C_MANIFEST),
+            // A rename, a glob and a foreign root do not resolve.
+            (
+                TRACING_BODY,
+                vec![(filter, "pub use crate_a::metadata::LevelFilter as Other;\n")],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                TRACING_BODY,
+                vec![(filter, "pub use crate_a::metadata::*;\n")],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                TRACING_BODY,
+                vec![(filter, "pub use external::LevelFilter;\n")],
+                CRATE_C_MANIFEST,
+            ),
+            // A local definition or a second import also naming the type.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, hop),
+                    (
+                        "crates/crate_c/src/lib.rs",
+                        "pub mod filter;\npub struct LevelFilter;\n",
+                    ),
+                ],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, hop),
+                    (
+                        "crates/crate_c/src/other.rs",
+                        "pub use external::LevelFilter;\n",
+                    ),
+                ],
+                CRATE_C_MANIFEST,
+            ),
+            // A glob in the module file could supply the name instead.
+            (
+                TRACING_BODY,
+                vec![(
+                    filter,
+                    "pub use other::*;\npub use crate_a::metadata::LevelFilter;\n",
+                )],
+                CRATE_C_MANIFEST,
+            ),
+            // A path remap in the library defeats layout resolution.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, hop),
+                    (
+                        "crates/crate_c/src/lib.rs",
+                        "#[path = \"x.rs\"] mod filter;\n",
+                    ),
+                ],
+                CRATE_C_MANIFEST,
+            ),
+            // Another module path than the file holds.
+            (
+                "use crate_c::other::LevelFilter; LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            // A moved library root leaves the crate name unestablished.
+            (
+                TRACING_BODY,
+                vec![(filter, hop)],
+                "[package]\nname='crate-c'\n[lib]\npath='lib/x.rs'\n",
+            ),
+            // A private or nested-scope hop is not an established
+            // module-level re-export.
+            (
+                TRACING_BODY,
+                vec![(filter, "use crate_a::metadata::LevelFilter;\n")],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                TRACING_BODY,
+                vec![(
+                    filter,
+                    "mod inner { pub use crate_a::metadata::LevelFilter; }\n",
+                )],
+                CRATE_C_MANIFEST,
+            ),
+            // Two imports of the type in the module file itself.
+            (
+                TRACING_BODY,
+                vec![(
+                    filter,
+                    "pub use crate_a::metadata::LevelFilter;\npub use crate_a::LevelFilter;\n",
+                )],
+                CRATE_C_MANIFEST,
+            ),
+            // The test file globs, or binds the library name locally.
+            (
+                "use crate_c::filter::LevelFilter; use other::*; LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                "use crate_c::filter::LevelFilter; mod crate_c {} LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            // The test renames another crate to the library name.
+            (
+                "use external as crate_c; use crate_c::filter::LevelFilter; LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                "extern crate external as crate_c; use crate_c::filter::LevelFilter; LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            // The library root declares `filter` inline: the layout file is
+            // not the module, whatever it re-exports.
+            (
+                TRACING_BODY,
+                vec![
+                    (
+                        "crates/crate_c/src/lib.rs",
+                        "pub mod filter { pub use external::*; }\n",
+                    ),
+                    (filter, hop),
+                ],
+                CRATE_C_MANIFEST,
+            ),
+            // The library root never mounts `filter`.
+            (
+                TRACING_BODY,
+                vec![
+                    ("crates/crate_c/src/lib.rs", "pub mod other;\n"),
+                    (filter, hop),
+                ],
+                CRATE_C_MANIFEST,
+            ),
+            // Both layout files exist: ambiguous.
+            (
+                TRACING_BODY,
+                vec![(filter, hop), ("crates/crate_c/src/filter/mod.rs", "\n")],
+                CRATE_C_MANIFEST,
+            ),
+        ];
+        for (body, files, manifest) in cases {
+            let related = reexport_related(body, &files, manifest)?;
+            assert!(related.is_empty(), "{body} {files:?}: must not relate");
+        }
+        Ok(())
+    }
+
+    /// #4905: a nested module path resolves by layout; a dev-only edge to
+    /// the owner (invisible to library code) or a partially indexed test
+    /// package refuses the same hop.
+    #[test]
+    fn reexport_hop_needs_a_library_edge_and_a_whole_test_package() -> Result<(), String> {
+        let hop = "pub use crate_a::metadata::LevelFilter;\n";
+        let nested = "use crate_c::filter::level::LevelFilter; LevelFilter::current()";
+        assert_eq!(
+            reexport_related(
+                nested,
+                &[
+                    ("crates/crate_c/src/filter.rs", "pub mod level;\n"),
+                    ("crates/crate_c/src/filter/level.rs", hop),
+                ],
+                CRATE_C_MANIFEST
+            )?,
+            vec![RelationReason::DirectOwnerCall]
+        );
+        let files = [("crates/crate_c/src/filter.rs", hop)];
+        assert!(
+            reexport_related_with(
+                TRACING_BODY,
+                &files,
+                CRATE_C_MANIFEST,
+                PathDependencySection::DevDependencies,
+                false,
+            )?
+            .is_empty(),
+            "dev-dependency hop must not relate"
+        );
+        assert!(
+            reexport_related_with(
+                TRACING_BODY,
+                &files,
+                CRATE_C_MANIFEST,
+                PathDependencySection::Dependencies,
+                true,
+            )?
+            .is_empty(),
+            "partially indexed test package must not relate"
+        );
+        Ok(())
+    }
+
+    /// #4905: the tracing-subscriber shape: `filter/mod.rs` re-exports
+    /// `LevelFilter` from its private `level` module through a brace list,
+    /// beside a crate-local glob, and `level.rs` re-exports it from the
+    /// owner's crate. A `pub(crate)` inner hop admits the same way.
+    #[test]
+    fn reexport_hop_follows_one_crate_local_hop_to_the_dependency() -> Result<(), String> {
+        let filter_mod = "mod filter_fn;\nmod level;\npub use self::filter_fn::*;\npub use self::level::{LevelFilter, ParseError as LevelParseError};\n";
+        for level in [
+            "pub use crate_a::metadata::{LevelFilter, ParseLevelFilterError as ParseError};\nimpl Layer for LevelFilter {}\n",
+            "pub(crate) use crate_a::metadata::LevelFilter;\npub struct ParseError;\n",
+        ] {
+            let related = reexport_related(
+                TRACING_BODY,
+                &[
+                    ("crates/crate_c/src/filter/mod.rs", filter_mod),
+                    (
+                        "crates/crate_c/src/filter/filter_fn.rs",
+                        "pub struct FilterFn;\n",
+                    ),
+                    ("crates/crate_c/src/filter/level.rs", level),
+                ],
+                CRATE_C_MANIFEST,
+            )?;
+            assert_eq!(related, vec![RelationReason::DirectOwnerCall], "{level}");
+        }
+        // A `crate::` or `super::` first hop to a sibling module.
+        for (filter_mod, sibling) in [
+            (
+                "pub use crate::level::LevelFilter;\n",
+                "crates/crate_c/src/level.rs",
+            ),
+            (
+                "pub use super::level::LevelFilter;\n",
+                "crates/crate_c/src/level.rs",
+            ),
+        ] {
+            let related = reexport_related(
+                TRACING_BODY,
+                &[
+                    ("crates/crate_c/src/lib.rs", "pub mod filter;\nmod level;\n"),
+                    ("crates/crate_c/src/filter.rs", filter_mod),
+                    (sibling, "pub(crate) use crate_a::metadata::LevelFilter;\n"),
+                ],
+                CRATE_C_MANIFEST,
+            )?;
+            assert_eq!(
+                related,
+                vec![RelationReason::DirectOwnerCall],
+                "{filter_mod}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #4905 negatives for the crate-local hop and the test file's scope.
+    #[test]
+    fn reexport_hop_refuses_unresolved_crate_local_chains() -> Result<(), String> {
+        let filter_mod = "mod level;\npub use self::level::LevelFilter;\n";
+        let level = "crates/crate_c/src/filter/level.rs";
+        let filter = "crates/crate_c/src/filter/mod.rs";
+        let hop = "pub use crate_a::metadata::LevelFilter;\n";
+        type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>);
+        let cases: Vec<Case<'_>> = vec![
+            // A private inner hop is not visible to the parent module.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, filter_mod),
+                    (level, "use crate_a::metadata::LevelFilter;\n"),
+                ],
+            ),
+            // The inner module is not mounted.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, "pub use self::level::LevelFilter;\n"),
+                    (level, hop),
+                ],
+            ),
+            // A third hop is not followed.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, "mod level;\npub use self::level::LevelFilter;\n"),
+                    (level, "mod inner;\npub use self::inner::LevelFilter;\n"),
+                    ("crates/crate_c/src/filter/level/inner.rs", hop),
+                ],
+            ),
+            // A glob rooted outside the crate anywhere in the library.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, filter_mod),
+                    (level, hop),
+                    ("crates/crate_c/src/other.rs", "pub use external::*;\n"),
+                ],
+            ),
+            // A function-local import in the test shadows the type.
+            (
+                "use crate_c::filter::LevelFilter; fn t() { use external::LevelFilter; LevelFilter::current() }",
+                vec![(filter, filter_mod), (level, hop)],
+            ),
+            // The chain module rebinds the dependency key locally.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, filter_mod),
+                    (
+                        level,
+                        "use crate::other::ext as crate_a;\npub use crate_a::metadata::LevelFilter;\n",
+                    ),
+                ],
+            ),
+            // `mod level;` nested in an inline module mounts `inner::level`,
+            // not `filter::level`.
+            (
+                TRACING_BODY,
+                vec![
+                    (
+                        filter,
+                        "mod inner { mod level; }\npub use self::level::LevelFilter;\n",
+                    ),
+                    (level, hop),
+                ],
+            ),
+            // A `pub(crate)` first hop is invisible to the test crate.
+            (
+                TRACING_BODY,
+                vec![(
+                    "crates/crate_c/src/filter.rs",
+                    "pub(crate) use crate_a::metadata::LevelFilter;\n",
+                )],
+            ),
+        ];
+        for (body, files) in cases {
+            let related = reexport_related(body, &files, CRATE_C_MANIFEST)?;
+            assert!(related.is_empty(), "{body} {files:?}: must not relate");
+        }
+        Ok(())
+    }
+
     /// #9619: the file's one glob of the owner's dependency spells the same
     /// type-path call.
     #[test]
@@ -14597,6 +16292,101 @@ fn crate_c_score_test() {
             ])
         );
         assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
+    }
+
+    /// #14270: the diff-mode relation must apply the same test-local rival
+    /// refusal as the repo-exposure grip path (#13999). A test that reaches
+    /// `discounted_total` only through a module its own file declares
+    /// (`mod local { pub fn discounted_total(..) }` reached by a bare or a
+    /// glob `use`) names the rival, never the production owner in
+    /// `src/lib.rs`, so it earns no `direct_owner_call` and establishes no
+    /// reach. The plain owner-import control on the same production source
+    /// keeps `direct_owner_call`. Sources mirror
+    /// `fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/test-local-rival-{bare,glob}-use`.
+    #[test]
+    fn test_local_rival_use_does_not_credit_the_production_owner() -> Result<(), String> {
+        const PROD: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+        let relation = |test_source: &str| -> Result<Vec<(String, RelationReason)>, String> {
+            let mut index = RustIndex::default();
+            for (path, source) in [("src/lib.rs", PROD), ("tests/boundary.rs", test_source)] {
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                    Path::new(path),
+                    source,
+                )
+                .map_err(|error| error.to_string())?;
+                index.insert_file(PathBuf::from(path), facts, true);
+            }
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == "discounted_total"),
+                "setup: the production owner is indexed"
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"))
+                .cloned()
+                .ok_or("setup: production owner indexed")?;
+            let probe = probe("src/lib.rs", "amount >= threshold");
+            Ok(
+                find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                    .into_iter()
+                    .map(|(test, reason)| (test.name.clone(), reason))
+                    .collect(),
+            )
+        };
+        for (test_source, rival_test) in [
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn bare_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "bare_rival",
+            ),
+            (
+                "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::*;\n\n#[test]\nfn glob_rival() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n",
+                "glob_rival",
+            ),
+        ] {
+            let related = relation(test_source)?;
+            assert!(
+                related.iter().any(|(name, _)| name == rival_test),
+                "{rival_test}: the rival test must be present in the related set before its reason is judged, got {related:?}"
+            );
+            assert!(
+                related.iter().all(|(name, reason)| name != rival_test
+                    || *reason == RelationReason::WeakTokenSubstring),
+                "{rival_test}: a test-local rival call must demote to weak_token_substring, got {related:?}"
+            );
+            assert!(
+                !related
+                    .iter()
+                    .any(|(_, reason)| reason.establishes_reach(true)),
+                "{rival_test}: no related test may establish reach to the production owner, got {related:?}"
+            );
+        }
+        // Plain owner-import control: no rival module, the imported name is
+        // the production owner, so the direct credit stays.
+        let control = relation(
+            "use discount_lib::discounted_total;\n\n#[test]\nfn owner_import_control() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            control.iter().any(|(name, reason)| {
+                name == "owner_import_control" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "owner-import control must keep direct_owner_call, got {control:?}"
+        );
+        // #14744 review: a body-level production glob shadows the module-level
+        // rival import, so the production call keeps its direct credit.
+        let body_glob = relation(
+            "mod local {\n    pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\nuse local::discounted_total;\n\n#[test]\nfn body_glob_owner() {\n    use discount_lib::pricing::*;\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        )?;
+        assert!(
+            body_glob.iter().any(|(name, reason)| {
+                name == "body_glob_owner" && *reason == RelationReason::DirectOwnerCall
+            }),
+            "a body glob of the production module shadows the rival import, got {body_glob:?}"
+        );
+        Ok(())
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {
@@ -16163,6 +17953,128 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #13843: a help-text field literal shares prose words (`framework`,
+    /// `capability`) with unrelated assertions. Those words relate a test
+    /// only when its assertion quotes the probe's literal whole; a code token
+    /// (`open_in` above) still relates on its own.
+    #[test]
+    fn literal_only_prose_words_relate_a_test_only_through_the_whole_literal() {
+        let probe = struct_field_probe(
+            "crates/ripr/src/cli/command_metadata.rs",
+            "summary: \"Show capability status per framework.\",",
+        );
+        let related_names = |assertion: &str| {
+            let test = test_with_assertions(
+                "crates/ripr/src/cli/tests.rs",
+                "renders_the_help",
+                assertion,
+                vec![oracle_fact(
+                    assertion,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![test],
+                ..Default::default()
+            });
+            find_related_tests(&probe, None, &index, true, None, None)
+                .into_iter()
+                .map(|(test, reason)| (test.name.clone(), reason))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            related_names(
+                "assert!(violations.iter().any(|v| v.contains(\"names framework `Test::More`\")));"
+            ),
+            Vec::new(),
+            "a shared prose word is no tie"
+        );
+        assert_eq!(
+            related_names("assert!(help.contains(\"Show capability status per framework.\"));"),
+            vec![(
+                "renders_the_help".to_string(),
+                RelationReason::AssertionTargetAffinity
+            )],
+            "an assertion quoting the literal whole still relates"
+        );
+        let capture = ProbeLiterals::new("error: format!(\"missing manifest {manifest_path:?}\")");
+        assert!(
+            capture.admits("manifest_path", "assert_eq!(err.manifest_path, expected);"),
+            "a format-string capture is a live binding, not prose"
+        );
+        let escaped = ProbeLiterals::new("msg: format!(\"{{status}}\")");
+        assert!(
+            !escaped.admits("status", "assert_eq!(report.status, Status::Ok);"),
+            "an escaped brace is a literal, not a capture"
+        );
+        let raw = ProbeLiterals::new("summary: r#\"Show \"capability\" status\"#, // \"status\"");
+        assert_eq!(raw.literals, vec!["Show \"capability\" status".to_string()]);
+        let one_word = ProbeLiterals::new("name: \"status\",");
+        assert!(!one_word.admits("status", "assert_eq!(report.status, Status::Ok);"));
+        assert!(one_word.admits("status", "assert_eq!(row.name, \"status\");"));
+        let quote_char = ProbeLiterals::new("sep: '\"', label: \"Show status\"");
+        assert_eq!(quote_char.literals, vec!["Show status".to_string()]);
+        assert!(!raw.admits("status", "assert!(report.status.is_ok());"));
+    }
+
+    /// #13896: a literal-only word cannot return through the loose test-name
+    /// fallback after assertion-target affinity has correctly rejected it.
+    #[test]
+    fn literal_only_probe_word_does_not_seed_substring_fallback() {
+        let assertion_text = "assert_eq!(report.status, Status::Ok);";
+        let unrelated = test_with_assertions(
+            "tests/cli.rs",
+            "status_check",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![unrelated],
+            ..Default::default()
+        });
+        let probe = struct_field_probe("src/options.rs", "summary: \"Show status\",");
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &RelatedTestCandidateIndex::new(&index),
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+        assert_eq!(
+            (indexed.len(), full_scan.len()),
+            (0, 0),
+            "indexed related: {indexed:?}; full scan related: {full_scan:?}"
+        );
+    }
+
+    /// #13896: braces in an ordinary help string are data, not an inline
+    /// format capture. The real `format!` and escaped-brace controls above
+    /// retain their separate meanings.
+    #[test]
+    fn plain_string_braces_are_not_format_captures() {
+        let plain = ProbeLiterals::new("summary: \"Use {status} to filter results\"");
+        assert!(
+            !plain.admits("status", "assert_eq!(report.status, Status::Ok);"),
+            "a plain string literal must not mint a live `status` binding"
+        );
     }
 
     /// #9173: a package's root `build.rs` runs under Cargo before the package

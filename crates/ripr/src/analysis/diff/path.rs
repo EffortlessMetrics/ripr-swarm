@@ -42,7 +42,15 @@ pub(super) const MAX_DIFF_PATH_COMPONENTS: usize = 256;
 /// separator count over the raw line: a `diff --git` line carries two paths,
 /// so the line allowance is twice the per-path bound plus the side prefixes.
 pub(super) fn path_marker_exceeds_depth_bound(raw: &str) -> bool {
-    const PREFIXES: [&str; 5] = ["--- ", "+++ ", "diff --git ", "rename from ", "rename to "];
+    const PREFIXES: [&str; 7] = [
+        "--- ",
+        "+++ ",
+        "diff --git ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+    ];
     PREFIXES.iter().any(|prefix| raw.starts_with(prefix))
         && raw.bytes().filter(|byte| *byte == b'/').count() > 2 * MAX_DIFF_PATH_COMPONENTS + 4
 }
@@ -195,6 +203,14 @@ pub(super) fn parse_rename_from_path(raw: &str) -> Option<PathBuf> {
 
 pub(super) fn parse_rename_to_path(raw: &str) -> Option<PathBuf> {
     parse_rename_path_marker(raw, "rename to ")
+}
+
+pub(super) fn parse_copy_from_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "copy from ")
+}
+
+pub(super) fn parse_copy_to_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "copy to ")
 }
 
 fn parse_rename_path_marker(raw: &str, prefix: &str) -> Option<PathBuf> {

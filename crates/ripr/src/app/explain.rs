@@ -143,20 +143,35 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(render_selected(
-            format,
-            finding,
-            config,
-            &navigation.context_command(selector),
-            &output.root,
-            output.source_value_files(finding),
-            output.suppression.as_ref().is_some_and(|outcome| {
-                outcome
-                    .suppressed
-                    .iter()
-                    .any(|entry| entry.finding_id == finding.id)
-            }),
-        )),
+        FindingSelection::Unique(finding) => {
+            let rendered = render_selected(
+                format,
+                finding,
+                config,
+                &navigation.context_command(selector),
+                &output.root,
+                output.source_value_files(finding),
+                output.suppression.as_ref().is_some_and(|outcome| {
+                    outcome
+                        .suppressed
+                        .iter()
+                        .any(|entry| entry.finding_id == finding.id)
+                }),
+            );
+            // #13910: the check run's own withholding decision, read from the
+            // `owner_opt_outs` it kept (policy-suppressed findings are already
+            // excluded there), so explain never re-derives the opt-out.
+            let withheld = output
+                .owner_opt_outs
+                .iter()
+                .find(|opt_out| opt_out.finding_id == finding.id);
+            Ok(match (format, withheld) {
+                (ExplainFormat::Human, Some(opt_out)) => {
+                    output::human::render_owner_opt_out_explain_line(opt_out) + &rendered
+                }
+                _ => rendered,
+            })
+        }
         FindingSelection::Ambiguous(candidates) => Err(refuse_selector_miss(
             sink,
             ambiguous_finding_match(
@@ -442,11 +457,26 @@ const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
 /// causes, so a typo, an unchanged line and a finding one line up were
 /// indistinguishable.
 ///
-/// The run output carries counts, not the per-file changed-line set, so this
-/// never says whether the named line itself changed. Finding ids, seam ids
-/// and malformed locations return `None`: they keep their own wording.
+/// For a file without findings a complete run also says whether the named
+/// line changed (#15039), from the outcome's run-local changed-line index.
+/// Finding ids, seam ids and malformed locations return `None`: they keep
+/// their own wording.
 fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
     location_miss_cause_text(selector, output)
+}
+
+/// The [`MAX_NEARBY_FINDING_LOCATIONS`] locations nearest `wanted_line`,
+/// listed in file/line order, and how many were listed.
+fn nearest_locations(mut locations: Vec<(usize, String)>, wanted_line: usize) -> (String, usize) {
+    locations.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
+    locations.truncate(MAX_NEARBY_FINDING_LOCATIONS);
+    locations.sort();
+    let listed = locations
+        .iter()
+        .map(|(line, file)| format!("{file}:{line}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    (listed, locations.len())
 }
 
 /// A [`location_miss_cause`] clause, whether it already names the same
@@ -482,11 +512,8 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
     let wanted_line = selector_line.parse::<usize>().ok()?;
     // A `file:line:column` selector would read its line as part of the path
     // and be told the path is misspelled; the #14384 hint names the column
-    // form instead.
-    if selector_file
-        .rsplit_once(':')
-        .is_some_and(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
-    {
+    // form instead, through the same detector (#14511).
+    if super::selector::location_column_form_file(selector_file).is_some() {
         return None;
     }
     let wanted_file = super::selector::normalize_locator_path(selector_file);
@@ -518,34 +545,74 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
     nearby.sort();
     nearby.dedup();
     if !nearby.is_empty() {
-        let total = nearby.len();
-        nearby.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
-        nearby.truncate(MAX_NEARBY_FINDING_LOCATIONS);
-        nearby.sort();
-        let listed = nearby
-            .iter()
-            .map(|(line, file)| format!("{file}:{line}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let scope = if total > nearby.len() {
-            format!("the {} nearest of {total} are", nearby.len())
-        } else if total == 1 {
-            "it is at".to_string()
-        } else {
-            "they are at".to_string()
+        // #14492: retry advice names only a location that selects exactly
+        // one finding; a line several findings share would refuse the retry
+        // as ambiguous, so those lines point at probe ids instead.
+        let (unique, shared): (Vec<_>, Vec<_>) = nearby.into_iter().partition(|(line, file)| {
+            matches!(
+                super::selector::select_finding(&output.findings, &format!("{file}:{line}")),
+                super::selector::FindingSelection::Unique(_)
+            )
+        });
+        let shared_count = shared.len();
+        let noun = match (unique.len() + shared_count, shared_count) {
+            (1, 0) => "a finding at another line",
+            (1, _) => "findings at another line",
+            _ => "findings at other lines",
         };
-        let noun = if total == 1 {
-            "a finding at another line"
+        let shared_note = if shared_count == 0 {
+            String::new()
         } else {
-            "findings at other lines"
+            let verb = if shared_count == 1 {
+                "holds"
+            } else {
+                "each hold"
+            };
+            let (listed, _) = nearest_locations(shared, wanted_line);
+            let lead = if unique.is_empty() { "" } else { "; " };
+            format!("{lead}{listed} {verb} several findings, so select one there by its probe id")
+        };
+        let text = if unique.is_empty() {
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {shared_note}"
+            )
+        } else {
+            let count = unique.len();
+            let (listed, shown) = nearest_locations(unique, wanted_line);
+            let scope = if count > shown {
+                format!("the {shown} nearest of {count} are")
+            } else if count == 1 {
+                "it is at".to_string()
+            } else {
+                "they are at".to_string()
+            };
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations{shared_note}"
+            )
         };
         return Some(LocationMissCause {
-            text: format!(
-                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
-            ),
+            text,
             names_same_file_lines: true,
             names_incomplete: false,
         });
+    }
+
+    // #14676: a finding file that matches only ignoring ASCII case is the
+    // file the user meant. The #14416 hint names its correct spelling and
+    // lines; a disk probe here would answer differently by filesystem (on a
+    // case-insensitive one the wrong-case path "exists" with "no finding"),
+    // contradicting that hint, so the cause defers before probing. The hint
+    // speaks only for a path-shaped selector, so a bare `MAKEFILE:3` keeps
+    // its cause rather than getting neither sentence.
+    if wanted_file.contains(['/', '.'])
+        && output.findings.iter().any(|finding| {
+            super::selector::locator_paths_match_ignoring_ascii_case(
+                &crate::analysis::stable_path_text(&finding.probe.location.file),
+                selector_file,
+            )
+        })
+    {
+        return None;
     }
 
     // Only a plain relative path is probed on disk, so a selector can never
@@ -584,11 +651,82 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
         });
     }
     let counts = &outcome.counts;
+    // #15039: a complete run knows which lines its diff changed, so say
+    // which of the three reasons applies to the named line. The index holds
+    // the producer's own parsed diff; an outcome without one (an older
+    // carrier) keeps the general sentence.
+    let reason = match outcome.changed_lines.as_ref() {
+        Some(index) => changed_line_reason(index, &wanted_file, wanted_line),
+        None => "ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none".to_string(),
+    };
     cause.push_str(&format!(
-        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        ". {reason}. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
         counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
     ));
     Some(LocationMissCause::plain(cause))
+}
+
+/// How many changed lines of the file a location miss names.
+const MAX_NEARBY_CHANGED_LINES: usize = 5;
+
+/// Which of the three reasons a file without findings has none at
+/// `wanted_line` (#15039): the diff changes no text line of the file, the
+/// line is not one the diff changed, or the line changed and has no finding.
+/// `index` is the complete run's own changed-line set. It holds added text
+/// lines only, so a binary or mode-only change is absent from it and the
+/// first sentence claims no more than that. Nor does a changed line without
+/// a finding establish why: a complete run can leave a file out by
+/// configuration, so that sentence lists the possible reasons.
+fn changed_line_reason(
+    index: &crate::analysis_outcome::ChangedLineIndex,
+    wanted_file: &str,
+    wanted_line: usize,
+) -> String {
+    // The index is keyed by the producer's stable path text, which escapes
+    // reserved bytes the selector spells literally. The diff parser builds
+    // its paths from normal components, so `a/./b` and `a//b` are respelled
+    // the same way here.
+    let respelled: std::path::PathBuf = Path::new(wanted_file)
+        .components()
+        .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        .collect();
+    let key = crate::analysis::stable_path_text(&respelled);
+    let Some(lines) = index.lines_of(&key) else {
+        return "This run's diff changes no text line of that file, and ripr reports a finding only on a changed line".to_string();
+    };
+    if lines.contains(&wanted_line) {
+        return format!(
+            "Line {wanted_line} changed, but this run has no finding on it: a comment, blank line, test code, a file the configuration leaves out or a kind of change ripr does not model has none"
+        );
+    }
+    if lines.is_empty() {
+        return format!(
+            "The diff only removes lines from that file, so line {wanted_line} is not a changed line, and ripr reports a finding only on a changed line"
+        );
+    }
+    let mut nearest: Vec<usize> = lines.iter().copied().collect();
+    nearest.sort_by_key(|line| (line.abs_diff(wanted_line), *line));
+    nearest.truncate(MAX_NEARBY_CHANGED_LINES);
+    nearest.sort_unstable();
+    let listed = nearest
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let scope = if lines.len() > nearest.len() {
+        format!(
+            "the {} nearest of its {} changed lines are",
+            nearest.len(),
+            lines.len()
+        )
+    } else if lines.len() == 1 {
+        "its one changed line is".to_string()
+    } else {
+        "its changed lines are".to_string()
+    };
+    format!(
+        "Line {wanted_line} is not a line this run's diff changed ({scope} {listed}), and ripr reports a finding only on a changed line"
+    )
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
@@ -972,6 +1110,258 @@ mod tests {
             message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
             "ambiguous refusal must name the second candidate: {message}"
         );
+    }
+
+    fn fixture_check_output(name: &str) -> Result<CheckOutput, String> {
+        let mut input = fixture_diff_input(name);
+        let config = crate::config::load_for_root(&input.root)?;
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
+        check_with_progress(input, &config, AnalysisProgressScope::Diff, None)
+    }
+
+    /// Every `file:line` the same-file clause tells the user to retry with:
+    /// the list after `is at` / `are at`, up to `. Retry with`.
+    fn advised_retry_locations(cause: &str) -> Vec<String> {
+        let Some((head, _)) = cause.split_once(". Retry with one of those locations") else {
+            return Vec::new();
+        };
+        // After `of that file: ` comes `it is at`, `they are at` or the
+        // bounded `the 5 nearest of 7 are`, then the list.
+        let scope = head
+            .split_once("of that file: ")
+            .map_or("", |(_, scope)| scope);
+        let listed = scope
+            .strip_prefix("it is at ")
+            .or_else(|| scope.strip_prefix("they are at "))
+            .or_else(|| scope.split_once(" are ").map(|(_, listed)| listed))
+            .unwrap_or("");
+        listed
+            .split(", ")
+            .filter(|location| !location.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// #14492: `collection_argument_plain` has two findings at
+    /// `src/lib.rs:3` and none elsewhere. A miss on another line of that
+    /// file must not tell the user to retry `src/lib.rs:3`, which refuses as
+    /// ambiguous; it points at probe ids instead. With a uniquely held line
+    /// added, only that line is offered for retry.
+    #[test]
+    fn same_file_retry_advice_names_only_uniquely_selectable_lines() -> Result<(), String> {
+        let mut output = fixture_check_output("collection_argument_plain")?;
+        let shared: Vec<_> = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.location.line == 3)
+            .collect();
+        if shared.len() != 2 || output.findings.len() != 2 {
+            return Err(format!(
+                "fixture must hold exactly two findings, both at line 3: {:?}",
+                output
+                    .findings
+                    .iter()
+                    .map(|finding| (&finding.id, finding.probe.location.line))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if !matches!(
+            super::super::selector::select_finding(&output.findings, "src/lib.rs:3"),
+            FindingSelection::Ambiguous(_)
+        ) {
+            return Err("src/lib.rs:3 must be ambiguous in the fixture".to_string());
+        }
+
+        let cause = location_miss_cause("src/lib.rs:1", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(
+            &cause,
+            "src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+        require_not_contains(&cause, "Retry with one of those locations")?;
+
+        // Add a uniquely held line: it is offered, the shared one is not.
+        let mut unique = output.findings[0].clone();
+        unique.id = "probe:src_lib.rs:unique_line:00000007".to_string();
+        unique.probe.id = crate::domain::ProbeId(unique.id.clone());
+        unique.probe.location.line = 7;
+        unique.canonical_gap = None;
+        output.findings.push(unique);
+        let cause = location_miss_cause("src/lib.rs:5", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.is_empty() {
+            return Err(format!("the uniquely held line must be offered: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "it is at src/lib.rs:7. Retry with one of those locations",
+        )?;
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )?;
+
+        // More uniquely held lines than the clause lists: the bounded form
+        // still offers only unique locations, and the shared line stays out.
+        for line in [20, 21, 22, 23, 24, 25] {
+            let mut extra = output.findings[0].clone();
+            extra.id = format!("probe:src_lib.rs:unique_line:000000{line}");
+            extra.probe.id = crate::domain::ProbeId(extra.id.clone());
+            extra.probe.location.line = line;
+            extra.canonical_gap = None;
+            output.findings.push(extra);
+        }
+        let cause = location_miss_cause("src/lib.rs:30", &output)
+            .map(|cause| cause.text)
+            .ok_or("a same-file miss must carry a cause")?;
+        require_contains(&cause, "the 5 nearest of 7 are ")?;
+        let advised = advised_retry_locations(&cause);
+        if advised.len() != 5 {
+            return Err(format!("the bounded list must offer 5 locations: {cause}"));
+        }
+        for location in &advised {
+            if !matches!(
+                super::super::selector::select_finding(&output.findings, location),
+                FindingSelection::Unique(_)
+            ) {
+                return Err(format!(
+                    "advised retry {location:?} does not select exactly one finding: {cause}"
+                ));
+            }
+        }
+        require_contains(
+            &cause,
+            "; src/lib.rs:3 holds several findings, so select one there by its probe id",
+        )
+    }
+
+    /// #14676: a selector whose path names a finding file in the wrong
+    /// ASCII case gets no disk-probe cause. On a case-insensitive filesystem
+    /// that probe would call the file present with "no finding", against the
+    /// #14416 hint naming its findings; the deferral happens before the
+    /// probe, so this Linux test pins the same outcome every filesystem gets.
+    #[test]
+    fn wrong_case_selector_defers_the_cause_to_the_case_hint() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        if !output
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+        {
+            return Err("fixture must hold a finding in src/lib.rs".to_string());
+        }
+        for selector in ["SRC/Lib.rs:9", "Lib.rs:9"] {
+            if let Some(cause) = location_miss_cause(selector, &output) {
+                return Err(format!(
+                    "{selector}: a wrong-case finding file gets no probe cause: {}",
+                    cause.text
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: the case hint must speak"))?;
+            require_contains(&hint, "Paths match case-sensitively.")?;
+            require_contains(&hint, "Findings in src/lib.rs are on line 3")?;
+        }
+        // Control: a path matching no finding file in any case keeps its cause.
+        let cause = location_miss_cause("src/other.rs:9", &output)
+            .map(|cause| cause.text)
+            .ok_or("an unrelated path keeps its cause")?;
+        require_contains(&cause, "is not the path of a file from the analyzed root")?;
+
+        // The assembled fresh-run miss the CLI prints: the case hint alone,
+        // with no probe clause from either filesystem outcome.
+        let message = match explain_fixture("collection_argument_plain", "SRC/Lib.rs:9") {
+            Ok(rendered) => return Err(format!("SRC/Lib.rs:9 must miss: {rendered}")),
+            Err(message) => message,
+        };
+        for wanted in [
+            "no finding matched \"SRC/Lib.rs:9\"",
+            "Paths match case-sensitively.",
+            "Findings in src/lib.rs are on line 3",
+        ] {
+            if !message.contains(wanted) {
+                return Err(format!("assembled miss lacks {wanted:?}: {message}"));
+            }
+        }
+        for unwanted in [
+            "exists, but this run has no finding",
+            "is not the path of a file from the analyzed root",
+        ] {
+            if message.contains(unwanted) {
+                return Err(format!("assembled miss carries {unwanted:?}: {message}"));
+            }
+        }
+
+        // A bare wrong-case name matching an extensionless finding file gets
+        // no hint (the hint needs a path shape), so the cause must stay.
+        let mut output = output;
+        let mut makefile = output.findings[0].clone();
+        makefile.probe.location.file = output.root.join("Makefile");
+        output.findings.push(makefile);
+        let hint = super::super::selector::location_miss_hint(
+            &output.findings,
+            &output.root,
+            "MAKEFILE:3",
+            super::super::selector::ScopeCompleteness::Complete,
+        );
+        if hint.is_some() {
+            return Err(format!("a bare name gets no hint: {hint:?}"));
+        }
+        if location_miss_cause("MAKEFILE:3", &output).is_none() {
+            return Err("MAKEFILE:3 gets no hint, so it must keep a cause".to_string());
+        }
+        Ok(())
+    }
+
+    /// #14511: the cause defers a `file:line:column` selector to the hint
+    /// through the shared detector, and an all-digit extensionless path is
+    /// not mistaken for a column form.
+    #[test]
+    fn column_forms_defer_to_the_hint_and_digit_paths_keep_a_cause() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        for selector in ["src/lib.rs:3:5", "Makefile:3:5"] {
+            if location_miss_cause(selector, &output).is_some() {
+                return Err(format!(
+                    "{selector} is a column form; the hint speaks for it"
+                ));
+            }
+            let hint = super::super::selector::location_miss_hint(
+                &output.findings,
+                &output.root,
+                selector,
+                super::super::selector::ScopeCompleteness::Complete,
+            )
+            .ok_or_else(|| format!("{selector}: a column form must get a hint"))?;
+            require_contains(&hint, "Selectors are file:line; drop the column.")?;
+        }
+        for selector in ["src/2024:10", "2024:10"] {
+            if location_miss_cause(selector, &output).is_none() {
+                return Err(format!("{selector} is file:line and must keep a cause"));
+            }
+        }
+        Ok(())
     }
 
     /// #8166 Slice B: a unique canonical gap identity resolves exactly the

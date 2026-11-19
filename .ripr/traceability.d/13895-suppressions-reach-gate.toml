@@ -1,0 +1,40 @@
+# Owner-scoped suppression selector and review-comments policy (#13895).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/output/suppressions.rs::parse_accepts_path_plus_function_selector",
+  "crates/ripr/src/output/suppressions.rs::parse_rejects_function_without_path",
+  "crates/ripr/src/output/suppressions.rs::parse_rejects_entry_with_no_selector",
+  "crates/ripr/src/output/suppressions.rs::parse_rejects_function_with_finding_id_glob_path_or_ambiguous_owner",
+  "crates/ripr/src/output/suppressions.rs::parse_rejects_function_on_test_efficiency_and_duplicate_function_selectors",
+  "crates/ripr/src/output/suppressions.rs::parse_still_rejects_unknown_fields_next_to_function",
+  "crates/ripr/src/output/suppressions.rs::function_selector_survives_expression_edit_and_spares_other_functions",
+  "crates/ripr/src/output/suppressions.rs::function_selector_fails_closed_on_path_name_missing_or_expired",
+  "crates/ripr/src/output/suppressions.rs::owner_function_of_strips_the_file_and_rejects_ambiguous_owners",
+  "crates/ripr/src/output/review_comments/suppression.rs::only_findings_marked_suppressed_are_read_from_check_output",
+  "crates/ripr/src/output/review_comments/suppression.rs::a_unique_bare_id_binds_to_exactly_one_seam",
+  "crates/ripr/src/output/review_comments/suppression.rs::an_id_naming_two_selected_seams_warns_and_suppresses_nothing",
+  "crates/ripr/src/output/review_comments/suppression.rs::an_unselected_sibling_makes_the_id_ambiguous",
+  "crates/ripr/src/output/review_comments/suppression.rs::an_id_is_refused_when_the_full_inventory_is_unavailable",
+  "crates/ripr/src/output/review_comments/suppression.rs::an_ordinal_id_is_refused_with_a_warning",
+  "crates/ripr/src/output/review_comments/suppression.rs::a_static_class_entry_is_reported_not_silently_skipped",
+  "crates/ripr/src/output/review_comments/suppression.rs::a_check_output_function_label_is_not_widened_to_the_owner",
+  "crates/ripr/src/output/review_comments/suppression.rs::check_output_suppresses_only_the_named_finding_in_a_two_seam_function",
+  "crates/ripr/src/app/agent_brief/bounded.rs::shared_named_ids_cover_every_observed_seam_including_unretained_ones",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_parses_suppression_policy_and_rejects_an_empty_value",
+  "crates/ripr/tests/check_to_gate_chain.rs::review_comments_suppression_policy_keeps_the_gate_from_blocking_on_suppressed_function",
+  "crates/ripr/tests/check_to_gate_chain.rs::function_selector_survives_an_expression_edit_but_a_finding_id_does_not",
+  "crates/ripr/tests/check_to_gate_chain.rs::check_output_suppression_reaches_review_comments_and_the_gate",
+  "crates/ripr/tests/check_to_gate_chain.rs::check_output_suppresses_only_the_named_finding_of_a_multi_seam_function",
+  "crates/ripr/tests/check_to_gate_chain.rs::finding_id_entry_applied_through_review_comments_policy_suppresses_one_seam",
+  "crates/ripr/tests/check_to_gate_chain.rs::review_comments_never_applies_the_default_policy_implicitly_and_fails_closed",
+  "crates/ripr/tests/check_to_gate_chain.rs::review_comments_skips_expired_entries_and_applies_path_globs",
+  "crates/ripr/tests/check_to_gate_chain.rs::sarif_marks_function_selector_results_suppressed_and_spares_the_sibling",
+]
+
+# gate check forwards --suppression-policy to its review-comments step (#13895).
+[[extend]]
+id = "RIPR-SPEC-0435"
+tests = [
+  "crates/ripr/src/cli/commands/gate.rs::gate_check_forwards_suppression_policy_to_the_producer_only",
+]

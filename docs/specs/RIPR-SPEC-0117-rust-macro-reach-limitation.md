@@ -646,6 +646,29 @@ repair and installed daily-use acceptance remain open under #6643 and its
 supporting issues. The original-workspace native witness and this static
 source-profile acceptance remain separate evidence planes.
 
+### Returned QuickCheck property is not an absent assertion (#6643)
+
+A `#[quickcheck]` or `#[quickcheck_macros::quickcheck]` function whose
+written return type is `bool` or `TestResult` fails through the value it
+returns; the harness checks it. With no assertion macro in its body, its
+related-test row used to read `has no assertion`, and the finding told the
+reader to add an assertion the property already has. Such a row now reads
+`assertion_admission_unproven`. The finding gains an evidence line that starts
+with "QuickCheck property returns its check:", names the property, and says
+ripr does not read its returned check. When every
+oracle-crediting related test is such a property (or a #9981 forwarded
+callback limit), the observe and discriminate summaries use the refused-context
+wording (`rust_assertion_context_unestablished`) instead of the no-assertion
+wording, which also replaces the add-an-assertion next step.
+
+This grants no oracle, strength or class: the returned expression stays
+unread, so the class is decided exactly as before. A property with no return
+value, a plain `#[test]`, and an attribute that merely ends in `quickcheck`
+(`#[my::quickcheck]`) keep their previous reading. A same-named local
+`quickcheck` attribute is not distinguished; that can only withdraw an absence
+claim, never add credit. Reading the returned relation as evidence remains the
+open model/relational acceptance of #6643.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -666,7 +689,7 @@ source-profile acceptance remain separate evidence planes.
 
 ## Acceptance Examples
 
-1. **Macro-boundary limitation fires**: an integration test calls `outer()`;
+1. [abstain] **Macro-boundary limitation fires**: an integration test calls `outer()`;
    `outer()` invokes `call_inner!`; same-repo `macro_rules! call_inner` mentions
    changed owner `inner`. Result: `no_static_path` plus
    `static_limit_kind: rust_macro_reach_unresolved`.
@@ -675,26 +698,25 @@ source-profile acceptance remain separate evidence planes.
    `no_static_path`.
 3. **External macro**: `outer()` invokes a macro whose definition is not in the
    indexed repo source. Result: unchanged bare `no_static_path`.
-4. **Lexical transitive path exists**: the RIPR-SPEC-0114 witness fires first.
+4. [abstain] **Lexical transitive path exists**: the RIPR-SPEC-0114 witness fires first.
    Result remains a transitive/public-API limitation, not macro-reach. For
    integration-test witnesses, RIPR-SPEC-0118 refines the kind to
    `rust_integration_public_api_path_unresolved`; non-integration witnesses
    keep `rust_transitive_reach_unresolved`.
-5. **Proximity-only finding** (#7071): the only related test shares the
+5. [abstain] **Proximity-only finding** (#7071): the only related test shares the
    owner's file and calls `outer()`, which invokes `call_inner!`. Result:
    `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
    next step naming the witnessing test.
-6. **A recognized weak direct oracle also calls the owner** (#7542): same macro shape plus
+6. [abstain] **A recognized weak direct oracle also calls the owner** (#7542): same macro shape plus
    `assert!(inner(2) > 0)`, while the opaque `outer_triples` route asserts
    `outer(4) == 12`. Reach stays `yes` and classification stays `weakly_exposed`,
    but the finding names `rust_macro_reach_unresolved` and `outer_triples`.
    It does not advise writing an assertion before that route is inspected.
-   A direct confirmed discriminator gets no new limit, including when another
-   weak stage leaves its overall class `weakly_exposed`.
+   A direct confirmed discriminator is example 13.
    A direct call with no recognized oracle is outside this mixed gate. An
    unread assertion macro with the owner in its arguments remains governed by
    RIPR-SPEC-0120 (#7089), including when dependent reach exceeds its budget.
-7. **Owner handed to a local macro as an argument** (#6614): `doubled()`
+7. [abstain] **Owner handed to a local macro as an argument** (#6614): `doubled()`
    holds `twice!(inner)` and never calls `inner`; the only same-repo
    `macro_rules! twice` is unique and every source mentioning `macro_rules`
    parses. The chain records a macro-argument hop that forwards no result,
@@ -702,11 +724,8 @@ source-profile acceptance remain separate evidence planes.
    `doubled()` that holds an exact oracle in any operand shape
    (`assert_eq!(doubled(), 14)`, `let d = doubled(); assert_eq!(d, 14)`)
    reads `propagation_unknown` (`helper_result_not_forwarded`), neither
-   credit nor gap. A test whose oracles are all weak on their own terms
-   (`assert!(doubled() > 0)`, under the RIPR-SPEC-0159 weak-oracle rule,
-   #7549) keeps the prior evidence, and no edge forms
-   for an owner named only in a string literal, a caller that binds a local
-   or parameter of the owner's name, or a second invocation site.
+   credit nor gap. Weak-only tests and shapes that form no edge are
+   example 14.
 8. **Same-file test table** (#6925): a file defines `macro_rules! edge_table`
    with `$($name:ident($width:expr, $limit:expr, $want:expr))*` whose
    transcriber emits one `#[test] fn $name` asserting `fits_edge($width,
@@ -744,6 +763,27 @@ source-profile acceptance remain separate evidence planes.
    invokes `grouped_table! { .. }`. The owner reads `exposed`, as in example 10,
    and the unrelated `NOTE` import stays valid. A renamed, nested or glob group
    member is not followed.
+13. **A direct confirmed discriminator beside the macro shape** (#7542, split
+    from example 6): the same macro shape, with a direct call to the owner
+    that a recognized exact oracle confirms, gets no new limit, including when
+    another weak stage leaves its overall class `weakly_exposed`.
+14. **Weak-only or edgeless macro-argument shapes** (#6614, #7549, split from
+    example 7): a test calling `doubled()` whose oracles are all weak on their
+    own terms (`assert!(doubled() > 0)`, under the RIPR-SPEC-0159 weak-oracle
+    rule) keeps the prior evidence, and no edge forms for an owner named only
+    in a string literal, a caller that binds a local or parameter of the
+    owner's name, or a second invocation site.
+
+In examples 9 to 12 the bare owner call inside the generated test resolves
+through the owner's call identity at the invoking file. A `#[path = ".."]` in
+another integration-test file of the package (`tests/modules.rs` mounting
+`other/rows.rs`) does not switch that identity off when every such literal
+stays below its own directory: it only rearranges that test crate, so the
+owner's module path is unchanged (#12771). A `..` segment, an absolute, drive
+or backslash literal, a raw string, a `cfg_attr` carrier, a `#[path]` inside a
+macro body, a file that does not parse, any `#[path]` outside `tests/`, or an
+owner that itself lives under `tests/` keeps it off, and the owner reads
+unresolved rather than credited.
 
 ## Required Evidence
 
@@ -842,6 +882,8 @@ source-profile acceptance remain separate evidence planes.
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses`
 - `crates/ripr/src/analysis/language/rust/mod.rs::tests::mixed_macro_witness_survives_dependent_scope_narrowing`
+- `crates/ripr/tests/quickcheck_returned_property.rs` (returned QuickCheck
+  property, #6643)
 - `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_oracle_preserves_the_macro_witness_in_ready_and_draft`
 - `crates/ripr/tests/mixed_macro_reach.rs::strong_direct_oracle_remains_credited_beside_the_macro`
 - `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_without_a_test_macro_route_keeps_the_gap`
@@ -864,6 +906,7 @@ source-profile acceptance remain separate evidence planes.
 | Pass-through item macro expansion | `crates/ripr/src/analysis/syntax/passthrough_item_macros.rs` |
 | Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
+| Returned QuickCheck property miss | `crates/ripr/src/analysis/classify/refusal_miss.rs` (`is_returned_quickcheck_property`) |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Human witness and limitation-detail projection | `crates/ripr/src/output/human/sections.rs` |

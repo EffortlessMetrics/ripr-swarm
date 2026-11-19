@@ -1,19 +1,22 @@
 name: Rust Test Shards
 
-# The hosted required test phase, split into four nextest partitions (#10507).
+# The hosted required test phase, split into two nextest partitions (#10507).
 # `rust-gates.yml` runs every gate that needs no test run (policy, Clippy, goldens,
-# fixtures, corpora, doctests, PR evidence) and, called with `test-shards: 4`,
+# fixtures, corpora, doctests, PR evidence) and, called with `test-shards: 2`,
 # leaves `cargo nextest run --workspace --profile ci` to this workflow. The caller
 # starts the shards alongside those gates so the required context fits inside the
 # merge queue's status-check timeout (#4838); a gate failure therefore still spends
 # the shard minutes (#10346 traded for latency), and the caller's result requires
 # both. The self-hosted routes keep the one-command step inside rust-gates.yml.
 #
-# Four `--partition hash:N/4` runs together select exactly the tests the single
+# Two `--partition hash:N/2` runs together select exactly the tests the single
 # unsharded command selects. `verify` is the check that makes that true rather
 # than assumed: every shard must have exited zero with a fresh JUnit report naming
-# a test, and the four partition lists must be pairwise disjoint and equal the
+# a test, and the two partition lists must be pairwise disjoint and equal the
 # full workspace list. A missing or cancelled shard is a failure, never a pass.
+# Two workers each retain a private build and source tree. This removes two
+# complete workspace builds without introducing an archive producer dependency;
+# whole-route elapsed time and runner occupancy remain separately measured (#8194).
 on:
   workflow_call:
     inputs:
@@ -27,7 +30,7 @@ permissions:
 
 jobs:
   rust-test-shard:
-    name: Rust tests shard ${{ matrix.shard }} of 4
+    name: Rust tests shard ${{ matrix.shard }} of 2
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Job-level so every Cargo call in the shard (the prepare build, nextest, the
@@ -40,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       # Full history, like the unsharded step: base-resolving tests refuse on a
       # shallow clone (#10344).
@@ -55,12 +58,14 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: nextest@0.9.149
 
       # Separate dependency cache from the gates job; the action defaults exclude
-      # workspace test binaries. One shard on main is enough to write the cache.
+      # workspace test binaries. Existing default-branch entries are best-effort
+      # reads; a miss still builds all tests. Only shard 1 of an already-selected
+      # manual main qualification may save; no ordinary push or extra warmer.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}
@@ -112,7 +117,7 @@ jobs:
           time_tool=/usr/bin/time
           mkdir -p "$metrics" || echo "::warning::build metrics directory unavailable"
           checkout_sha="$(git rev-parse HEAD)" || checkout_sha=unavailable
-          printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\nshard=%s/4\nsample_period_seconds=5\nsample_units=MiB\nsample_columns=utc used_mb available_mb swap_used_mb\nrss_scope=largest_command_or_waited_descendant_process_not_aggregate\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${{ matrix.shard }}" > "$metrics/context.txt" || echo "::warning::build metrics identity unavailable"
+          printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\nshard=%s/2\nsample_period_seconds=5\nsample_units=MiB\nsample_columns=utc used_mb available_mb swap_used_mb\nrss_scope=largest_command_or_waited_descendant_process_not_aggregate\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${{ matrix.shard }}" > "$metrics/context.txt" || echo "::warning::build metrics identity unavailable"
           ( while true; do free -m | awk -v timestamp="$(date -u +%FT%TZ)" '/^Mem:/{used=$3; available=$7} /^Swap:/{if (used ~ /^[0-9]+$/ && available ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/) print timestamp, used, available, $3}'; sleep 5; done ) > "$metrics/system-memory.tsv" &
           sampler=$!
           finish() {
@@ -160,21 +165,29 @@ jobs:
       # Shard 1 hands the prepared normal binary to the verifier. It needs no
       # additional compilation there; the attempt suffix isolates reruns.
       - name: Retain the xtask binary for the verify job
+        id: xtask-artifact
         if: matrix.shard == 1
         run: |
-          mkdir -p target/xtask-binary
-          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
+          staging="$(mktemp -d "$RUNNER_TEMP/ripr-xtask-upload.XXXXXX")"
+          stripped="$staging/xtask-stripped"
+          trap 'rm -f "$stripped"' EXIT
+          strip --strip-debug -o "$stripped" target/debug/xtask
+          python3 tools/ci/shard-verifier-artifact.py retain \
+            --binary "$stripped" --destination "$staging/payload" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --sha "$(git rev-parse HEAD)"
+          printf 'path=%s\n' "$staging/payload" >> "$GITHUB_OUTPUT"
 
       - name: Upload the xtask binary
         if: matrix.shard == 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
-          path: target/xtask-binary/xtask
+          path: ${{ steps.xtask-artifact.outputs.path }}
           if-no-files-found: error
           retention-days: 1
 
-      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
+      - name: Required Rust tests (shard ${{ matrix.shard }} of 2)
         id: rust-test-shard
         timeout-minutes: 40
         run: |
@@ -183,7 +196,7 @@ jobs:
           checkout_sha="$(git rev-parse HEAD)"
           {
             printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
+            printf 'profile=ci\nshard=%s/2\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
             cargo nextest --version
             rustc --version
             cargo --version
@@ -196,12 +209,12 @@ jobs:
           # the run executes: taken after it, shard 4 spent 4.3 to 6.1 minutes here
           # on every run (4 to 16 seconds on the other shards), with the cause
           # hidden by the discarded stderr (#12915).
-          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
           if [ "${{ matrix.shard }}" = 1 ]; then
             cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           fi
           set +e
-          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4
+          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2
           test_exit=$?
           set -e
           printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
@@ -235,6 +248,11 @@ jobs:
           retention-days: 5
 
   rust-test-shards-verify:
+    # Only this unprivileged consumer needs API artifact metadata. No App token,
+    # writes or secrets; the caller already permits actions: read.
+    permissions:
+      contents: read
+      actions: read
     name: Rust test shards verify
     needs: rust-test-shard
     if: ${{ !cancelled() }}
@@ -258,14 +276,11 @@ jobs:
           pattern: ${{ inputs.artifact-name }}-nextest-shard-*
           path: shards
 
-      # A partial re-run that skips shard 1 leaves the binary in an earlier attempt's
-      # artifact (same commit), so take the newest one present.
-      # One match extracts straight into the path; several each get a directory.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: ${{ inputs.artifact-name }}-xtask-*
-          path: xtask-binary
-
+      # Executable download is by a selected same-run artifact ID, in fresh
+      # runner-temp storage. Validate canonical attempt, archive/member digests
+      # and producer checkout identity before executing. No recursive scan of G.
+      # Earlier-attempt reuse is not proof of no later uploadless producer;
+      # authoritative job supersession remains the #14500 lifecycle obligation.
       # `verify-test-shards` accepts the shards only as conservation of the one
       # unpartitioned run: each shard's status, run context (repository, checkout,
       # run, attempt, profile, partition, exit) and JUnit report (complete, no
@@ -277,18 +292,23 @@ jobs:
       # files; a partial re-run is disclosed as `verified_attempts` in the
       # combined context.
       - name: Check the shards are a complete, disjoint, green cover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_PREFIX: ${{ inputs.artifact-name }}
         run: |
-          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
-          test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
-          chmod +x "$xtask"
-          "$xtask" verify-test-shards \
+          python3 tools/ci/shard-verifier-artifact.py launch \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --sha "$(git rev-parse HEAD)" \
+            --prefix "$ARTIFACT_PREFIX" --runner-temp "$RUNNER_TEMP" \
+            --provenance target/nextest/ci/verifier-artifact.json \
+            -- verify-test-shards \
             --dir shards \
-            --artifact "${{ inputs.artifact-name }}" \
-            --attempt "${{ github.run_attempt }}" \
+            --artifact "$ARTIFACT_PREFIX" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
             --repository "$GITHUB_REPOSITORY" \
             --sha "$(git rev-parse HEAD)" \
             --run-id "$GITHUB_RUN_ID" \
-            --shards 4 \
+            --shards 2 \
             --out target/nextest/ci
           cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
 
@@ -301,5 +321,6 @@ jobs:
             target/nextest/ci/junit.xml
             target/nextest/ci/run-context.txt
             target/nextest/ci/shards-summary.txt
+            target/nextest/ci/verifier-artifact.json
           if-no-files-found: warn
           retention-days: 5

@@ -24,7 +24,7 @@ PR. They should be short, dated, and focused on consequences.
 | [0015](0015-start-here-surfaces-use-canonical-gap-records.md) | accepted | Keep start-here surfaces centered on canonical gap records. |
 | [0016](0016-editor-adoption-assurance-remains-read-only.md) | accepted | Keep editor adoption assurance read-only. |
 | [0017](0017-editor-gap-queue-is-read-only.md) | accepted | Keep editor actionable gap queue projection read-only. |
-| [0018](0018-perl-lsp-fact-substrate.md) | proposed | Use `perl-lsp` batch fact export as the Perl intelligence substrate. |
+| [0018](0018-perl-lsp-fact-substrate.md) | accepted | Use `perl-lsp` batch fact export as the Perl intelligence substrate. |
 | [0019](0019-language-adapters-reuse-shared-packet-contract.md) | accepted | Language adapters reuse the shared packet contract: one validator, shared renderers, parity test. |
 | [0020](0020-repair-artifacts-carry-producer-identity.md) | accepted | Repair artifacts carry producer identity, repository revision, worktree state, and a bounded content commitment. |
 | [0021](0021-static-and-executed-assurance-axes.md) | accepted | Keep static movement, executed verification, receipt issuance, and external runtime mutation on separate axes. |

@@ -84,6 +84,8 @@ pub(crate) fn probes_for_file_with_relations(
     // the old lines of a multi-line `&&`/`||` chain that an added predicate
     // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
+    // #14938: old lines whose replacement only respelled a returned constant.
+    let mut equal_constant_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -118,6 +120,14 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_string_continuations = old_source
         .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
+    // #14181: lines of a build-time `const { assert!(..) }` block, also when
+    // rustfmt splits it, select no runtime family.
+    let added_const_assertions = find_file_facts(index, &changed.path)
+        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_const_assertions = old_source
+        .map(super::lexical::inline_const_assertion_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -133,6 +143,25 @@ pub(crate) fn probes_for_file_with_relations(
     for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
         *flag |= removed_verification.contains(&line.line);
     }
+    // Where each side's actual trailing line comments start, read from the
+    // whole file so a `//` inside a string or block comment is never one.
+    let added_comments = find_file_facts(index, &changed.path)
+        .map(|facts| super::unchanged_code_line::line_comment_columns(&facts.source))
+        .unwrap_or_default();
+    let removed_comments = old_source
+        .map(super::unchanged_code_line::line_comment_columns)
+        .unwrap_or_default();
+    // Both files as the lexical scanner reads them, built only when a pair
+    // needs it. Without the old file there is no reading of the removed
+    // side, so such a pair stays probed.
+    let lexical_lines = std::cell::OnceCell::new();
+    let read_lexical_lines = || {
+        let new = find_file_facts(index, &changed.path)?;
+        Some((
+            super::unchanged_code_line::LexicalLines::of(&new.source),
+            super::unchanged_code_line::LexicalLines::of(old_source?),
+        ))
+    };
     let added_at = changed
         .added_lines
         .iter()
@@ -165,14 +194,84 @@ pub(crate) fn probes_for_file_with_relations(
                 && !removed_position.contains(&removed.line)
                 && !added_string_continuations.contains(&new_side_line)
                 && !removed_string_continuations.contains(&removed.line);
-        if respelling || whitespace_only {
+        // #14175: the same code with a trailing line comment added, removed
+        // or reworded is the same program.
+        let added_comment = added_comments.get(&new_side_line).copied();
+        let removed_comment = removed_comments.get(&removed.line).copied();
+        let comment_only = super::unchanged_code_line::is_trailing_line_comment_only_change(
+            added_text,
+            added_comment,
+            removed_text,
+            removed_comment,
+        );
+        // #14175: a positional pair whose parsed text is the same changed
+        // only in bytes the diff reader drops: its line ending (a CRLF/LF
+        // rewrite, a final newline added or removed) or a line-1 byte-order
+        // mark. Rust reads CRLF as LF everywhere, string literals included,
+        // so the pair is the same program text.
+        let line_ending_only =
+            added_text.trim_end_matches('\r') == removed_text.trim_end_matches('\r');
+        // Equal text can still change meaning when another edited line moved
+        // a comment or string boundary (a block comment turned into line
+        // comments around a statement), so both rules also need the two
+        // lines to read as the same code in their own files.
+        let unchanged_code = (comment_only || line_ending_only)
+            && match (lexical_lines.get_or_init(read_lexical_lines), comment_only) {
+                (Some((new, old)), true) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    added_comment,
+                    old,
+                    removed.line,
+                    removed_comment,
+                ),
+                (Some((new, old)), false) => super::unchanged_code_line::same_code_context(
+                    new,
+                    new_side_line,
+                    None,
+                    old,
+                    removed.line,
+                    None,
+                ),
+                (None, _) => false,
+            };
+        if respelling || whitespace_only || unchanged_code {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
+        }
+    }
+    // #14760: a line that only applies an identifier rename this file's diff
+    // proves at the declaration (`HEADER_NAME_MAP[b]` -> `TOKEN_MAP[b]`)
+    // reads the same item, and the declaration line only renames it.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let rename_only =
+            super::identifier_rename::rename_only_lines(changed, &facts.source, old_source);
+        for &new_side_line in &rename_only.added {
+            if let Some(&added_index) = added_at.get(&new_side_line) {
+                skip_added[added_index] = true;
+            }
+        }
+        for old_line in &rename_only.removed {
+            if let Some(&removed_index) = removed_at.get(old_line) {
+                skip_removed[removed_index] = true;
+            }
         }
     }
     // A line that is byte-identical on both sides of one replacement run
     // (unchanged or moved inside a rewritten block) is not an edit (#8389).
     for (new_side_line, old_line) in changed.identical_replacement_lines() {
+        if let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&old_line))
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
+    // #14428: a `match` rewritten as `let ... else` (clippy
+    // `manual_let_else`) keeps its diverging statement. The removed
+    // `None => return R,` arm and the added `return R;` are the same
+    // statement when the scrutinee pairs, so neither seeds a probe.
+    for (new_side_line, old_line) in changed.let_else_diverging_pairs() {
         if let (Some(&added_index), Some(&removed_index)) =
             (added_at.get(&new_side_line), removed_at.get(&old_line))
         {
@@ -253,12 +352,17 @@ pub(crate) fn probes_for_file_with_relations(
     };
     // Added lines whose only lexical family is `static_unknown`: a type-bound
     // line, or (#14094) a string-literal continuation line, whose text is
-    // data even when it reads like code. A removed line pairs with them on
-    // that family alone.
+    // data even when it reads like code, or (#14181) a line of a build-time
+    // `const { assert!(..) }` block. A removed line pairs with them on that
+    // family alone.
     let added_static_only = added_bounds
         .iter()
         .zip(&changed.added_lines)
-        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .map(|(bound, line)| {
+            *bound
+                || added_string_continuations.contains(&line.new_side_line)
+                || added_const_assertions.contains(&line.new_side_line)
+        })
         .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
@@ -418,8 +522,10 @@ pub(crate) fn probes_for_file_with_relations(
             text,
             removed_counterpart.as_deref(),
         );
+        let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
             .into_iter()
+            .filter(|_| !in_const_assertion)
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
             .filter(|shape| propagation_subject.is_none() || shape.family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
@@ -471,6 +577,55 @@ pub(crate) fn probes_for_file_with_relations(
                                 .any(|other| other.family != ProbeFamily::ReturnValue)
                     })
             };
+            // #14938: a returned constant respelled as the same value
+            // (`65` as `0x41`, `"A"` as `"\x41"`, `1.0` as `1e0`) changed
+            // no behavior, so no test could notice it and the line seeds no
+            // probe. Only a line that is wholly that value (a tail, maybe
+            // `return`ed, with its `;` or `,`) qualifies, so text outside
+            // the shape is known unchanged and a string or comment elsewhere
+            // on the line cannot hide an edit.
+            let equal_constant_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        let bare = |line: &str| {
+                            let line = line.trim();
+                            let line = line.strip_prefix("return ").unwrap_or(line);
+                            line.strip_suffix([';', ','])
+                                .unwrap_or(line)
+                                .trim()
+                                .to_string()
+                        };
+                        // The statement envelope must match too: `65;`
+                        // becoming `return 0x41;` adds an early return.
+                        let envelope = |line: &str| {
+                            let line = line.trim();
+                            (
+                                line.starts_with("return "),
+                                line.ends_with(';'),
+                                line.ends_with(','),
+                            )
+                        };
+                        let value = bare(&shape_text);
+                        bare(text) == value
+                            && envelope(text) == envelope(removed)
+                            && crate::analysis::classify::is_equal_constant_respelling(
+                                &bare(removed),
+                                &value,
+                            )
+                    })
+            };
+            // The removed line it replaced is the same value too, so it seeds
+            // no deleted-behavior probe either.
+            // The line is wholly that constant, so every other shape on it
+            // (`true == false` inside `return !false == false;`) lies inside
+            // the same unchanged value and is dropped too.
+            let equal_constant_line = canonical_shapes.iter().any(&equal_constant_return);
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && equal_constant_line
+            {
+                equal_constant_counterparts.push(removed.line);
+            }
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -504,12 +659,101 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 guard_edit_counterparts.push(removed.line);
             }
+            // A `match` header whose edit sits wholly inside its scrutinee
+            // (`match name.rfind(..)` to `match name.find(..)`) changed no
+            // arm, so arm confirmation (an assertion naming the changed arm)
+            // is the wrong discriminator for it (#14722). Another shape inside
+            // the scrutinee carries the edit when the line has one; otherwise
+            // the header reads as an unclassified change, as the same
+            // expression edit does on a plain line.
+            let scrutinee_only_header = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::MatchArm
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let header = canonical_probe_text(text, shape.text);
+                        // A `=>` in a string literal (`match t.find("=>")`)
+                        // is not an arm on the header line.
+                        header.starts_with("match ")
+                            && !mask_comments_and_strings(&header).contains("=>")
+                            && removed_span_of_shape(text, &header, removed.trim())
+                                .is_some_and(|old| old != header && old.starts_with("match "))
+                    })
+            };
+            // The other shape must hold the whole edit itself (its own old
+            // cut differs), not merely sit unchanged inside the scrutinee,
+            // and must survive the filters below as a probe of its own.
+            let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
+                let header = canonical_probe_text(text, shape.text);
+                removed_counterpart.as_deref().is_some_and(|removed| {
+                    canonical_shapes.iter().any(|other| {
+                        let other_text = canonical_probe_text(text, other.text);
+                        other.family != ProbeFamily::MatchArm
+                            && other.family != ProbeFamily::StaticUnknown
+                            && !unchanged_return(other)
+                            && !respelled_return(other)
+                            && header.contains(other_text.as_str())
+                            && removed_span_of_shape(text, &other_text, removed.trim())
+                                .is_some_and(|old| old != other_text)
+                    })
+                })
+            };
+            let carried_header = |shape: &super::classify::ParserProbeShape| {
+                scrutinee_only_header(shape) && scrutinee_carried(shape)
+            };
+            // A shape inside a scrutinee-only header that does not hold the
+            // edit (`a >= b` in `match foo(a >= b)` to `match bar(a >= b)`)
+            // did not change; the header's unclassified probe stands for the
+            // edit, so the unchanged shape is not a finding of its own.
+            let unchanged_in_header = |shape: &super::classify::ParserProbeShape| {
+                let shape_text = canonical_probe_text(text, shape.text);
+                shape.family != ProbeFamily::MatchArm
+                    && shape.family != ProbeFamily::StaticUnknown
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        match removed_span_of_shape(text, &shape_text, removed.trim()) {
+                            Some(old) => old == shape_text,
+                            // No locatable cut: unchanged only when the old
+                            // line holds the text, with no operand syntax
+                            // extending it, at least as often as the new one.
+                            // `total > limit` is not inside `subtotal > limit`,
+                            // `total > limit.max` or `x.total > limit`, and a
+                            // comparison repeated on the new line is not all
+                            // unchanged when the old line held it once.
+                            None => {
+                                let old = super::classify::operand_bounded_token_run_count(
+                                    removed,
+                                    &shape_text,
+                                );
+                                old > 0
+                                    && old
+                                        >= super::classify::operand_bounded_token_run_count(
+                                            text,
+                                            &shape_text,
+                                        )
+                            }
+                        }
+                    })
+                    && canonical_shapes.iter().any(|header| {
+                        scrutinee_only_header(header)
+                            && !scrutinee_carried(header)
+                            && canonical_probe_text(text, header.text).contains(shape_text.as_str())
+                    })
+            };
             let canonical_shapes = canonical_shapes
                 .iter()
                 .filter(|shape| {
-                    !unchanged_return(shape) && !respelled_return(shape) && !guard_only_arm(shape)
+                    !unchanged_return(shape)
+                        && !respelled_return(shape)
+                        && !equal_constant_line
+                        && !guard_only_arm(shape)
+                        && !carried_header(shape)
+                        && !unchanged_in_header(shape)
                 })
-                .cloned()
+                .map(|shape| {
+                    let mut shape = shape.clone();
+                    if scrutinee_only_header(&shape) {
+                        shape.family = ProbeFamily::StaticUnknown;
+                    }
+                    shape
+                })
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
                 let key = (shape.start_byte, shape.family.as_str().to_string());
@@ -625,7 +869,9 @@ pub(crate) fn probes_for_file_with_relations(
         // code. Its text (`if x > 3 { return Err(e) }` in a help message)
         // selects no behavioral family; the literal's own rule below decides
         // whether the edited text keeps one `static_unknown`.
-        let families = if added_string_continuations.contains(&added.new_side_line) {
+        let families = if added_string_continuations.contains(&added.new_side_line)
+            || in_const_assertion
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line_against(text, removed_counterpart.as_deref())
@@ -648,7 +894,32 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            probes.extend(retargeted);
+            // #14132: two changed bindings that are operands of one comparison
+            // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
+            // it. The comparison is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded. Bindings in different
+            // terms of one line (`a < b && c < d`) keep their own probes.
+            for seeded in retargeted {
+                let already_retargeted = probes.iter().any(|kept| {
+                    kept.probe.family == seeded.probe.family
+                        && kept.probe.location.line == seeded.probe.location.line
+                        && kept.probe.expression == seeded.probe.expression
+                        && kept
+                            .binding_relation
+                            .as_ref()
+                            .zip(seeded.binding_relation.as_ref())
+                            .is_some_and(|(kept, seeded)| {
+                                bindings_share_a_comparison(
+                                    &seeded.predicate_expression,
+                                    &kept.binding,
+                                    &seeded.binding,
+                                )
+                            })
+                });
+                if !already_retargeted {
+                    probes.push(seeded);
+                }
+            }
             continue;
         }
         // #11400: a changed `const` value is its readers' new return value.
@@ -743,6 +1014,9 @@ pub(crate) fn probes_for_file_with_relations(
         if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
+        if equal_constant_counterparts.contains(&removed.line) {
+            continue;
+        }
         if let Some(definition) = removed_macros
             .as_ref()
             .and_then(|map| map.owner_of_line(removed.line))
@@ -767,6 +1041,7 @@ pub(crate) fn probes_for_file_with_relations(
         // #14094: deleted string-literal text is not deleted code either.
         let families = if removed_bounds.lines[removed_index]
             || removed_string_continuations.contains(&removed.line)
+            || removed_const_assertions.contains(&removed.line)
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
@@ -792,6 +1067,19 @@ pub(crate) fn probes_for_file_with_relations(
                     || probes
                         .iter()
                         .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
+            {
+                continue;
+            }
+            // #14181: an edited line of a build-time `const { assert!(..) }`
+            // block is judged by its replacement's probe, which carries this
+            // text as `before`; the short operands (`N`) give the token
+            // pairing above nothing to match.
+            if family == ProbeFamily::StaticUnknown
+                && removed_const_assertions.contains(&removed.line)
+                && added_const_assertions.contains(&removed.new_side_line)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
             {
                 continue;
             }
@@ -1088,7 +1376,7 @@ fn retarget_changed_const_readers(
     if readers.is_empty()
         || readers
             .iter()
-            .any(|shape| changed_lines.contains(&shape.start_line))
+            .any(|shape| changed_lines.contains(&shape.start_line()))
     {
         return None;
     }
@@ -1097,8 +1385,8 @@ fn retarget_changed_const_readers(
             .iter()
             .map(|shape| {
                 let line = ChangedLine {
-                    line: shape.start_line,
-                    new_side_line: shape.start_line,
+                    line: shape.start_line(),
+                    new_side_line: shape.start_line(),
                     text: shape.text.to_string(),
                 };
                 let mut seeded = SeededProbe::from_probe(build_probe(
@@ -2175,7 +2463,7 @@ fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
             // Out-of-line `mod name;` (no brace index) and self-closed
             // blocks contribute no scope; the composer owns cross-file
             // roles and bare syntax lines stay eligible.
-            let (opens, closes) = brace_delta(&masked_line[brace..]);
+            let (opens, closes) = brace_delta(masked_line.get(brace..).unwrap_or_default());
             if opens > closes {
                 stack.push((depth + 1, requires_test, line_number));
             }
@@ -2228,7 +2516,13 @@ fn parse_inline_module(
     index: usize,
 ) -> Option<(bool, Option<usize>)> {
     let mut attributes: Vec<String> = Vec::new();
-    let mut masked_rest = masked_lines[index].trim();
+    let masked_line = masked_lines[index];
+    // #14089: every step below only drops a prefix, so `masked_rest` stays a
+    // suffix of `masked_line` and the brace offset can be returned relative
+    // to the whole line. Trimming the end too left the offset relative to
+    // the rest after attributes and indentation, and the caller sliced the
+    // whole line there, inside a multibyte char on `#[cfg(test)] mod dक्x {`.
+    let mut masked_rest = masked_line.trim_start();
     let mut original_rest = original_lines[index].trim();
     // Same-line attributes, in lockstep: structure from masked text, text
     // from the original. Divergence fails closed (fewer attributes).
@@ -2237,7 +2531,7 @@ fn parse_inline_module(
         split_leading_attribute(original_rest),
     ) {
         attributes.push(attribute.to_string());
-        masked_rest = masked_remainder.trim();
+        masked_rest = masked_remainder.trim_start();
         original_rest = original_remainder.trim();
     }
     let masked_rest = strip_visibility(masked_rest);
@@ -2245,15 +2539,16 @@ fn parse_inline_module(
     if after_mod
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return None;
     }
     let name_start = masked_rest.len() - after_mod.trim_start().len();
     let name = after_mod.trim_start();
-    // Module name: one identifier; anything else is not an item we scope.
+    // Module name: one identifier (Unicode `XID_Continue`, #14089); anything
+    // else is not an item we scope.
     let end = name
-        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|character: char| !(character == '_' || unicode_ident::is_xid_continue(character)))
         .unwrap_or(name.len());
     if end == 0 {
         return None;
@@ -2285,9 +2580,10 @@ fn parse_inline_module(
             }
         }
     }
+    let rest_start = masked_line.len() - masked_rest.len();
     Some((
         attributes_require_test(&attributes),
-        Some(name_start + end + brace_offset),
+        Some(rest_start + name_start + end + brace_offset),
     ))
 }
 
@@ -2304,7 +2600,7 @@ pub(super) fn strip_visibility(text: &str) -> &str {
     if after_pub
         .chars()
         .next()
-        .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+        .is_some_and(|next| next == '_' || unicode_ident::is_xid_continue(next))
     {
         return text;
     }
@@ -2510,6 +2806,20 @@ fn added_run_start(
     starts: &std::collections::BTreeMap<usize, usize>,
 ) -> usize {
     ChangedFile::added_run_start_from(starts, added_new_side_line)
+}
+
+/// Whether two bindings are named in the same `&&`/`||` term of a predicate
+/// line, so they are operands of one comparison (#14132).
+fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) -> bool {
+    let names = |term: &str, name: &str| {
+        term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name)
+    };
+    // Comment and string text is not an operand: `a < lo && c < hi { // a`.
+    mask_comments_and_strings(predicate_line)
+        .split("&&")
+        .flat_map(|term| term.split("||"))
+        .any(|term| names(term, first) && names(term, second))
 }
 
 fn has_matching_added_line(
@@ -3638,8 +3948,10 @@ mod tests {
                 ProbeShapeFact {
                     start_line: 3,
                     end_line: 3,
-                    start_byte,
-                    end_byte: start_byte + shape_text.len(),
+                    start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+                    end_byte: crate::analysis::facts::probe_shape_position(
+                        start_byte + shape_text.len(),
+                    ),
                     kind: *kind,
                     text: (*shape_text).into(),
                     value_consumed: false,
@@ -3797,6 +4109,257 @@ mod tests {
         assert!(
             probes.iter().any(|probe| probe.expression == same),
             "{probes:?}"
+        );
+    }
+
+    /// #14428: a `match` rewritten as `let ... else` (clippy
+    /// `manual_let_else`) keeps its diverging statement, so the removed
+    /// `None => return R,` arm and the added `return R;` pair and seed no
+    /// probe. A changed scrutinee or a changed return value keeps both.
+    #[test]
+    fn a_manual_let_else_rewrite_pairs_its_diverging_statement() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let rewritten = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert_eq!(rewritten.let_else_diverging_pairs(), vec![(24, 24)]);
+        let probes = probes_for_file(Path::new("workspace"), &rewritten, &RustIndex::default());
+        assert!(
+            probes
+                .iter()
+                .all(|probe| !probe.expression.contains("return Ordering::Greater")),
+            "the paired diverging statement must not seed a probe: {probes:?}"
+        );
+        let changed_scrutinee = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = other.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(changed_scrutinee.let_else_diverging_pairs().is_empty());
+        let changed_value = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Less;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(changed_value.let_else_diverging_pairs().is_empty());
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &changed_value,
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.contains("return Ordering::Less")),
+            "a changed diverging statement keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #14428 fail-closed: a repeated diverging statement, a multi-line arm,
+    /// or a second statement in the `else` block never pairs by guess.
+    #[test]
+    fn manual_let_else_pairing_is_fail_closed() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let repeated = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "None => return Ordering::Greater,"),
+            ],
+        );
+        assert!(repeated.let_else_diverging_pairs().is_empty());
+        let block_arm = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => {"),
+                line(25, 24, "return Ordering::Greater;"),
+                line(26, 24, "}"),
+            ],
+        );
+        assert!(block_arm.let_else_diverging_pairs().is_empty());
+        let second_statement = changed(
+            vec![
+                line(20, 20, "let Some(rhs) = rhs.next() else {"),
+                line(21, 21, "log();"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+            ],
+        );
+        assert!(second_statement.let_else_diverging_pairs().is_empty());
+    }
+
+    /// A reversed `let None = ... else` pattern diverges on the opposite
+    /// variant, so it must not pair with a removed `None => return R,` arm.
+    #[test]
+    fn a_reversed_let_else_pattern_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let reversed = changed(
+            vec![
+                line(20, 20, "let None = rhs.next() else {"),
+                line(24, 24, "return Ordering::Greater;"),
+            ],
+            vec![
+                line(20, 20, "let rhs = match rhs.next() {"),
+                line(24, 24, "None => return Ordering::Greater,"),
+                line(25, 24, "Some(rhs) => rhs,"),
+            ],
+        );
+        assert!(
+            reversed.let_else_diverging_pairs().is_empty(),
+            "reversed pattern paired: {:?}",
+            reversed.let_else_diverging_pairs()
+        );
+    }
+
+    /// A removed arm in one function must not pair with an added
+    /// `let ... else` in a neighbouring function.
+    #[test]
+    fn a_neighbouring_functions_arm_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let cross = changed(
+            vec![
+                line(30, 23, "let Some(v) = option else {"),
+                line(31, 24, "return 0;"),
+            ],
+            vec![
+                line(10, 20, "let x = match option {"),
+                line(12, 20, "None => return 0,"),
+            ],
+        );
+        assert!(
+            cross.let_else_diverging_pairs().is_empty(),
+            "cross-function paired: {:?}",
+            cross.let_else_diverging_pairs()
+        );
+    }
+
+    /// ` = ` inside a string literal in the scrutinee must not defeat
+    /// pairing.
+    #[test]
+    fn a_scrutinee_with_an_equals_sign_still_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let s = changed(
+            vec![
+                line(20, 20, "let Some(x) = lookup(\"a = b\") else {"),
+                line(24, 24, "return 0;"),
+            ],
+            vec![
+                line(20, 20, "let x = match lookup(\"a = b\") {"),
+                line(24, 24, "None => return 0,"),
+            ],
+        );
+        assert_eq!(
+            s.let_else_diverging_pairs(),
+            vec![(24, 24)],
+            "string scrutinee lost the pair"
+        );
+    }
+
+    /// A pattern that itself holds ` = ` inside a string literal cannot be
+    /// split from the scrutinee by the first ` = `, so it fails closed
+    /// rather than pairing the wrong text.
+    #[test]
+    fn a_pattern_with_an_equals_sign_never_pairs() {
+        let line = |line: usize, new_side_line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line,
+            text: text.to_string(),
+        };
+        let changed = |added: Vec<ChangedLine>, removed: Vec<ChangedLine>| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added,
+            removed_lines: removed,
+        };
+        let s = changed(
+            vec![
+                line(20, 20, "let Some(\"a = b\") = lookup() else {"),
+                line(24, 24, "return 0;"),
+            ],
+            vec![
+                line(20, 20, "let x = match lookup() {"),
+                line(24, 24, "None => return 0,"),
+            ],
+        );
+        assert!(
+            s.let_else_diverging_pairs().is_empty(),
+            "pattern with ` = ` paired: {:?}",
+            s.let_else_diverging_pairs()
         );
     }
 
@@ -4464,6 +5027,164 @@ mod tests {
         );
     }
 
+    /// #14175: a trailing line comment added, removed or reworded beside
+    /// unchanged code seeds no probe; a changed token beside it, and a `//`
+    /// that is string or block-comment content, keep theirs.
+    #[test]
+    fn trailing_line_comment_only_edits_seed_no_probe() {
+        let source = |line: &str| format!("fn f(total: u32) -> u32 {{\n{line}\n    total\n}}\n");
+        let probes = |added: &str, removed: &str| {
+            block_probes(&source(added), &[(2, added)], &[(2, 2, removed)])
+        };
+        for (added, removed) in [
+            // Added, removed, reworded.
+            ("    if total > 100 { // big orders", "    if total > 100 {"),
+            ("    if total > 100 {", "    if total > 100 { // big orders"),
+            (
+                "    if total > 100 { // large",
+                "    if total > 100 { // big",
+            ),
+            // Spacing before the comment and a string beside it.
+            ("    log(\"a // b\");   // note", "    log(\"a // b\");"),
+            ("    let c = '/'; // slash", "    let c = '/'; // divide"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(seeded.is_empty(), "{added} vs {removed}: {seeded:?}");
+        }
+        for (added, removed) in [
+            // The code changed too.
+            (
+                "    if total >= 100 { // big orders",
+                "    if total > 100 {",
+            ),
+            ("    if total > 100 { // big", "    if total > 10 { // big"),
+            // The `//` is string content on one or both sides.
+            ("    log(\"a // c\");", "    log(\"a // b\");"),
+            ("    log(\"a\"); // b", "    log(\"a // b\");"),
+            // The `//` sits in a block comment that then closes onto code.
+            ("    /* x // y */ g(total);", "    /* x // y */ h(total);"),
+            // Indentation is code layout the whitespace rule owns.
+            ("        g(total); // note", "    g(total);"),
+        ] {
+            let seeded = probes(added, removed);
+            assert!(!seeded.is_empty(), "{added} vs {removed} lost its probe");
+        }
+        // The closing line of a multi-line string: the first `//` is string
+        // content, so rewording it changes the value.
+        let multiline =
+            "fn f() -> &'static str {\n    let s = \"open\n  see // here\"; // note\n    s\n}\n";
+        let string_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // there\"; // note")],
+        );
+        assert!(
+            !string_tail.is_empty(),
+            "a `//` inside a multi-line string keeps its probe"
+        );
+        let comment_tail = block_probes(
+            multiline,
+            &[(3, "  see // here\"; // note")],
+            &[(3, 3, "  see // here\"; // remark")],
+        );
+        assert!(comment_tail.is_empty(), "{comment_tail:?}");
+
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(5),
+                "a(); // x",
+                Some(5)
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a();", None, "a(); ", None
+            )
+        );
+        // A column that does not land on `//` in the changed text.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(4),
+                "a();",
+                None
+            )
+        );
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "a(); // x",
+                Some(40),
+                "a();",
+                None
+            )
+        );
+        // A line that is only a comment is not this rule's subject.
+        assert!(
+            !super::super::unchanged_code_line::is_trailing_line_comment_only_change(
+                "    // x",
+                Some(4),
+                "    // y",
+                Some(4)
+            )
+        );
+        assert_eq!(
+            super::super::unchanged_code_line::line_comment_columns(
+                "a(); // x\nlet u = \"http://h\";\n  b(); // y\n"
+            ),
+            std::collections::BTreeMap::from([(1, 5), (3, 7)])
+        );
+    }
+
+    /// #14175: a positional pair with the same text (a line-ending rewrite,
+    /// a final newline added or removed) seeds no probe, also beside a real
+    /// edit in the same block and for punctuation-only lines; the edited line
+    /// keeps its probe.
+    #[test]
+    fn line_ending_only_pairs_seed_no_probe() {
+        let source = "pub fn discount(total: u32) -> u32 {\r\n    if total > 100 {\r\n        total - 10\r\n    } else {\r\n        total\r\n    }\r\n}\r\n";
+        let lines = [
+            "pub fn discount(total: u32) -> u32 {",
+            "    if total > 100 {",
+            "        total - 10",
+            "    } else {",
+            "        total",
+            "    }",
+            "}",
+        ];
+        let added = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, *text))
+            .collect::<Vec<_>>();
+        let removed = lines
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at + 1, 1, *text))
+            .collect::<Vec<_>>();
+        let churn = block_probes(source, &added, &removed);
+        assert!(churn.is_empty(), "{churn:?}");
+
+        // The same rewrite with one real edit: only that line is probed.
+        let mut edited = removed.clone();
+        edited[1] = (2, 1, "    if total >= 100 {");
+        let mixed = block_probes(source, &added, &edited);
+        assert!(!mixed.is_empty(), "the edited line lost its probe");
+        assert!(
+            mixed.iter().all(|probe| probe.location.line == 2),
+            "{mixed:?}"
+        );
+
+        // A diff file with CRLF line endings leaves the carriage return on
+        // one side only.
+        let one_sided = block_probes(
+            "fn f(total: u32) -> u32 {\n    total - 10\n}\n",
+            &[(2, "    total - 10")],
+            &[(2, 2, "    total - 10\r")],
+        );
+        assert!(one_sided.is_empty(), "{one_sided:?}");
+    }
+
     #[test]
     fn behavior_neutral_respellings_seed_no_probe() {
         for (added, removed) in [
@@ -4762,8 +5483,9 @@ mod tests {
         );
     }
 
-    /// #7037: the `match` scrutinee shape is a MatchArm shape too, so a
-    /// changed scrutinee is cut to the old scrutinee without the brace.
+    /// #7037: a changed scrutinee is cut to the old scrutinee without the
+    /// brace. #14722: no arm changed, so the header is not a match-arm probe;
+    /// it reads as an unclassified change.
     #[test]
     fn match_scrutinee_edit_cuts_before_to_the_old_scrutinee() {
         let probes = single_shape_probes(
@@ -4774,12 +5496,278 @@ mod tests {
             "",
         );
 
-        let arm = probes
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
+        let header = probes
             .iter()
-            .find(|probe| probe.family == ProbeFamily::MatchArm);
+            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
         assert_eq!(
-            arm.and_then(|probe| probe.before.as_deref()),
+            header.and_then(|probe| probe.before.as_deref()),
             Some("match kind"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a scrutinee edit whose changed comparison is its own shape is
+    /// that predicate's finding; the header adds no second probe.
+    #[test]
+    fn a_scrutinee_predicate_edit_is_the_predicate_probe_alone() {
+        let probes = shapes_probes(
+            "match a >= b {",
+            "match a > b {",
+            &[
+                (ProbeShapeKind::MatchArm, "match a >= b"),
+                (ProbeShapeKind::Predicate, "a >= b"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+    }
+
+    /// #14722: a comparison that sits unchanged inside the scrutinee does
+    /// not carry an edit elsewhere in it, so the header keeps the only
+    /// probe; the unchanged comparison is no finding of its own.
+    #[test]
+    fn an_unchanged_comparison_in_the_scrutinee_does_not_carry_the_edit() {
+        let probes = shapes_probes(
+            "match bar(a >= b) {",
+            "match foo(a >= b) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match bar(a >= b)"),
+                (ProbeShapeKind::Predicate, "a >= b"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+        assert_eq!(
+            probes[0].before.as_deref(),
+            Some("match foo(a >= b)"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a comparison outside the header whose text also appears
+    /// inside it (in a string literal) is not the header's carrier: its text
+    /// is not unique on the line, so it owns no cut of the edit.
+    #[test]
+    fn a_same_text_comparison_outside_the_header_does_not_carry_the_edit() {
+        let probes = shapes_probes(
+            "let marker = x > 0; match tag(\"x > 0\", after()) {",
+            "let marker = x > 0; match tag(\"x > 0\", before()) {",
+            &[
+                (ProbeShapeKind::Predicate, "x > 0"),
+                (ProbeShapeKind::MatchArm, "match tag(\"x > 0\", after())"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+        assert_eq!(
+            probes[0].before.as_deref(),
+            Some("match tag(\"x > 0\", before())"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a respelled integer inside the scrutinee (`Some(21)` to
+    /// `Some(0x15)`) holds the whole edit but is dropped as no change of
+    /// value, so it cannot license dropping the header too: the line keeps
+    /// the header's unclassified probe.
+    #[test]
+    fn a_respelled_return_in_the_scrutinee_does_not_drop_the_header() {
+        let probes = shapes_probes(
+            "match pick(Some(0x15)) {",
+            "match pick(Some(21)) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match pick(Some(0x15))"),
+                (ProbeShapeKind::ReturnValue, "Some(0x15)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+        assert_eq!(
+            probes[0].before.as_deref(),
+            Some("match pick(Some(21))"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a return value whose cut ends where the edit starts
+    /// (`f(Some(1), 2)` to `f(Some(1))`) owns a cut but is dropped as an
+    /// unchanged return, so it cannot license dropping the header too.
+    #[test]
+    fn an_unchanged_return_beside_the_scrutinee_edit_does_not_drop_the_header() {
+        let probes = shapes_probes(
+            "match f(Some(1)) {",
+            "match f(Some(1), 2) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match f(Some(1))"),
+                (ProbeShapeKind::ReturnValue, "Some(1)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+    }
+
+    /// #14722: a comparison that did change, beside a second edit in the
+    /// same scrutinee (`(a >= b, c)` to `(a > b, d)`), owns no single cut
+    /// but is not the old line's text, so it keeps its own finding beside
+    /// the header's unclassified one.
+    #[test]
+    fn a_changed_comparison_beside_a_second_scrutinee_edit_is_kept() {
+        let probes = shapes_probes(
+            "match (a > b, d) {",
+            "match (a >= b, c) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match (a > b, d)"),
+                (ProbeShapeKind::Predicate, "a > b"),
+            ],
+            "",
+        );
+
+        let mut families = probes
+            .iter()
+            .map(|probe| probe.family.as_str().to_string())
+            .collect::<Vec<_>>();
+        families.sort();
+        assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
+    }
+
+    /// #14722 review: a comparison whose text occurs in the old line only
+    /// inside a longer identifier (`total > limit` in `subtotal > limit`)
+    /// changed, so it keeps its own probe beside the unclassified header.
+    #[test]
+    fn a_comparison_found_only_inside_an_old_identifier_is_kept() {
+        let probes = shapes_probes(
+            "match (total > limit, true) {",
+            "match (subtotal > limit, false) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match (total > limit, true)"),
+                (ProbeShapeKind::Predicate, "total > limit"),
+            ],
+            "",
+        );
+
+        let mut families = probes
+            .iter()
+            .map(|probe| probe.family.as_str().to_string())
+            .collect::<Vec<_>>();
+        families.sort();
+        assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
+    }
+
+    /// #14722 review: the old line holding the comparison's text only as
+    /// part of a longer operand (`total > limit.max`, `x.total > limit`) does
+    /// not make the comparison unchanged, so it keeps its own probe.
+    #[test]
+    fn a_comparison_found_only_inside_a_longer_old_operand_is_kept() {
+        for removed in [
+            "match (total > limit.max, false) {",
+            "match (x.total > limit, false) {",
+            "match (total > limit as u64, false) {",
+            "match (total > limit | mask, false) {",
+            "match (total > limit << 1, false) {",
+            "match (total > limit!(x), false) {",
+            "match (a | total > limit, false) {",
+            "match (a >> total > limit, false) {",
+        ] {
+            let probes = shapes_probes(
+                "match (total > limit, true) {",
+                removed,
+                &[
+                    (ProbeShapeKind::MatchArm, "match (total > limit, true)"),
+                    (ProbeShapeKind::Predicate, "total > limit"),
+                ],
+                "",
+            );
+
+            let mut families = probes
+                .iter()
+                .map(|probe| probe.family.as_str().to_string())
+                .collect::<Vec<_>>();
+            families.sort();
+            assert_eq!(
+                families,
+                vec!["predicate", "static_unknown"],
+                "{removed}: {probes:?}"
+            );
+        }
+    }
+
+    /// #14722 review: a `=>` inside a string literal in the scrutinee is not
+    /// an arm, so the scrutinee-only header still reads as unclassified.
+    #[test]
+    fn a_string_arrow_in_the_scrutinee_does_not_keep_a_match_arm() {
+        let probes = shapes_probes(
+            "match text.find(\"=>\") {",
+            "match text.rfind(\"=>\") {",
+            &[(ProbeShapeKind::MatchArm, "match text.find(\"=>\")")],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+    }
+
+    /// #14722: an arm edit on a line that also holds the header reaches past
+    /// the scrutinee, so the header stays a match-arm probe and is never
+    /// read as an unclassified scrutinee edit.
+    #[test]
+    fn an_arm_edit_beside_an_unchanged_header_stays_a_match_arm() {
+        let probes = shapes_probes(
+            "match kind { 0 => 2, _ => 9 }",
+            "match kind { 0 => 1, _ => 9 }",
+            &[
+                (ProbeShapeKind::MatchArm, "match kind"),
+                (ProbeShapeKind::MatchArm, "0 =>"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "{probes:?}"
+        );
+        // The edit reaches past the scrutinee, so the header keeps its
+        // match-arm probe over the whole old line.
+        assert!(
+            probes.iter().any(|probe| {
+                probe.family == ProbeFamily::MatchArm
+                    && probe.before.as_deref() == Some("match kind { 0 => 1, _ => 9 }")
+            }),
             "{probes:?}"
         );
     }
@@ -5311,8 +6299,10 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: producer,
-                        end_byte: producer + PREDICATE.len(),
+                        start_byte: crate::analysis::facts::probe_shape_position(producer),
+                        end_byte: crate::analysis::facts::probe_shape_position(
+                            producer + PREDICATE.len(),
+                        ),
                         kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.into(),
                         value_consumed: false,
@@ -5419,7 +6409,7 @@ mod tests {
                         start_line: 10,
                         end_line: 13,
                         start_byte: 0,
-                        end_byte: expression.len(),
+                        end_byte: crate::analysis::facts::probe_shape_position(expression.len()),
                         kind: ProbeShapeKind::CallDeletion,
                         text: expression.into(),
                         value_consumed: false,
@@ -7646,6 +8636,31 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+
+    /// #14089: the module brace offset was measured from the text after the
+    /// same-line attribute and indentation, then used to slice the whole
+    /// line, which landed inside a multibyte char of the module name.
+    #[test]
+    fn cfg_test_module_scope_reads_a_same_line_attribute_before_a_non_ascii_name() {
+        let source = "#[cfg(test)] mod dक्iscarded {\n\
+             \x20   const DEEP: u32 = 1;\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(source, 2));
+        assert!(!line_in_cfg_test_module(source, 4));
+        // Indented, with visibility, and a same-line nested block.
+        let nested = "    #[cfg(test)] pub(crate) mod 日本 { mod inner {\n\
+             \x20       const DEEP: u32 = 1;\n\
+             \x20   }\n\
+             }\n\
+             const LIMIT: usize = 2;\n";
+        assert!(line_in_cfg_test_module(nested, 2));
+        assert!(line_in_cfg_test_module(nested, 3));
+        assert!(!line_in_cfg_test_module(nested, 5));
+        // `modé` is one identifier, not the `mod` keyword.
+        let not_a_module = "#[cfg(test)]\nmodé {\n    const X: u32 = 1;\n}\n";
+        assert!(!line_in_cfg_test_module(not_a_module, 3));
     }
     fn macro_source_index(path: &Path, source: &str) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {

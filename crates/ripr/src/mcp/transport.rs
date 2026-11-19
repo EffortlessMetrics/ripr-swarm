@@ -16,7 +16,10 @@ use serde_json::json;
 use std::{
     io::{Error, Write},
     path::PathBuf,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -76,6 +79,36 @@ fn record_failure(failure: &Failure, reason: &'static str) {
     // Notify retains a permit even if that future is between polls.
     failure.wake.notify_one();
 }
+/// A termination signal ends an idle session (#14102).
+///
+/// The server entry turns the first SIGINT or SIGTERM into a flag that a
+/// running refresh attempt consumes as its cancellation. With no request
+/// admitted nothing else reads that flag: the transport would stay blocked on
+/// input, so a single `kill` or Ctrl-C could not stop the server, and the
+/// armed flag would cancel whichever refresh came next. The transport
+/// therefore treats a still-pending signal observed at its idle point (every
+/// earlier reply flushed, no request admitted) as a clean end of input.
+///
+/// The pair is the server interrupt flag and the wake of a receive blocked on
+/// input. An attempt that consumed the signal has already cleared the flag,
+/// so that signal never ends the session, and the wake permit it left behind
+/// is harmless: the flag alone decides. (A plain pair, so targets without a
+/// signal source carry no unconstructed type.)
+pub(super) type IdleInterrupt = (Arc<AtomicBool>, Arc<Notify>);
+/// Consumes the pending signal, as an attempt's terminal exchange does: the
+/// stop request ends this session only. A later `mcp::run` in the same
+/// process starts with a clear flag, and the repeated-signal native escape
+/// is re-armed by the next signal rather than left armed by this one.
+fn take_idle_interrupt(interrupt: Option<&IdleInterrupt>) -> bool {
+    interrupt.is_some_and(|(pending, _wake)| pending.swap(false, Ordering::SeqCst))
+}
+/// Resolves when a signal may be pending; never resolves without a source.
+async fn idle_interrupt_wake(interrupt: Option<&IdleInterrupt>) {
+    match interrupt {
+        Some((_pending, wake)) => wake.notified().await,
+        None => std::future::pending().await,
+    }
+}
 struct BoundedTransport<R, W> {
     /// Shared across handshake attempts so bytes already buffered from a
     /// pipelined frame survive a retried handshake (#5267).
@@ -85,6 +118,7 @@ struct BoundedTransport<R, W> {
     admission: Arc<Admission>,
     pending_protocol_error: Option<Vec<u8>>,
     writer_needs_drain: bool,
+    idle_interrupt: Option<IdleInterrupt>,
 }
 
 /// A transport-level protocol error with an explicit null id, pre-encoded
@@ -291,8 +325,17 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     self.writer_needs_drain = false;
                 }
             }
+            // The idle point: nothing admitted, every earlier reply flushed.
+            // A signal still pending here was not consumed by an attempt, so
+            // it asks the server itself to stop (#14102).
+            if take_idle_interrupt(self.idle_interrupt.as_ref()) {
+                return None;
+            }
             let read = tokio::select! {
                 _ = self.failure.wake.notified() => return None,
+                // Re-check the flag from the top: an attempt may have
+                // consumed the signal that left this wake behind.
+                _ = idle_interrupt_wake(self.idle_interrupt.as_ref()) => continue,
                 read = async {
                     let mut reader = self.reader.lock().await;
                     reader.read_frame().await
@@ -451,13 +494,44 @@ pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), St
         // the typed `workspace_unavailable` replies still carry the failure.
         let _ = writeln!(std::io::stderr(), "{warning}");
     }
-    serve(
+    serve_interruptible(
         tokio::io::stdin(),
         tokio::io::stdout(),
         status,
         analysis_root,
+        stdio_idle_interrupt()?,
     )
     .await
+}
+/// Bind the installed server interrupt flag to an async wake (Unix).
+///
+/// `None` when the entry installed no interrupts (an embedder that owns its
+/// own signal policy): the transport then keeps stdin EOF as its only exit.
+/// The streams share signal-hook's handler chain with the flag registration,
+/// which runs first, so the flag is already set when a wake is observed.
+#[cfg(unix)]
+fn stdio_idle_interrupt() -> Result<Option<IdleInterrupt>, String> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Some(pending) = crate::cli::interrupt::server_interrupt_flag() else {
+        return Ok(None);
+    };
+    let wake = Arc::new(Notify::new());
+    for kind in [SignalKind::interrupt(), SignalKind::terminate()] {
+        let mut stream = signal(kind).map_err(|error| {
+            format!("observe MCP termination signals: {error}; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version")
+        })?;
+        let wake = wake.clone();
+        let _forwarder = tokio::spawn(async move {
+            while stream.recv().await.is_some() {
+                wake.notify_one();
+            }
+        });
+    }
+    Ok(Some((pending, wake)))
+}
+#[cfg(not(unix))]
+fn stdio_idle_interrupt() -> Result<Option<IdleInterrupt>, String> {
+    Ok(None)
 }
 /// One operator-facing line when the workspace root did not resolve, so the
 /// failure is not visible only as `workspace_unavailable` in tool output.
@@ -485,11 +559,26 @@ fn startup_warning(status: &WorkspaceStatus) -> Option<String> {
          Tools will fail closed with workspace_unavailable until the server is restarted."
     ))
 }
+/// The session without a signal source: stdin EOF is its only clean exit.
+#[cfg(test)]
 pub(super) async fn serve<R, W>(
     reader: R,
     writer: W,
     status: WorkspaceStatus,
     analysis_root: Option<PathBuf>,
+) -> Result<(), String>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    serve_interruptible(reader, writer, status, analysis_root, None).await
+}
+pub(super) async fn serve_interruptible<R, W>(
+    reader: R,
+    writer: W,
+    status: WorkspaceStatus,
+    analysis_root: Option<PathBuf>,
+    idle_interrupt: Option<IdleInterrupt>,
 ) -> Result<(), String>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -516,6 +605,7 @@ where
             admission: admission.clone(),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            idle_interrupt: idle_interrupt.clone(),
         };
         let service = match server.serve(transport).await {
             Ok(service) => service,

@@ -214,8 +214,10 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
         .ok_or("clone")?;
     assert!(!Arc::ptr_eq(&old, &cloned));
     assert_eq!(cloned.shadow_computations(), 0);
+    // The replacement still spells `Widget` (without declaring it), so the
+    // answer is computed on the new snapshot rather than short-circuited.
     index.file_data_mut(Path::new(LIB)).ok_or("file")?.source =
-        "mod tests { #[test] fn subject() {} }".into();
+        "mod tests { use super::Widget; #[test] fn subject() {} }".into();
     let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
     assert!(!test_module_shadows_type(
         &test, source, "Widget", None, &index
@@ -227,6 +229,37 @@ fn module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers(
     assert!(!Arc::ptr_eq(&old, &new));
     assert_eq!(old.shadow_computations(), 1);
     assert_eq!(new.shadow_computations(), 1);
+    Ok(())
+}
+
+#[test]
+fn module_shadow_check_skips_the_snapshot_when_the_file_never_spells_the_name() -> Result<(), String>
+{
+    // #12947: a file that spells neither the name nor `r#name` cannot shadow
+    // it, so the answer comes without consulting (or parsing) its snapshot.
+    let source = "mod tests { struct Gadget; trait Render {} #[test] fn subject() {} }";
+    let index = index(&[(LIB, source)]);
+    let test = index.tests().iter().next().ok_or("subject")?.clone();
+    let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+    assert!(!test_module_shadows_type(
+        &test, source, "Widget", None, &index
+    ));
+    assert!(!test_module_shadows_trait(
+        &test, source, "Paint", None, &index
+    ));
+    let snapshot = index
+        .source_syntax
+        .get(&index, Path::new(LIB))
+        .ok_or("snapshot")?;
+    assert_eq!(snapshot.shadow_computations(), 0);
+    // A spelled name still takes the full check: both answers are positive.
+    assert!(test_module_shadows_type(
+        &test, source, "Gadget", None, &index
+    ));
+    assert!(test_module_shadows_trait(
+        &test, source, "Render", None, &index
+    ));
+    assert_eq!(snapshot.shadow_computations(), 2);
     Ok(())
 }
 
@@ -3929,23 +3962,41 @@ fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
             "#[test_case(4, 12)]\n#[serial_test::serial]",
         ),
         ("extern crate test_case;", "#[test_case::test_case(4, 12)]"),
+        // A `; "name"` suffix only names the generated test.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"four\")]",
+        ),
     ] {
         let tests = case_test(prelude, attributes, params, "weighs");
         assert_eq!(test_case_admitted(&tests).len(), 1, "{tests}");
     }
     for (prelude, attributes, parameters, name) in [
         // The `=> expected` form generates its own comparison; `matches`,
-        // `with`, descriptions and the other `test_case` attributes change
-        // what runs.
+        // `with` and the other `test_case` attributes change what runs.
         (
             "use test_case::test_case;",
             "#[test_case(4 => 12)]",
             params,
             "weighs",
         ),
+        // A name that could mark the generated test ignored, or a suffix
+        // that is not one string literal.
         (
             "use test_case::test_case;",
-            "#[test_case(4, 12 ; \"four\")]",
+            "#[test_case(4, 12 ; \"ignore four\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"inconclusive\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; four)]",
             params,
             "weighs",
         ),
@@ -6362,9 +6413,38 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         None
     );
 
+    // The body may invoke a trusted name or the wrapper itself: each
+    // resolves as the same call passed in the arguments would. httparse's
+    // `req!` forwards to its own second arm and asserts with `assert_eq!`.
+    assert_eq!(
+        refusal(&format!(
+            "{}{call}",
+            definition.replace("check(1);", "check(1); assert!(true);")
+        )),
+        None
+    );
+    let recursive = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        case! { $name, 1, |$v| $body }\n    };\n    ($name:ident, $want:expr, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { assert_eq!(1, $want); let check = |$v: u32| $body; check(1); }\n    };\n}\n";
+    assert_eq!(refusal(&format!("{recursive}{call}")), None);
+    // The body may call a trusted name that nothing rebinds.
+    let forwards = "macro_rules! case { ($n:ident) => { vec!($n); }; }\ncase!(assert_eq);\n";
+    assert_eq!(refusal(forwards), None);
+    // A macro called inside a function body between them defines nothing
+    // outside that body, so ordinary tests may sit between calls.
+    assert_eq!(
+        refusal(&format!(
+            "{definition}#[test]\nfn plain() {{ assert_eq!(1, 1); generate!(); }}\nfn build() -> Vec<u32> {{ vec![1] }}\n{call}"
+        )),
+        None
+    );
+
     // Each way the wrapper may still bind a name keeps the argument
     // ambiguous.
-    let bang = definition.replace("check(1);", "check(1); assert!(true);");
+    let bang = definition.replace("check(1);", "check(1); generate!();");
+    // A fragment named like a trusted macro still expands to any name.
+    let fragment_bang = definition
+        .replace("($name:ident,", "($name:ident, $assert_eq:ident,")
+        .replace("check(1);", "check(1); $assert_eq!();");
+    let path_bang = definition.replace("check(1);", "check(1); std::assert!(true);");
     let defines = definition.replace("#[test]", "macro_rules! inner { () => {} }\n#[test]");
     let imports = definition.replace("#[test]", "use other::*;\n#[test]");
     let attributed = format!("#[allow(unused)]\n{definition}");
@@ -6384,6 +6464,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         format!("{definition}crate::case!(one, |v| {{ assert_eq!(v, 1); }});\n"),
         // The definition invokes a macro or holds a binding word.
         format!("{bang}{call}"),
+        format!("{fragment_bang}case!(one, generate, |v| {{ assert_eq!(v, 1); }});\n"),
+        format!("{path_bang}{call}"),
+        // A body call of a trusted name that this file rebinds receives the
+        // arguments through a fragment, so its own scan never sees them:
+        // an imported `vec!` may define `assert_eq` from `$n`.
+        format!("use ext::vec;\n{forwards}"),
+        format!("{forwards}use ext::vec;\n"),
         format!("{defines}{call}"),
         format!("{imports}{call}"),
         // An attribute on the definition may change it.
@@ -6412,8 +6499,13 @@ fn a_local_wrapper_that_cannot_bind_a_name_keeps_assert_eq_trusted() {
         // A macro expanded between the definition and the call may emit a
         // shadowing `macro_rules! case`.
         format!("{definition}generate!();\n{call}"),
-        // Even a trusted name may be a local macro that emits one.
-        format!("{definition}fn build() -> Vec<u32> {{ vec![1] }}\n{call}"),
+        // Even a trusted name may be a local macro that emits one, and an
+        // `impl` block is no block expression: it does not confine one.
+        format!("{definition}vec! {{ 1 }}\n{call}"),
+        format!("{definition}impl S {{ generate!(); }}\n{call}"),
+        // A block confines what it defines only from calls outside it: a
+        // call later in the same block may see a shadowing `case`.
+        format!("{definition}fn setup() {{ generate!(); {call}}}\n"),
         // A module between them may carry a shadowing definition, even
         // without an outer attribute (`#![macro_use]` in its own file).
         format!("{definition}#[macro_use]\nmod shadow;\n{call}"),
@@ -6630,6 +6722,7 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let located = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7141,6 +7234,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     let probe = return_probe(owner(&index, "weight"), "x * 3");
     let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
         &probe,
+        Some(owner(&index, "weight")),
         test,
         &test.assertions[0],
         &index,
@@ -7149,6 +7243,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
         Some(AssertionRefusal::MacroBinding {
             name,
             site: Some((path, site)),
+            ..
         }) => Some((name, path, site)),
         _ => None,
     };
@@ -7178,6 +7273,7 @@ fn a_macro_binding_refusal_points_at_its_site() {
     assert_eq!(
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index
@@ -7400,15 +7496,17 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         "{} full-index passes for 96 lookups",
         syntax.workspace_scan_passes()
     );
-    // The production refusal path pays the same bound: a predicate probe's
-    // refused disclosures across both test roots add no third pass.
+    // The production refusal path pays the same bound: a return-value probe's
+    // refused disclosures across both test roots add no third pass. A
+    // predicate `assert_eq!` is admitted ungated (#14537), so it exercises no
+    // refusal site; the return family still takes the gate.
     let owner = index
         .functions()
         .iter()
         .find(|function| function.name == "gate" && function.file == Path::new(LIB));
     assert!(owner.is_some(), "the owner must be indexed from {LIB}");
     let owner = owner.unwrap_or(index.functions().at(0));
-    let probe = predicate_probe(owner, "10 <= value");
+    let probe = return_probe(owner, "10 <= value");
     for tests_path in [TESTS, CONVERGENCE_OTHER_TESTS] {
         let test = index
             .tests()
@@ -7416,11 +7514,17 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
             .find(|test| test.file == Path::new(tests_path));
         assert!(test.is_some(), "{tests_path} must be indexed");
         let Some(test) = test else { continue };
-        let refusal = syntax.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let refusal = syntax.equality_assertion_refusal(
+            &probe,
+            Some(owner),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         assert!(
             matches!(
                 &refusal,
-                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+                Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)), .. })
                     if name == "assert_eq" && path.as_path() == Path::new(CONVERGENCE_GLOB)
             ),
             "{tests_path}: {refusal:?}"
@@ -8912,6 +9016,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                 },
             )
         }),
+        placement_include: None,
     }
 }
 
@@ -9102,6 +9207,7 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         match OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9178,6 +9284,7 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         let probe = return_probe(owner(&index, "weight"), "x * 3");
         OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             &test,
             &test.assertions[0],
             &index,
@@ -9261,9 +9368,16 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
     let mut lines = Vec::new();
     for at in 0..2 {
         let test = index.tests().at(at);
-        let memoized = shared.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let memoized = shared.equality_assertion_refusal(
+            &probe,
+            Some(owner(&index, "weight")),
+            test,
+            &test.assertions[0],
+            &index,
+        );
         let fresh = OwnerPinSyntax::default().equality_assertion_refusal(
             &probe,
+            Some(owner(&index, "weight")),
             test,
             &test.assertions[0],
             &index,
@@ -9339,6 +9453,111 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         ("mod global;\nitems!();\npub use global::*;\n", false),
+        // #14116: std's `thread_local!` and `compile_error!` emit no module,
+        // so they do not stop the file's own module glob being local.
+        (
+            "mod global;\nuse global::*;\nthread_local! { static COUNT: u8 = 0; }\n",
+            true,
+        ),
+        (
+            "mod global;\nstd::thread_local! { static COUNT: u8 = 0; }\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\ncompile_error!(\"unsupported\");\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nuse global::*;\nmod tests { use super::*; }\nthread_local! { static C: u8 = 0; }\n",
+            true,
+        ),
+        // A call that spells the root, a non-std path, or a file that may
+        // rebind the macro's name keeps the refusal.
+        (
+            "mod global;\nthread_local! { static global: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\ndep::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n::std::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "macro_rules! thread_local { ($($t:tt)*) => {}; }\nmod global;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod helpers {\n    #[macro_export]\n    macro_rules! thread_local { () => { extern crate dep as global; }; }\n}\n#[cfg(any())]\nmod global;\nuse global::*;\nthread_local!();\n",
+            false,
+        ),
+        (
+            "fn helper() {\n    #[macro_export]\n    macro_rules! compile_error { ($($t:tt)*) => {}; }\n}\nmod global;\nuse global::*;\ncompile_error!(\"no\");\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::cells as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "#[macro_use]\nextern crate dep;\nmod global;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nmod other;\nuse other::*;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        // `core` exports neither macro, and a `std::` call needs `std` unbound.
+        (
+            "mod global;\ncore::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep as std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nmod std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep as std;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nmacro thread_local($($t:tt)*) {}\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[macro_use]\nmod macros;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\ncompile_error!(global);\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nstd::compile_error!(\"unsupported\");\nuse global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nextern crate dep as std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::{self as std};\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep::r#std;\nstd::thread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate dep as thread_local;\nthread_local! { static C: u8 = 0; }\nuse global::*;\n",
+            false,
+        ),
         // Another item or import may bind the root under a `cfg` the scan
         // does not evaluate, or the module may hold files it cannot see.
         (
@@ -14221,6 +14440,81 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     Ok(())
 }
 
+/// The workspace constant table parses every file that names `const` or
+/// `static`. Off the pool (the cold single-seam review stage) that per-file
+/// work fans out over rayon instead of running the whole corpus on one
+/// thread; on a pool worker it stays in line under the #8756 memo-lock guard.
+/// Either way the table is folded in index file order, so a name declared in
+/// several files lists them in the same order, and files without either
+/// keyword are skipped before any parse.
+#[test]
+fn the_workspace_constant_table_fans_out_off_the_pool_with_the_same_table() -> Result<(), String> {
+    let index = index(&[
+        (
+            "src/a.rs",
+            "pub const LIMIT: u32 = 3;\npub static NAME: &str = \"a\";\n",
+        ),
+        (
+            "src/b.rs",
+            "pub const LIMIT: u64 = 4;\nthread_local! { static T: u8 = 1; }\n",
+        ),
+        ("src/c.rs", "pub fn plain() -> u32 { 1 }\n"),
+        (
+            "src/d.rs",
+            "pub const fn broken( -> u32 { const LIMIT: u8 = 5; }\n",
+        ),
+    ]);
+    let table_and_decision = || {
+        LAST_SCAN_FAN_OUT.with(|last| last.set(None));
+        let table = workspace_constant_table(&index);
+        (table, LAST_SCAN_FAN_OUT.with(std::cell::Cell::get))
+    };
+
+    let (off_pool, decision) = table_and_decision();
+    assert_eq!(
+        decision,
+        Some(true),
+        "the per-file constant scan from a thread outside the pool must fan out"
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (on_pool, decision) = pool.install(table_and_decision);
+    assert_eq!(
+        decision,
+        Some(false),
+        "the per-file constant scan on a pool worker must run in line"
+    );
+    assert_eq!(off_pool, on_pool, "fan-out must not change the table");
+
+    let files_of = |name: &str| -> Vec<PathBuf> {
+        off_pool
+            .get(name)
+            .map(|rows| rows.iter().map(|(path, _, _)| path.clone()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        files_of("LIMIT"),
+        vec![
+            PathBuf::from("src/a.rs"),
+            PathBuf::from("src/b.rs"),
+            PathBuf::from("src/d.rs"),
+        ],
+        "rows keep index file order, including the text-read unparsed file"
+    );
+    assert_eq!(files_of("NAME"), vec![PathBuf::from("src/a.rs")]);
+    assert_eq!(files_of("T"), vec![PathBuf::from("src/b.rs")]);
+    assert!(
+        off_pool
+            .values()
+            .flatten()
+            .all(|(path, _, _)| path != Path::new("src/c.rs")),
+        "a file without const or static contributes nothing"
+    );
+    Ok(())
+}
+
 /// #9211: the first workspace macro-site lookup on a classify worker ran the
 /// whole-corpus scan in line while holding the memo lock, so every sibling
 /// worker slept on it. Priming pays the scan once, fanned out over the pool
@@ -14292,6 +14586,89 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         }
     }
     Ok(())
+}
+
+/// #13754: the workspace `matches` binding-site scan skips files whose
+/// stored candidates rule `matches` out, still scans a file without stored
+/// candidates, finds exactly the sites an unfiltered scan finds, and is
+/// shared by every syntax instance over one index.
+#[test]
+fn the_matches_site_scan_skips_ruled_out_files_and_is_shared_per_index() {
+    let files = [
+        (
+            "src/lib.rs",
+            "pub fn parse(n: u8) -> Option<u8> { (n > 0).then_some(n) }\n",
+        ),
+        (
+            "src/rebind.rs",
+            "macro_rules! matches { ($e:expr) => { true }; }\n",
+        ),
+        ("src/glob.rs", "use other::*;\npub fn f() {}\n"),
+        (
+            "tests/it.rs",
+            "#[test]\nfn parses() { assert!(matches!(demo::parse(1), Some(1))); }\n",
+        ),
+    ];
+    let mut index = index(&files);
+    // A file with no stored candidates (as a lexical fallback leaves it)
+    // must still be scanned: its glob import may bind every name.
+    let unparsed = PathBuf::from("src/unparsed.rs");
+    let mut facts = summarize_file(unparsed.clone(), "use another::*;\n".to_string());
+    facts.macro_candidates = None;
+    index.insert_file_only(unparsed.clone(), facts);
+    let candidates = |path: &str| {
+        index
+            .files()
+            .get(Path::new(path))
+            .and_then(|facts| facts.macro_candidates.as_deref().cloned())
+    };
+    assert!(
+        candidates("src/lib.rs").is_some_and(|c| !c.may_bind("matches")),
+        "fixture premise: src/lib.rs is ruled out by its candidates"
+    );
+    assert!(
+        candidates("src/rebind.rs").is_some_and(|c| c.may_bind("matches")),
+        "fixture premise: the local definition may bind matches"
+    );
+
+    let unfiltered: Vec<(PathBuf, MacroBindingSite)> = index
+        .files()
+        .iter()
+        .flat_map(|(file, facts)| {
+            trusted_macro_binding_sites(
+                &facts.source,
+                index.macro_scope_crates(),
+                &assertion_context_macros(),
+                &|_, _| false,
+                &|_| false,
+            )
+            .into_iter()
+            .filter(|(name, _)| name == "matches")
+            .map(|(_, site)| (file.clone(), site))
+            .collect::<Vec<_>>()
+        })
+        .collect();
+    let sites = OwnerPinSyntax::matches_binding_sites(&index).to_vec();
+    assert_eq!(sites, unfiltered, "the prefilter drops no site");
+    for file in ["src/rebind.rs", "src/glob.rs", "src/unparsed.rs"] {
+        assert!(
+            sites.iter().any(|(path, _)| path == Path::new(file)),
+            "{file} must report a matches site: {sites:?}"
+        );
+    }
+
+    // Shared per index: the memo is the index's, and a second instance
+    // reads the same slice instead of scanning again.
+    let shared = index
+        .call_identity_memos
+        .matches_binding_sites
+        .get()
+        .map(Vec::as_ptr);
+    assert_eq!(
+        shared,
+        Some(OwnerPinSyntax::matches_binding_sites(&index).as_ptr()),
+        "the scan is memoized on the index"
+    );
 }
 
 #[test]
@@ -14503,6 +14880,17 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(file_renames_to(&other, "Fxo"));
         assert!(!file_renames_to(&renames, "Fxo"));
     }
+}
+
+/// #14089: the word before `[` was measured with an ASCII-only predicate, so
+/// a non-ASCII identifier char was the char found and the slice started one
+/// byte later, inside it. The identifier now stays whole.
+#[test]
+fn index_operand_reads_a_non_ascii_indexed_place() {
+    assert!(index_operand("größe["));
+    assert!(index_operand("values["));
+    assert!(!index_operand("return ["));
+    assert!(!index_operand("grö ["));
 }
 
 /// #13703: a file read proves the roots of only the rooted spellings the

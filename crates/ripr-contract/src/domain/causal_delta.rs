@@ -711,4 +711,36 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn an_unknown_gap_on_either_side_alone_keeps_the_comparison_unknown() {
+        let unknown = || Some(state(GapState::Unknown, OracleStrength::Strong));
+        let known = || Some(state(GapState::Actionable, OracleStrength::Strong));
+        for (base, head, basis) in [
+            (None, unknown(), vec![AttributionBasis::BaseItemAbsent]),
+            (unknown(), None, vec![AttributionBasis::HeadItemAbsent]),
+        ] {
+            let delta = compare_fixture_delta("gap:one", true, true, base, head);
+            assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+            assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+            assert_eq!(delta.attribution_basis, basis);
+        }
+        // Control: the same shapes with a known gap state are attributed.
+        let introduced = compare_fixture_delta("gap:one", true, true, None, known());
+        assert_eq!(
+            introduced.delta_attribution,
+            DeltaAttribution::IntroducedByChange
+        );
+        let resolved = compare_fixture_delta("gap:one", true, true, known(), None);
+        assert_eq!(
+            resolved.delta_attribution,
+            DeltaAttribution::ResolvedByChange
+        );
+        // One unknown side beside a known side of the same identity.
+        for (base, head) in [(unknown(), known()), (known(), unknown())] {
+            let delta = compare_fixture_delta("gap:one", true, true, base, head);
+            assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+            assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+        }
+    }
 }

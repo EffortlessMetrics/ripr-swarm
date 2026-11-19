@@ -111,7 +111,20 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
             .to_string()
     };
     let full_findings = full["findings"].as_array().cloned().unwrap_or_default();
-    let terse_findings = terse["findings"].as_array().cloned().unwrap_or_default();
+    // Hoisted related-test cores merge back first (#13673); legend codes
+    // are expanded below.
+    let table = terse
+        .get("related_test_table")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    assert!(
+        table >= 1,
+        "the fixture repeats test rows across findings, so a table is emitted: {terse_text}"
+    );
+    let terse_findings = crate::output::json::restore_related_test_rows(&terse)?
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(full_findings.len(), terse_findings.len());
     assert!(
         full_findings.len() >= 3,
@@ -158,6 +171,22 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
                 .collect();
             assert_eq!(expanded, original, "{key} did not round-trip");
         }
+        // Related-test oracle lines and `why` sentences expand back (#13673).
+        let mut restored_rows = terse_finding["related_tests"].clone();
+        if let Some(rows) = restored_rows.as_array_mut() {
+            for row in rows {
+                for key in ["oracle", "why"] {
+                    if let Some(text) = row.get(key).and_then(serde_json::Value::as_str) {
+                        let text = expand(text);
+                        row[key] = serde_json::Value::String(text);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            full_finding["related_tests"], restored_rows,
+            "related_tests did not round-trip"
+        );
     }
     // Head identity fields are untouched.
     for key in [
@@ -206,7 +235,12 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
     let declared = schema["properties"]
         .as_object()
         .ok_or("schema properties")?;
-    for key in ["rendering", "evidence_legend", "dropped_aliases"] {
+    for key in [
+        "rendering",
+        "evidence_legend",
+        "dropped_aliases",
+        "related_test_table",
+    ] {
         assert!(declared.contains_key(key), "schema must declare {key}");
         assert!(terse.get(key).is_some(), "terse document must carry {key}");
     }

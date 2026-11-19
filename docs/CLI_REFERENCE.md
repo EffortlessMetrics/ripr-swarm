@@ -54,8 +54,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -472,7 +472,11 @@ Options:
                        close (every started test ends, every announced suite
                        finishes), then records the normalized result with the
                        attempt as a caller-reported claim.
-                       Optional; it does not gate finish yet. Anything else is
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout. A finish that
                        stops after the receipt evaluation began shows as
@@ -708,8 +712,11 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
+fills a boundary input when the changed comparison names one, builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
@@ -1252,6 +1259,14 @@ otherwise target/ripr/cache under the Cargo workspace root).
             version of this status report, not of the on-disk cache layers
             (those carry their own version in their directory names).
 
+`reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
+fact entries (Rust, TypeScript, Python) that the next run writing facts to a
+usable cache removes: entries from older cache schemas, and entries from
+other ripr builds other than the two most recently used and any that served
+a cache hit in the last 7 days. Kept entries, including any newer cache schema an editor server
+on another ripr version still reads, are not counted. They are a subset of
+the recognized-layer totals.
+
 `entry_count` and `total_size_bytes` count only the recognized ripr cache
 layer directories, the same set `ripr cache clear` removes; files anywhere
 else under the cache root — including a regular file wearing a layer name —
@@ -1431,9 +1446,10 @@ Options:
                            or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
                            Applied before the diff-size limits, so they measure
                            only the chosen files. Changed files outside the
-                           scope are named in a language_scope_unsupported
-                           limitation and have no finding: the outcome is
-                           partial_with_limitations, never clean. A scope that
+                           scope are named in a requested_scope_excluded
+                           scope note and have no finding; the outcome stays
+                           complete. Built-in generated skips still make the
+                           run partial. A scope that
                            leaves no changed file is an error. Not supported
                            for repo-scoped formats. A bare PATH argument
                            (`ripr check src/lib.rs`) is the same as --path.
@@ -1906,10 +1922,12 @@ Options:
                    verify document) beside the stderr prose and the same
                    exit code. Refusals that stop before the check (no
                    current attempt, several attempts, an ended attempt, a
-                   blocked baseline, an unanchored root) and operational
-                   errors before the verify step keep stdout empty. An
-                   unknown flag or stray argument prints the `cli_refusal`
-                   JSON document on stdout beside its exit 2 stderr prose.
+                   blocked baseline, an unanchored root) print the
+                   `cli_refusal` JSON document with their reason `code`
+                   and `disposition`; operational errors before the verify
+                   step keep stdout empty. An unknown flag or stray
+                   argument prints the `cli_refusal` JSON document on
+                   stdout beside its exit 2 stderr prose.
   --quiet          Drop progress lines and `wrote <path>` lines from stderr.
                    Refusals and the result stay. `RIPR_QUIET` does the same.
 
@@ -2480,6 +2498,7 @@ Check options:
   --base REV                          Required. Base revision of the change, for example origin/main.
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
+  --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
@@ -2539,6 +2558,14 @@ the visible-only default records evidence without blocking, after a completed
 evaluation. Missing-input usage errors and `config_error` reports stay quiet.
 An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
 
+Reading the status: visible-only never blocks on findings, so a completed
+visible-only run reads `advisory` (or `blocked` on an exception-policy
+violation), including a run that recorded nothing; the Markdown report says so
+when that is the case. `pass` is reachable only in an enforcing mode
+(acknowledgeable, baseline-check, calibrated-gate). In visible-only, read the
+`summary` counts and `warnings`, not `status`, to tell whether anything was
+found.
+
 Examples:
   ripr gate
   ripr gate evaluate --pr-guidance PATH
@@ -2592,8 +2619,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -3827,9 +3854,10 @@ Options:
   --json           Print the repair packet JSON, including
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
-                   status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes. An unknown flag prints the
-                   `cli_refusal` JSON document on stdout beside its exit 2
+                   status JSON. A refusal keeps its stderr prose and exit
+                   code and prints the `cli_refusal` JSON document on
+                   stdout with its reason `code` and `disposition`. An
+                   unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
@@ -3956,8 +3984,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 The CI summary prints the generated workflow's step summary as Markdown on
 stdout, from the artifacts earlier steps wrote. It reads only; it never runs
@@ -4035,8 +4065,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 Examples:
   ripr reports ci-packet --root .
@@ -4301,7 +4333,7 @@ Examples:
 ```text
 Write advisory PR test guidance on changed lines (does not post to GitHub).
 
-Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--out PATH] [--timeout-ms MS]
+Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--suppression-policy PATH] [--out PATH] [--timeout-ms MS]
 
 Options:
   --root PATH    Workspace root. Defaults to current directory.
@@ -4314,10 +4346,20 @@ Options:
   --check-output PATH
                  Optional producer-generated `ripr check --json` artifact.
                  Its typed analysis outcome is projected without rerunning the
-                 producer; incomplete input remains incomplete guidance.
+                 producer; incomplete input remains incomplete guidance. Findings
+                 that artifact marks `suppressed` stay in the `suppressed` array
+                 (not `comments`), so `gate evaluate` does not block on them.
+  --suppression-policy PATH
+                 Explicit opt-in suppression policy (same file and semantics as
+                 `ripr check --suppression-policy`, root-relative when not
+                 absolute; a missing or malformed file is an error). Matching
+                 seams move to the `suppressed` array with reason
+                 `suppressed_by_policy`, which `gate evaluate` treats as
+                 non-blocking. Not combinable with `--gap-ledger`. The default
+                 `.ripr/suppressions.toml` is never applied implicitly.
   --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
   --timeout-ms MS
-                 Cooperative analysis budget (default 120000ms), checked at
+                 Cooperative analysis budget (default 600000ms), checked at
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
@@ -4329,7 +4371,7 @@ Environment variables:
                                  owner indexing or loading the workspace corpus.
                                  Receipt status is failed with the named
                                  limitation; no guidance artifacts are published.
-                                 Default: 1200. Must be a positive integer.
+                                 Default: 5000. Must be a positive integer.
   RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
                                  Byte budget for those inputs plus changed diff
                                  text. Same named refusal; default: 268435456
