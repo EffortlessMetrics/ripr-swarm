@@ -1,7 +1,7 @@
 # The integer whole-body constant-tail credit asks the shared base-owner
 # gate decision before any direct-return edge completes (#15104).
 [[extend]]
-id = "RIPR-SPEC-0001"
+id = "RIPR-SPEC-0197"
 tests = [
   "crates/ripr/src/analysis/diff/base_owner.rs::tests::owner_swap_reads_new_side_gates_and_twins",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_plain_integer_constant_tail_keeps_its_credit",

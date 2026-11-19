@@ -1559,6 +1559,21 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+A `cfg` gate may compile the changed owner out for a twin the related tests
+run instead (#15104). Before any direct-return witness completes for a
+changed whole-body constant tail, the classifier asks
+`diff::owner_may_be_swapped`, the new-side half of the shared base-owner gate
+decision: a `cfg`/`cfg_attr` on the function, an enclosing item or the file,
+a same-path same-name twin, or a gated or changed module declaration on the
+owner's chain. When it answers yes, or when the source or the module
+declarations cannot be read, no witness completes and propagation reads
+`unknown` (`cfg_gated_owner`), so the finding reads no stronger than
+`propagation_unknown`. Ungated owners, an owner beside an unrelated
+`cfg(test)` module and a same-named function on another path keep the
+credit. Limit: a `#[path]` module declaration anywhere in the workspace is
+read as able to retarget any owner, so it withholds this credit
+workspace-wide until `#[path]` targets are resolved per owner.
+
 ### Format owner tails (#6578)
 
 `format_tail_witness` in `classify/propagation_witness.rs` completes a

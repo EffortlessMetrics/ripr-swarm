@@ -20342,6 +20342,30 @@
           "class": "exposed"
         }
       ]
+    },
+    {
+      "id": "rust_constant_tail_cfg_twin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_constant_tail_cfg_twin",
+      "vector": "a_cfg_gated_owner_whose_twin_the_test_runs_changes_its_constant_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
     }
   ]
 }
