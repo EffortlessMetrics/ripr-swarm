@@ -121,9 +121,11 @@ The boolean-owner step is covered by
 (a compound, wrapped, method-receiver, renamed, `debug_assert!` or
 `assert_ne!` row, a non-`bool` owner, a non-weak class, a predicate probe,
 no owner, no rows, an unreadable oracle, and a proximity-only row). It
-re-blesses `fixtures/rust_predicate_appended_int_arm_old_input` and the other
-goldens it reaches, each confined to the `recommended_next_step` string and
-its human rendering.
+re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,
+`fixtures/rust_predicate_appended_str_arm_false_side_only`,
+`fixtures/rust_nested_use_owner` and `fixtures/guard_operand_dropped_agreement`,
+each confined to the `recommended_next_step` / `suggested_next_action` string
+and its human rendering.
 
 ## Non-Goals
 
