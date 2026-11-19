@@ -30,6 +30,7 @@ use ra_ap_syntax::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod dispatch_target;
 mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
@@ -5984,79 +5985,116 @@ fn text_resolves_method_to_type(
     scope_body: &str,
     whole_body: bool,
 ) -> bool {
-    let bytes = text.as_bytes();
+    method_call_sites(text, method).any(|at| {
+        call_site_resolves_to_type(
+            text,
+            at,
+            method,
+            impl_type,
+            impl_trait,
+            body_for_lets,
+            scope_body,
+            whole_body,
+        )
+    })
+}
+
+/// Byte offsets of every `method` token in `text` at an identifier boundary
+/// and followed (after whitespace) by `(`: each spelling that may call it.
+fn method_call_sites<'t>(text: &'t str, method: &'t str) -> impl Iterator<Item = usize> + 't {
     let mut search = 0usize;
-    while let Some(relative) = text[search..].find(method) {
-        let at = search + relative;
-        let after = at + method.len();
-        // A binding is read only from `let`s before this call, so a later
-        // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
-        // line has no position in the body, so it does not consult `let`s.
-        // Only `let`s finished (`;`) before the call count, so the statement
-        // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
-        let body_for_lets = if whole_body {
-            body_for_lets
-                .get(..at)
-                .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
-            if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
-                let qualifier = ident_ending_at(text, at - 2);
-                if qualifier.is_some_and(|ty| ty == impl_type) {
-                    return true;
-                }
-                // `<f64 as Render>::render(..)` names the impl outright;
-                // `Render::render(&-0.0f64)` dispatches on its first
-                // argument's type. A raw call line is unmasked, so a form
-                // quoted in a string or comment there must not count: only
-                // the masked body reads these.
-                if whole_body
-                    && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
-                        || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
-                            && first_argument_has_type(
-                                text,
-                                after,
-                                impl_type,
-                                body_for_lets,
-                                text,
-                                scope_body,
-                                at,
-                            )))
-                {
-                    return true;
-                }
-            } else if at > 0 && bytes[at - 1] == b'.' {
-                if let Some(recv) = ident_ending_at(text, at - 1) {
-                    if recv == impl_type
-                        // `1.5f64.m()` reads only the fragment after the `.`
-                        // (`5f64`), which still carries the literal's suffix.
-                        // A raw call line is unmasked, so a literal quoted in
-                        // a string or comment there must not type a receiver.
-                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type_at(
-                            body_for_lets,
-                            text,
-                            scope_body,
-                            at,
-                            recv,
-                            impl_type,
-                        )
-                    {
-                        return true;
-                    }
-                } else if whole_body
-                    && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
-                {
-                    return true;
-                }
+    std::iter::from_fn(move || {
+        if method.is_empty() {
+            return None;
+        }
+        while let Some(relative) = text.get(search..)?.find(method) {
+            let at = search + relative;
+            let after = at + method.len();
+            search = at + method.chars().next().map_or(1, char::len_utf8);
+            if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
+                return Some(at);
             }
         }
-        search = at + method.chars().next().map_or(1, char::len_utf8);
+        None
+    })
+}
+
+/// Whether the call of `method` spelled at byte `at` of `text` resolves its
+/// receiver (or its trait-qualified first argument) to `impl_type`, as
+/// [`text_resolves_method_to_type`] reads one site.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site of text_resolves_method_to_type, which takes the same inputs"
+)]
+fn call_site_resolves_to_type(
+    text: &str,
+    at: usize,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+    body_for_lets: &str,
+    scope_body: &str,
+    whole_body: bool,
+) -> bool {
+    let bytes = text.as_bytes();
+    let after = at + method.len();
+    // A binding is read only from `let`s before this call, so a later
+    // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
+    // line has no position in the body, so it does not consult `let`s.
+    // Only `let`s finished (`;`) before the call count, so the statement
+    // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
+    let body_for_lets = if whole_body {
+        body_for_lets
+            .get(..at)
+            .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
+            .unwrap_or("")
+    } else {
+        ""
+    };
+    if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
+        let qualifier = ident_ending_at(text, at - 2);
+        if qualifier.is_some_and(|ty| ty == impl_type) {
+            return true;
+        }
+        // `<f64 as Render>::render(..)` names the impl outright;
+        // `Render::render(&-0.0f64)` dispatches on its first
+        // argument's type. A raw call line is unmasked, so a form
+        // quoted in a string or comment there must not count: only
+        // the masked body reads these.
+        whole_body
+            && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
+                || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
+                    && first_argument_has_type(
+                        text,
+                        after,
+                        impl_type,
+                        body_for_lets,
+                        text,
+                        scope_body,
+                        at,
+                    )))
+    } else if at > 0 && bytes[at - 1] == b'.' {
+        if let Some(recv) = ident_ending_at(text, at - 1) {
+            recv == impl_type
+                // `1.5f64.m()` reads only the fragment after the `.`
+                // (`5f64`), which still carries the literal's suffix.
+                // A raw call line is unmasked, so a literal quoted in
+                // a string or comment there must not type a receiver.
+                || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
+                || let_binding_mentions_type_at(
+                    body_for_lets,
+                    text,
+                    scope_body,
+                    at,
+                    recv,
+                    impl_type,
+                )
+        } else {
+            whole_body && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
+        }
+    } else {
+        false
     }
-    false
 }
 
 /// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
@@ -8477,6 +8515,14 @@ fn owner_call_relation_reason_gated(
             {
                 return RelationReason::WeakTokenSubstring;
             }
+            // #15273: a default method never runs for a type whose impl
+            // overrides it. When every call in the test resolves to such a
+            // type, the name match reaches only the overrides.
+            if indexed_same_name_count > 1
+                && dispatch_target::every_call_runs_an_override(test, owner, same_name_ids)
+            {
+                return RelationReason::WeakTokenSubstring;
+            }
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
@@ -8562,6 +8608,11 @@ fn owner_call_relation_reason_gated(
     // and trait, and refused a second `fmt` for the same pair.
     if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
+    }
+    // #15273: an inherent `area(&self)` on the impl's own type takes
+    // `Square(3).area()` before the trait impl does.
+    if dispatch_target::inherent_twin_takes_every_call(test, owner, same_name_ids, index) {
+        return RelationReason::WeakTokenSubstring;
     }
     let impl_trait = owner_dispatch_trait(owner);
     if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
