@@ -33,9 +33,12 @@
 
 use super::assertion_selection::PythonAssertionFocus;
 use super::exception_variant::{
-    builtin_exception_parent, expected_classes, known_not_subclass, raised_type_name,
+    builtin_exception_parent, expected_classes, known_not_subclass, old_class_outside,
+    raised_type_name,
 };
-use super::related_tests::{PythonRelatedCandidate, owner_module_paths};
+use super::related_tests::{
+    PythonRelatedCandidate, import_source_module_matches_owner, module_name_identifies_owner_for,
+};
 use super::source_facts::parse_module_result;
 use super::{PythonAssertion, PythonOwner};
 use crate::domain::{OracleKind, OracleStrength};
@@ -125,8 +128,11 @@ pub(super) fn python_message_pin_gap(
 /// related error assertions all fail to name `New` exactly (#15356). A
 /// `pytest.raises(Base, match=...)` / `assertRaisesRegex(Base, ...)` passes
 /// for the old and the new class alike when `New` derives from `Base` (or is
-/// `Base`), so it pins only the base class. Only an assertion expecting exactly
-/// `New`, with the name resolving to the owner's own class (the same import, a
+/// `Base`), so it pins only the base class. Residual: an imported `New` is not
+/// read, so an alias of the old builtin in its own module (`New = ValueError`)
+/// would still be credited. Only an assertion expecting exactly
+/// `New` (and the old class lying outside `New`'s subtree, so the assertion
+/// fails before the edit), with the name resolving to the owner's own class (the same import, a
 /// plain import from the owner's module, or an untouched builtin), is read as
 /// discriminating; any other shape, a tuple, the old type, a base class or
 /// `Exception` keeps the finding weak. `None` when the raised type does not
@@ -146,7 +152,6 @@ pub(super) fn python_raised_type_pin_gap(
     }
     let owner_import = owner.imports.iter().find(|import| import.alias == new_type);
     let builtin = builtin_exception_parent(&new_type).is_some();
-    let owner_modules = owner_module_paths(&owner.file);
     let mut seen = false;
     for candidate in related_candidates
         .iter()
@@ -167,15 +172,25 @@ pub(super) fn python_raised_type_pin_gap(
                 && !rebinding.rebinds(&new_type)
                 && match (owner_import, test_import) {
                     (Some(own), Some(theirs)) => {
+                        // The same plain absolute import in both modules; an
+                        // unresolved relative spelling or a test-local package
+                        // of that root never compares equal.
                         own.imported == theirs.imported
                             && !own.source_module.is_empty()
+                            && !own.source_module.starts_with('.')
                             && own.source_module == theirs.source_module
+                            && module_name_identifies_owner_for(
+                                owner,
+                                &theirs.source_module,
+                                &test.file,
+                            )
                     }
                     (Some(_), None) => false,
                     (None, Some(theirs)) => {
                         !builtin
                             && theirs.imported == new_type
-                            && owner_modules.contains(&theirs.source_module)
+                            && !theirs.source_module.starts_with('.')
+                            && import_source_module_matches_owner(theirs, owner, &test.file)
                     }
                     (None, None) => {
                         builtin
@@ -183,7 +198,16 @@ pub(super) fn python_raised_type_pin_gap(
                             && test.imports.iter().all(|import| import.imported != "*")
                     }
                 };
-            if exact && resolves {
+            if exact
+                && resolves
+                && old_class_outside(
+                    owner_source,
+                    &old_type,
+                    &new_type,
+                    owner_import.is_some(),
+                    &owner.imports,
+                )
+            {
                 return None;
             }
             // An exact old-class expectation the new class is statically known

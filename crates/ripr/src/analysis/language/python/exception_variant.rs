@@ -395,6 +395,60 @@ fn stale_pins(
     Some(pins)
 }
 
+/// Whether an assertion expecting exactly `new` fails against the OLD raise
+/// (#15356): the old class is neither `new` nor one of its subclasses, so
+/// `pytest.raises(new)` passes after the edit but not before. A resolvable
+/// `new` (builtin or defined once in the module) needs the old class provably
+/// outside its subtree. An imported `new` cannot be read here; an untouched
+/// builtin old class cannot derive from a user class, which leaves only an
+/// alias of that builtin in the class's own module (`New = ValueError`) as a
+/// documented residual.
+pub(super) fn old_class_outside(
+    source: Option<&str>,
+    old: &str,
+    new: &str,
+    new_imported: bool,
+    owner_imports: &[super::PythonImport],
+) -> bool {
+    if old == new {
+        return false;
+    }
+    let Some(source) = source else {
+        // No module text: only two builtins have a fixed hierarchy.
+        return !new_imported
+            && builtin_chain(old).is_some_and(|chain| !chain.contains(&new))
+            && builtin_chain(new).is_some();
+    };
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let facts = ModuleBindingFacts::of(source, &module.body);
+    if new_imported {
+        return builtin_exception_parent(old).is_some()
+            && owner_imports.iter().all(|import| import.alias != old)
+            && facts.unbound(old);
+    }
+    // Both names must read as the one class they spell: an untouched builtin
+    // or a class defined once in the module.
+    let reads = |name: &str| facts.unbound(name) || facts.bound_once(name);
+    reads(old)
+        && reads(new)
+        && exception_ancestry(&module.body, &facts, new, 0).is_some()
+        && exception_ancestry(&module.body, &facts, old, 0)
+            .is_some_and(|ancestry| !ancestry.iter().any(|name| name == new))
+}
+
+/// The builtin class and its ancestors up to `BaseException`.
+fn builtin_chain(name: &str) -> Option<Vec<&str>> {
+    let mut chain = vec![name];
+    let mut current = name;
+    while current != "BaseException" {
+        current = builtin_exception_parent(current)?;
+        chain.push(current);
+    }
+    Some(chain)
+}
+
 /// `Some(true)` only when `new` is statically known not to be `old` or a
 /// subclass of it; `None` when either hierarchy cannot be read exactly.
 pub(super) fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {

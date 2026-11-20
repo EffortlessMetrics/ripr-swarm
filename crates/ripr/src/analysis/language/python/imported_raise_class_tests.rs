@@ -5,7 +5,7 @@
 use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::owners_tests::{extract_owners, extract_tests};
 use crate::domain::{ExposureClass, Finding, StaticLimitKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 type Check = Result<(), String>;
 
@@ -28,8 +28,23 @@ fn tests_with(expected: &str) -> String {
 }
 
 fn classify(source: &str, tests: &str, old: Option<&str>, new: &str) -> Result<Finding, String> {
+    classify_in(source, tests, old, new, &[])
+}
+
+/// `workspace` lists extra workspace files that may shadow the owner's module.
+fn classify_in(
+    source: &str,
+    tests: &str,
+    old: Option<&str>,
+    new: &str,
+    workspace: &[&str],
+) -> Result<Finding, String> {
     let file = Path::new("src/verlib/version.py");
-    let owners = extract_owners(file, source);
+    let mut owners = extract_owners(file, source);
+    if !workspace.is_empty() {
+        let files = workspace.iter().map(PathBuf::from).collect::<Vec<_>>();
+        super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    }
     let tests = extract_tests(Path::new("tests/test_version.py"), tests);
     if !owners.iter().any(|owner| owner.name == "parse_release") || tests.is_empty() {
         return Err("the fixture must extract its owner and a test".to_string());
@@ -230,5 +245,161 @@ fn match_pattern_on_a_base_class_does_not_credit_a_local_subclass_swap() -> Chec
         new,
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const BUILTIN_SOURCE: &str = "def parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise LookupError(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+
+#[test]
+fn an_assertion_on_a_class_the_old_class_derives_from_never_credits_the_swap() -> Check {
+    // `pytest.raises(New, match=..)` passes before and after when the old
+    // class is `New` or one of its subclasses.
+    let old = "        raise KeyError(\"invalid version\")";
+    let new = "        raise LookupError(\"invalid version\")";
+    let finding = classify(
+        BUILTIN_SOURCE,
+        &matching_tests(IMPORT_RELEASE, "LookupError"),
+        Some(old),
+        new,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let exception = BUILTIN_SOURCE.replace("LookupError", "Exception");
+    let finding = classify(
+        &exception,
+        &matching_tests(IMPORT_RELEASE, "Exception"),
+        Some("        raise ValueError(\"invalid version\")"),
+        "        raise Exception(\"invalid version\")",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The unrelated direction is discriminating: ValueError is no LookupError.
+    let finding = classify(
+        BUILTIN_SOURCE,
+        &matching_tests(IMPORT_RELEASE, "LookupError"),
+        Some("        raise ValueError(\"invalid version\")"),
+        new,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const LOCAL_SOURCE: &str = "class Base(ValueError):\n    pass\n\n\nclass Child(Base):\n    pass\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise Base(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+
+#[test]
+fn a_local_swap_to_an_ancestor_is_not_credited_by_the_ancestor_assertion() -> Check {
+    let imports = "from verlib.version import Base, Child, parse_release\n";
+    let old = "        raise Child(\"invalid version\")";
+    let new = "        raise Base(\"invalid version\")";
+    let finding = classify(
+        LOCAL_SOURCE,
+        &matching_tests(imports, "Base"),
+        Some(old),
+        new,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Swapping the other way (Base -> Child) is told apart by `Child`.
+    let child = LOCAL_SOURCE.replace("raise Base(", "raise Child(");
+    let finding = classify(
+        &child,
+        &matching_tests(imports, "Child"),
+        Some("        raise Base(\"invalid version\")"),
+        "        raise Child(\"invalid version\")",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn owner_module_resolution_refuses_shadowed_and_relative_imports() -> Check {
+    let local = "from verlib.version import Child, parse_release\n";
+    let source = LOCAL_SOURCE.replace("raise Base(", "raise Child(");
+    let old = "        raise Base(\"invalid version\")";
+    let new = "        raise Child(\"invalid version\")";
+    let tests = matching_tests(local, "Child");
+    let finding = classify(&source, &tests, Some(old), new)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "positive control: {finding:?}"
+    );
+    // A test-local `verlib` package answers the test's import instead.
+    let finding = classify_in(
+        &source,
+        &tests,
+        Some(old),
+        new,
+        &[
+            "src/verlib/version.py",
+            "tests/verlib/__init__.py",
+            "tests/test_version.py",
+        ],
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "shadowed: {finding:?}"
+    );
+    // The same relative spelling in the owner and the test names different
+    // packages.
+    let relative_owner = SOURCE.replace("from verlib.errors", "from .errors");
+    let relative_test = matching_tests(
+        &format!("from .errors import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(&relative_owner, &relative_test, Some(OLD), NEW)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "relative: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn exact_class_credit_guards_name_bindings_in_the_test_module() -> Check {
+    // Each binding makes the asserted name unprovable in the test module.
+    let imports = format!("from verlib.errors import InvalidVersion\n{IMPORT_RELEASE}");
+    for extra in [
+        "InvalidVersion = ValueError\n",
+        "class InvalidVersion(Exception):\n    pass\n",
+    ] {
+        let tests = matching_tests(&format!("{imports}{extra}"), "InvalidVersion");
+        let finding = classify(SOURCE, &tests, Some(OLD), NEW)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{extra}: {finding:?}"
+        );
+    }
+    // A builtin asserted next to a star import may be rebound by it.
+    let old = "        raise ValueError(\"invalid version\")";
+    let new = "        raise LookupError(\"invalid version\")";
+    let star = matching_tests(
+        &format!("from helpers import *\n{IMPORT_RELEASE}"),
+        "LookupError",
+    );
+    let finding = classify(BUILTIN_SOURCE, &star, Some(old), new)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "star: {finding:?}");
+    let plain = matching_tests(IMPORT_RELEASE, "LookupError");
+    let finding = classify(BUILTIN_SOURCE, &plain, Some(old), new)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "control: {finding:?}"
+    );
+    // An old-class expectation is a discriminator only when the new class's
+    // ancestry is readable; an imported base is not.
+    let imported_base = "from elsewhere import Base\n\n\nclass Child(Base):\n    pass\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise Child(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+    let tests = matching_tests(IMPORT_RELEASE, "ValueError");
+    let finding = classify(
+        imported_base,
+        &tests,
+        Some("        raise ValueError(\"invalid version\")"),
+        "        raise Child(\"invalid version\")",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "imported base: {finding:?}"
+    );
     Ok(())
 }
