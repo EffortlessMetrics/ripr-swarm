@@ -422,3 +422,87 @@ fn empty_tables_disclose_only_executed_inline_title_functions() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn row_writes_withhold_each_literals_and_disclose_for_registrations() {
+    fn assert_for_disclosed(source: &str, statement: &str) {
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{statement}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.is_some_and(|gap| gap.shape == "test.for registration"),
+            "{statement}"
+        );
+    }
+
+    for write in [
+        "[p] = [5]",
+        "({ p } = value)",
+        "[a, p] = value",
+        "({ key: [p] } = value)",
+        "delete (p)[0]",
+        "(p = 5)",
+        "(p++)",
+    ] {
+        for (method, binding) in [("each", "p, tier"), ("for", "[p, tier]")] {
+            let source = format!(
+                "import {{ test, expect }} from 'vitest';\ntest.{method}([[999, 'silver']])('tier', ({binding}) => {{\n  {write};\n  expect(loyaltyTier(p)).toBe(tier);\n}});"
+            );
+            if method == "each" {
+                assert_eq!(
+                    observed_and_expected(&source),
+                    vec![(Some("loyaltyTier(p)".into()), None, true, 4)],
+                    "{write}"
+                );
+            } else {
+                assert_for_disclosed(&source, write);
+            }
+        }
+    }
+
+    for (statement, concrete) in [
+        ("[row[0]] = [5]", false),
+        ("delete row[0]", false),
+        ("[other] = [row[0]]", true),
+        ("[other[row[0]]] = [5]", true),
+        ("delete other[row[0]]", true),
+        ("[other = f(row[0])] = []", true),
+    ] {
+        let source = format!(
+            "import {{ test, expect }} from 'vitest';\ntest.for([[999, 'silver']])('tier', (row) => {{\n  {statement};\n  expect(loyaltyTier(row[0])).toBe(row[1]);\n}});"
+        );
+        if concrete {
+            assert_eq!(
+                observed_and_expected(&source),
+                vec![(
+                    Some("loyaltyTier(999)".into()),
+                    Some("'silver'".into()),
+                    false,
+                    4
+                )],
+                "{statement}"
+            );
+        } else {
+            assert_for_disclosed(&source, statement);
+        }
+    }
+}
+
+#[test]
+fn object_each_row_writes_keep_dynamic_expected_values() {
+    for (binding, value, write) in [
+        ("row", "row.out", "[row.out] = [5]"),
+        ("row", "row.out", "delete row.out"),
+        ("{out}", "out", "[out] = [5]"),
+    ] {
+        let source = format!(
+            "test.each([{{out: 17}}])('result', ({binding}) => {{\n  {write};\n  expect(f()).toBe({value});\n}});"
+        );
+        assert_eq!(
+            observed_and_expected(&source),
+            vec![(Some("f()".into()), None, true, 3)],
+            "{write}"
+        );
+    }
+}

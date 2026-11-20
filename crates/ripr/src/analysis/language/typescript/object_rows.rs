@@ -320,7 +320,7 @@ pub(crate) fn row_loop_assertions(
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<Vec<TypeScriptAssertion>> {
     let (no_parameters, callback_span, body_span) = callback_parts(callback)?;
-    if !no_parameters {
+    if !no_parameters || super::table_rows::callback_writes_row(callback, |p| p == row_loop.param) {
         return None;
     }
     member_case_assertions(
@@ -360,7 +360,9 @@ pub(crate) fn object_each_assertions(
     }
     match &param.pattern {
         oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => {
-            if !ident.name.is_ascii() {
+            if !ident.name.is_ascii()
+                || super::table_rows::callback_writes_row(callback, |p| p == ident.name.as_str())
+            {
                 return None;
             }
             member_case_assertions(
@@ -400,7 +402,11 @@ pub(crate) fn object_each_assertions(
                 }
                 locals.push((local.name.to_string(), key.name.to_string()));
             }
-            if locals.is_empty() {
+            if locals.is_empty()
+                || super::table_rows::callback_writes_row(callback, |p| {
+                    locals.iter().any(|(name, _)| name == p)
+                })
+            {
                 return None;
             }
             destructured_case_assertions(callback_span, body_span, &locals, &rows, source, bindings)
