@@ -9030,7 +9030,7 @@ pub(crate) fn classify_resolved_owner(
         }
         if candidate.relation == TypeScriptRelationKind::PackageBuildSource {
             evidence.push(format!(
-                "test `{}` calls the package through its build entry. The manifest links that entry to this source, but the loaded bundle is unverified",
+                "test `{}` calls the package through its build entry. RIPR found one tracked source candidate for this entry. The loaded bundle is unverified",
                 candidate.test.name
             ));
         }
