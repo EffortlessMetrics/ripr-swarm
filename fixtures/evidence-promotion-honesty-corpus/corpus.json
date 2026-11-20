@@ -12156,6 +12156,30 @@
       ]
     },
     {
+      "id": "rust_verification_prelude_glob_plain_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/verification_prelude_glob_plain_import",
+      "vector": "plain_import_of_crate_name_keeps_verification_prelude_glob_foreign",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_glob_import_qualified_other_module",
       "language": "rust",
       "tier": "pure",
