@@ -1663,14 +1663,30 @@ fn coerced_parameter_reads_the_literal_through_the_conversion() -> Result<(), St
     let marshmallow = "import datetime as dt\n\n\ndef from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    try:\n        return dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)\n    except OverflowError as exc:\n        raise ValueError(\"big\") from exc\n";
     let real = classify_edit_case(marshmallow, negative, 6, old, new)?;
     assert_eq!(real.class, ExposureClass::WeaklyExposed, "{real:?}");
-    // Controls that keep the rebinding unreadable: a second binding, and a
-    // module that shadows `float`.
+    // A float literal whose spelling is not the stored value
+    // (`1.0000000000000001` is `1.0`) is refused, so an on-boundary call is
+    // never reported as missing the boundary.
+    let rounded = classify_edit_case(
+        &source.replace("value < 0", "value < 1"),
+        "from src.subject import from_timestamp\n\ndef test_one():\n    assert from_timestamp(1.0000000000000001) == 1.0\n",
+        3,
+        "    if value < 1:",
+        "    if value <= 1:",
+    )?;
+    assert!(
+        rounded.activation.missing_discriminators.is_empty(),
+        "{rounded:?}"
+    );
+    assert_eq!(rounded.class, ExposureClass::Exposed, "{rounded:?}");
+    // Controls that keep the rebinding unreadable: a second binding, a
+    // module that shadows `float`, and a parameter that shadows it.
     for refused in [
         source.replace(
             "    return value\n",
             "    value = abs(value)\n    return value\n",
         ),
         format!("float = int\n{source}"),
+        source.replace("(value):", "(value, float=abs):"),
     ] {
         let line = refused
             .lines()

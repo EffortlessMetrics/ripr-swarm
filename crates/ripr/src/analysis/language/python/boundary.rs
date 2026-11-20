@@ -2193,10 +2193,19 @@ fn numeric_coercion_rebinding(
                 Ok(integer) => {
                     conversion == "int" || integer.unsigned_abs() <= 1 << 53 || small_bound
                 }
+                // A float literal is kept only when its decimal spelling is
+                // the value Python stores: `1.0000000000000001` is the float
+                // `1.0`, so its spelling would compare unequal to a `1` bound
+                // that the call actually meets.
                 Err(_) => {
                     conversion == "float"
-                        && value.parse::<f64>().is_ok_and(f64::is_finite)
                         && value.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+                        && value.parse::<f64>().is_ok_and(|float| {
+                            float.is_finite()
+                                && canonical_decimal(value).is_some()
+                                && canonical_decimal(value)
+                                    == canonical_decimal(&format!("{float}"))
+                        })
                 }
             }
         })
@@ -2219,6 +2228,15 @@ fn leading_numeric_coercion(
     if owner.owner_kind != Some(OwnerKind::Function)
         || !owner.class_path.is_empty()
         || !owner.decorators.is_empty()
+    {
+        return None;
+    }
+    // A parameter named `float`/`int` (`fee(value, float=lambda x: 0)`)
+    // shadows the builtin inside the body.
+    if owner
+        .parameters
+        .iter()
+        .any(|parameter| matches!(parameter.name.as_str(), "float" | "int"))
     {
         return None;
     }
