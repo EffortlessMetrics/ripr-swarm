@@ -277,6 +277,15 @@ Visibility-unknown presentation text remains a static limitation or inspection
 route. It must not render as generic `static_unknown` user instruction or
 mutation-testing escalation.
 
+The Markdown ledger report shows imported values exactly. Each gap id, anchor,
+owner, seam id and command is an inline code span that reads back as the value
+in the JSON ledger, including any `|` or backtick, so a command copied from the
+report is the command the ledger carries. A code span is one line, so a line
+ending inside a value shows as a space, and whitespace around a seam id or an
+inspection command is not shown; the JSON ledger keeps the original.
+Warnings and limits are bare text in
+which `<` does not open raw HTML and `@name` does not notify an account.
+
 ### Receipts And Movement
 
 `receipt` and `movement` fields must tie before/after proof to a selected
@@ -499,6 +508,28 @@ stay legacy-string-only),
 `crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::load_gap_ledger_records_binds_typed_routes_to_the_workspace_root`
 (the LSP binds recovery to its workspace root, not the server's working
 directory, and the legacy-only path recovers nothing).
+
+`ripr reports gap-ledger` given a readable source that is not valid JSON or
+not that source kind's shape writes the `blocked` ledger to `--out` (replacing
+any earlier ledger) and then exits `2`, naming the flag, path, cause and the
+command that produces a valid input (#14311). Pinned by
+`crates/ripr/src/cli/commands/reports.rs::tests::reports_gap_ledger_refuses_a_malformed_source_after_writing_blocked`,
+whose valid `[]` control stays `no_records` with exit `0`.
+
+A source that parses but is a producer refusal (`downstream_consumable:
+false` in `analysis_scope` or `run_limitations[]`, nothing analyzed) also
+writes the `blocked` ledger and then exits `2`, naming the flag, path and
+refusal (#14434). The error names the source's recorded `repair_route` when it
+has one (`analysis_scope`, else a non-consumable `run_limitations[]` entry). A
+saved `blocked` ledger keeps `run_limitations[]`, so fed back as `--records` it
+still names that route; a refusal disclosed only in `analysis_scope` is saved
+with a marker-only entry, so its error says to re-run the producing check
+instead.
+Findings-bounded, partial-scope and incomplete-outcome sources keep their own
+typed handling and exit `0`. Pinned by
+`crates/ripr/src/cli/commands/reports.rs::tests::reports_gap_ledger_refuses_a_producer_refusal_source_after_writing_blocked`,
+whose bounded and complete controls exit `0` (the complete one as
+`no_records`).
 
 This spec PR does not add production code or public output fields.
 

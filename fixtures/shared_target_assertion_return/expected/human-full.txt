@@ -39,6 +39,7 @@ Evidence
   - related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source assertion argument value 6 at line 9
   - source function argument value x = 2 at line 9
+  - assertion not credited: `assert_eq!` in pin at src/shared.rs:9: src/main.rs:1 defines a macro named `assert_eq`
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

@@ -23,9 +23,9 @@
 
 use super::gaps::GapItem;
 use super::workspace::{
-    AttemptFailure, CODE_ANALYSIS_FAILED, CODE_ITEM_NOT_FOUND, CODE_NO_SNAPSHOT,
-    CODE_STALE_SNAPSHOT, CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot,
-    WorkspaceSession, bounded_document,
+    AttemptFailure, CODE_ANALYSIS_FAILED, CODE_NO_SNAPSHOT, CODE_STALE_SNAPSHOT,
+    CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot, WorkspaceSession,
+    bounded_document,
 };
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
@@ -483,13 +483,8 @@ impl WorkspaceSession {
         root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         // A saved tracked-worktree snapshot serves a card only when its source
         // custody was established at refresh (#7357): the findings and the seam
         // inventory consumed the same Rust bytes. Anything else refuses with
@@ -717,7 +712,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings (#6825 review); compare cards across transports only at equal config identity",
+                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings; compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -794,6 +789,7 @@ mod tests {
     use crate::domain::{
         Confidence, ExposureClass, FindingCanonicalGap, OracleKind, OracleStrength,
     };
+    use crate::mcp::workspace::CODE_ITEM_NOT_FOUND;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -887,6 +883,8 @@ mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -931,6 +929,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -960,6 +959,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }

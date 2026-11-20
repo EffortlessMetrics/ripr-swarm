@@ -23,9 +23,226 @@ use std::path::Path;
 /// `classify_change_with_old` (def headers via #1294; module-scope bare variables
 /// via #1289 — class-body variable annotations remain out of scope because
 /// `@dataclass`/Pydantic make them runtime-meaningful).
+/// Production callers know the line's position and use
+/// [`is_python_no_behavior_line_at`]; this is its statement-position reading.
+#[cfg(test)]
 pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
+    is_python_no_behavior_line_at(line, false)
+}
+
+/// Whether a line is a comment, blank, or bare-string no-op, for a line whose
+/// position is known: a line
+/// that starts inside an open `(`, `[` or `{` is an argument or element, not a
+/// statement, so a bare string there (often one part of an implicit
+/// concatenation, `raise E(\n    "a"\n    " b")`) is a changed value and
+/// carries behavior (#13875). Blank and comment lines stay no-ops anywhere.
+pub(super) fn is_python_no_behavior_line_at(line: &str, inside_brackets: bool) -> bool {
     let trimmed = line.trim();
-    trimmed.is_empty() || trimmed.starts_with('#') || is_bare_string_literal_statement(trimmed)
+    trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || (!inside_brackets && is_bare_string_literal_statement(trimmed))
+}
+
+/// Bracket-continuation evidence for one changed file, from one lex of each
+/// side (#13875). A side that does not lex counts every line as inside
+/// brackets; with no rebuilt old file there is no old evidence at all, so an
+/// old line keeps the docstring reading.
+pub(super) struct BracketEvidence {
+    new: Option<Vec<std::ops::RangeInclusive<usize>>>,
+    old: Option<Vec<std::ops::RangeInclusive<usize>>>,
+    has_old: bool,
+}
+
+/// The bracket facts of one changed line, as the classifier reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BracketLine {
+    /// The new line starts inside an open bracket, so a bare string on it is
+    /// an argument, not a docstring (#13875). True when the file did not lex.
+    pub(super) new_in: bool,
+    /// The same for the paired old line, against the rebuilt old source.
+    pub(super) old_in: bool,
+    /// The one-based `(opening, closing)` lines of the bracketed statement
+    /// the new line continues, when the file lexed. A bare string there takes
+    /// the statement's probe shape, not a bare string's.
+    pub(super) span: Option<(usize, usize)>,
+}
+
+impl BracketEvidence {
+    /// The evidence for `path`, from its workspace source and its rebuilt
+    /// old source.
+    pub(super) fn of(
+        workspace: &super::bounded_read::CappedWorkspaceSources,
+        path: &Path,
+        old_source: &Option<String>,
+    ) -> Self {
+        Self::read(
+            workspace.sources.get(path).map(String::as_str),
+            old_source.as_deref(),
+        )
+    }
+
+    pub(super) fn read(new_source: Option<&str>, old_source: Option<&str>) -> Self {
+        Self {
+            new: new_source.and_then(bracket_continuation_line_ranges),
+            old: old_source.and_then(bracket_continuation_line_ranges),
+            has_old: old_source.is_some(),
+        }
+    }
+
+    /// The classifier's bracket facts for new-side `line` paired with
+    /// old-side `old_line`.
+    pub(super) fn line(&self, line: usize, old_line: Option<usize>) -> BracketLine {
+        BracketLine {
+            new_in: self.new_line_in(line),
+            old_in: old_line.is_some_and(|old| self.old_line_in(old)),
+            span: self.new_statement_span(line),
+        }
+    }
+
+    /// Whether new-side `text` on `line` is a no-op line (#13875).
+    pub(super) fn new_quiet(&self, text: &str, line: usize) -> bool {
+        is_python_no_behavior_line_at(text, self.new_line_in(line))
+    }
+
+    /// Whether old-side `text` on `line` is a no-op line (#13875).
+    pub(super) fn old_quiet(&self, text: &str, line: usize) -> bool {
+        is_python_no_behavior_line_at(text, self.old_line_in(line))
+    }
+
+    /// Whether new-side `line` starts inside an open bracket.
+    pub(super) fn new_line_in(&self, line: usize) -> bool {
+        match &self.new {
+            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            None => true,
+        }
+    }
+
+    /// Whether old-side `line` starts inside an open bracket.
+    pub(super) fn old_line_in(&self, line: usize) -> bool {
+        if !self.has_old {
+            return false;
+        }
+        match &self.old {
+            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            None => true,
+        }
+    }
+
+    /// The enclosing bracketed statement of new-side `line`, when it lexed.
+    pub(super) fn new_statement_span(&self, line: usize) -> Option<(usize, usize)> {
+        enclosing_bracket_statement(self.new.as_deref()?, line)
+    }
+
+    /// The old-side ranges for the deleted-line path: none to check when the
+    /// old file did not lex, and an empty set when there is no old file.
+    pub(super) fn old_ranges_for_deleted(&self) -> Option<&[std::ops::RangeInclusive<usize>]> {
+        if self.has_old {
+            self.old.as_deref()
+        } else {
+            Some(&[])
+        }
+    }
+}
+
+/// One-based line spans of the lines that start inside an open bracket: for
+/// each outermost `(`/`[`/`{` that closes on a later line, the lines after
+/// the opening one through the closing one. Taken from a lex of the whole
+/// `source`, so brackets inside strings and comments do not count. `None`
+/// when the source does not lex, so the caller can fail closed (#13875).
+pub(super) fn bracket_continuation_line_ranges(
+    source: &str,
+) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let (mut line, mut scanned) = (1usize, 0usize);
+    let mut line_at = |offset: usize| {
+        line += source
+            .get(scanned..offset)
+            .map_or(0, |gap| gap.matches('\n').count());
+        scanned = scanned.max(offset);
+        line
+    };
+    let mut spans = Vec::new();
+    let (mut depth, mut open_line) = (0usize, 0usize);
+    for result in lex(source, Mode::Module) {
+        let (token, range) = result.ok()?;
+        match token {
+            Tok::Lpar | Tok::Lsqb | Tok::Lbrace => {
+                if depth == 0 {
+                    open_line = line_at(usize::from(range.start()));
+                }
+                depth += 1;
+            }
+            Tok::Rpar | Tok::Rsqb | Tok::Rbrace => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let close_line = line_at(usize::from(range.start()));
+                    if open_line < close_line {
+                        spans.push(open_line + 1..=close_line);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(spans)
+}
+
+/// The one-based `(opening, closing)` lines of the outermost bracketed
+/// statement that `line` continues, from [`bracket_continuation_line_ranges`].
+/// `None` when the line does not start inside a bracket.
+pub(super) fn enclosing_bracket_statement(
+    ranges: &[std::ops::RangeInclusive<usize>],
+    line: usize,
+) -> Option<(usize, usize)> {
+    ranges
+        .iter()
+        .find(|range| range.contains(&line))
+        .map(|range| (range.start().saturating_sub(1), *range.end()))
+}
+
+/// The whole statement a bare-string continuation line belongs to, joined
+/// onto one line, so its probe shape is the statement's (#13875): a message
+/// string inside `raise E(` is an error path, inside `return f(` a returned
+/// value. `None` when the line is not a bare string, or the span or source
+/// is unknown.
+pub(super) fn bare_string_statement_text(
+    line_text: &str,
+    span: Option<(usize, usize)>,
+    source: Option<&str>,
+) -> Option<String> {
+    let (open, close) = span?;
+    // Inside brackets a trailing comma separates arguments, so `"msg",` is
+    // the same bare string argument as `"msg"`; a trailing `# comment` is not
+    // part of it either.
+    let bare = without_trailing_comment(line_text)?.trim_end();
+    let bare = bare.strip_suffix(',').unwrap_or(bare);
+    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = source?
+        .lines()
+        .skip(open.checked_sub(1)?)
+        .take(close.checked_sub(open)? + 1)
+        .map(str::trim)
+        .collect();
+    (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// `line_text` without its trailing `#` comment, cut at the end of the last
+/// code token so a `#` inside a string stays. `None` when the line does not
+/// lex on its own.
+fn without_trailing_comment(line_text: &str) -> Option<&str> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let trimmed = line_text.trim();
+    let mut code_end = 0;
+    for result in lex(trimmed, Mode::Module) {
+        let (token, range) = result.ok()?;
+        // The lexer drops comments, so the last non-newline token ends the code.
+        if !matches!(token, Tok::Newline) {
+            code_end = usize::from(range.end());
+        }
+    }
+    trimmed.get(..code_end)
 }
 
 /// Whether `new` differs from `old` only in a trailing `#` comment or in

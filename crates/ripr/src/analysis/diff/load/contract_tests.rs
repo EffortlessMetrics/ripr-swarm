@@ -353,9 +353,10 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
     // fixed `a/`/`b/` side prefix, so either setting rewrites identity:
     // `diff.noprefix` drops the prefixes, after which the parser's `b/` strip
     // eats a real `b/` directory component and `b/identity.rs` collapses onto
-    // `identity.rs`; `diff.mnemonicPrefix` re-labels the sides `c/`/`w/`,
-    // which that strip does not recognise, so the side prefix leaks into the
-    // parsed path. Both are demonstrated on every loader.
+    // `identity.rs`; `diff.mnemonicPrefix` re-labels the sides `c/`/`w/`.
+    // Since #15103 the parser reads that mnemonic pair as the canonical one,
+    // so its raw control keeps parsed identity and the pin is shown by the
+    // boundary spelling alone. Both are demonstrated on every loader.
     //
     // `diff.mnemonicPrefix` only rewrites the base-tree-to-worktree
     // comparison that `load_worktree_diff` issues. It does not touch the
@@ -369,16 +370,18 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
         PathBuf::from("src/lib.rs"),
     ];
 
-    for (setting, value, mutated_boundary) in [
+    for (setting, value, mutated_boundary, raw_loses_identity) in [
         (
             "diff.noprefix",
             "true",
             "diff --git identity.rs identity.rs",
+            true,
         ),
         (
             "diff.mnemonicPrefix",
             "true",
             "diff --git c/identity.rs w/identity.rs",
+            false,
         ),
     ] {
         repo.config(setting, value)?;
@@ -402,9 +405,10 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
             .map(|file| file.path.clone())
             .collect();
         raw_paths.sort();
-        assert_ne!(
-            raw_paths, canonical_paths,
-            "{setting} raw control kept parsed identity, so the fixture does not discriminate: {raw_paths:?}"
+        assert_eq!(
+            raw_paths != canonical_paths,
+            raw_loses_identity,
+            "{setting} raw control parsed to an unexpected identity: {raw_paths:?}"
         );
 
         let [committed, range, worktree] = repo.patches()?;
@@ -671,5 +675,128 @@ fn git_rename_source_with_embedded_header_separator() -> io::Result<()> {
                 .contains(&PathBuf::from("src/other.rs"))
         );
     }
+    Ok(())
+}
+
+/// #14193: ambient `diff.renames` must not decide whether a renamed and
+/// edited file is read as one edited line or as a whole new file.
+#[test]
+fn ambient_rename_detection_config_does_not_change_the_source_patch() -> io::Result<()> {
+    use super::super::parse::parse_unified_diff_with_metadata;
+
+    let repo = Repo::new("ambient-rename-detection")?;
+    let body = (1..=12)
+        .map(|n| format!("pub fn kept_{n}() -> u8 {{ {n} }}\n"))
+        .collect::<String>();
+    // A second, unrelated body to copy from, so the rename has one candidate
+    // source; `copies` only reads a source the same change modifies.
+    let other = (1..=12)
+        .map(|n| format!("pub fn origin_{n}() -> u16 {{ {n}00 }}\n"))
+        .collect::<String>();
+    fs::write(repo.root.join("src/old_name.rs"), &body)?;
+    fs::write(repo.root.join("src/origin.rs"), &other)?;
+    git(&repo.root, &["add", "."])?;
+    git(&repo.root, &["commit", "--quiet", "-m", "rename base"])?;
+    let base = git(&repo.root, &["rev-parse", "HEAD"])?.trim().to_string();
+    git(&repo.root, &["mv", "src/old_name.rs", "src/new_name.rs"])?;
+    fs::write(
+        repo.root.join("src/new_name.rs"),
+        body.replace("{ 7 }", "{ 70 }"),
+    )?;
+    fs::write(
+        repo.root.join("src/origin.rs"),
+        other.replace("{ 300 }", "{ 301 }"),
+    )?;
+    fs::write(
+        repo.root.join("src/copied.rs"),
+        other.replace("{ 500 }", "{ 501 }"),
+    )?;
+    git(&repo.root, &["add", "."])?;
+    git(
+        &repo.root,
+        &["commit", "--quiet", "-m", "rename, edit, copy"],
+    )?;
+
+    let load = |repo: &Repo| -> io::Result<[String; 3]> {
+        Ok([
+            load_diff(&repo.root, Some(&base), None, Some(GIT_TIMEOUT))
+                .map_err(io::Error::other)?,
+            load_diff_range(&repo.root, &base, "HEAD").map_err(io::Error::other)?,
+            load_worktree_diff(&repo.root, Some(&base), Some(GIT_TIMEOUT))
+                .map_err(io::Error::other)?,
+        ])
+    };
+    // Changed lines per path, and the rename count, of one patch.
+    let shape = |patch: &str| {
+        let parsed = parse_unified_diff_with_metadata(patch);
+        let files = parsed
+            .changed_files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.clone(),
+                    file.removed_lines.len(),
+                    file.added_lines.len(),
+                )
+            })
+            .collect::<Vec<_>>();
+        (files, parsed.renamed_file_count)
+    };
+    let expected = (
+        vec![
+            (PathBuf::from("src/copied.rs"), 0, 12),
+            (PathBuf::from("src/new_name.rs"), 1, 1),
+            (PathBuf::from("src/origin.rs"), 1, 1),
+        ],
+        1,
+    );
+    for patch in load(&repo)? {
+        assert_eq!(shape(&patch), expected, "default config:\n{patch}");
+    }
+
+    for setting in ["false", "copies"] {
+        repo.config("diff.renames", setting)?;
+        // The raw control must differ, or the setting does not discriminate.
+        let raw = git(&repo.root, &["diff", &format!("{base}...HEAD")])?;
+        assert_ne!(
+            shape(&raw),
+            expected,
+            "diff.renames={setting} raw control kept the default shape:\n{raw}"
+        );
+        for (loader, patch) in ["load_diff", "load_diff_range", "load_worktree_diff"]
+            .into_iter()
+            .zip(load(&repo)?)
+        {
+            assert_eq!(
+                shape(&patch),
+                expected,
+                "{loader} let diff.renames={setting} change the source patch:\n{patch}"
+            );
+            assert!(
+                patch.contains("rename from src/old_name.rs\nrename to src/new_name.rs\n"),
+                "{loader} lost the rename under diff.renames={setting}:\n{patch}"
+            );
+            assert!(
+                !patch.contains("copy from "),
+                "{loader} read a copy section under diff.renames={setting}:\n{patch}"
+            );
+        }
+        git(&repo.root, &["config", "--unset", "diff.renames"])?;
+    }
+
+    // A caller's own flag still decides for its invocation.
+    let no_renames = String::from_utf8(
+        run_git_diff_bytes(
+            &repo.root,
+            &format!("{base}...HEAD"),
+            &["--no-renames"],
+            "0",
+            Some(GIT_TIMEOUT),
+            None,
+        )
+        .map_err(io::Error::other)?,
+    )
+    .map_err(io::Error::other)?;
+    assert!(!no_renames.contains("rename from "), "{no_renames}");
     Ok(())
 }

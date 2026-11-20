@@ -1206,13 +1206,11 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     ] {
         let text = normalized(text);
         for required in [
-            "committed default-branch diff",
-            "By default",
-            "staged and unstaged tracked edits and untracked files are outside",
+            "default-branch diff",
+            "saved staged and unstaged tracked edits when any exist",
+            "source: \"committed\"",
             "source: \"worktree\"",
             "unsaved buffers and untracked files remain outside",
-            "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
-            "shared check authority does not mean identical input",
             "`ripr check --committed`",
         ] {
             if !text.contains(required) {
@@ -1230,7 +1228,8 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     }
     let description = normalized(description);
     for required in [
-        "By default: committed input only",
+        "By default, like `ripr check`",
+        "source: \"committed\"",
         "source: \"worktree\"",
         "INSTRUCTIONS",
     ] {
@@ -3955,11 +3954,12 @@ fn check_prepare_schema_fields(schema: &Value, document: &Value) -> Result<(), S
     Ok(())
 }
 
-/// Keep the wording tied to actual input selection: the same dirty fixture
-/// yields CLI findings but a committed-only MCP snapshot with scope disclosure.
+/// Keep the wording tied to actual input selection: on the same dirty fixture
+/// an explicit committed MCP refresh is committed-only with scope disclosure,
+/// and an omitted source reads the saved edits like the CLI default (#13096).
 #[cfg(feature = "lang-rust")]
 #[test]
-fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
+fn dirty_tree_cli_and_mcp_share_the_default_input() -> Result<(), String> {
     let root = install_b4_repair_ready_fixture()?;
     let _cleanup = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
@@ -4042,7 +4042,12 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     let mut session = SequentialStdio::spawn(&root)?;
     let timeout = Duration::from_mins(1);
     session.call("discover", "server/discover", json!({}), timeout)?;
-    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = session.call_tool(
+        "refresh",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+        timeout,
+    )?;
     let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
     if refresh.pointer("/attempt/state").and_then(Value::as_str) != Some("completed")
         || refresh
@@ -4081,6 +4086,26 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     {
         return Err(format!(
             "an empty committed list must say not_analyzed on the same snapshot: {listed}"
+        ));
+    }
+    // #13096: with no `source`, MCP makes the CLI's default choice on the
+    // same dirty tree: the saved tracked edits, with the CLI's findings.
+    let defaulted = session.call_tool("refresh-default", "ripr_refresh", json!({}), timeout)?;
+    let defaulted = structured_tool_success(&defaulted, "ripr_refresh")?;
+    let live_count = live
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .ok_or("CLI default output lost findings")?;
+    if defaulted.get("requested_source") != Some(&json!("default"))
+        || defaulted.get("captured_source") != Some(&json!("worktree"))
+        || defaulted
+            .pointer("/snapshot/finding_count")
+            .and_then(Value::as_u64)
+            != u64::try_from(live_count).ok()
+    {
+        return Err(format!(
+            "an omitted source must read the dirty tree like the CLI default ({live_count} findings): {defaulted}"
         ));
     }
     drop(session);
@@ -4719,6 +4744,95 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// #14186: a method the pinned SDK can type but this server does not serve
+/// used to answer `-32601` with only the bare method name as its message,
+/// while a method the SDK cannot type said `Method not found: <method>`.
+/// Both groups share the conventional wording, in an `initialize` session and
+/// for the discovery-session `ping`, and the session keeps serving.
+#[test]
+fn sdk_typed_unserved_methods_say_method_not_found() -> Result<(), String> {
+    let root = workspace_root()?;
+    let unserved: [(&str, Value); 6] = [
+        ("prompts/get", json!({"name": "any"})),
+        ("logging/setLevel", json!({"level": "debug"})),
+        (
+            "resources/subscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        (
+            "resources/unsubscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        ("tasks/get", json!({"taskId": "any"})),
+        // The control: a method the SDK cannot type already used the wording.
+        ("nope/never", json!({})),
+    ];
+    let mut script = line(json!({
+        "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "unserved-method-control", "version": "1"}}
+    }))?;
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?);
+    for (method, params) in &unserved {
+        script.extend(line(json!({
+            "jsonrpc": "2.0", "id": method, "method": method, "params": params
+        }))?);
+    }
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}),
+    )?);
+    let responses = response_lines(&run_mcp(&root, &[&script])?)?;
+    if responses.len() != unserved.len() + 2 {
+        return Err(format!(
+            "expected one reply per request, got {}: {responses:?}",
+            responses.len()
+        ));
+    }
+    for (index, (method, _params)) in unserved.iter().enumerate() {
+        let reply = &responses[index + 1];
+        if reply.get("id") != Some(&json!(method))
+            || reply.pointer("/error/code") != Some(&json!(-32601))
+            || reply.pointer("/error/message")
+                != Some(&json!(format!("Method not found: {method}")))
+        {
+            return Err(format!(
+                "unserved `{method}` must answer -32601 `Method not found: {method}`: {reply}"
+            ));
+        }
+    }
+    if responses[unserved.len() + 1] != json!({"jsonrpc": "2.0", "id": "alive", "result": {}}) {
+        return Err(format!(
+            "session did not recover after unserved methods: {responses:?}"
+        ));
+    }
+
+    // A `server/discover` session does not serve `ping`: the same wording.
+    let mut discovery = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": {"_meta": current_meta()}
+    }))?;
+    for (id, method) in [("tools", "tools/list"), ("ping", "ping")] {
+        discovery.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method,
+            "params": {"_meta": current_meta()}
+        }))?);
+    }
+    let responses = response_lines(&run_mcp(&root, &[&discovery])?)?;
+    if responses.len() != 3
+        || responses[0].get("result").is_none()
+        || responses[1].get("result").is_none()
+        || responses[2].pointer("/error/code") != Some(&json!(-32601))
+        || responses[2].pointer("/error/message") != Some(&json!("Method not found: ping"))
+    {
+        return Err(format!(
+            "discovery-session ping must answer -32601 `Method not found: ping`: {responses:?}"
+        ));
     }
     Ok(())
 }
@@ -6515,6 +6629,8 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
@@ -6522,6 +6638,11 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
         .iter()
         .find(|item| item["canonical_id"] == ready_id.as_str())
         .ok_or_else(|| format!("truncated refresh lost {ready_id}: {list}"))?;
+    if item["class"] != "exposed" {
+        return Err(format!(
+            "precondition (#14327): the truncation-refused item must be exposed: {item}"
+        ));
+    }
     if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
         return Err(format!(
             "truncated inventory must refuse {ready_id} with {TRUNCATED}: {item}"
@@ -6636,14 +6757,18 @@ fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), Strin
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     if !items
         .iter()
-        .any(|item| item["canonical_id"] == ready_id.as_str())
+        .any(|item| item["canonical_id"] == ready_id.as_str() && item["class"] == "exposed")
     {
-        return Err(format!("truncated refresh lost {ready_id}: {list}"));
+        return Err(format!(
+            "truncated refresh lost exposed item {ready_id}: {list}"
+        ));
     }
     for item in items {
         let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
@@ -7048,8 +7173,9 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
             .ok_or_else(|| format!("refresh returned no snapshot id: {document}"))
     };
 
-    // Omitted `source` is the unchanged committed default: clean checkout,
-    // empty committed diff, v1 shape with no source facts.
+    // Omitted `source` on a clean checkout selects committed input (the
+    // `ripr check` default for a clean tree): empty committed diff, v1 shape
+    // with no source facts.
     let committed = refresh(&mut session, "committed-1", json!({}))?;
     let committed_id = snapshot_id(&committed)?;
     if committed.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
@@ -7242,10 +7368,42 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         ));
     }
 
-    // Committed again, with the dirty edits present: still the committed
+    // #13096: with tracked edits present, an omitted `source` takes
+    // `ripr check`'s default and reads the working tree. It is the explicit
+    // worktree request (same identity), disclosed as a default selection.
+    let defaulted = refresh(&mut session, "default-dirty", json!({}))?;
+    if snapshot_id(&defaulted)? != mixed_id
+        || defaulted.get("requested_source") != Some(&json!("default"))
+        || defaulted.get("captured_source") != Some(&json!("worktree"))
+        || defaulted.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || defaulted.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "an omitted source on a dirty tree must read the saved edits as `ripr check` does: {defaulted}"
+        ));
+    }
+    // A later explicit request is reported as explicit, not as the default.
+    let explicit_worktree = refresh(
+        &mut session,
+        "wt-after-default",
+        json!({ "source": "worktree" }),
+    )?;
+    if snapshot_id(&explicit_worktree)? != mixed_id
+        || explicit_worktree.get("requested_source") != Some(&json!("worktree"))
+    {
+        return Err(format!(
+            "an explicit worktree request after a default one must say worktree: {explicit_worktree}"
+        ));
+    }
+
+    // Explicit committed, with the dirty edits present: still the committed
     // result (empty diff, dirty-tree scope disclosure folded into its own
     // committed identity), never either worktree identity, and stable.
-    let again = refresh(&mut session, "committed-3", json!({}))?;
+    let again = refresh(
+        &mut session,
+        "committed-3",
+        json!({ "source": "committed" }),
+    )?;
     let dirty_committed_id = snapshot_id(&again)?;
     if dirty_committed_id == mixed_id
         || dirty_committed_id == unstaged_id
@@ -7281,7 +7439,11 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         ));
     }
     // Failed worktree request over a committed last-good, the converse.
-    let committed_again = refresh(&mut session, "committed-4", json!({}))?;
+    let committed_again = refresh(
+        &mut session,
+        "committed-4",
+        json!({ "source": "committed" }),
+    )?;
     if snapshot_id(&committed_again)? != dirty_committed_id {
         return Err(format!(
             "committed replay must be deterministic: {committed_again}"
@@ -7912,5 +8074,93 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
         default_text.len(),
         summary_text.len()
     );
+    Ok(())
+}
+
+/// #14327: over real stdio, `RIPR_MCP_TEXT_CONTENT=brief` turns the
+/// `ripr_get_gap` text into the gap's test-author lines, read from the same
+/// `structuredContent` the default session serves unchanged.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), String> {
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut observed: Vec<(Value, String)> = Vec::new();
+    for env in [&[][..], &[("RIPR_MCP_TEXT_CONTENT", "brief")][..]] {
+        let mut session = SequentialStdio::spawn_with_env(&root, env)?;
+        let refresh =
+            session.call_tool("refresh", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+        structured_tool_success(&refresh, "refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), timeout)?;
+        let listed = structured_tool_success(&list, "list")?;
+        let first = listed["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or_else(|| format!("list omitted its first canonical_id: {listed}"))?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        let document = structured_tool_success(&gap, "get gap")?;
+        let text = gap
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("get gap lost its text content: {gap}"))?
+            .to_string();
+        observed.push((document, text));
+    }
+    let [(default_doc, default_text), (brief_doc, brief_text)] = observed.as_slice() else {
+        return Err("expected two sessions".to_string());
+    };
+    // Two sessions over one unchanged fixture: the snapshot id is a content
+    // hash, so equal documents mean the same snapshot, not a coincidence.
+    if brief_doc != default_doc {
+        return Err("structuredContent must be identical in full and brief modes".to_string());
+    }
+    let item = &default_doc["item"];
+    let field = |pointer: &str| -> Result<String, String> {
+        match item.pointer(pointer) {
+            Some(Value::String(text)) => Ok(text.clone()),
+            Some(Value::Number(number)) => Ok(number.to_string()),
+            other => Err(format!("served gap lacks {pointer}: {other:?}")),
+        }
+    };
+    let header = format!(
+        "ripr gap: {} {}:{} owner={}.",
+        field("/class")?,
+        field("/location/file")?,
+        field("/location/line")?,
+        field("/causal_attribution/owner")?,
+    );
+    let lines: Vec<&str> = brief_text.lines().collect();
+    if !lines.first().is_some_and(|line| line.starts_with(&header))
+        || !lines.iter().any(|line| {
+            line.starts_with("changed: ")
+                && field("/changed_behavior/after")
+                    .or_else(|_| field("/changed_behavior/expression"))
+                    .is_ok_and(|changed| line.contains(&changed))
+        })
+        || !lines.iter().any(|line| line.starts_with("missing: "))
+        || !lines
+            .iter()
+            .any(|line| line.starts_with("readiness: repair_ready="))
+        || !brief_text.contains(&field("/canonical_id")?)
+    {
+        return Err(format!(
+            "brief get_gap text is not the served gap's projection (want {header:?}):\n{brief_text}"
+        ));
+    }
+    if serde_json::from_str::<Value>(brief_text).is_ok()
+        || brief_text.len() * 2 > default_text.len()
+    {
+        return Err(format!(
+            "brief get_gap text must be a projection under half the JSON copy: {} vs {}",
+            brief_text.len(),
+            default_text.len()
+        ));
+    }
     Ok(())
 }

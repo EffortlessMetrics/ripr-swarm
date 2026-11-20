@@ -429,6 +429,15 @@ pub(crate) struct RepoSeam {
     /// before the fact existed, which words the read neutrally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner_borrows_receiver: Option<bool>,
+    /// The owner function's opt-out (`#[mutants::skip]` on the owner or an
+    /// enclosing scope, #14139, #15000), decided once at extraction through
+    /// [`crate::analysis::owner_opt_out::FileOwnerOptOuts`]. Not part of
+    /// the seam ID. The repo-scope formats withhold such seams from their
+    /// counts and disclose the number; other consumers ignore it. Absent for
+    /// every seam whose owner carries no opt-out, so cached and serialized
+    /// seams without the attribute are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner_opt_out: Option<crate::analysis::owner_opt_out::OwnerOptOutReason>,
 }
 
 /// How a test can call a seam's owner function, read from the parser's item
@@ -494,6 +503,26 @@ impl OwnerCallShape {
             }
         }
     }
+}
+
+/// #14683: the result of a head-only match-arm seam's arm (`Size::Medium =>`
+/// gives `450`) read from `source`, the seam file's whole text, under the
+/// same fail-closed same-line rule the flow model applies to a head-only
+/// arm probe (#14420). Presentation only: it is not part of the seam ID or
+/// the cached seam, and a source whose line no longer holds this head reads
+/// nothing.
+pub(crate) fn match_arm_seam_result(seam: &RepoSeam, source: &str) -> Option<String> {
+    let head = seam.expression().trim();
+    let head_only = seam.kind() == SeamKind::MatchArm
+        && head.ends_with("=>")
+        && crate::analysis::mask_comments_and_strings(head)
+            .matches("=>")
+            .count()
+            == 1;
+    if !head_only {
+        return None;
+    }
+    crate::analysis::classify::same_line_arm_result_in(head, seam.display_line(), source, 1)
 }
 
 impl RepoSeam {
@@ -624,6 +653,7 @@ impl RepoSeam {
             source_lines: None,
             owner_call: OwnerCallShape::Unknown,
             owner_borrows_receiver: None,
+            owner_opt_out: None,
         }
     }
 
@@ -659,6 +689,22 @@ impl RepoSeam {
 
     pub(crate) fn owner_borrows_receiver(&self) -> Option<bool> {
         self.owner_borrows_receiver
+    }
+
+    /// Record the owner's opt-out decision (#14139).
+    pub(crate) fn with_owner_opt_out(
+        mut self,
+        opt_out: Option<crate::analysis::owner_opt_out::OwnerOptOutReason>,
+    ) -> Self {
+        self.owner_opt_out = opt_out;
+        self
+    }
+
+    /// The owner's opt-out, when its function carries `#[mutants::skip]`.
+    pub(crate) fn owner_opt_out(
+        &self,
+    ) -> Option<crate::analysis::owner_opt_out::OwnerOptOutReason> {
+        self.owner_opt_out
     }
 
     pub(crate) fn id(&self) -> &SeamId {
@@ -836,6 +882,49 @@ mod tests {
             );
         }
         assert_eq!(SeamGripClass::from_schema_value("weakly_exposed"), None);
+    }
+
+    /// #14683: a head-only match-arm seam reads its same-line result from
+    /// the file; a block result, a non-arm seam and a full-arm expression
+    /// read nothing.
+    #[test]
+    fn match_arm_seam_result_reads_the_heads_line() {
+        let source = "fn f(x: u8) -> u8 {\n    match x {\n        0 => 450,\n        1 => { 2 }\n        _ => 3,\n    }\n}\n";
+        let arm = |line: usize, expression: &str, kind: SeamKind| {
+            RepoSeam::new(
+                "src/lib.rs",
+                "f",
+                kind,
+                line * 10,
+                line,
+                expression,
+                RequiredDiscriminator::MatchArmTaken {
+                    arm: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+        };
+        assert_eq!(
+            match_arm_seam_result(&arm(3, "0 =>", SeamKind::MatchArm), source).as_deref(),
+            Some("450")
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(4, "1 =>", SeamKind::MatchArm), source),
+            None
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(3, "0 =>", SeamKind::ReturnValue), source),
+            None
+        );
+        assert_eq!(
+            match_arm_seam_result(&arm(5, "_ => 3,", SeamKind::MatchArm), source),
+            None
+        );
+        // A head another line now holds is not read from this line.
+        assert_eq!(
+            match_arm_seam_result(&arm(5, "0 =>", SeamKind::MatchArm), source),
+            None
+        );
     }
 
     fn make_seam(file: &str, owner: &str, kind: SeamKind, off: usize) -> RepoSeam {
@@ -1401,6 +1490,33 @@ mod tests {
         assert_eq!(restored.owner_call(), &OwnerCallShape::Unknown);
         let shaped = seam.with_owner_call(OwnerCallShape::Free);
         assert_eq!(shaped.owner_call(), &OwnerCallShape::Free);
+        Ok(())
+    }
+
+    /// #14139: a seam without an owner opt-out serializes exactly as before
+    /// (no key), and a seam with one keeps it through the cache's serde round
+    /// trip under the stable reason token, without changing its ID.
+    #[test]
+    fn owner_opt_out_is_absent_by_default_and_survives_a_cache_round_trip() -> Result<(), String> {
+        use crate::analysis::owner_opt_out::OwnerOptOutReason;
+        let seam = make_seam("src/lib.rs", "src/lib.rs::f", SeamKind::ReturnValue, 0);
+        let plain = serde_json::to_value(&seam).map_err(|err| err.to_string())?;
+        assert!(plain.get("owner_opt_out").is_none(), "{plain}");
+        assert_eq!(seam.owner_opt_out(), None);
+
+        let skipped = seam
+            .clone()
+            .with_owner_opt_out(Some(OwnerOptOutReason::MutantsSkip));
+        assert_eq!(skipped.id(), seam.id());
+        let stored = serde_json::to_value(&skipped).map_err(|err| err.to_string())?;
+        assert_eq!(stored["owner_opt_out"], "owner_mutants_skip");
+        let restored: RepoSeam = serde_json::from_value(stored).map_err(|err| err.to_string())?;
+        assert_eq!(
+            restored.owner_opt_out(),
+            Some(OwnerOptOutReason::MutantsSkip)
+        );
+        let legacy: RepoSeam = serde_json::from_value(plain).map_err(|err| err.to_string())?;
+        assert_eq!(legacy.owner_opt_out(), None);
         Ok(())
     }
 

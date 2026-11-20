@@ -68,6 +68,20 @@ the Rust adapter runs a bounded BFS walk over the lexical call facts in the Rust
    - Stop when callee name not found in-crate (external / unresolved).
    - Stop when depth > 5.
 4. If the owner's name is reached within depth ≤ 5: a candidate path was found.
+   When several tests witness it, one is named and the rest are counted. The
+   order is: a corroborated call before an uncorroborated one, and both before
+   a derive entry. A call is uncorroborated when the test's receiver does not
+   resolve to the entry's impl type, or when every reaching entry is a
+   module-level or local `fn` (never a trait default method or an
+   unestablished container) but the test calls it with method syntax
+   (`.name(..)`, such as a same-named builder setter). Next come fewer
+   call-chain hops from the entry to the owner, then test file and line
+   (#14970). The same order picks each test's entry symbol, and a test file
+   applying several reaching derives offers the one with the fewest hops. A
+   consumer with an admission rule, such as the cross-package rule for
+   `reachable_unrevealed` (#10127), ranks only the witnesses it admits,
+   including a file's derive entries. It does not filter the single best one,
+   so a nearer refused witness never hides an admitted one.
 5. Only when step 4 names no witness, the same walk continues past depth 5,
    level by level (#8047). At each deeper level a test may enter (a test
    calls one of its names, or a derive entry exists), the witness selection
@@ -103,7 +117,7 @@ unchanged.
 all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 `weakly_exposed`.
 
-#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
+#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit. One exception (#14968, RIPR-SPEC-0094): a finding that reads `reachable_unrevealed` only because every related test asserts nothing but dropped literal-only assertions keeps the `weakly_exposed` admission it had with that credit.
 
 #11481 extends it to `infection_unknown` findings with `weak` reach whose related tests are all proximity-only or related only by an owner-named test (`owner_named_test`, which never has to call the owner). A private helper reached only through a public entry (the `numeric_identifier` -> `Version::from_str` -> `Version::parse` shape) now names the same limit. The class stays `infection_unknown`; reach stays `weak`; the witness is a candidate path, not a related test. No witness leaves the finding unchanged. RIPR-SPEC-0117 ("`infection_unknown` with an owner-named test") states the admission rule. `weakly_exposed` with only `owner_named_test` is deliberately not limited (decided under #11481: its credited weak assertion is a real gap the repo-wide witness cannot replace), and a mixed set holding a non-proximity relation stays unlimited. Known limit: the witness walk is name-only, so a same-named function in another module can name the limit (advisory only).
 
@@ -200,7 +214,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    `test → outer → inner`. Result: `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`.
    Fixture: `fixtures/rust_transitive_reach_positive/`.
 
-2. **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
+2. [abstain] **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
    a test helper (`assert_public_api_accepts`), the helper calls a public API function, and the
    API flows through internal helpers to the changed owner (`matches_greater`). Result:
    `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`, with a witness naming
@@ -210,10 +224,12 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    candidate path. Result: bare `no_static_path`, no `static_limit_kind`. Classification unchanged.
    Fixture: `fixtures/rust_transitive_reach_negative/`.
 
-4. **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
-   No limitation fires (no candidate path found through macros). Classification stays bare `no_static_path`.
+4. [abstain] **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
+   No transitive-reach limitation fires (no candidate path found through macros), and
+   the finding stays `no_static_path`; RIPR-SPEC-0119 example 1 names the macro-wrapped
+   test call limit on that finding.
 
-5. **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
+5. [abstain] **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
    exceeds the 5-hop witness walk, so the walk continues past it and finds the
    test entering the chain at `fn_a` (#8047). Result: the same limitation as
    example 1, naming that test. Classification unchanged (`no_static_path`, or
@@ -248,6 +264,18 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
   — positive path found
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none`
   — no path, limitation does not fire
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_witnesses_at_different_depths_then_the_closest_entry_is_named`
+  — the entry closest to the owner is named before file order; ties keep file order (#14970)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_method_syntax_call_to_a_free_entry_then_it_does_not_win_on_depth`
+  — a `.name(..)` call to a free-function entry does not outrank a farther free call (#14970)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::method_syntax_detection_reads_whole_names_outside_strings`
+  — method-syntax detection reads whole names outside strings and comments (#14970)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_an_admission_rule_then_a_refused_nearer_witness_does_not_hide_an_admitted_one`
+  — with an admission rule, only admitted witnesses are ranked, within and past the bound (#14970)
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_file_applying_two_derives_offers_the_one_closest_to_the_owner`
+  — a file applying several reaching derives offers its closest admitted one (#14970)
+- `crates/ripr/tests/cross_package_wrapper_reach.rs::a_nearer_unrelated_namesake_does_not_hide_the_dependent_wrapper`
+  — a nearer refused namesake chain does not drop the cross-package limit (#14970)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
   — depth 5 boundary: still finds
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_depth_6_then_the_walk_past_the_bound_names_a_witness`
