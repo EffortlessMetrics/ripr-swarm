@@ -943,7 +943,10 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 if options.ci.is_some() {
                     // `init` generates one CI provider per run, so a repeat
                     // would silently drop the first (#15259).
-                    return Err("init --ci takes one provider per run; pass --ci github or --ci gitlab, then rerun init for the other".to_string());
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        "--ci",
+                        "init --ci takes one provider per run; pass --ci github or --ci gitlab, then rerun init for the other",
+                    ));
                 }
                 options.ci = Some(parse_init_ci(provider)?);
             }

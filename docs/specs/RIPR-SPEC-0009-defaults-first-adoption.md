@@ -44,6 +44,12 @@ The default contract is:
   write the error and accepted list to stderr, leave stdout empty, and create
   no files. A missing provider retains the missing-value refusal. Valid
   `github` and `gitlab` parsing, preview, and generated file contents remain unchanged.
+- `ripr init` refuses (exit 2, no files written) when `--ci`, `--agents` or
+  `--root` is followed by another flag instead of a value, and when `--ci` is
+  repeated: one run generates one CI provider (#15259). A directory at
+  `ripr.toml` or the CI workflow path is refused without a `--force` hint,
+  because `--force` cannot replace a directory. Under `--json` these usage
+  refusals write the typed `cli_refusal` document.
 - With a lossless root, successful `ripr init --ci github` names the generated
   workflow and tells the adopter to review and commit it, then open or update
   a pull request and read the advisory job summary. Successful `ripr init --ci gitlab`

@@ -1623,7 +1623,10 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
             "--token-available" | "--no-token" => {
                 let available = args[i] == "--token-available";
                 if token_seen.is_some_and(|prior| prior != available) {
-                    return Err("pr-comments plan takes either --token-available or --no-token, not both; pass only one".to_string());
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --token-available or --no-token, not both; pass only one",
+                    ));
                 }
                 token_seen = Some(available);
                 token_available = available;
@@ -1631,7 +1634,10 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
             "--write-permission" | "--no-write-permission" => {
                 let granted = args[i] == "--write-permission";
                 if write_seen.is_some_and(|prior| prior != granted) {
-                    return Err("pr-comments plan takes either --write-permission or --no-write-permission, not both; pass only one".to_string());
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --write-permission or --no-write-permission, not both; pass only one",
+                    ));
                 }
                 write_seen = Some(granted);
                 write_permission = granted;

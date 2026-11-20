@@ -32,6 +32,28 @@ fn workspace(name: &str) -> Result<std::path::PathBuf, String> {
     Ok(root)
 }
 
+/// A `--json` request gets the typed `cli_refusal` document on stdout:
+/// `(code, token, next command)`.
+fn refused_json(root: &Path, args: &[&str], expected: (&str, &str, &str)) -> Result<(), String> {
+    let output = run(root, args)?;
+    if output.status.code() != Some(2) {
+        return Err(format!("{args:?}: expected exit 2; {output:?}"));
+    }
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("{args:?}: stdout must be one JSON document: {err}"))?;
+    let (code, token, next) = expected;
+    let actual = (
+        document["status"].as_str(),
+        document["error"]["code"].as_str(),
+        document["error"]["token"].as_str(),
+        document["error"]["next"]["command"].as_str(),
+    );
+    if actual != (Some("refused"), Some(code), Some(token), Some(next)) {
+        return Err(format!("{args:?}: unexpected refusal document {document}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn init_value_flags_followed_by_a_flag_report_a_missing_value() -> Result<(), String> {
     let root = workspace("argval-init")?;
@@ -54,6 +76,11 @@ fn init_value_flags_followed_by_a_flag_report_a_missing_value() -> Result<(), St
             "init --ci takes one provider per run",
             "--ci github or --ci gitlab",
         ],
+    )?;
+    refused_json(
+        &root,
+        &["init", "--ci", "github", "--ci", "gitlab", "--json"],
+        ("conflicting_flags", "--ci", "ripr init --help"),
     )?;
     ignore_remove_dir_all(&root);
     Ok(())
@@ -102,6 +129,18 @@ fn pr_comments_plan_validates_pull_request_and_conflicting_toggles() -> Result<(
         ],
         &["either --write-permission or --no-write-permission"],
     )?;
+    for (first, second) in [
+        ("--token-available", "--no-token"),
+        ("--no-token", "--token-available"),
+        ("--write-permission", "--no-write-permission"),
+        ("--no-write-permission", "--write-permission"),
+    ] {
+        refused_json(
+            &root,
+            &["pr-comments", "plan", first, second, "--json"],
+            ("conflicting_flags", second, "ripr pr-comments plan --help"),
+        )?;
+    }
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -147,20 +186,11 @@ fn completions_suggest_a_shell_only_when_genuinely_close() -> Result<(), String>
         &["positional argument", "ripr completions bash"],
     )?;
     // A JSON request still gets the typed refusal document.
-    let output = run(&root, &["completions", "--shell", "bash", "--json"])?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
-    for fragment in [
-        "\"status\": \"refused\"",
-        "unknown_argument",
-        "\"--shell\"",
-        "ripr completions --help",
-    ] {
-        assert!(
-            stdout.contains(fragment),
-            "missing {fragment:?} in {stdout}"
-        );
-    }
+    refused_json(
+        &root,
+        &["completions", "--shell", "bash", "--json"],
+        ("unknown_argument", "--shell", "ripr completions --help"),
+    )?;
     ignore_remove_dir_all(&root);
     Ok(())
 }

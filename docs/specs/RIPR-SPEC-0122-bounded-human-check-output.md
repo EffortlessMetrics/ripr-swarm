@@ -529,6 +529,10 @@ line (a `--diff` patch that disagrees with the checkout, or a removed line). Onl
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
 
+A direct `ripr agent stub --at` value with two numeric suffixes
+(`src/lib.rs:12:4`) is refused with the `FILE:LINE` form and an example rather
+than read as a path ending in `:12` (#15259).
+
 When the file has seams but the function has none of the requested family,
 a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 `FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
