@@ -38,7 +38,9 @@ read named the changed field `retries` on its path and was credited `exposed`.
 The expected class is pinned per finding (`expected/check.json`, checked by
 `check-fixture-contracts`):
 
-EXPECTED_CLASSES_PLACEHOLDER
+```expected-classes
+probe:src_config.ts:typescript_preview:c1e7e7c3 -> weakly_exposed
+```
 
 This fixture ships no `expected/human.txt`, for the same reason as
 `ts_multi_value_field_change_sibling`: the default human output prints a state token

@@ -841,7 +841,8 @@ fn ts_value_observed_reads_sibling_field(
 /// changed field that the change does not move: `f().retries.other` while the
 /// edit turns `retries: 3` into `retries: { n: 5 }`.
 ///
-/// The read must end in `<changed key>.<child>` on a plain owner-rooted base,
+/// The read must be `<owner call>.<changed key>.<child>`, the key read
+/// directly off the owner call's result,
 /// and the changed field's new value must be an object literal whose moved
 /// children are known (see `TypeScriptChangedField::changed_children`). The
 /// moved child (`f().retries.n`) and the whole field (`f().retries`) keep the

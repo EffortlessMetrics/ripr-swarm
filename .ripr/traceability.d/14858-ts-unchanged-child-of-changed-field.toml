@@ -13,6 +13,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::non_object_old_value_member_read_keeps_credit",
   "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::unchanged_looking_child_that_can_move_keeps_credit",
 ]
+fixtures = [
+  "fixtures/ts_changed_field_unchanged_child",
+]
 code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_value_observed_reads_unchanged_child",
   "crates/ripr/src/analysis/language/typescript/probe_shape.rs::TypeScriptChangedField::changed_children",
