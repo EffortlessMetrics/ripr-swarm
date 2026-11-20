@@ -1,4 +1,7 @@
-use super::{FoldOptions, fold_in, fold_text, parse_args};
+use super::{
+    ADMISSION_FILE_CAP, FoldOptions, fold_in, fold_text, oversize_release_cut_warning, parse_args,
+};
+use crate::policy::changelog_fragments::changelog_fragment_violations;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -263,5 +266,115 @@ fn release_cut_fold_leaves_no_fragment_for_the_cut_check() -> Result<(), String>
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(left, vec!["README.md".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn oversize_release_cut_warning_advises_fold_and_delete_batches_not_keep_fragments()
+-> Result<(), String> {
+    assert_eq!(oversize_release_cut_warning(ADMISSION_FILE_CAP - 1), None);
+    let warning = oversize_release_cut_warning(ADMISSION_FILE_CAP)
+        .ok_or("expected oversize warning when folded fragments + CHANGELOG.md exceed cap")?;
+    assert!(warning.contains("161 changed files"), "{warning}");
+    assert!(warning.contains("--write --limit 149"), "{warning}");
+    assert!(warning.contains("changelog.d/README.md"), "{warning}");
+    assert!(!warning.contains("--keep-fragments"), "{warning}");
+    assert!(!warning.contains("snapshot"), "{warning}");
+    Ok(())
+}
+
+#[test]
+fn kept_fragments_fail_ordinary_validation_while_fold_and_delete_batch_passes() -> Result<(), String>
+{
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repo parent")?
+        .to_path_buf();
+    let policy_doc = fs::read_to_string(repo_root.join("docs/CHANGELOG_POLICY.md"))
+        .map_err(|e| e.to_string())?;
+
+    let kept_root = root_with(&[("a-one.md", frag("Fixed", "- One (#1).\n"))])?;
+    fs::create_dir_all(kept_root.join("docs")).map_err(|e| e.to_string())?;
+    fs::write(kept_root.join("docs/CHANGELOG_POLICY.md"), &policy_doc)
+        .map_err(|e| e.to_string())?;
+    let keep = FoldOptions {
+        write: true,
+        limit: None,
+        keep_fragments: true,
+        release_cut: false,
+    };
+    fold_in(&kept_root, &keep)?;
+    let kept_violations = changelog_fragment_violations(&kept_root, false)?;
+    assert!(
+        kept_violations.iter().any(|v| v.contains("a-one.md")
+            && v.contains("duplicates an entry in CHANGELOG.md Unreleased")),
+        "expected duplicate-entry violation for kept fragment, got {kept_violations:?}"
+    );
+    let _ = fs::remove_dir_all(&kept_root);
+
+    let batch_root = root_with(&[
+        ("a-one.md", frag("Fixed", "- One (#1).\n")),
+        ("b-two.md", frag("Fixed", "- Two (#2).\n")),
+    ])?;
+    fs::create_dir_all(batch_root.join("docs")).map_err(|e| e.to_string())?;
+    fs::write(batch_root.join("docs/CHANGELOG_POLICY.md"), &policy_doc)
+        .map_err(|e| e.to_string())?;
+    let report = fold_in(&batch_root, &opts(true, Some(1)))?;
+    assert_eq!(report.folded.len(), 1);
+    assert_eq!(report.remaining, 1);
+    let batch_violations = changelog_fragment_violations(&batch_root, false)?;
+    assert!(
+        batch_violations.is_empty(),
+        "expected fold-and-delete batch to pass check-changelog-fragments, got {batch_violations:?}"
+    );
+    let _ = fs::remove_dir_all(&batch_root);
+    Ok(())
+}
+
+#[test]
+fn fold_changelog_help_and_readme_align_on_batched_fold_and_delete() -> Result<(), String> {
+    let catalog = crate::command::command_catalog();
+    let entry = catalog
+        .iter()
+        .find(|entry| entry.command.starts_with("fold-changelog "))
+        .ok_or("fold-changelog missing from command_catalog")?;
+    assert!(
+        entry.notes.contains("local inspection only"),
+        "help notes should restrict --keep-fragments to local inspection: {}",
+        entry.notes
+    );
+    assert!(
+        entry.notes.contains("149 fragments"),
+        "help notes should document the 149-fragment batch limit: {}",
+        entry.notes
+    );
+    assert!(
+        !entry.notes.contains("snapshot"),
+        "help notes must not advise a kept-fragment snapshot: {}",
+        entry.notes
+    );
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repo parent")?
+        .to_path_buf();
+    let readme =
+        fs::read_to_string(repo_root.join("changelog.d/README.md")).map_err(|e| e.to_string())?;
+    assert!(
+        readme.contains("--write --limit 149"),
+        "changelog.d/README.md should document --write --limit 149"
+    );
+    assert!(
+        readme.contains("local inspection only"),
+        "changelog.d/README.md should restrict --keep-fragments to local inspection"
+    );
+    assert!(
+        !readme.contains("deletion-only batch PRs"),
+        "changelog.d/README.md must not advise kept-fragment deletion-only batch PRs"
+    );
+    assert!(
+        !readme.contains("fold a snapshot ahead of the cut"),
+        "changelog.d/README.md must not advise folding a snapshot ahead of the cut"
+    );
     Ok(())
 }
