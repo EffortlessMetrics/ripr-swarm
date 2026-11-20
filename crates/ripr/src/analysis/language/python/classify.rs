@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod property_tests;
+
 use super::approx_band::{
     PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
 };

@@ -1,5 +1,7 @@
 //! Tests for the TypeScript preview adapter.
 
+mod classification_property_tests;
+
 use super::*;
 use std::path::{Path, PathBuf};
 
