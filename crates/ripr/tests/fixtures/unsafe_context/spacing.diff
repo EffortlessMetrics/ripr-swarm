@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19 +19 @@
+-    unsafe{ value + 1 }
++    unsafe { value + 2 }

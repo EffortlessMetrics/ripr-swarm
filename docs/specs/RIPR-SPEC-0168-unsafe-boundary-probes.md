@@ -12,7 +12,7 @@ Linked ADRs:
 
 Linked plan:
 
-Linked issues: #3536
+Linked issues: #3536, #15348
 
 Linked PRs:
 
@@ -32,11 +32,15 @@ static evidence that a changed line sits inside an unsafe execution boundary.
 
 The Rust fact index records parser-backed `unsafe_boundary` probe shapes for
 `unsafe fn` bodies and explicit `unsafe {}` blocks. When a changed line lies
-inside such a boundary, the diff projection emits one explicit
+inside such a boundary, the diff projection can emit an explicit
 `static_unknown` probe at the changed line, tagged with the
 `unsafe_boundary` probe shape and the `static_unknown` probe family. Ordinary
-predicate, call, value, and effect probes are preserved alongside the boundary
-context. A line shared between boundary and non-boundary code projects no
+predicate, call, value, and effect probes take precedence over enclosing
+boundary context when they carry the edit on the same candidate line of the
+same owner. An unchanged expression beside the edit cannot suppress the note.
+An ambiguous replacement retains it. Each boundary
+keeps at most one projection on a remaining eligible line. An independently
+introduced unsafe qualifier or block opener retains its own finding. A line shared between boundary and non-boundary code projects no
 unsafe-boundary probe: the boundary's exact AST byte range must overlap the
 changed line, and an opening or closing edge line shared with code outside the
 boundary disqualifies it. Nested boundaries resolve to the innermost boundary
@@ -86,9 +90,8 @@ keeps the plain `unsafe block` label.
 
 ## Outputs
 
-- One `static_unknown` probe for the innermost boundary containing each
-  changed line, projected at that line with the `unsafe_boundary` probe
-  shape.
+- A classified change, or the innermost boundary’s `static_unknown` fallback
+  where the context is the only evidence.
 
 ## Acceptance Examples
 
@@ -101,6 +104,7 @@ keeps the plain `unsafe block` label.
 
 ## Test Mapping
 
+- `crates/ripr/tests/unsafe_context.rs` (changed behavior and safety-only controls).
 - `fixtures/unsafe_boundary_probe` (golden corpus).
 - `fixtures/unsafe_assumption_stop_reason` (golden corpus).
 - `crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs` —

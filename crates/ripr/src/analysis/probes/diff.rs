@@ -30,7 +30,7 @@ use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_lead
 use crate::analysis::language::changed_let_binding;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Test surface: the probe vec without the #3294 relations. Production
@@ -73,6 +73,9 @@ pub(crate) fn probes_for_file_with_relations(
     // added line at every step of the run, once per added line (#7524).
     let added_run_starts = changed.added_run_starts();
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
+    let mut unsafe_boundaries = Vec::new();
+    let mut unsafe_context_lines = BTreeMap::new();
+    let counterparts = changed.replacement_counterparts();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
         &changed.path,
@@ -550,13 +553,15 @@ pub(crate) fn probes_for_file_with_relations(
                 }
             }
         }
-        let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
+        let removed_counterpart = counterparts
+            .get(&added.new_side_line)
+            .map(|line| line.text.trim());
         let parser_shapes = parser_probe_shapes_for_changed_line_against(
             index,
             &changed.path,
             added.new_side_line,
             text,
-            removed_counterpart.as_deref(),
+            removed_counterpart,
         );
         let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
@@ -582,7 +587,7 @@ pub(crate) fn probes_for_file_with_relations(
             // the whole edit, so the line keeps a probe for what did change.
             let unchanged_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let removed = removed.trim();
                         shape_outside_edit(text, &canonical_probe_text(text, shape.text), removed)
                             && canonical_shapes.iter().any(|other| {
@@ -604,7 +609,7 @@ pub(crate) fn probes_for_file_with_relations(
             // test notices it.
             let respelled_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let shape_text = canonical_probe_text(text, shape.text);
                         removed_span_of_shape(text, &shape_text, removed.trim())
                             .is_some_and(|before| is_integer_respelling(&shape_text, &before))
@@ -622,7 +627,7 @@ pub(crate) fn probes_for_file_with_relations(
             // on the line cannot hide an edit.
             let equal_constant_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let shape_text = canonical_probe_text(text, shape.text);
                         let bare = |line: &str| {
                             let line = line.trim();
@@ -669,7 +674,7 @@ pub(crate) fn probes_for_file_with_relations(
             // predicate inside its guard holds the whole edit.
             let guard_only_arm = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::MatchArm
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let removed = removed.trim();
                         let arm = canonical_probe_text(text, shape.text);
                         let Some(guard) = arm.find(" if ").map(|at| &arm[at + 4..]) else {
@@ -704,7 +709,7 @@ pub(crate) fn probes_for_file_with_relations(
             // expression edit does on a plain line.
             let scrutinee_only_header = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::MatchArm
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let header = canonical_probe_text(text, shape.text);
                         // A `=>` in a string literal (`match t.find("=>")`)
                         // is not an arm on the header line.
@@ -719,7 +724,7 @@ pub(crate) fn probes_for_file_with_relations(
             // and must survive the filters below as a probe of its own.
             let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
                 let header = canonical_probe_text(text, shape.text);
-                removed_counterpart.as_deref().is_some_and(|removed| {
+                removed_counterpart.is_some_and(|removed| {
                     canonical_shapes.iter().any(|other| {
                         let other_text = canonical_probe_text(text, other.text);
                         other.family != ProbeFamily::MatchArm
@@ -743,7 +748,7 @@ pub(crate) fn probes_for_file_with_relations(
                 let shape_text = canonical_probe_text(text, shape.text);
                 shape.family != ProbeFamily::MatchArm
                     && shape.family != ProbeFamily::StaticUnknown
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         match removed_span_of_shape(text, &shape_text, removed.trim()) {
                             Some(old) => old == shape_text,
                             // No locatable cut: unchanged only when the old
@@ -792,11 +797,13 @@ pub(crate) fn probes_for_file_with_relations(
                 })
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
-                let key = (shape.start_byte, shape.family.as_str().to_string());
-                if emitted_parser_shapes.contains_key(&key) {
-                    continue;
+                if shape.unsafe_boundary.is_none() {
+                    let key = (shape.start_byte, shape.family.as_str().to_string());
+                    if emitted_parser_shapes.contains_key(&key) {
+                        continue;
+                    }
+                    emitted_parser_shapes.insert(key, probes.len());
                 }
-                emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
                 if shape.family == ProbeFamily::StaticUnknown
                     && skip_added_string_continuation(shape.start_line, text)
@@ -871,6 +878,13 @@ pub(crate) fn probes_for_file_with_relations(
                     before,
                     Some(canonical_text.clone()),
                 );
+                if let Some(boundary) = shape.unsafe_boundary {
+                    unsafe_boundaries.push((probes.len(), shape.start_byte, boundary));
+                    if boundary == super::classify::UnsafeBoundary::Enclosing {
+                        unsafe_context_lines
+                            .insert(added.new_side_line, (text, removed_counterpart));
+                    }
+                }
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
             continue;
@@ -910,7 +924,7 @@ pub(crate) fn probes_for_file_with_relations(
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
-            classify_changed_line_against(text, removed_counterpart.as_deref())
+            classify_changed_line_against(text, removed_counterpart)
                 .into_iter()
                 .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
                 .collect::<Vec<_>>()
@@ -1002,6 +1016,56 @@ pub(crate) fn probes_for_file_with_relations(
             seeded.binding_return = return_flow.clone();
             probes.push(seeded);
         }
+    }
+
+    // Only candidate-side probes actually emitted for this file can carry the
+    // edit. A parser shape that was filtered or downgraded cannot hide a note.
+    // Select the first surviving projection per boundary, so a classified edit
+    // cannot consume the fallback needed for a different line in the same body.
+    if !unsafe_boundaries.is_empty() {
+        let replacement_runs = changed
+            .removed_lines
+            .iter()
+            .map(|old| added_run_start(old.new_side_line, &added_run_starts))
+            .collect::<BTreeSet<_>>();
+        let classified = probes
+            .iter()
+            .map(|seed| &seed.probe)
+            .filter(|probe| probe.family != ProbeFamily::StaticUnknown)
+            .filter_map(|probe| {
+                let line = probe.location.line;
+                let &(added, removed) = unsafe_context_lines.get(&line)?;
+                // A predicate can be present on an edited line even when only
+                // the statement beside it changed. Require the classified
+                // expression to carry the edit; an unpaired replacement is
+                // ambiguous, while every expression on a pure addition is new.
+                let carries_edit = match removed {
+                    Some(old) => {
+                        (added == probe.expression && added != old)
+                            || removed_span_of_shape(added, &probe.expression, old)
+                                .is_some_and(|before| before != probe.expression)
+                    }
+                    None => !replacement_runs.contains(&added_run_start(line, &added_run_starts)),
+                };
+                carries_edit.then_some((line, probe.owner.as_ref()?))
+            })
+            .collect::<BTreeSet<_>>();
+        let mut retained = BTreeSet::new();
+        let mut keep = vec![true; probes.len()];
+        for (index, boundary, context_only) in unsafe_boundaries {
+            let probe = &probes[index].probe;
+            let shadowed = context_only == super::classify::UnsafeBoundary::Enclosing
+                && probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| classified.contains(&(probe.location.line, owner)));
+            keep[index] = !shadowed && retained.insert(boundary);
+        }
+        probes = probes
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(probe, keep)| keep.then_some(probe))
+            .collect();
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
@@ -6316,7 +6380,7 @@ mod tests {
             start_byte,
             text,
             standalone_call: false,
-            unsafe_boundary: false,
+            unsafe_boundary: None,
         }
     }
 
