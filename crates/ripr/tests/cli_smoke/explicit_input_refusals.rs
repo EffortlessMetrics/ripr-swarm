@@ -283,3 +283,35 @@ fn gate_warns_on_stderr_when_an_optional_input_is_unavailable() -> Result<(), St
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+#[test]
+fn gate_names_an_unavailable_mutation_calibration_once() -> Result<(), String> {
+    let root = fixture("gate-mutation-calibration-once")?;
+    std::fs::write(
+        root.join("guidance.json"),
+        r#"{"schema_version":"0.1","comments":[]}"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let output = run(
+        &root,
+        &[
+            "gate",
+            "evaluate",
+            "--pr-guidance",
+            "guidance.json",
+            "--mutation-calibration",
+            "nope.json",
+        ],
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mentions = stderr
+        .matches("--mutation-calibration nope.json is unavailable")
+        .count();
+    if mentions != 1 {
+        return Err(format!(
+            "stderr must name the dropped input exactly once, saw {mentions}:\n{stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
