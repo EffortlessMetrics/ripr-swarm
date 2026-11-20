@@ -2729,6 +2729,16 @@ mod audit_controls {
             .join("\n");
         assert!(refused.contains("not a regular file"), "{refused}");
 
+        // A link loop is an unreadable manifest, not an absent one.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink("suppressions.toml", root.join(manifest))
+            .map_err(|e| e.to_string())?;
+        let refused = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("a manifest link loop must be refused, not read as absent")?;
+        assert!(refused.contains("cannot be resolved"), "{refused}");
+        assert!(refused.contains(".ripr/suppressions.toml"), "{refused}");
+
         // A parent-directory link (`.ripr -> outside`) escapes the same way.
         std::fs::remove_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
         let outside_dir = base.join("outside-dir");

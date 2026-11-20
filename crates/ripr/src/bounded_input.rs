@@ -69,7 +69,12 @@ pub(crate) fn read_root_metadata_toml(
     what: &str,
 ) -> Result<Option<String>, String> {
     let path = root.join(relative_path);
-    if !path.exists() {
+    // Only a genuinely missing file is absent: a permission-denied lookup or
+    // a link loop reaches the sanitized resolution error below instead.
+    if matches!(
+        std::fs::metadata(&path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    ) {
         return Ok(None);
     }
     let display = relative_path.display();
