@@ -21,12 +21,15 @@
 //! Blessing never adds: `RIPR_PRUNE_REFUSAL_BASELINE=1` rewrites fragments to
 //! drop entries that no longer offend, and nothing else.
 
+use ra_ap_syntax::{
+    AstNode, Edition, SourceFile,
+    ast::{self, HasAttrs, HasName},
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FRAGMENT_DIR: &str = "policy/refusal-next-step.d";
-const KEY_LEN: usize = 110;
 
 /// Words that mark a literal as describing a failure or refusal.
 const REASON_CUES: &[&str] = &[
@@ -406,59 +409,26 @@ fn code_positions(source: &str) -> Vec<bool> {
     in_code
 }
 
-/// `source` with every `#[cfg(test)]` item blanked out: a `mod tests { .. }`
-/// block, a test-only function, or a test-only `use ..;`. Production code
-/// after such an item stays visible. Cutting the file at the first
-/// `#[cfg(test)]` instead hid everything below a test-only import near the top
-/// of a file (#14163).
-fn without_test_items(source: &str) -> String {
-    const MARKER: &str = "#[cfg(test)]";
-    let bytes = source.as_bytes();
-    let mut out = String::with_capacity(source.len());
+const TEST_ATTRIBUTE: &str = "#[cfg(test)]";
+
+/// Cut at the syntax item's boundary. Braces in types and expressions within
+/// its signature do not terminate the item. Copy a space so adjacent tokens
+/// cannot become a new trigger at the cut.
+fn without_test_items(source: &str, tree: &ast::SourceFile) -> String {
+    let mut out = String::new();
     let mut copied = 0;
-    let mut at = 0;
-    while at < bytes.len() {
-        let (lexeme, next) = lex_at(bytes, at);
-        if !matches!(lexeme, Lexeme::Code(b'#')) || !source[at..].starts_with(MARKER) {
-            at = next;
-            continue;
-        }
-        // Walk to the end of the item: the first `;` outside every brace,
-        // paren and bracket (so `[u8; 4]` in a signature does not end it), or
-        // the close of the first top-level `{ .. }` block.
-        let mut depth = 0usize;
-        let mut nest = 0usize;
-        let mut end = at + MARKER.len();
-        let mut closed = false;
-        while end < bytes.len() {
-            let (lexeme, next) = lex_at(bytes, end);
-            end = next;
-            match lexeme {
-                Lexeme::Code(b'(' | b'[') => nest += 1,
-                Lexeme::Code(b')' | b']') => nest = nest.saturating_sub(1),
-                Lexeme::Code(b'{') => depth += 1,
-                Lexeme::Code(b'}') => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 && nest == 0 {
-                        closed = true;
-                        break;
-                    }
-                }
-                Lexeme::Code(b';') if depth == 0 && nest == 0 => {
-                    closed = true;
-                    break;
-                }
-                _ => {}
+    for attr in tree.syntax().descendants().filter_map(ast::Attr::cast) {
+        if attr.syntax().text() == TEST_ATTRIBUTE
+            && let Some(item) = attr.syntax().parent()
+        {
+            let range = item.text_range();
+            let start = usize::from(range.start());
+            if copied <= start {
+                out.push_str(&source[copied..start]);
+                out.push(' ');
+                copied = usize::from(range.end());
             }
         }
-        out.push_str(&source[copied..at]);
-        if !closed {
-            // An item that never closes: drop the rest, as the old cut did.
-            copied = bytes.len();
-            break;
-        }
-        copied = end;
-        at = end;
     }
     out.push_str(&source[copied..]);
     out
@@ -499,8 +469,11 @@ fn message_follows(trigger: &str, after: &str) -> bool {
 
 /// The `(file, key)` pairs whose message reads like an error but has no cue.
 fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
-    let production = without_test_items(source);
-    let body = production.as_str();
+    let tree = SourceFile::parse(source, Edition::CURRENT).tree();
+    offenders_in_production(relative, &without_test_items(source, &tree))
+}
+
+fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
     let in_code = code_positions(body);
     let mut keys = BTreeSet::new();
     for trigger in TRIGGERS {
@@ -524,13 +497,7 @@ fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
             if !has_reason_cue(&lower) || has_action_cue(&lower) {
                 continue;
             }
-            let key: String = text
-                .chars()
-                .take(KEY_LEN)
-                .collect::<String>()
-                .trim_end()
-                .to_string();
-            keys.insert(format!("{relative}|{}", key.replace('\n', " ")));
+            keys.insert(format!("{relative}|{}", text.trim_end().replace('\n', " ")));
         }
     }
     keys
@@ -571,140 +538,139 @@ fn child_module_dir(path: &Path) -> PathBuf {
     }
 }
 
-/// Spans of inline `mod name { .. }` blocks: (open brace, close brace, name).
-fn inline_module_spans(source: &str) -> Vec<(usize, usize, String)> {
-    let bytes = source.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let mut spans = Vec::new();
-    let mut open: Vec<(usize, usize, String)> = Vec::new();
-    let mut pending: Option<String> = None;
-    let mut depth = 0usize;
-    let mut at = 0;
-    while at < bytes.len() {
-        let (lexeme, next) = lex_at(bytes, at);
-        match lexeme {
-            Lexeme::Code(b'm')
-                if bytes[at..].starts_with(b"mod")
-                    && (at == 0 || !is_ident(bytes[at - 1]))
-                    && bytes.get(at + 3).is_some_and(u8::is_ascii_whitespace) =>
-            {
-                let name: String = source[at + 3..]
-                    .trim_start()
-                    .chars()
-                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-                    .collect();
-                pending = (!name.is_empty()).then_some(name);
-            }
-            Lexeme::Code(b';') => pending = None,
-            Lexeme::Code(b'{') => {
-                depth += 1;
-                if let Some(name) = pending.take() {
-                    open.push((at, depth, name));
-                }
-            }
-            Lexeme::Code(b'}') => {
-                if open.last().is_some_and(|(_, level, _)| *level == depth)
-                    && let Some((start, _, name)) = open.pop()
-                {
-                    spans.push((start, at, name));
-                }
-                depth = depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-        at = next;
+/// Rust resolves a top-level literal #[path] beside the declaring file, even
+/// in foo.rs where a default child would instead live in foo/. Inside an
+/// inline module both forms start in that module's directory.
+fn module_target(
+    file: &Path,
+    loaded_by_path: bool,
+    module: &ast::Module,
+) -> Option<(PathBuf, bool)> {
+    let attr = module
+        .attrs()
+        .find(|attr| attr.simple_name().as_deref() == Some("path"));
+    let parent_module = module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(ast::Module::cast);
+    let dir = if let Some(parent) = parent_module {
+        module_target(file, loaded_by_path, &parent)?.0
+    } else if attr.is_some() || loaded_by_path {
+        file.parent()?.to_owned()
+    } else {
+        child_module_dir(file)
+    };
+
+    if let Some(attr) = attr {
+        let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
+            return None;
+        };
+        let ast::Expr::Literal(literal) = meta.expr()? else {
+            return None;
+        };
+        let ast::LiteralKind::String(string) = literal.kind() else {
+            return None;
+        };
+        // Compare actual paths, including explicit names containing "..".
+        let target = dir
+            .join(string.value().ok()?.as_ref())
+            .canonicalize()
+            .ok()?;
+        Some((target, true))
+    } else {
+        Some((
+            dir.join(module.name()?.text().trim_start_matches("r#")),
+            false,
+        ))
     }
-    spans.sort();
-    spans
 }
 
-/// Paths, relative to the file's child-module directory, of out-of-line
-/// modules declared under `#[cfg(test)]`, such as `#[cfg(test)] mod rows;` or
-/// `#[cfg(test)] #[doc(hidden)] pub(crate) mod rows;`. A declaration inside
-/// inline modules keeps their names, so `mod nested { #[cfg(test)] mod rows; }`
-/// gives `nested/rows`. A module with a `#[path]` attribute is left to the
-/// per-item cut.
-fn test_only_child_modules(source: &str) -> Vec<String> {
-    const MARKER: &str = "#[cfg(test)]";
-    let in_code = code_positions(source);
-    let spans = inline_module_spans(source);
-    let mut names = Vec::new();
-    let mut search = 0;
-    while let Some(found) = source[search..].find(MARKER) {
-        let at = search + found;
-        search = at + MARKER.len();
-        if !in_code[at] {
+/// Rust can load the same file conventionally or through #[path]. Its
+/// default child directory depends on how the declaring file was loaded.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ModuleFile {
+    path: PathBuf,
+    by_path: bool,
+}
+
+#[derive(Default)]
+struct ModuleChildren {
+    ordinary: Vec<ModuleFile>,
+    test: Vec<ModuleFile>,
+}
+
+fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren {
+    let mut children = ModuleChildren::default();
+    for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
+        if module.semicolon_token().is_none() {
             continue;
         }
-        let mut rest = source[search..].trim_start();
-        // Skip further attributes on the same item.
-        let mut has_path = false;
-        while let Some(attr) = rest.strip_prefix("#[") {
-            let Some(close) = attr.find(']') else {
-                break;
-            };
-            has_path |= attr[..close].trim_start().starts_with("path");
-            rest = attr[close + 1..].trim_start();
-        }
-        if has_path {
-            continue;
-        }
-        if let Some(after) = rest.strip_prefix("pub") {
-            rest = after.trim_start();
-            if let Some(scoped) = rest.strip_prefix('(') {
-                let Some(close) = scoped.find(')') else {
-                    continue;
-                };
-                rest = scoped[close + 1..].trim_start();
-            }
-        }
-        let Some(after) = rest.strip_prefix("mod ") else {
+        let Some((target, explicit)) = module_target(&file.path, file.by_path, &module) else {
             continue;
         };
-        let after = after.trim_start();
-        let name: String = after
-            .chars()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-            .collect();
-        if !name.is_empty() && after[name.len()..].trim_start().starts_with(';') {
-            let mut path: Vec<&str> = spans
-                .iter()
-                .filter(|(open, close, _)| *open < at && at < *close)
-                .map(|(_, _, module)| module.as_str())
-                .collect();
-            path.push(&name);
-            names.push(path.join("/"));
+        let test_only = module
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|item| item.attrs().any(|a| a.syntax().text() == TEST_ATTRIBUTE));
+        let dest = if test_only {
+            &mut children.test
+        } else {
+            &mut children.ordinary
+        };
+        if explicit {
+            dest.push(ModuleFile {
+                path: target,
+                by_path: true,
+            });
+        } else {
+            for path in [target.with_extension("rs"), target.join("mod.rs")] {
+                dest.push(ModuleFile {
+                    path,
+                    by_path: false,
+                });
+            }
         }
     }
-    names
+    children
+}
+
+/// Walk physical module paths, keeping the loading mode until their children
+/// have been visited. A file may be imported in both modes.
+fn reachable_files(
+    roots: &[ModuleFile],
+    modules: &BTreeMap<ModuleFile, ModuleChildren>,
+    with_tests: bool,
+) -> BTreeSet<PathBuf> {
+    let mut seen = BTreeSet::new();
+    let mut todo = roots.to_vec();
+    while let Some(file) = todo.pop() {
+        if seen.insert(file.clone())
+            && let Some(children) = modules.get(&file)
+        {
+            todo.extend(children.ordinary.iter().cloned());
+            if with_tests {
+                todo.extend(children.test.iter().cloned());
+            }
+        }
+    }
+    seen.into_iter().map(|file| file.path).collect()
 }
 
 fn fragment_name(relative: &str) -> String {
     format!("{}.txt", relative.replace(['/', '\\'], "__"))
 }
 
-fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
-    let src = crate_dir().join("src");
+fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    let src = src
+        .canonicalize()
+        .map_err(|error| format!("resolve {}: {error}", src.display()))?;
     let mut files = Vec::new();
     source_files(&src, &mut files)?;
-    files.sort();
-    let mut test_only = Vec::new();
+    let mut modules = BTreeMap::new();
+    let mut found = Vec::new();
     for path in &files {
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| format!("read {}: {error}", path.display()))?;
-        let dir = child_module_dir(path);
-        for name in test_only_child_modules(&source) {
-            test_only.push(dir.join(&name));
-            test_only.push(dir.join(format!("{name}.rs")));
-        }
-    }
-    let mut by_file = BTreeMap::new();
-    for path in files {
-        // A file whose `mod` declaration is `#[cfg(test)]` is test-only as a
-        // whole, and so is everything below its directory.
-        if test_only.iter().any(|module| path.starts_with(module)) {
-            continue;
-        }
         let relative = format!(
             "crates/ripr/src/{}",
             path.strip_prefix(&src)
@@ -712,15 +678,53 @@ fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
                 .to_string_lossy()
                 .replace('\\', "/")
         );
-        let bytes =
-            std::fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        let source = String::from_utf8_lossy(&bytes).to_string();
-        let keys = offenders_in(&relative, &source);
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let tree = SourceFile::parse(&source, Edition::CURRENT).tree();
+        for by_path in [false, true] {
+            let file = ModuleFile {
+                path: path.to_owned(),
+                by_path,
+            };
+            let children = module_children(&file, &tree);
+            modules.insert(file, children);
+        }
+        let keys = offenders_in_production(&relative, &without_test_items(&source, &tree));
         if !keys.is_empty() {
-            by_file.insert(relative, keys);
+            found.push((path, relative, keys));
         }
     }
-    Ok(by_file)
+    // Include standalone sources as roots. Only a file reached through a
+    // test edge and absent from the production walk is excluded.
+    let named: BTreeSet<_> = modules
+        .values()
+        .flat_map(|children| {
+            children
+                .test
+                .iter()
+                .chain(&children.ordinary)
+                .map(|child| &child.path)
+        })
+        .collect();
+    let mut roots: Vec<_> = files
+        .iter()
+        .filter(|file| !named.contains(file))
+        .map(|path| ModuleFile {
+            path: path.clone(),
+            by_path: false,
+        })
+        .collect();
+    roots.extend(["lib.rs", "main.rs"].map(|name| ModuleFile {
+        path: src.join(name),
+        by_path: false,
+    }));
+    let all = reachable_files(&roots, &modules, true);
+    let production = reachable_files(&roots, &modules, false);
+    Ok(found
+        .into_iter()
+        .filter(|(path, _, _)| !all.contains(*path) || production.contains(*path))
+        .map(|(_, relative, keys)| (relative, keys))
+        .collect())
 }
 
 fn baseline() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
@@ -755,7 +759,7 @@ fn baseline() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
 
 #[test]
 fn error_messages_name_a_next_step_or_are_baselined() -> Result<(), String> {
-    let current = current_offenders()?;
+    let current = current_offenders(&crate_dir().join("src"))?;
     let accepted = baseline()?;
     let prune = std::env::var("RIPR_PRUNE_REFUSAL_BASELINE").is_ok_and(|value| value == "1");
 
@@ -1049,6 +1053,121 @@ fn offender_messages(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn scan_distinguishes_uncued_messages_after_character_110() {
+    let prefix = format!("missing {}", "é".repeat(102));
+    assert_eq!(prefix.chars().count(), 110);
+    let first = format!("{prefix} alpha");
+    let second = format!("{prefix} beta");
+    let source = format!(r#"fn f() {{ Err("{first}"); Err("{second}"); }}"#);
+    let keys = offenders_in("x.rs", &source);
+    let accepted = offenders_in("x.rs", &format!(r#"fn f() {{ Err("{first}"); }}"#));
+    assert_eq!(keys.intersection(&accepted).count(), 1);
+    assert_eq!(
+        keys.difference(&accepted).collect::<Vec<_>>(),
+        vec![&format!("x.rs|{second}")]
+    );
+}
+
+#[test]
+fn scan_skips_the_body_after_a_braced_const_argument() {
+    let source = r#"
+#[cfg(test)]
+fn helper() -> Buf<{ 1 + 3 }> {
+    Err("test-only widget is missing")
+}
+fn live() { Err("production widget is missing"); }
+"#;
+    assert_eq!(offender_messages(source), ["production widget is missing"]);
+}
+
+fn scan_module_fixture(
+    files: &[(&str, &str)],
+) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let src = fixture.path().join("src");
+    for (name, body) in files {
+        let path = src.join(name);
+        std::fs::create_dir_all(path.parent().ok_or("missing fixture parent")?)?;
+        std::fs::write(path, body)?;
+    }
+    Ok(current_offenders(&src)?.into_values().flatten().collect())
+}
+
+#[test]
+fn scan_excludes_only_the_named_test_path() -> Result<(), Box<dyn std::error::Error>> {
+    let keys = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"mod host; mod shared; mod moved; #[path = "relocated/entry.rs"] mod extra;"#,
+        ),
+        ("relocated/entry.rs", "mod rows;"),
+        (
+            "relocated/rows.rs",
+            r#"fn f() { Err("live relocated row is missing"); }"#,
+        ),
+        (
+            "host.rs",
+            r#"
+            #[cfg(test)] #[path = "support.rs"] mod moved;
+            #[cfg(test)] #[path = "relocated/rows.rs"] mod duplicate;
+            #[path = "shared.rs"] #[cfg(test)] mod alias;
+            mod nested { #[path = "alt/mod.rs"] #[cfg(test)] mod helpers; }
+        "#,
+        ),
+        (
+            "support.rs",
+            r#"fn f() { Err("support widget is missing"); }"#,
+        ),
+        (
+            "host/nested/alt/mod.rs",
+            r#"fn f() { Err("nested helper is missing"); }"#,
+        ),
+        (
+            "host/nested/alt/sibling.rs",
+            r#"fn f() { Err("other nested widget is missing"); }"#,
+        ),
+        (
+            "shared.rs",
+            r#"fn f() { Err("shared widget is missing"); }"#,
+        ),
+        ("moved.rs", r#"fn f() { Err("live widget is missing"); }"#),
+        (
+            "host/moved.rs",
+            r#"fn f() { Err("other widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        keys,
+        BTreeSet::from([
+            "crates/ripr/src/host/moved.rs|other widget is missing".into(),
+            "crates/ripr/src/host/nested/alt/sibling.rs|other nested widget is missing".into(),
+            "crates/ripr/src/moved.rs|live widget is missing".into(),
+            "crates/ripr/src/shared.rs|shared widget is missing".into(),
+            "crates/ripr/src/relocated/rows.rs|live relocated row is missing".into(),
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_excludes_nested_test_rows_and_keeps_production_rows()
+-> Result<(), Box<dyn std::error::Error>> {
+    let keys = scan_module_fixture(&[
+        ("lib.rs", "mod rows; mod nested { #[cfg(test)] mod rows; }"),
+        ("rows.rs", r#"fn f() { Err("production row is missing"); }"#),
+        (
+            "nested/rows.rs",
+            r#"fn f() { Err("test row is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        keys,
+        BTreeSet::from(["crates/ripr/src/rows.rs|production row is missing".into(),])
+    );
+    Ok(())
+}
+
+#[test]
 fn scan_sees_production_code_below_a_test_only_item() {
     // #14163: the scan used to stop at the first `#[cfg(test)]`, so a
     // test-only import near the top of a file hid every message below it.
@@ -1137,9 +1256,6 @@ mod rows;
 pub(crate) mod helpers ;
 #[cfg(test)]
 mod inline_tests {}
-#[cfg(test)]
-#[path = "elsewhere.rs"]
-mod moved;
 mod production;
 mod nested {
     mod inner {
@@ -1152,14 +1268,28 @@ mod nested {
 // #[cfg(test)] mod commented;
 const NOTE: &str = "#[cfg(test)] mod quoted;";
 "##;
+    let tree = SourceFile::parse(source, Edition::CURRENT).tree();
+    let children = module_children(
+        &ModuleFile {
+            path: "src/lib.rs".into(),
+            by_path: false,
+        },
+        &tree,
+    );
+    let test_files: Vec<_> = children.test.into_iter().map(|file| file.path).collect();
     assert_eq!(
-        test_only_child_modules(source),
-        vec![
-            "rows".to_string(),
-            "helpers".to_string(),
-            "nested/inner/rows".to_string(),
-            "nested/helpers".to_string(),
+        test_files,
+        [
+            "src/rows.rs",
+            "src/rows/mod.rs",
+            "src/helpers.rs",
+            "src/helpers/mod.rs",
+            "src/nested/inner/rows.rs",
+            "src/nested/inner/rows/mod.rs",
+            "src/nested/helpers.rs",
+            "src/nested/helpers/mod.rs"
         ]
+        .map(PathBuf::from)
     );
     assert_eq!(
         child_module_dir(Path::new("src/a/b.rs")),

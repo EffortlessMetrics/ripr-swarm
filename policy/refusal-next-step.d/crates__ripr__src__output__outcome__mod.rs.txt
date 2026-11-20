@@ -7,7 +7,7 @@ crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field
 crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `kind`
 crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `seam_id`
 crates/ripr/src/output/outcome/mod.rs|static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array
-crates/ripr/src/output/outcome/mod.rs|static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a
+crates/ripr/src/output/outcome/mod.rs|static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a missing seam cannot be read as removed; {})  and
 crates/ripr/src/output/outcome/mod.rs|targeted rerun before artifact is missing `seams` array
 crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing string `static_class`
 crates/ripr/src/output/outcome/mod.rs|targeted rerun selected no current seams
