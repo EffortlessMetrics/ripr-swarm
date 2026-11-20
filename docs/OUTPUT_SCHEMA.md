@@ -2938,9 +2938,10 @@ The evidence-first fields are additive in schema `0.2`:
   nested below the root (the nearest directory holding `pyproject.toml`,
   `setup.cfg`, `setup.py`, `pytest.ini` or `tox.ini`), the optional
   `verify_cwd` names that directory relative to the root, and the command,
-  test path and venv are relative to it; confidence is `medium` when that
-  project has no venv but the root does (#15302). Root-level projects omit
-  `verify_cwd`.
+  test path and venv are relative to it; confidence is at most `medium` when
+  that project has no venv but the root does (#15302). A command that cannot
+  be moved into its project keeps the root-relative route and the root's
+  venv decision, and omits `verify_cwd`, as root-level projects do.
 - `python_repair_card` is an additive optional object for direct weak Python
   findings that already have a canonical gap, concrete missing discriminator,
   related-test evidence, placement, and verify command. It is intentionally

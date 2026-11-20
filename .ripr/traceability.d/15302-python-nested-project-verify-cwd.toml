@@ -10,6 +10,9 @@ tests = [
   "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_venv_without_pytest_lowers_confidence_despite_a_root_venv_with_pytest",
   "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_sarif_card_names_the_project_cwd",
   "crates/ripr/src/output/markdown.rs::python_verify_cwd_roots_verify_or_withholds_it",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::nested_move_leaves_foreign_related_tests_root_relative_without_the_venv",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::nested_move_that_cannot_relativize_leaves_the_root_route",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::cap_confidence_only_lowers",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/verify_interpreter.rs",

@@ -419,6 +419,67 @@ mod tests {
         );
     }
 
+    /// #15302: a related test outside the nested project keeps its
+    /// root-relative PATH command; only in-project lines take the project's
+    /// venv, and a second pass changes nothing.
+    #[test]
+    fn nested_move_leaves_foreign_related_tests_root_relative_without_the_venv() {
+        let mut lines = evidence(&[
+            "suggested_verify_command: python -m pytest py/tests/test_a.py::test_total",
+            "suggested_verify_command_confidence: high",
+            "test_verify_command: python -m pytest py/tests/test_a.py::test_total (test_total)",
+            "test_verify_command: python -m pytest other/tests/test_b.py::test_b (test_b)",
+        ]);
+        let foreign = relativize_to_project("py", &mut lines);
+        assert_eq!(foreign, Some(vec![4]));
+        let decision = PytestVerifyInterpreter::from_facts(
+            Some(".venv/bin/python"),
+            VenvPytest::Present(Some("9.2.0".to_string())),
+        );
+        decision.rewrite_evidence(&mut lines, &foreign.unwrap_or_default());
+        let expected = [
+            "suggested_verify_command: .venv/bin/python -m pytest tests/test_a.py::test_total",
+            "suggested_verify_command_confidence: high",
+            "suggested_verify_venv_pytest: present",
+            "suggested_verify_cwd: py",
+            "test_verify_command: .venv/bin/python -m pytest tests/test_a.py::test_total (test_total)",
+            "test_verify_command: python -m pytest other/tests/test_b.py::test_b (test_b)",
+        ];
+        assert_eq!(lines, expected);
+        let again = relativize_to_project("py", &mut lines);
+        decision.rewrite_evidence(&mut lines, &again.unwrap_or_default());
+        assert_eq!(lines, expected);
+    }
+
+    /// #15302: a suggested command that cannot move into the nested project
+    /// leaves the evidence untouched, so the caller keeps the root route.
+    #[test]
+    fn nested_move_that_cannot_relativize_leaves_the_root_route() {
+        let original = evidence(&[
+            "suggested_verify_command: python -m pytest other/tests/test_b.py::test_b",
+            "suggested_verify_command_confidence: high",
+        ]);
+        let mut lines = original.clone();
+        assert_eq!(relativize_to_project("py", &mut lines), None);
+        assert_eq!(lines, original);
+        let mut unittest = evidence(&[
+            "suggested_verify_command: python -m unittest py.tests.test_a",
+            "suggested_verify_command_confidence: high",
+        ]);
+        let before = unittest.clone();
+        assert_eq!(relativize_to_project("py", &mut unittest), None);
+        assert_eq!(unittest, before);
+    }
+
+    #[test]
+    fn cap_confidence_only_lowers() {
+        for (current, capped) in [("high", "medium"), ("medium", "medium"), ("low", "low")] {
+            let mut lines = vec![format!("{CONFIDENCE}{current}")];
+            cap_confidence(&mut lines, "medium");
+            assert_eq!(lines, [format!("{CONFIDENCE}{capped}")]);
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn root_with_dot_venv_selects_its_interpreter_from_static_facts() -> std::io::Result<()> {
