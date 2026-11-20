@@ -882,7 +882,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::output::path::human_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
