@@ -472,7 +472,10 @@ fn run_negative_corpus_with_input(
             sha256: format!("sha256:{}", sha256_file(qualified.binary())?),
         };
         let mut custody = qualified.custody_json();
-        custody["installed_help_contract"] = help_contract;
+        custody
+            .as_object_mut()
+            .ok_or_else(|| "qualified custody is not an object".to_string())?
+            .insert("installed_help_contract".to_string(), help_contract);
         (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;

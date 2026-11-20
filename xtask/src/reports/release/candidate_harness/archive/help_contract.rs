@@ -43,7 +43,7 @@ impl InstalledCandidate {
         let declared = declared_cases(entry)?;
         for (_, committed, bytes) in helpers {
             let helper = String::from_utf8_lossy(bytes);
-            if ["CARGO_BIN_EXE", "option_env!", "env::var"]
+            if ["CARGO_BIN_EXE", "option_env!", "env::var", "use std::env"]
                 .iter()
                 .any(|needle| helper.contains(needle))
             {
@@ -94,9 +94,16 @@ impl InstalledCandidate {
 /// The number of `#[test]` cases the harness declares, and a check that it
 /// finds the executable only through `CARGO_BIN_EXE_ripr`.
 pub(crate) fn declared_cases(entry: &str) -> Result<usize, String> {
-    if entry.matches(BINARY_BINDING).count() != 1
+    // Comment lines are ignored, so a commented-out binding does not count.
+    let code = entry
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if code.matches(BINARY_BINDING).count() != 1
         || entry.contains("option_env!")
         || entry.contains("env::var")
+        || entry.contains("use std::env")
     {
         return Err(format!(
             "help harness must locate ripr only through one {BINARY_BINDING}"
@@ -350,6 +357,10 @@ fn second_case() { assert!(!ripr().is_empty()); }
                 "fn second_case() { let _ = std::env::var(\"RIPR\");",
             ),
             PASSING.replace("#[test]", "#[tokio::test]"),
+            PASSING.replace(
+                "fn ripr() -> &'static str { env!(\"CARGO_BIN_EXE_ripr\") }",
+                "// env!(\"CARGO_BIN_EXE_ripr\")\nfn ripr() -> &'static str { \"ripr\" }",
+            ),
         ] {
             assert!(declared_cases(&entry).is_err(), "accepted: {entry}");
         }

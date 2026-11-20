@@ -330,21 +330,21 @@ the installed binary or library API. Changing the list is a release-contract
 change that must be reviewed against `cargo package -p ripr --list`, the
 measured `.crate` size and this document.
 
-The published `cli_help_hierarchy` target must compile and run from the
-extracted package without repository-root documentation. It keeps the rendered
-help and synthetic-document cases; its shared helper is packaged under
-`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
-the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
-real Cargo archive and rejects removal of the shared test helper:
+The `cli_help_hierarchy` target is not published. It needs no
+repository-root documentation, so it compiles standalone from its three files.
+It keeps the rendered help and synthetic-document cases. Seven live
+repository-guide audits belong to the unpublished `xtask` target
+`ripr_public_guide_contract`. That target also checks that a real Cargo
+archive carries no `tests/`, compiles the help target standalone against the
+checkout candidate, and rejects removal of the shared test helper:
 
 ```bash
 cargo test -p ripr --test cli_help_hierarchy
 cargo test -p xtask --test ripr_public_guide_contract
 ```
 
-These focused checks establish the help target's package boundary. Other
-packaged test targets retain their own asset requirements and are not qualified
-by this check.
+Release qualification runs the same cases against the installed candidate (see
+above).
 
 The example paths are enumerated rather than globbed as `examples/**` on
 purpose. `ripr` runs against the sample workspace during tests and writes a
