@@ -1348,20 +1348,28 @@ impl ClassifiedProbeEvidence {
         // A file that rebinds a primitive type name (`type i32 = u8;`, or a
         // `use` naming one) can change the width a primitive-spelled type in
         // the owner has, which the fold cannot see (#14950 review).
-        let owner_types_are_primitive = context.owner_fn.is_some_and(|owner| {
-            owner_constants.as_deref().is_some_and(|source| {
-                owner
-                    .start_line
-                    .checked_sub(1)
-                    .and_then(|index| source.lines().nth(index))
-                    .is_some_and(|line| !line.starts_with(char::is_whitespace))
-                    && !file_may_rebind_primitive_type(source)
+        // The scan reads the whole file, so it runs at most once per probe
+        // and only for a probe the pin can admit: asked eagerly, every
+        // probe of a file read the file again (#15621).
+        let owner_types_are_primitive = std::cell::OnceCell::new();
+        let owner_types_are_primitive = || {
+            *owner_types_are_primitive.get_or_init(|| {
+                context.owner_fn.is_some_and(|owner| {
+                    owner_constants.as_deref().is_some_and(|source| {
+                        owner
+                            .start_line
+                            .checked_sub(1)
+                            .and_then(|index| source.lines().nth(index))
+                            .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                            && !file_may_rebind_primitive_type(source)
+                    })
+                })
             })
-        });
+        };
         let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
             matches!(context.probe.family, ProbeFamily::ReturnValue)
                 && owner_name_unique
-                && owner_types_are_primitive
+                && owner_types_are_primitive()
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
