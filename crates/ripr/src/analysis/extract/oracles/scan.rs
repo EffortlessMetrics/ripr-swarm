@@ -6169,8 +6169,6 @@ fn price_boundary_discriminator() {
             (r#"format!(r"{expected}")"#, true),
             (r#"format!("{}", r"{expected}")"#, false),
             (r#"format!("{}", expected)"#, true),
-            (r#"write!(sink(), r"{expected}")"#, true),
-            (r#"write!(sink(), "{}", r"{expected}")"#, false),
             (r#"concat!(r"{expected}")"#, false),
             (r#"render!("{expected}")"#, true),
         ] {
@@ -6186,6 +6184,23 @@ fn price_boundary_discriminator() {
             assert_eq!((fact.kind, fact.strength), wanted, "{operand}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn write_macro_reads_only_the_template_and_evaluated_values() {
+        let placeholders = std::collections::BTreeSet::from([String::from("expected")]);
+        for (operand, reads) in [
+            (r#"write!(sink(), r"{expected}")"#, true),
+            (r#"write!(sink(), "{}", r"{expected}")"#, false),
+            (r#"write!(sink(), "{}", expected)"#, true),
+        ] {
+            let assertion = format!("assert_eq!(result(), {operand})");
+            assert_eq!(
+                super::super::classify::assertion_reads_placeholder(&assertion, &placeholders),
+                reads,
+                "{operand}"
+            );
+        }
     }
 
     #[test]
