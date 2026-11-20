@@ -14581,7 +14581,7 @@ fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize,
 /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
 /// may stand between the `let` and the assertion. Every use still lies in
 /// an assertion, so no item, pattern or macro outside one can rebind it.
-fn let_bound_owner_call<'a>(
+pub(super) fn let_bound_owner_call<'a>(
     test: &'a TestSummary,
     assertion: &OracleFact,
     operand: &str,

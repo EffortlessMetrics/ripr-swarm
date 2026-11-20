@@ -1830,6 +1830,34 @@ fn t() {
 }
 
 #[test]
+fn bare_boolean_pin_pairs_only_the_reachable_comparison() -> Result<(), String> {
+    for (assertion, expected) in [
+        ("assert!(thr(5, true));", ExposureClass::Exposed),
+        (
+            "let v = thr(5, true);\nassert_eq!(v, true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "assert!(!thr(5, false));",
+            ExposureClass::PropagationUnknown,
+        ),
+    ] {
+        let test = format!("use thr::thr;\n#[test]\nfn t() {{\n{assertion}\n}}\n");
+        let findings = findings_with_parameter(
+            "x: i32, on: bool",
+            "",
+            "",
+            "    x >= 5 && on",
+            "    x > 5 && on",
+            &test,
+        )?;
+        let returned = family(&findings, "return_value")?;
+        assert_eq!(returned.class, expected, "{returned:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn masked_boundary_is_not_rescued_by_an_unmasked_non_boundary_call() -> Result<(), String> {
     let test = "use thr::thr;\n#[test]\nfn t() {\nassert_eq!(thr(5, false), false);\nassert_eq!(thr(9, true), true);\n}\n";
     let findings = findings_with_parameter(

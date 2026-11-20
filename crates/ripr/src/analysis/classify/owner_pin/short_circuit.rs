@@ -64,6 +64,34 @@ enum Atom {
     },
 }
 
+/// The unchanged gate and the one comparison whose spelling changed.
+pub(in crate::analysis::classify) struct GuardedReturnChange<'a> {
+    pub(in crate::analysis::classify) gate_name: &'a str,
+    gate: &'a Operand,
+    open: bool,
+    before: &'a Operand,
+    after: &'a Operand,
+}
+
+impl GuardedReturnChange<'_> {
+    pub(in crate::analysis::classify) fn witnessed_by(
+        &self,
+        test: &TestSummary,
+        arguments: &[String],
+        line: usize,
+        owner: &str,
+    ) -> bool {
+        let Some(runs) = argument_runs(test, None, arguments, line, owner) else {
+            return false;
+        };
+        runs.iter().any(|row| {
+            self.gate.evaluate(row) == Some(self.open)
+                && matches!((self.before.evaluate(row), self.after.evaluate(row)),
+                    (Some(old), Some(new)) if old != new || self.before.is_reversed_form_of(self.after))
+        })
+    }
+}
+
 const COMPARISONS: &[&str] = &["==", "!=", "<=", ">=", "<", ">"];
 
 impl ShortCircuitTail {
@@ -91,7 +119,10 @@ impl ShortCircuitTail {
     }
 
     /// A comparison edit with one unchanged Boolean parameter guarding its result.
-    pub(in crate::analysis::classify) fn comparison_gate(&self, before: &Self) -> Option<&str> {
+    pub(in crate::analysis::classify) fn comparison_gate<'a>(
+        &'a self,
+        before: &'a Self,
+    ) -> Option<GuardedReturnChange<'a>> {
         if self.operator != before.operator
             || self.operands.len() != 2
             || before.operands.len() != 2
@@ -105,24 +136,16 @@ impl ShortCircuitTail {
                 && matches!(self.operands[changed].kind, OperandKind::Compare { .. })
                 && matches!(before.operands[changed].kind, OperandKind::Compare { .. })
             {
-                return self.parameters.get(parameter).map(String::as_str);
+                return Some(GuardedReturnChange {
+                    gate_name: self.parameters.get(parameter)?,
+                    gate: &self.operands[gate],
+                    open: self.operator == "&&",
+                    before: &before.operands[changed],
+                    after: &self.operands[changed],
+                });
             }
         }
         None
-    }
-
-    pub(in crate::analysis::classify) fn result_on(&self, arguments: &[String]) -> Option<bool> {
-        if arguments.len() != self.parameters.len() {
-            return None;
-        }
-        let values: Vec<_> = arguments.iter().cloned().map(Some).collect();
-        let continues = self.operator == "&&";
-        for operand in &self.operands {
-            if operand.evaluate(&values)? != continues {
-                return Some(!continues);
-            }
-        }
-        Some(continues)
     }
 
     /// The owner's parameters in declaration order.
@@ -491,6 +514,34 @@ fn top_level_operands<'a>(text: &'a str, operator: &str) -> Option<Vec<&'a str>>
 }
 
 impl Operand {
+    /// A spelling-only reversal (e.g. `n >= 3` to `3 <= n`) has no
+    /// separating old/new input. Keep its existing comparison-pin reading
+    /// when that same observed row actually opens the gate.
+    fn is_reversed_form_of(&self, other: &Self) -> bool {
+        let OperandKind::Compare {
+            left,
+            operator,
+            right,
+        } = &self.kind
+        else {
+            return false;
+        };
+        let OperandKind::Compare {
+            left: other_left,
+            operator: other_op,
+            right: other_right,
+        } = &other.kind
+        else {
+            return false;
+        };
+        left == other_right
+            && right == other_left
+            && matches!(
+                (*operator, *other_op),
+                ("<", ">") | (">", "<") | ("<=", ">=") | (">=", "<=") | ("==", "==") | ("!=", "!=")
+            )
+    }
+
     /// Whether a comparison with a string literal compares a parameter
     /// declared as a plain string type (`&str`, `String`, `&String`) by
     /// `==` or `!=`.

@@ -2,6 +2,7 @@
 id = "RIPR-SPEC-0158"
 tests = [
   "crates/ripr/tests/returned_comparison_boundary.rs::compound_return_masks_are_not_exposed",
+  "crates/ripr/tests/returned_comparison_boundary.rs::bare_boolean_pin_pairs_only_the_reachable_comparison",
   "crates/ripr/tests/returned_comparison_boundary.rs::compound_return_unmasked_boundary_keeps_the_baseline_reading",
   "crates/ripr/tests/returned_comparison_boundary.rs::unobserved_discriminating_call_does_not_borrow_another_calls_oracle",
 ]

@@ -48,22 +48,57 @@ pub(in crate::analysis) fn unpaired_return_gate(
     }
     let after = ShortCircuitTail::parse(&owner.body, &probe.expression)?;
     let before = after.with_chain(probe.before.as_deref()?)?;
-    let gate = after.comparison_gate(&before)?;
+    let change = after.comparison_gate(&before)?;
     let paired = tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             if !(test.start_line..=test.end_line).contains(&assertion.line)
-                || !assertion_is_discriminating(assertion)
                 || !admitted(test, assertion)
-                || !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &assertion.text, assertion.line)
+                || !super::call_identity::boundary_owner_calls_resolve(
+                    index,
+                    owner,
+                    test,
+                    &assertion.text,
+                    assertion.line,
+                )
             {
                 return false;
             }
-            resolved_whole_owner_calls(test, &assertion.text, owner, true)
+            let bare = assertion_comparison_operands(&assertion.text).is_none();
+            asserted_result_operands(test, &assertion.text, owner)
                 .iter()
-                .any(|args| matches!((before.result_on(args), after.result_on(args)), (Some(old), Some(new)) if old != new))
+                .any(|operand| {
+                    let bound = super::owner_pin::let_bound_owner_call(
+                        test,
+                        assertion,
+                        operand,
+                        "",
+                        &owner.name,
+                        true,
+                        bare,
+                    );
+                    let (call, line) = match bound {
+                        Some(call) => {
+                            // The initializer is a borrowed slice of this test's body.
+                            let offset = call.as_ptr() as usize - test.body.as_ptr() as usize;
+                            let line = test.start_line
+                                + test.body[..offset]
+                                    .bytes()
+                                    .filter(|ch| *ch == b'\n')
+                                    .count();
+                            (call, line)
+                        }
+                        None => (operand.as_str(), assertion.line),
+                    };
+                    super::owner_pin::is_whole_free_owner_call(call, &owner.name)
+                        && super::call_identity::boundary_owner_calls_resolve(
+                            index, owner, test, call, line,
+                        )
+                        && call_arguments(call, &owner.name)
+                            .is_some_and(|args| change.witnessed_by(test, &args, line, &owner.name))
+                })
         })
     });
-    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{gate}`"))
+    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{}`", change.gate_name))
 }
 
 /// Token carried in the discriminate summary when a predicate would otherwise
@@ -686,16 +721,28 @@ fn whole_owner_call_operands(
     assertion_text: &str,
     owner: &FunctionSummary,
 ) -> Vec<Vec<String>> {
-    resolved_whole_owner_calls(test, assertion_text, owner, false)
+    asserted_result_operands(test, assertion_text, owner)
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
 }
 
-fn resolved_whole_owner_calls(
+fn asserted_result_operands(
     test: &TestSummary,
     assertion_text: &str,
     owner: &FunctionSummary,
-    qualified: bool,
-) -> Vec<Vec<String>> {
-    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+) -> Vec<String> {
+    match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
         // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
         Some(compared) => {
@@ -725,33 +772,7 @@ fn resolved_whole_owner_calls(
                     .to_string(),
             ]
         }
-    };
-    operands
-        .iter()
-        .filter_map(|operand| {
-            let operand = operand.trim();
-            let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(offset, arguments)] = lists.as_slice() else {
-                return None;
-            };
-            let (prefix, operand) = operand.split_at(*offset);
-            if !prefix.is_empty()
-                && !(qualified
-                    && prefix.strip_suffix("::").is_some_and(|path| {
-                        path.split("::").all(|segment| {
-                            !segment.is_empty()
-                                && segment.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
-                        })
-                    }))
-            {
-                return None;
-            }
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
-            .then(|| arguments.clone())
-        })
-        .collect()
+    }
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as
