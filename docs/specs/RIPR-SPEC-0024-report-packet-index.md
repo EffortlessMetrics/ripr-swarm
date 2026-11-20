@@ -137,7 +137,7 @@ the default `--root .` and relative directories the commands stay portable and
 run from the directory the index read. For any other `--root`, a regeneration
 command names the resolved repository and gives every artifact path as an
 absolute path. Commands such as `ripr first-pr` resolve their inputs and
-`--out-dir` against `--root`, so a relative artifact path would land under the
+`--output-dir` against `--root`, so a relative artifact path would land under the
 indexed root instead of where the index looks (#4000).
 
 Repo-local `cargo xtask reports index` also records the Lane 1 evidence chain

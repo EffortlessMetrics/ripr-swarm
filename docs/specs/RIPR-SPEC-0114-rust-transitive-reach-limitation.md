@@ -214,7 +214,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    `test → outer → inner`. Result: `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`.
    Fixture: `fixtures/rust_transitive_reach_positive/`.
 
-2. **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
+2. [abstain] **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
    a test helper (`assert_public_api_accepts`), the helper calls a public API function, and the
    API flows through internal helpers to the changed owner (`matches_greater`). Result:
    `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`, with a witness naming
@@ -224,10 +224,12 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    candidate path. Result: bare `no_static_path`, no `static_limit_kind`. Classification unchanged.
    Fixture: `fixtures/rust_transitive_reach_negative/`.
 
-4. **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
-   No limitation fires (no candidate path found through macros). Classification stays bare `no_static_path`.
+4. [abstain] **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
+   No transitive-reach limitation fires (no candidate path found through macros), and
+   the finding stays `no_static_path`; RIPR-SPEC-0119 example 1 names the macro-wrapped
+   test call limit on that finding.
 
-5. **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
+5. [abstain] **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
    exceeds the 5-hop witness walk, so the walk continues past it and finds the
    test entering the chain at `fn_a` (#8047). Result: the same limitation as
    example 1, naming that test. Classification unchanged (`no_static_path`, or

@@ -229,12 +229,15 @@ Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
 print as one row that names the members' lines, the count, the owner and the
 kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
-when there are at most three runs, so a row never names a line that no member
-is on; more runs print the covering span with the distinct line count
-(`1078-1241 (31 distinct lines)`) (#14682). For example:
+when there are at most three runs, so such a row never names a line that no
+member is on. More runs print the covering span with the count of distinct
+member lines inside it, not the span length (`1078-1241 (5 distinct lines)`
+means 5 member lines somewhere in the 164-line span); that fallback row can
+name lines between members that no member is on (#14682). The fallback shape is
+pinned end to end by `fixtures/hidden_row_span_fallback`. For example:
 
 ```text
-- src/lib.rs:1078-1241 (31 distinct lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (5 distinct lines) (weak, lower-priority candidate); 7 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -749,7 +752,12 @@ finding whose repair packet is blocked by an unresolved expected value or a
 moved assertion selection, which says ripr has no complete repair packet for the
 finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
-its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
+its file to bind it to and sends the reader to the Next step above; a finding
+whose changed line holds several same-kind seams, none more specific than the
+others (one per comparison in `a < b && c == d`), says the changed line holds
+N spots, names up to three of them (`and N more` beyond that), says ripr will not
+pick one, and sends the reader to the Next step above, instead of claiming no
+spot could be tied to the line (#15157); several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
 producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete

@@ -2373,6 +2373,16 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             true,
         ),
         (
+            "let_bound_results_named_in_messages",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            true,
+        ),
+        (
+            "let_bound_far_results_named_in_messages",
+            "let hit = gate(50);\n        let miss = gate(3);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            false,
+        ),
+        (
             "shadowed_owner",
             "let gate = |value: u32| value >= 10;\n        assert!(gate(10));\n        assert!(!gate(9));",
             false,

@@ -28,6 +28,9 @@ mod python;
 #[cfg(test)]
 mod schema_parity_tests;
 mod suggest;
+/// Near-miss spelling hints, shared with the hand-parsed policy manifests
+/// (`.ripr/suppressions.toml`) so their typos read like `ripr.toml` ones.
+pub(crate) use suggest::did_you_mean;
 mod toolchain_file;
 #[cfg(test)]
 mod value_hint_tests;
@@ -61,18 +64,21 @@ pub(crate) use model::{
 };
 use overrides::discover_workspace_crates;
 
-pub(crate) use preview_excluded::{
-    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
-};
+#[cfg(feature = "lang-python")]
+pub(crate) use preview_excluded::is_probable_fixture_or_data_path;
+pub(crate) use preview_excluded::path_matches_preview_excluded_patterns;
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
-    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
-    detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, detect_python_project,
+    is_declared_handwritten_python_path, is_detectable_excluded_python_path,
     is_detectable_generated_python_path, is_detectable_python_source_name,
-    is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name,
+    is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
+};
+#[cfg(feature = "lang-python")]
+pub(crate) use python::{
+    declared_python_handwritten_under, is_python_dir_pruned_from_repo_discovery,
 };
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]

@@ -244,7 +244,10 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke. The patch veto is narrowed
+    or non-literal argument stays smoke, except a plain name that is a direct,
+    settled pytest parametrize argname of the test with recorded cases, rebound
+    nowhere in the body (no statement binding and no `:=`) and not a
+    Hypothesis input (#15310), which counts as the row's literal. The patch veto is narrowed
     only to a closed allow-list (#10391): a test file keeps the credit when
     every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
     `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
@@ -325,7 +328,9 @@ mock expectations, and custom `assert_*` helpers.
   defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
   class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
   `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
-  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  truthiness on a non-bool owner and non-literal arguments stay uncredited
+  (the pytest `is True` / `is False` forms take the #15310 parametrize-argname
+  exception above; the unittest forms never do).
   `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
@@ -2177,3 +2182,29 @@ adapter contributes:
 - `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`
 - `language_adapter_python_static_limit_transitive_reach`
+
+### Unresolved loop-comparison boundary (#12954)
+
+For a changed adjacent relational comparison in the closed iterator and
+accumulator selection shape (either `best = next(it)` followed by `for x in it`,
+or `best = xs[0]` followed by `for x in xs[1:]` or `for x in xs`, both with conditional
+`best = x` and `return best`), an unresolved boundary is
+`infection_unknown` when each oracle-eligible test has one or more assertions
+and each has a strong direct comparison of the owner call on an integer list
+or tuple with an integer. The owner may have a second parameter unused by this
+closed body, bound positionally, by name, or by an integer-literal default.
+When there are two parameters, every default must be an integer literal even
+when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
+does not resolve the loop's comparison operands. A
+single line with multiple assertions or `and`
+conjuncts qualifies only when every statement and conjunct is such a direct
+pin. A test with exactly one direct owner-call assignment followed by one
+integer equality assertion on that local also qualifies when test facts show
+no implicit setup, substitution, opaque module or edited-test uncertainty.
+Qualified calls must resolve to the owner through test imports. The changed
+condition must be the comparison alone: a further `and` or `or` operand can run
+on different iterations after the edit, so the selector is not closed. The
+result-alias form reads the test's own assignment; an earlier test's call
+assigned to a local of the same name does not stand in for it. The finding carries an infection stop
+reason and no repair suggestion. Other source and test shapes retain their
+existing behavior.

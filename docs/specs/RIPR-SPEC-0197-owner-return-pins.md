@@ -490,6 +490,12 @@ wrong credits.
    RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
+   The same holds for a `?` inside a trusted macro's operands in the test
+   function's own body (`assert_eq!(parse(..)?, 91)`, #14116): its error
+   fails the test, so it cannot skip the comparison. It still refuses when
+   the macro call sits in a closure, an `async` block or a nested `fn`, when
+   the operand holds a closure (`|`) or an `async` block, and in any
+   function that is not a test (a helper's caller may discard the error).
    Exactly
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
@@ -515,7 +521,11 @@ wrong credits.
    `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
-   change the value through a shared handle). A `mut` binding, a second binding, a
+   change the value through a shared handle). A mention in such an
+   assertion's message arguments (`assert_eq!(v, 4, "got {}", v)`) is not
+   counted (#14158): it is formatted only after the comparison has failed,
+   so it never decides the test; the binding must still be exactly one of
+   the compared operands. A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
    unpinned. A primitive scalar result (cell-0094) is the exception: when
@@ -824,7 +834,7 @@ twins' or `#[path]` targets' functions therefore refuses. Any other
 difference inside the item (comments included) refuses, and so does a gate:
 a `cfg` or `cfg_attr` on the function, an enclosing item, the file, a
 matching `mod` declaration, an item enclosing it or its declaring file, or
-the presence of any `#[path]` declaration. A constant is built only from `bool`, integer,
+a `#[path]` declaration that may reach the owner (below). A constant is built only from `bool`, integer,
 byte, `char` and string literals, `!` on a `bool`, `-` on an integer, the
 `bool` operators `&&`, `||`, `&`, `|`, `^`, `==` and `!=` (integer `==` only
 in `i8` range), parentheses, arrays and an unrebound bare `vec![..]` (not the
@@ -1559,6 +1569,29 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+A `cfg` gate may compile the changed owner out for a twin the related tests
+run instead (#15104). Before any direct-return witness completes for a
+changed whole-body constant tail, the classifier asks
+`diff::owner_may_be_swapped`, the new-side half of the shared base-owner gate
+decision: a `cfg`/`cfg_attr` on the function, an enclosing item or the file,
+a same-path same-name twin, or a gated or changed module declaration on the
+owner's chain. When it answers yes, or when the source or the module
+declarations cannot be read, no witness completes and propagation reads
+`unknown` (`cfg_gated_owner`), so the finding reads no stronger than
+`propagation_unknown`. Ungated owners, an owner beside an unrelated
+`cfg(test)` module and a same-named function on another path keep the
+credit. A `#[path]` module declaration gates the owners it may reach:
+the file its literal names, resolved against the declaring file's
+directory (case-insensitively, with a backslash read as a separator), any file under
+that file's directory, where its own `mod` declarations resolve, except a
+default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
+can move or compile out), and any file whose path spells the declaration's
+name. A target that is not a literal on a top-level out-of-line
+declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+an inline module, a non-literal value) gates every owner. Limit:
+the declarations inside a target file are not followed, so every file under
+its directory is gated.
+
 ### Format owner tails (#6578)
 
 `format_tail_witness` in `classify/propagation_witness.rs` completes a
@@ -1836,9 +1869,12 @@ would. Such an assertion is a pin when:
    one `!`) that the test binds once with an immutable `let` to a complete
    owner call, read under the same binding rules as `assert_eq!(binding, true)`
    (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
-   operand of assertions after the `let`, once in this assertion. A `mut` or
-   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
-   other non-assertion use, or a binding named in the message refuses.
+   operand of assertions after the `let`, and it is the whole condition of
+   this assertion. A mention in this assertion's message arguments
+   (`assert!(hit, "{}", hit)`) is not counted (#14158): they are formatted
+   only after the condition has failed. A `mut` or reassigned binding, a
+   disjunction (`assert!(hit || other)`), a copy or other non-assertion
+   use, or a binding named only in the message refuses.
 4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
@@ -1926,9 +1962,8 @@ reads `assert_eq!` operands when:
    gate. The #6974 let-bound result rule reads a plain `assert!` here as
    it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
    fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
-   side of the single `==` is the binding alone, the assertion names it
-   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
-   is string text), and every #6974 binding condition holds. A guard twin
+   side of the single `==` is the binding alone, the condition names it
+   nowhere else, and every #6974 binding condition holds. A guard twin
    over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
    stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
@@ -2155,7 +2190,12 @@ and only per pinned call:
    or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
    both literals, with no leading `!` (`!x == 0` is `(!x) == 0`). An atom
    is a parameter, a plain integer or `bool` literal, an unescaped char
-   literal, or a parameter `%` or `/` a nonzero integer literal. Such an
+   literal, a parameter `%` or `/` a nonzero integer literal, or (#15030)
+   an escape-free string literal (`"--verbose"`; no `\` or inner `"`, not raw
+   or byte). A comparison with a string literal reads only when its
+   parameter is declared `&str`, `&'a str`, `String` or `&String`, whose
+   `==` compares text. A newtype may implement `PartialEq<&str>` its own
+   way, so it refuses the whole chain. Such an
    operand cannot call, index, overflow, divide by a variable or write, so
    skipping it changes only the value. Anything else (a call, field,
    index, cast, parenthesis, macro, constant, float, `+`/`-`/`*`) refuses.
@@ -3647,7 +3687,10 @@ assertions. This repair shares the existing callback without that larger migrati
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,
-  `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
+  `evaluates_operands_on_literal_values`,
+  `reads_plain_string_equality_chains_and_refuses_the_rest` (#15030);
+  fixtures `rust_predicate_appended_str_arm_truth_assert` and
+  `rust_predicate_appended_str_arm_false_side_only`; `owner_pin/tests.rs`
   `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
   `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
   `a_short_circuit_tail_refuses_a_body_with_earlier_statements`,
@@ -3670,7 +3713,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/let_bound_lone_equality_pin.rs`
   (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
   `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
-  `an_equality_the_test_never_runs_stays_unrevealed`).
+  `an_equality_the_test_never_runs_stays_unrevealed`); message-argument
+  mentions (#14158): `a_binding_named_again_in_the_message_arguments_still_pins`,
+  `a_message_mention_lends_nothing_the_compared_operands_do_not`.
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,
@@ -4067,7 +4112,8 @@ of the exact `x == 101` input row, independently of final gap admission. The
 three non-owner fixtures (`rust_nested_use_cfg`, `rust_nested_use_dependency_alias`,
 `rust_nested_use_dependency_glob`) classify their return-value findings
 `infection_unknown`, because call identity does not resolve to the owner;
-`rust_nested_use_owner` remains `static_unknown`. The fixtures use direct calls,
+`rust_nested_use_owner` resolves the owner call, so its return-value finding reads
+`weakly_exposed` (#14940). The fixtures use direct calls,
 not function values.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). The computed-input continuation (`computed_input_parameters`) applies the same admission (below). It does not cover the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.

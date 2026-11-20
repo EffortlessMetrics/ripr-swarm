@@ -42,6 +42,9 @@ mod check_artifact_stdin;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/check_work_budget.rs"]
+mod check_work_budget;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
@@ -818,6 +821,19 @@ fn workspace_root() -> PathBuf {
 
 fn sample_diff() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/example.diff")
+}
+
+/// Make a fixture root its own Git repository. Cargo pins TMPDIR under this
+/// checkout's `target/`, and `init --ci` refuses a root below a Git top level
+/// (#15389), so an adopter-shaped CI fixture must be the repository root.
+fn git_init_root(root: &Path) -> Result<(), String> {
+    let output = run_command("git", Some(root), &["init", "-q"])
+        .map_err(|err| format!("git init {}: {err}", root.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("git init {} failed: {output:?}", root.display()))
+    }
 }
 
 fn unique_temp_workspace(label: &str) -> PathBuf {
@@ -6881,6 +6897,19 @@ fn pr_review_front_panel_names_an_unreadable_assistant_proof()
         stderr.contains("test-oracle-assistant-proof.json"),
         "{stderr}"
     );
+    // #14631: the promoted line's read cause already names the path, so the
+    // renderer must not append it a second time.
+    let unreadable_line = stderr
+        .lines()
+        .find(|line| line.contains("Assistant proof artifact is unreadable: "))
+        .unwrap_or_default();
+    assert_eq!(
+        unreadable_line
+            .matches("test-oracle-assistant-proof.json")
+            .count(),
+        1,
+        "{stderr}"
+    );
     assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
     Ok(())
@@ -7236,11 +7265,11 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
         .display()
         .to_string()
         .replace('\\', "/");
-    let plain = format!("--out-dir {expected_out_dir}");
-    let quoted = format!("--out-dir '{expected_out_dir}'");
+    let plain = format!("--output-dir {expected_out_dir}");
+    let quoted = format!("--output-dir '{expected_out_dir}'");
     assert!(stderr.contains(&plain) || stderr.contains(&quoted));
-    assert!(!stderr.contains("--out-dir target/ripr/reports"));
-    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
+    assert!(!stderr.contains("--output-dir target/ripr/reports"));
+    assert!(!stderr.contains("--output-dir 'target/ripr/reports'"));
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
@@ -18286,6 +18315,7 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
 #[test]
 fn init_dry_run_fails_like_the_real_run_when_workflow_parent_is_a_file() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     std::fs::write(workspace.join(".github"), "not a directory\n")
         .map_err(|e| format!("write .github as a file: {e}"))?;
     let root = workspace.display().to_string();
@@ -18392,6 +18422,7 @@ fn init_dry_run_fails_like_the_real_run_when_root_is_not_a_directory() -> Result
 #[test]
 fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
         .map_err(|e| format!("write existing ripr.toml: {e}"))?;
     let root = workspace.display().to_string();
@@ -18424,6 +18455,7 @@ fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(),
 #[test]
 fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
     assert_success(&output);
@@ -18519,6 +18551,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
 #[test]
 fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     assert!(!workspace.join("docs/CI.md").exists());
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
@@ -18666,6 +18699,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
 #[test]
 fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "gitlab"]);
     assert_success(&output);
@@ -18690,6 +18724,7 @@ fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String>
 #[test]
 fn init_ci_github_refuses_existing_workflow_without_force() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let workflow_dir = workspace.join(".github/workflows");
     std::fs::create_dir_all(&workflow_dir).map_err(|e| format!("create workflow dir: {e}"))?;
     std::fs::write(workflow_dir.join("ripr.yml"), "name: Existing\n")
@@ -37763,6 +37798,100 @@ fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result
         ready_stdout.contains("to analyze your branch against its default branch")
             && !ready_stdout.contains("no commits yet"),
         "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// `init` in a root with nothing ripr can read (a brand-new repository with
+/// only a README) warns that `ripr check` has nothing to analyze, instead of
+/// writing a Rust configuration in silence. The warning is advisory (files
+/// are written, exit 0), and a root that has source stays quiet.
+#[test]
+fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-no-source-warning");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    // Fixture check: no manifest and no source file of any language.
+    assert!(!repo.join("Cargo.toml").exists());
+    let repo_arg = repo.display().to_string();
+
+    let empty = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&empty);
+    assert!(
+        repo.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {empty:?}"
+    );
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("has no Cargo.toml and no source file ripr reads yet"),
+        "init into a root without source must warn: {stderr}"
+    );
+
+    std::fs::write(repo.join("app.py"), "def f():\n    return 1\n").map_err(|e| e.to_string())?;
+    let with_source = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&with_source);
+    let quiet = String::from_utf8_lossy(&with_source.stderr);
+    assert!(
+        !quiet.contains("no source file ripr reads yet"),
+        "a root with source must stay quiet: {quiet}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #15195: in a monorepo whose Rust and TypeScript projects sit below the
+/// root, the shallow doctor marker scan finds nothing at the root. With the
+/// `ripr.toml` that `init` writes there, doctor names the languages the config
+/// enables instead of "none detected"; without a config the ordinary line
+/// stays.
+#[test]
+fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
+    let repo = unique_temp_workspace("doctor-monorepo-languages");
+    for dir in ["backend/src", "frontend/src"] {
+        std::fs::create_dir_all(repo.join(dir)).map_err(|e| format!("mkdir {dir}: {e}"))?;
+    }
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    let files = [
+        (
+            "backend/Cargo.toml",
+            "[package]\nname = \"be\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("backend/src/lib.rs", "pub fn g(x: i32) -> i32 { x }\n"),
+        ("frontend/package.json", "{\"name\": \"fe\"}\n"),
+        ("frontend/src/a.ts", "export const f = (x: number) => x;\n"),
+    ];
+    for (path, body) in files {
+        std::fs::write(repo.join(path), body).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    let repo_arg = repo.display().to_string();
+    let detected_line = |output: &std::process::Output| -> Result<String, String> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .lines()
+            .find(|line| line.starts_with("- Detected languages:"))
+            .map(str::to_string)
+            .ok_or_else(|| format!("doctor must print a detected-languages line: {stdout}"))
+    };
+
+    // Fixture check: without a config the shallow scan finds no marker.
+    let bare = run_ripr(&["doctor", "--root", &repo_arg]);
+    let bare_line = detected_line(&bare)?;
+    assert_eq!(bare_line, "- Detected languages: none detected", "{bare:?}");
+
+    let init = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&init);
+    let config = std::fs::read_to_string(repo.join("ripr.toml")).map_err(|e| e.to_string())?;
+    assert!(
+        config.contains("\nenabled = [\"rust\", \"typescript\"]\n"),
+        "fixture: init must enable both languages: {config}"
+    );
+    let doctor = run_ripr(&["doctor", "--root", &repo_arg]);
+    let line = detected_line(&doctor)?;
+    assert!(
+        !line.contains("none detected") && line.ends_with("ripr.toml enables rust, typescript"),
+        "doctor must name the configured languages: {line}"
     );
     let _ = std::fs::remove_dir_all(&repo);
     Ok(())

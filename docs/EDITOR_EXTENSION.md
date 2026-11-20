@@ -88,6 +88,19 @@ Open VSX extension:
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
 
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
+
 ### Server Resolution
 
 On activation, the extension resolves the server in this order and records the
@@ -152,6 +165,12 @@ separate supply-chain boundary.
 ## Settings
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
+  Use the full path; a leading `~` means your home directory (for example
+  `~/.cargo/bin/ripr`). A relative path such as `./target/debug/ripr` is
+  refused, because it would not be resolved against the workspace folder. On
+  Windows the full path starts with a drive letter, a colon and a separator,
+  or with a UNC root; `C:ripr.exe` and `\tools\ripr.exe` are refused the same way. A
+  bare command name is looked up on `PATH`.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
   actions. Defaults to `true`; set it to `false` to hide the main status-bar
   item and skip starting the language server. `ripr: Show Status` still names
@@ -162,8 +181,11 @@ separate supply-chain boundary.
   needed. Defaults to `true`.
 - `ripr.server.version`: pinned server version. Empty means match the extension
   version.
-- `ripr.server.downloadBaseUrl`: override the manifest base URL for internal
-  mirrors.
+- `ripr.server.downloadBaseUrl`: the `https://` address of the folder that
+  holds the ripr release files, for an internal mirror. Give the folder, not
+  the manifest file. Empty uses GitHub Releases. A value that is not a plain
+  `https://` folder address skips the managed download, and the
+  unavailable-server message names the setting and what is wrong with it.
 - `ripr.check.mode`: preferred editor check mode for LSP diagnostics and
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
@@ -357,8 +379,8 @@ without re-running workspace analysis.
 ### Start Current Repair
 
 The `ripr: Start Current Repair` command is editor-side orchestration over the
-current projected gap. It selects the current or nearest `ripr` gap diagnostic,
-asks the LSP for the existing code actions at that diagnostic range, and runs
+current projected gap. It selects the `ripr` gap or seam diagnostic that
+contains the cursor, or else the nearest one, asks the LSP for the existing code actions at that diagnostic range, and runs
 one of those already-bounded actions. It does not read report files, parse hover
 text, rerun hidden analysis, generate tests, edit source, or change gate
 authority.
@@ -366,8 +388,12 @@ authority.
 When a current repair is available, the command offers the same actions exposed
 on the diagnostic: copy the first repair packet, copy the gap repair packet,
 open the best related test, copy the verify command, copy the receipt command,
-or copy a static-limit note. If only refresh/setup actions are available, the
-command reports that no current bounded repair action is available.
+or copy a static-limit note. When the server lists the start (or the repair
+packet) disabled, the command shows the server's reason instead. For example,
+while the production change is uncommitted it names the commit step to run
+first (#13636). If only refresh/setup actions are available and the server names
+no reason, the command reports that no current bounded repair action is
+available.
 
 ### Actionable Gap Queue Actions
 
@@ -428,7 +454,9 @@ server can provide seam-aware code actions:
 
 The repair-start, targeted-test, assertion, and related-test actions are
 conditional. `Start repair: copy repair command` is shown only when
-`ripr agent repair` would accept the seam: it passes the fail-closed
+`ripr agent repair` would accept the seam (while tracked source files are
+uncommitted it is listed disabled with the commit command to run first,
+#13636): it passes the fail-closed
 repair-packet flip (RIPR-SPEC-0087 §8) and its recommended test file is a test
 surface, or is the seam's own source file with exactly one governed inline
 `#[cfg(test)]` module that the repair is confined to. Any other seam (for
@@ -635,9 +663,10 @@ LSP diagnostics include a stable JSON `data` payload for editor commands:
 }
 ```
 
-Diagnostics remain advisory. `exposed` and weak or missing exposure
-findings render as warnings; `propagation_unknown` and `static_unknown`
-are informational.
+Diagnostics remain advisory. By default, `weakly_exposed`,
+`reachable_unrevealed`, `no_static_path` and `infection_unknown` findings
+render as warnings; `exposed`, `propagation_unknown` and `static_unknown` are
+informational.
 
 ## Hover Content
 

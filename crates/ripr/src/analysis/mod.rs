@@ -46,6 +46,7 @@ pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
+mod diff_intake_disclosure;
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
 /// evidence pass reports `processed`/`total` here instead of inventing a
@@ -145,9 +146,10 @@ pub(crate) use language::{
     python_module_fstring_reader_finding, python_module_reader_assertion_parses,
     python_module_string_reader_finding, python_module_value_without_import_identity,
 };
+#[cfg(feature = "lang-typescript")]
+pub(crate) use probes::normalize_expression;
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
-    normalize_rust_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
 pub(crate) use rust_index::{DeclinedRustFile, IndexDisclosureRun, RustIndex};
 #[cfg(test)]
@@ -630,7 +632,9 @@ fn top_typescript_readiness_blocker(
 use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+#[cfg(feature = "lang-typescript")]
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 /// #11398: whether `seam` is a field write in a method (`self.count += 1`)

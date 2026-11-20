@@ -1642,7 +1642,13 @@ fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<
         }
         segments.truncate(at);
     }
-    path.extend(segments.into_iter().map(str::to_string));
+    // Scopes record plain names (`r#b` and `b` are one module), so the
+    // definition's path drops the raw prefix the parser id keeps.
+    path.extend(
+        segments
+            .into_iter()
+            .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string()),
+    );
     Some(path)
 }
 
@@ -2399,7 +2405,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
 }
 
 /// The package a file belongs to. A relative path keeps
-/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// [`super::related_tests::package_prefix`] (`[<dirs>/]crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an
 /// absolute path outside a `crates/` layout unscoped (#3235) and drops the
 /// workspace directory from an absolute `crates/<name>/`, so two packages
@@ -2572,6 +2578,24 @@ pub(super) fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
         && super::super::rust_index::is_test_file(file)
+}
+
+/// An integration-test crate root: a file under `tests/` ([`under_tests_dir`]),
+/// or the entry file of a `[[test]]` target whose manifest `path` puts it
+/// outside both `tests/` and `src/` (`checks/score.rs`, #15332), declared by
+/// the analysis root's own package (the one package whose path-shape key is
+/// `None`, like the file's). Only the declared entry file itself is
+/// admitted; a module it mounts keeps the path-shape reading. Without
+/// manifest authority the answer is the path-shape one.
+pub(super) fn integration_test_root(index: &RustIndex, file: &Path) -> bool {
+    if under_tests_dir(file) {
+        return true;
+    }
+    let normalized = super::related_tests::normalize_path(file);
+    !(normalized.contains("/src/") || normalized.starts_with("src/"))
+        && index
+            .member_crates
+            .is_declared_test_target_entry(file, true)
 }
 
 /// Module segments of a file below its crate root: `src/lib.rs` and
@@ -2857,7 +2881,7 @@ fn own_crate_names_of(
     let test_package = package_key(&test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
-    if same_package && !under_tests_dir(&test.file) {
+    if same_package && !integration_test_root(index, &test.file) {
         return names;
     }
     // An integration test of the owner's own package names that package's
@@ -6726,6 +6750,72 @@ fn integration_rename_case() {
         Ok(())
     }
 
+    #[test]
+    fn imported_macro_reusing_a_std_name_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-shadow-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        // The invocation scope imports a macro named `assert_eq` next to
+        // `a::render`: that import may expand to a rebinding `use`, so the
+        // generated test must not be credited to `a` from its scopes. (A
+        // local `macro_rules! assert_eq` is already refused earlier: the
+        // generated test is not indexed at all.)
+        for import in [
+            "use modules::b::assert_eq;",
+            "use modules::b::r#assert_eq;",
+            "use modules::b::hostile_assertion as r#assert_eq;",
+        ] {
+            let source = format!(
+                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the shadowed case must be indexed, or the assertion below is vacuous"
+            );
+            assert_ne!(
+                settle(&index, "/a.rs::render", "shadowed_case"),
+                Some(CallTarget::Owner)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #14069 fixture: a changed crate-level `max` beside test modules that
     /// reach a bare `max(..)` through different scopes.
     const STD_GLOB_LIB: &str = "\
@@ -7279,5 +7369,145 @@ fn raw_definition_case() {
             )],
             "{source}"
         );
+    }
+
+    /// #14087 shape B: a `use` leaf spelled as a raw identifier binds the
+    /// plain name. Read as `r#render` it bound nothing a bare `render(..)`
+    /// could find, so a glob of the other module supplied the name instead.
+    #[test]
+    fn a_raw_identifier_import_leaf_binds_the_plain_name() {
+        let source = "\
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+#[cfg(test)]
+mod raw_beats_glob {
+    use crate::a::*;
+    use crate::b::r#render;
+
+    #[test]
+    fn raw_leaf_of_b_beside_a_glob_of_a() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_alone {
+    use crate::a::r#render;
+
+    #[test]
+    fn raw_leaf_of_a() {
+        assert_eq!(render(1), 2);
+    }
+}
+
+#[cfg(test)]
+mod raw_group {
+    use crate::{r#b::{r#render}};
+
+    #[test]
+    fn raw_segments_in_a_group() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_rename {
+    use crate::b::render as r#render;
+
+    #[test]
+    fn raw_rename_to_the_same_name() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+pub mod r#c {
+    pub fn render(x: i32) -> i32 {
+        x * 3
+    }
+
+    #[cfg(test)]
+    mod inside_raw_module {
+        use super::*;
+
+        #[test]
+        fn glob_of_the_raw_declared_parent() {
+            assert_eq!(render(2), 6);
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_declared_module {
+    use crate::r#c::render;
+
+    #[test]
+    fn raw_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+
+#[cfg(test)]
+mod plain_path_to_raw_module {
+    use crate::c::render;
+
+    #[test]
+    fn plain_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+";
+        let index = index(&[("src/lib.rs", source)]);
+        let a = "lib.rs::a::render";
+        let b = "lib.rs::b::render";
+        // A module declared `mod r#c` is the module `c`: an import path
+        // spelled either way, and a glob of it from inside, reach its
+        // `render` and no other.
+        for test in [
+            "raw_path_to_a_raw_declared_module",
+            "plain_path_to_a_raw_declared_module",
+            "glob_of_the_raw_declared_parent",
+        ] {
+            assert_eq!(
+                settle(&index, "::r#c::render", test),
+                Some(CallTarget::Owner),
+                "{test} against c"
+            );
+            assert_eq!(
+                settle(&index, a, test),
+                Some(CallTarget::Other),
+                "{test} against a"
+            );
+        }
+        for (test, on_a, on_b) in [
+            (
+                "raw_leaf_of_b_beside_a_glob_of_a",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            ("raw_leaf_of_a", CallTarget::Owner, CallTarget::Other),
+            (
+                "raw_segments_in_a_group",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            (
+                "raw_rename_to_the_same_name",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+        ] {
+            assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
+            assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
+        }
     }
 }

@@ -1,3 +1,5 @@
+#[cfg(any(feature = "lang-perl", feature = "lang-python"))]
+use super::language::LanguageAdapter;
 #[cfg(feature = "lang-perl")]
 use super::language::PerlAdapter;
 #[cfg(feature = "lang-python")]
@@ -5,9 +7,8 @@ use super::language::PythonAdapter;
 #[cfg(feature = "lang-typescript")]
 use super::language::TypeScriptAdapter;
 use super::language::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
-    unanalyzed_source_language,
+    LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope, RustAdapter,
+    diff_limit_env, is_script_language, positive_limit_from_env, route, unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -17,6 +18,10 @@ use crate::analysis::cancellation;
 use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
 
+use crate::analysis::diff_intake_disclosure::{
+    BINARY_SOURCE_RECOVERY, binary_rendered_source_paths, binary_source_detail,
+    deleted_files_disclosure,
+};
 use crate::analysis::language_outcome::{
     DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1, diff_scope_label,
 };
@@ -988,15 +993,6 @@ fn unanalyzed_source_language_limitation(
     ))
 }
 
-fn deletion_disclosure_message(deleted_file_count: usize) -> Option<String> {
-    (deleted_file_count > 0).then(|| {
-        format!(
-            "ripr: diff deleted {deleted_file_count} file(s); deletion-only diffs produce no probes \
-             (deleted behavior has no new-side code to analyze)."
-        )
-    })
-}
-
 /// The truncated-stream disclosure message (#4375): `N` file section(s)
 /// parsed a textual header but no hunk body, so the producer stream appears
 /// to have ended mid-diff. Per-section counts, so a complete hunk in one
@@ -1450,8 +1446,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
-    let parsed_diff =
+    let mut parsed_diff =
         diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+    // #15121: a file the diff creates by copy is new code the patch does not
+    // carry; read it as an added file before any guard or adapter counts it.
+    // A hunkless copy that was read as an added file is a text change, even
+    // when its section also carries a file-mode change.
+    let copied_lines_read = diff::expand_copy_destinations(
+        &mut parsed_diff.changed_files,
+        &parsed_diff.copy_destination_paths,
+        &options.root,
+    )?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,
@@ -1521,6 +1526,8 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
+    let deleted_paths = parsed_diff.deleted_paths;
+    let binary_paths = parsed_diff.binary_paths;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -2187,12 +2194,13 @@ fn run_pipeline_for_diff_text_with_language_config(
         );
     }
 
-    if findings.is_empty()
-        && rust_changed_files == 0
-        && changed_files_by_language
+    // #15324: name the deleted files whatever else changed.
+    let other_changes = rust_changed_files > 0
+        || changed_files_by_language
             .iter()
-            .all(|(_, count)| *count == 0)
-        && let Some(message) = deletion_disclosure_message(deleted_file_count)
+            .any(|(_, count)| *count > 0);
+    if findings.is_empty()
+        && let Some(message) = deleted_files_disclosure(&deleted_paths, other_changes)
     {
         eprintln!("{message}");
     }
@@ -2244,9 +2252,9 @@ fn run_pipeline_for_diff_text_with_language_config(
 
     // Rename metadata can register a binary file without any text hunks.
     // That path must retain the same non-text refusal as an unrenamed blob.
+    let non_text_only = !copied_lines_read && has_only_non_text_changes(diff_text);
     if !diff_text.trim().is_empty()
-        && ((changed_files.is_empty() && renamed_file_count == 0)
-            || has_only_non_text_changes(diff_text))
+        && ((changed_files.is_empty() && renamed_file_count == 0) || non_text_only)
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
@@ -2256,7 +2264,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         // schema change); a well-formed diff with only binary or mode changes
         // gets its own wording so the recovery does not tell the reader to
         // fix a valid diff.
-        let (recovery, detail) = if has_only_non_text_changes(diff_text) {
+        let (recovery, detail) = if non_text_only {
             (
                 "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
                 NON_TEXT_ONLY_DETAIL,
@@ -2342,6 +2350,32 @@ fn run_pipeline_for_diff_text_with_language_config(
                 "{} file(s) changed only in line endings; probes treat text as unchanged: {listed}",
                 eol_only_churn_files.len()
             ))?,
+        );
+    }
+
+    // #15324: a source file git printed as binary (a `-diff` or `binary`
+    // attribute, or a NUL byte) carried no hunk, so its change was not
+    // analyzed. The result must not read as complete over it. The parser
+    // already dropped paths outside the requested scope; ripr's own artifacts
+    // and a copy destination read whole as added source are not unread.
+    let binary_sources = binary_rendered_source_paths(&binary_paths, |path| {
+        diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            || changed_files
+                .iter()
+                .any(|file| file.path == path && !file.added_lines.is_empty())
+    });
+    if !binary_sources.is_empty() {
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    BINARY_SOURCE_RECOVERY,
+                )?,
+            )
+            .with_affected_items(binary_sources.len() as u64)?
+            .with_detail(binary_source_detail(&binary_sources))?,
         );
     }
 
@@ -6016,29 +6050,6 @@ mod tests {
                 "1 generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns"
             )
         );
-        Ok(())
-    }
-
-    #[test]
-    fn deletion_disclosure_names_deleted_files_and_non_claim() -> Result<(), String> {
-        let message = deletion_disclosure_message(2)
-            .ok_or_else(|| "deleted files must produce a disclosure".to_string())?;
-        if !message.contains("deleted 2 file(s)") {
-            return Err(format!(
-                "disclosure must name the deleted-file count: {message}"
-            ));
-        }
-        if !message.contains("deletion-only diffs produce no probes") {
-            return Err(format!(
-                "disclosure must name the no-probe limitation: {message}"
-            ));
-        }
-        if !message.contains("no new-side code to analyze") {
-            return Err(format!("disclosure must carry the non-claim: {message}"));
-        }
-        if deletion_disclosure_message(0).is_some() {
-            return Err("zero deleted files must not produce a disclosure".to_string());
-        }
         Ok(())
     }
 
