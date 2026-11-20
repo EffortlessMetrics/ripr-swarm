@@ -1757,7 +1757,15 @@ subject is not a field projection of the owner's result: in
 fallback while the assertion receives the whole object `f()` returns, so it
 keeps its credit. A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
-fields are not this shape and keep their old reading.
+fields are outside this multi-value rule.
+
+For the two-member form `return { retries: 5, verbose };`, a change between
+decimal integer literals on the explicit field cannot change the unchanged
+shorthand binding. A direct assertion on `config().verbose` therefore reads
+`weakly_exposed`, while `config().retries` keeps its exact-field credit. This
+case requires the same two distinct names in the same positions and a bare
+zero-argument owner call. An expression that could write to `verbose` while
+building the object remains outside this rule.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
