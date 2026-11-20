@@ -52,7 +52,7 @@ fn given_a_helper_shape_that_is_not_established_then_the_test_stays_unrelated() 
         // Decorated.
         "import functools\nfrom pkg.core import total\n\n\n@functools.cache\ndef run(n):\n    return total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
         // Branches before the return.
-        "from pkg.core import total\n\n\ndef run(n):\n    if n:\n        return total(n)\n    return 0\n\n\ndef test_total():\n    assert run(1) == 11\n",
+        "from pkg.core import total\n\n\ndef run(n):\n    if n > 0:\n        return total(n)\n    return 0\n\n\ndef test_total():\n    assert run(1) == 11\n",
         // Async.
         "from pkg.core import total\n\n\nasync def run(n):\n    return total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
         // Defined twice: which one runs is not settled here.
