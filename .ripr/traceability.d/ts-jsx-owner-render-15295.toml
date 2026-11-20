@@ -11,5 +11,6 @@ tests = [
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/jsx_render.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
 ]
