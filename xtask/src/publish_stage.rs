@@ -84,8 +84,12 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
             // Stage the committed bytes on every host: a global
             // `core.autocrlf=true` would otherwise rewrite the checkout to
             // CRLF and `verify_stage` compares against `git show` (LF).
+            // `core.eol=lf` covers `text=auto` attributes, which otherwise
+            // check out with the native (CRLF) ending on Windows.
             "-c",
             "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
             "--shared",
             "--no-checkout",
             workspace_arg.as_str(),

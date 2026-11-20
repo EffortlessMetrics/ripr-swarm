@@ -52,7 +52,7 @@ fn verdict_line(finding: &Finding) -> String {
         .join(" ");
     let mut line = format!(
         "ripr: verdict {}:{} {} [{states}]",
-        crate::analysis::stable_path_text(&finding.probe.location.file),
+        crate::analysis::stable_source_path_text(&finding.probe.location.file),
         finding.probe.location.line,
         finding.class.as_str(),
     );
@@ -118,8 +118,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_verdict_line_prints_the_file_with_forward_slashes_on_every_platform() {
+    fn verdict_line_for(file: &str) -> String {
         let mut f = finding(
             ExposureClass::Exposed,
             evidence(
@@ -127,14 +126,36 @@ mod tests {
                 stage(StageState::Yes, "observed"),
             ),
         );
-        // A Windows-joined spelling: `.\src` plus a forward-slash tail.
-        f.probe.location.file = std::path::PathBuf::from(".\\src/lib.rs");
-        let line = verdict_line(&f);
-        assert!(
-            line.starts_with("ripr: verdict ./src/lib.rs:7 "),
-            "the verdict line must not carry a native backslash: {line}"
-        );
+        f.probe.location.file = std::path::PathBuf::from(file);
+        verdict_line(&f)
+    }
+
+    #[test]
+    fn a_verdict_line_prints_forward_slash_paths_unchanged() {
+        let line = verdict_line_for("./src/lib.rs");
+        assert!(line.starts_with("ripr: verdict ./src/lib.rs:7 "), "{line}");
+    }
+
+    // On Windows `\` is a separator, so a joined `.\src/lib.rs` renders with
+    // one separator style.
+    #[cfg(windows)]
+    #[test]
+    fn a_verdict_line_renders_windows_separators_as_forward_slashes() {
+        let line = verdict_line_for(".\\src/lib.rs");
+        assert!(line.starts_with("ripr: verdict ./src/lib.rs:7 "), "{line}");
         assert!(!line.contains('\\'), "{line}");
+    }
+
+    // On Unix `\` is a literal filename byte: rewriting it to `/` would name a
+    // different file, so the line keeps it distinct as `%5C`.
+    #[cfg(unix)]
+    #[test]
+    fn a_verdict_line_keeps_a_unix_backslash_filename_distinct() {
+        let line = verdict_line_for(".\\src/lib.rs");
+        assert!(
+            line.starts_with("ripr: verdict .%5Csrc/lib.rs:7 "),
+            "{line}"
+        );
     }
 
     #[test]

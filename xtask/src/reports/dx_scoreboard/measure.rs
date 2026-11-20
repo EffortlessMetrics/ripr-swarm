@@ -1027,9 +1027,12 @@ fn isolated_checkout(
             "clone",
             "--quiet",
             // The pin is verified byte-for-byte; a host `core.autocrlf=true`
-            // would materialize CRLF working files.
+            // would materialize CRLF working files, and so would a corpus
+            // `text=auto` attribute under the native `core.eol` on Windows.
             "-c",
             "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
             "--no-checkout",
             "--dissociate",
             "--",
