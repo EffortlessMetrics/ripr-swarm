@@ -4263,6 +4263,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern() {
+        for (pattern, expected) in [
+            ("Some(x)", vec![(21, 22)]),
+            ("None", vec![]),
+            ("Option::Some(x)", vec![]),
+            ("Some (x)", vec![]),
+        ] {
+            let opener = format!("let {pattern} = option else {{");
+            let changed = replacement(
+                &[(20, "let x = match option {"), (22, "None => return 0,")],
+                &[(20, &opener), (21, "return 0;")],
+            );
+            assert_eq!(changed.let_else_diverging_pairs(), expected, "{pattern}");
+        }
+    }
+
     /// #14428 fail-closed: a repeated diverging statement, a multi-line arm,
     /// or a second statement in the `else` block never pairs by guess.
     #[test]
