@@ -885,19 +885,8 @@ pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider gap budget (set R
 /// Past it the refusal stands, so the cap still bounds pathological monorepos.
 const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
 
-/// Seam inventory for a repair resolver. A repository only just past the
-/// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
-/// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
-/// raised to the exact total. The rerun is cut by nothing, and one that
-/// declined a Rust file is discarded, so the fail-closed truncation gate below
-/// is unchanged: an explicit
-/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
-///
-/// The CLI resolvers, the repair-start gate behind `ripr agent status` and the
-/// MCP completeness check all call this, so every surface agrees on whether a
-/// 10k to 20k seam repository can start a repair. Widening holds the
-/// process-wide cap exclusively, so concurrent MCP worker threads serialize
-/// their reruns instead of stranding the cap.
+/// Discover the bounded repair inventory and choose its final prefix before
+/// classifying seams. CLI, agent status and MCP share this completeness gate.
 pub(crate) fn inventory_for_repair(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -908,23 +897,12 @@ pub(crate) fn inventory_for_repair(
     ),
     String,
 > {
-    let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
-    if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
-        let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
-        let rerun =
-            crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
-        rerun.require_complete_evidence("repair seam inventory")?;
-        // The repair gates read the cap only. A file the parse budget declined
-        // has no seams in the inventory, so a rerun that declined any is not
-        // known to be complete and the original truncation refusal stands.
-        if rerun.declined_rust_files.is_empty() {
-            return Ok((rerun.classified, rerun.limit_info));
-        }
-    }
-    Ok(first)
+    let report = crate::analysis::inventory_repair_seams_report(root, config, REPAIR_SEAM_CEILING)?;
+    report.require_complete_evidence("seam inventory")?;
+    Ok((report.classified, report.limit_info))
 }
 
-/// The cap a repair resolver reruns with, or `None` when the cut stands: only
+/// The total a repair resolver can cover, or `None` when the cut stands: only
 /// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
 /// widens, to its exact total. An explicit limit is the operator's choice.
 pub(crate) fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
@@ -4756,7 +4734,7 @@ pub(crate) mod tests {
     /// End to end over a real repository above the 10,000-seam default cap
     /// (#1887): the plain inventory is cut, while the repair inventory, the
     /// gate behind `ripr agent status` and the MCP completeness read all
-    /// rerun at the exact total and agree the inventory is complete. The cap
+    /// agree the inventory is complete. The ordinary cap
     /// is restored afterwards, and a repository past the ceiling still cuts.
     #[test]
     fn repair_surfaces_agree_on_a_repository_above_the_default_seam_cap() -> Result<(), String> {
@@ -4764,6 +4742,7 @@ pub(crate) mod tests {
         if std::env::var_os("RIPR_REPO_EXPOSURE_SEAM_LIMIT").is_some() {
             return Ok(());
         }
+        let _stable_cap = crate::analysis::hold_seam_limit_mutators();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -4803,11 +4782,62 @@ pub(crate) mod tests {
                 .0
                 .len();
         assert!(per_module > 0, "calibration module yields seams");
+        let before_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        assert_eq!(inventory_for_repair(&root, &config)?.0.len(), per_module);
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_hit,
+            "repair reuses a healthy complete ordinary entry"
+        );
+
         let modules = (DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + per_module) / per_module + 5;
         for file in 1..modules {
             write_module(file)?;
         }
         write_lib(modules)?;
+
+        // A damaged ordinary entry must neither hide a widened entry nor
+        // disable the cache-base trust checks on either lookup.
+        let key = crate::analysis::workspace_cache_key_at_with_config(&root, &config)?;
+        let [(entry_dir, _), _] =
+            crate::analysis::seam_cache::RepoSeamFactCache::at(&root).entry_dirs();
+        std::fs::create_dir_all(&entry_dir).map_err(|error| error.to_string())?;
+        let damaged = entry_dir.join(key.filename());
+        std::fs::write(&damaged, b"invalid cache entry").map_err(|error| error.to_string())?;
+
+        // Run repair cold: an ordinary cached prefix would hide a redundant pass.
+        let before = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let (classified, info) = inventory_for_repair(&root, &config)?;
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get() - before,
+            classified.len()
+        );
+        assert!(info.is_none_or(|info| !info.is_truncated()));
+
+        let before_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let (warm, limit) = inventory_for_repair(&root, &config)?;
+        assert_eq!(warm.len(), classified.len());
+        assert!(limit.is_none());
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_hit,
+            "a malformed ordinary entry must not hide a healthy widened entry"
+        );
+        std::fs::remove_file(damaged).map_err(|error| error.to_string())?;
+
+        // The same input past a lower repair ceiling still returns the
+        // original cap and its canonical prefix.
+        let before_cut = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let past_ceiling = crate::analysis::inventory_repair_seams_report(
+            &root,
+            &config,
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + 1,
+        )?;
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get() - before_cut,
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+            "cold over-ceiling repair classifies exactly the ordinary prefix"
+        );
 
         // Plain inventory: cut by the default cap.
         let (_, plain) =
@@ -4818,9 +4848,6 @@ pub(crate) mod tests {
         assert_eq!(plain.source, SeamLimitSource::Default);
         assert!(plain.total <= REPAIR_SEAM_CEILING, "fixture stays in range");
 
-        // Repair inventory: widened, complete.
-        let (classified, info) = inventory_for_repair(&root, &config)?;
-        assert!(info.is_none_or(|info| !info.is_truncated()));
         assert_eq!(classified.len(), plain.total);
 
         // Agent-status gate: same answer, not withheld as truncated.
@@ -4836,7 +4863,33 @@ pub(crate) mod tests {
             "the status gate must use the widened inventory"
         );
 
-        // The cap is restored for later plain reads.
+        let cut = past_ceiling.limit_info.ok_or("expected the original cut")?;
+        assert_eq!(
+            (cut.analyzed, cut.total, cut.source),
+            (plain.analyzed, plain.total, plain.source.clone())
+        );
+        assert!(
+            past_ceiling
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id())
+                .eq(classified[..plain.analyzed]
+                    .iter()
+                    .map(|entry| entry.seam.id()))
+        );
+
+        // A declined Rust file leaves the known prefix truncated even when
+        // every discovered seam fits. Changing the bytes forces a cache miss.
+        std::fs::write(root.join("src/declined.rs"), [0xff]).map_err(|e| e.to_string())?;
+        let (declined, info) = inventory_for_repair(&root, &config)?;
+        let cut = info.ok_or("declined file must preserve the original cut")?;
+        assert_eq!(
+            (cut.analyzed, cut.total, cut.source),
+            (plain.analyzed, plain.total, plain.source)
+        );
+        assert_eq!(declined.len(), plain.analyzed);
+
+        // Later plain reads still return their ordinary cap.
         let (_, after) =
             crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
         assert!(after.is_some_and(|info| info.is_truncated()));
