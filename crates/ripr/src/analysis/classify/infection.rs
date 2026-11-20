@@ -719,8 +719,9 @@ fn opaque_boundary_input(
         // Only a macro the test itself defines: any other unread macro
         // (`info!`, `assert_that!`) is no evidence that its arguments feed
         // the owner.
-        for (name, arguments) in unread_macro_arguments(&test.body) {
-            if !local_macro_calls(&test.body, &name, owner) {
+        let unread = unread_macro_arguments(&test.body);
+        for (name, _, arguments) in &unread {
+            if !local_macro_calls(&test.body, name, owner) {
                 continue;
             }
             let literals = extract_literals(&arguments);
@@ -748,7 +749,27 @@ fn opaque_boundary_input(
         if declined {
             continue;
         }
-        if let Some(boundary) = call_arguments(&test.body, owner)
+        // An owner call inside an unread macro's arguments is no evidence
+        // of an input: the macro may discard it (`discard!(pick(100))`,
+        // which call extraction masks), and a local macro that does pass
+        // its arguments to the owner was read above.
+        let mut last_end = 0;
+        let outermost = unread
+            .iter()
+            .map(|(_, range, _)| range.clone())
+            .filter(|range| {
+                let keep = range.start >= last_end
+                    && test.body.is_char_boundary(range.start)
+                    && test.body.is_char_boundary(range.end);
+                if keep {
+                    last_end = range.end;
+                }
+                keep
+            })
+            .collect::<Vec<_>>();
+        let outside_macros =
+            crate::analysis::extract::property_macros::mask_evidence_ranges(&test.body, outermost);
+        if let Some(boundary) = call_arguments(&outside_macros, owner)
             .iter()
             .flat_map(|arguments| extract_literals(arguments))
             .find(|literal| probe_literals.contains(literal))
@@ -785,8 +806,9 @@ fn opaque_boundary_input(
 
 /// The argument text of each invocation in `body` of a macro other than the
 /// standard ones ripr reads ([`super::activation::READ_MACROS`]) and
-/// `macro_rules!`, with comments and strings masked for the scan.
-fn unread_macro_arguments(body: &str) -> Vec<(String, String)> {
+/// `macro_rules!`, with its byte range in `body`; comments and strings are
+/// masked for the scan.
+fn unread_macro_arguments(body: &str) -> Vec<(String, std::ops::Range<usize>, String)> {
     let masked = mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     let mut out = Vec::new();
@@ -817,7 +839,7 @@ fn unread_macro_arguments(body: &str) -> Vec<(String, String)> {
             continue;
         };
         if let Some(arguments) = body.get(open + 1..close) {
-            out.push((name.to_string(), arguments.to_string()));
+            out.push((name.to_string(), open + 1..close, arguments.to_string()));
         }
     }
     out
@@ -2963,6 +2985,13 @@ mod tests {
                 &["#[rstest]"][..],
                 &["assert_eq!(discount(&ctx, 50), 0);"][..],
             ),
+            // An owner call inside a macro that may discard it.
+            (
+                "fn t() { macro_rules! discard { ($($t:tt)*) => {}; } discard!(discount(100)); }",
+                &[][..],
+                &[][..],
+            ),
+            ("fn t() { skip!(discount(100)); }", &[][..], &[][..]),
             // A local macro that never calls the owner: 100 is an expected
             // value, not an input.
             (
