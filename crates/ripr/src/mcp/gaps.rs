@@ -523,6 +523,10 @@ pub(crate) struct GapItem {
     /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
     /// `seam_ambiguous` (#11622); it is not part of any served document.
     pub(crate) stub_route: Option<(String, usize, &'static str)>,
+    /// The changed seam's id when `--at` on `stub_route`'s line would refuse as
+    /// ambiguous; the refusal's stub command then names `--seam-id` instead.
+    /// An ambiguous line with no single validated seam has no `stub_route`.
+    pub(crate) stub_seam_id: Option<String>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -647,6 +651,23 @@ impl GapItem {
         }
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
+        // Only the stub-routed refusals print a stub command, so only they pay
+        // for the ambiguity probe. An ambiguous `--at` line names the
+        // validated seam id, or drops the route when no single seam stubs.
+        let stub_route = crate::app::test_stub::stub_route_location(finding, root);
+        let (stub_route, stub_seam_id) = if stub_route.is_some()
+            && matches!(
+                repair_readiness.ineligibility,
+                Some("seam_not_found" | "seam_ambiguous")
+            ) {
+            match crate::app::test_stub::stub_route_seam_choice(root, finding) {
+                crate::app::test_stub::StubRouteSeamChoice::Location => (stub_route, None),
+                crate::app::test_stub::StubRouteSeamChoice::SeamId(id) => (stub_route, Some(id)),
+                crate::app::test_stub::StubRouteSeamChoice::Unrunnable => (None, None),
+            }
+        } else {
+            (stub_route, None)
+        };
         let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         Ok(Self {
@@ -657,7 +678,8 @@ impl GapItem {
             language,
             list_summary,
             list_summary_bytes,
-            stub_route: crate::app::test_stub::stub_route_location(finding, root),
+            stub_route,
+            stub_seam_id,
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),
