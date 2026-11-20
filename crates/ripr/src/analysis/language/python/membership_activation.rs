@@ -15,8 +15,11 @@
 //! the changed statement: an `if`/`elif`/`while` condition, an `and`/`or`
 //! compound, `not (...)`, a parenthesized test, a `return`, an assignment, or
 //! a display that spans several lines. The display is a tuple, list or set of
-//! scalar literals, at least one member is kept, the subject and operator are
-//! the same on both sides, and nothing else on the changed line differs. The
+//! scalar literals, at least one member is kept, and the subject and
+//! operator are the same on both sides. A second edit on the line outside the
+//! display, or a member static evidence cannot read, withholds credit without
+//! reading rows. A removed-only line inside a multi-line display pairs the
+//! old comparison with the new one that lacks the line's elements. The
 //! subject is a bare owner parameter, or `p.lower()`, `p.casefold()`,
 //! `p.upper()`, `p.strip()` or `str(p)` of one.
 //!
@@ -40,10 +43,10 @@
 //! paired withholds credit the same way.
 //!
 //! Not engaged, so the existing verdict stands: a whole-collection
-//! replacement, a non-literal or computed display, a subject that is not a
-//! parameter or one of the transforms above, a line that also changes
-//! something outside the display, a source that does not parse, and a deleted
-//! display line or `match` arm, which other paths classify.
+//! replacement with nothing else changed, a non-literal or computed display,
+//! a subject that is not a parameter or one of the transforms above (an
+//! alias, `self.attr`, `cfg["key"]`), a source that does not parse, and a
+//! `match` arm.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
@@ -72,11 +75,24 @@ enum Scalar {
     None,
 }
 
-/// One collection member: its source text and its compared value.
+/// One collection member: its source text and its compared value, or None
+/// when static evidence cannot read it (an escape, `1e0`, `0x1`, a name,
+/// `b"y"`).
 #[derive(Clone, Debug)]
 struct Member {
     text: String,
-    value: Scalar,
+    value: Option<Scalar>,
+}
+
+impl Member {
+    /// Python equality for readable members; source text otherwise.
+    fn same(&self, other: &Member) -> bool {
+        match (&self.value, &other.value) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => self.text == other.text,
+            _ => false,
+        }
+    }
 }
 
 /// A transform the membership test applies to the parameter before
@@ -103,6 +119,8 @@ struct Site {
     lines: (usize, usize),
     /// Byte span of the display in its source.
     display: (usize, usize),
+    /// 1-based first and last line of the display.
+    display_lines: (usize, usize),
 }
 
 /// A case normalization the owner applies to the subject before the line.
@@ -159,13 +177,106 @@ pub(super) fn python_membership_member_gap(
         // owns still edits members: withhold credit without naming one.
         return element_line_fallback(owner, &new_sites, line_text, old_line_text);
     };
-    if outside_display(&old_source, changed_line, old.display)?
-        != outside_display(owner_source, changed_line, new.display)?
-    {
-        // Something else on the line changed as well.
-        return None;
+    let extra_edit = outside_display(&old_source, changed_line, old.display)?
+        != outside_display(owner_source, changed_line, new.display)?;
+    member_gap(
+        owner,
+        owner_source,
+        (old, new),
+        extra_edit,
+        related_candidates,
+        focus,
+    )
+}
+
+/// Evidence for a removed-only line (no new-side counterpart) that sat
+/// inside a multi-line literal membership display: the old file holds the
+/// display with the line, the new file the same comparison without it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "old and new sources, both coordinates and the oracle inputs"
+)]
+pub(super) fn python_membership_deleted_gap(
+    owner: &PythonOwner,
+    old_source: &str,
+    old_line: usize,
+    new_source: &str,
+    new_line: usize,
+    removed_text: &str,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<PythonBoundaryEvidence> {
+    let removed = element_line(removed_text)?;
+    let old_sites = sites_on_line(old_source, old_line)?;
+    let old = old_sites.iter().find(|site| {
+        site.display_lines.0 < old_line
+            && old_line < site.display_lines.1
+            && owner
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == site.parameter)
+    })?;
+    let removed: Vec<Member> = removed
+        .into_iter()
+        .map(|text| Member {
+            value: scalar(&text),
+            text,
+        })
+        .collect();
+    // The old members without the removed line's elements, in order.
+    let mut expected = old.members.clone();
+    for member in &removed {
+        let index = expected.iter().position(|kept| kept.same(member))?;
+        expected.remove(index);
     }
-    let altered = altered_members(&old.members, &new.members)?;
+    let mut candidates: Vec<Site> = sites_on_line(new_source, new_line)
+        .into_iter()
+        .chain(
+            new_line
+                .checked_sub(1)
+                .and_then(|line| sites_on_line(new_source, line)),
+        )
+        .flatten()
+        .filter(|site| {
+            site.subject == old.subject
+                && site.negated == old.negated
+                && site.members.len() == expected.len()
+                && site
+                    .members
+                    .iter()
+                    .zip(&expected)
+                    .all(|(left, right)| left.same(right))
+        })
+        .collect();
+    candidates.sort_by_key(|site| site.display);
+    candidates.dedup_by_key(|site| site.display);
+    match candidates.as_slice() {
+        [new] => member_gap(
+            owner,
+            new_source,
+            (old, new),
+            false,
+            related_candidates,
+            focus,
+        ),
+        // The new comparison cannot be located: withhold credit.
+        _ => Some(forced_gap(
+            old,
+            removed.first(),
+            "static evidence cannot locate the comparison after the deleted member line",
+        )),
+    }
+}
+
+/// The verdict for one paired old/new comparison whose members differ.
+fn member_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    (old, new): (&Site, &Site),
+    extra_edit: bool,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<PythonBoundaryEvidence> {
     let subject = new.parameter.as_str();
     if !owner
         .parameters
@@ -174,6 +285,24 @@ pub(super) fn python_membership_member_gap(
     {
         return None;
     }
+    let unreadable = old
+        .members
+        .iter()
+        .chain(&new.members)
+        .any(|member| member.value.is_none());
+    if unreadable || extra_edit {
+        let readable = readable_altered(&old.members, &new.members);
+        return Some(forced_gap(
+            new,
+            readable.first(),
+            if extra_edit {
+                "the changed line also edits code outside the collection, so no input reading can establish the edit is observed"
+            } else {
+                "a member of the collection is not a scalar literal static evidence reads, so no test input is placed on the altered members"
+            },
+        ));
+    }
+    let altered = altered_members(&old.members, &new.members)?;
     let rebinding = subject_rebinding(owner, owner_source, new.lines.0 - 1, subject)?;
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
@@ -222,6 +351,42 @@ pub(super) fn python_membership_member_gap(
         observed_values,
         reason,
     })
+}
+
+/// A gap that withholds `exposed` without reading rows, naming `first` as
+/// the discriminator when one is readable.
+fn forced_gap(site: &Site, first: Option<&Member>, why: &str) -> PythonBoundaryEvidence {
+    let subject = subject_text(site);
+    let operator = if site.negated { "not in" } else { "in" };
+    PythonBoundaryEvidence {
+        activation: BoundaryActivation::Missing,
+        discriminator: first.map(|member| format!("{subject} == {}", member.text)),
+        observed_values: Vec::new(),
+        reason: format!(
+            "The edit changes the members of a literal `{subject} {operator}` collection, and {why}{}",
+            first
+                .map(|member| format!(". Add a test case that passes {}", member.text))
+                .unwrap_or_default()
+        ),
+    }
+}
+
+/// Readable members present on one side only, without the kept-member
+/// requirement.
+fn readable_altered(old: &[Member], new: &[Member]) -> Vec<Member> {
+    let mut altered: Vec<Member> = Vec::new();
+    let one_side = |from: &[Member], other: &[Member]| -> Vec<Member> {
+        from.iter()
+            .filter(|member| member.value.is_some() && !other.iter().any(|o| o.same(member)))
+            .cloned()
+            .collect()
+    };
+    for member in one_side(old, new).into_iter().chain(one_side(new, old)) {
+        if !altered.iter().any(|seen| seen.same(&member)) {
+            altered.push(member);
+        }
+    }
+    altered
 }
 
 fn subject_text(site: &Site) -> String {
@@ -313,13 +478,12 @@ fn site(text: &SourceText<'_>, compare: &ast::ExprCompare) -> Option<Site> {
         .iter()
         .map(|element| {
             let source = text_for_range(text, element.range());
-            let value = scalar(source.trim())?;
-            Some(Member {
+            Member {
+                value: scalar(source.trim()),
                 text: source.trim().to_string(),
-                value,
-            })
+            }
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let (parameter, transform) = subject(&compare.left)?;
     let range = compare.range();
     let subject_source: String = text_for_range(text, compare.left.range())
@@ -339,6 +503,10 @@ fn site(text: &SourceText<'_>, compare: &ast::ExprCompare) -> Option<Site> {
         display: (
             usize::from(display.range().start()),
             usize::from(display.range().end()),
+        ),
+        display_lines: (
+            text.line_for_offset(usize::from(display.range().start())),
+            text.line_for_offset(usize::from(display.range().end())),
         ),
     })
 }
@@ -384,7 +552,7 @@ fn changed_pair<'a>(old: &'a [Site], new: &'a [Site]) -> Option<(&'a Site, &'a S
                 .members
                 .iter()
                 .zip(&new.members)
-                .any(|(left, right)| left.value != right.value)
+                .any(|(left, right)| !left.same(right))
     });
     let (old_site, new_site) = changed.next()?;
     if changed.next().is_some()
@@ -474,8 +642,7 @@ fn scalar(text: &str) -> Option<Scalar> {
 /// Members present on one side only, after Python equality. None for a
 /// whole-collection replacement (no member kept) or when nothing changed.
 fn altered_members(old: &[Member], new: &[Member]) -> Option<Vec<Member>> {
-    let contains =
-        |side: &[Member], member: &Member| side.iter().any(|other| other.value == member.value);
+    let contains = |side: &[Member], member: &Member| side.iter().any(|other| other.same(member));
     let removed: Vec<&Member> = old.iter().filter(|m| !contains(new, m)).collect();
     let added: Vec<&Member> = new.iter().filter(|m| !contains(old, m)).collect();
     let kept = old.iter().any(|m| contains(new, m));
@@ -605,8 +772,12 @@ fn row_hits(row: &CallRow, member: &Member, old: &Site, new: &Site, rebinding: R
             return false;
         }
     }
-    let holds = |side: &Site| side.members.iter().any(|m| m.value == value);
-    value == member.value && holds(old) != holds(new)
+    let holds = |side: &Site| {
+        side.members
+            .iter()
+            .any(|m| m.value.as_ref() == Some(&value))
+    };
+    member.value.as_ref() == Some(&value) && holds(old) != holds(new)
 }
 
 /// Whether `transform` maps the ASCII string `content` to itself.

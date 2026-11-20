@@ -1843,3 +1843,44 @@ fn changed_raise_message_inside_brackets_is_not_exposed_by_a_return_assertion() 
     );
     Ok(())
 }
+
+const TO_BOOL_LINES: &str = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n        \"on\",\n    ):\n        return True\n    return False\n";
+
+fn to_bool_test(cases: &str) -> String {
+    format!(
+        "import pytest\n\nfrom src.cart import to_bool\n\n\n@pytest.mark.parametrize(\"val\", [{cases}])\ndef test_truthy(val):\n    assert to_bool(val) == True\n"
+    )
+}
+
+/// #15632: deleting the `"y",` line of a multi-line membership display is a
+/// removed-only line. It credits `exposed` only when a strong row passes
+/// `"y"`.
+#[test]
+fn a_deleted_membership_member_line_needs_a_row_on_the_member() -> Result<(), String> {
+    for (label, cases, expected) in [
+        (
+            "membership-missed",
+            "\"yes\", \"on\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-hit",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            TO_BOOL_LINES,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted member: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}

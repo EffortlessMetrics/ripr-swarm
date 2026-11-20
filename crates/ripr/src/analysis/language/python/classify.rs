@@ -375,6 +375,7 @@ fn classify_change_full<'a>(
             line,
             owner,
             old_guard: None,
+            deleted_membership: None,
         },
         line_text,
         old_line_text,
@@ -397,6 +398,18 @@ pub(super) struct ChangeSite<'a> {
     pub(super) owner: &'a PythonOwner,
     /// A deleted line's old-side view (#11889), `None` for a live line.
     pub(super) old_guard: Option<OldGuardView<'a>>,
+    /// A deleted line's old and new files, for the membership rule (#15632);
+    /// `None` for a live line.
+    pub(super) deleted_membership: Option<DeletedMembershipView<'a>>,
+}
+
+/// The two files around a removed-only line: the old file and its 1-based
+/// line, and the candidate file (the site line is the new-side coordinate).
+#[derive(Clone, Copy)]
+pub(super) struct DeletedMembershipView<'a> {
+    pub(super) old_source: &'a str,
+    pub(super) old_line: usize,
+    pub(super) new_source: &'a str,
 }
 
 /// Where a deleted line sat in the old file: the old text, the owner re-spanned
@@ -497,6 +510,7 @@ fn classify_change_for_owner_inner<'a>(
         line,
         owner,
         old_guard,
+        deleted_membership,
     } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
@@ -1107,19 +1121,32 @@ fn classify_change_for_owner_inner<'a>(
     // whatever statement holds the comparison.
     let membership_gap = static_limit
         .is_none()
-        .then(|| {
-            owner_source.zip(old_line_text).and_then(|(source, old)| {
-                super::membership_activation::python_membership_member_gap(
+        .then(
+            || match (owner_source.zip(old_line_text), deleted_membership) {
+                (Some((source, old)), _) => {
+                    super::membership_activation::python_membership_member_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old,
+                        &related_candidates,
+                        &focus,
+                    )
+                }
+                (None, Some(view)) => super::membership_activation::python_membership_deleted_gap(
                     owner,
-                    source,
+                    view.old_source,
+                    view.old_line,
+                    view.new_source,
                     line,
                     line_text,
-                    old,
                     &related_candidates,
                     &focus,
-                )
-            })
-        })
+                ),
+                (None, None) => None,
+            },
+        )
         .flatten();
     let boundary = membership_gap.or_else(|| {
         (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))

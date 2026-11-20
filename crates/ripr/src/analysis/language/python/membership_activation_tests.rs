@@ -388,14 +388,72 @@ fn an_unmodelled_rebinding_withholds_credit_even_when_a_row_passes_the_member() 
 }
 
 #[test]
-fn a_line_that_also_changes_outside_the_display_keeps_the_existing_verdict() -> Result<(), String> {
-    let owner = "def to_bool(val, flag=True):\n    if val in (True, \"yes\", \"on\") and flag:\n        return True\n    return False\n";
-    let old = "    if val in (True, \"yes\", \"y\", \"on\") or flag:";
-    let finding = finding_at(owner, 2, old, &truthy_cases(CASES.0))?;
-    assert!(
-        !discriminators(&finding).contains(&"val == \"y\"".to_string()),
-        "the membership rule must not engage on a line with a second edit"
-    );
+fn a_line_that_also_changes_outside_the_display_withholds_credit() -> Result<(), String> {
+    // A second edit on the line: even a row that passes the removed member
+    // does not establish that the whole edit is observed.
+    for (new, old) in [
+        (
+            "    if val in (True, \"yes\", \"on\") and flag:",
+            "    if val in (True, \"yes\", \"y\", \"on\") or flag:",
+        ),
+        (
+            "    if not val in (True, \"yes\", \"on\"):",
+            "    if val in (True, \"yes\", \"y\", \"on\"):",
+        ),
+        (
+            "    if (val in (True, \"yes\", \"on\")) and flag:",
+            "    if val in (True, \"yes\", \"y\", \"on\") and flag:",
+        ),
+        (
+            "    if val in (True, \"yes\", \"on\"): return False",
+            "    if val in (True, \"yes\", \"y\", \"on\"): return True",
+        ),
+    ] {
+        let body = if new.ends_with(':') {
+            "        return True\n    return False\n"
+        } else {
+            "    return False\n"
+        };
+        let owner = format!("def to_bool(val, flag=True):\n{new}\n{body}");
+        for cases in [CASES.0, CASES.1] {
+            let finding = finding_at(&owner, 2, old, &truthy_cases(cases))?;
+            assert_eq!(
+                finding.class,
+                ExposureClass::WeaklyExposed,
+                "{new} / {cases}"
+            );
+            assert_eq!(
+                discriminators(&finding),
+                vec!["val == \"y\"".to_string()],
+                "{new}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_member_withholds_credit() -> Result<(), String> {
+    let owner = "def to_bool(val):\n    if val in (True, \"yes\", \"on\"):\n        return True\n    return False\n";
+    // Removing an escaped string: static evidence does not read `"\t"`.
+    let escaped = "    if val in (True, \"yes\", \"\\t\", \"on\"):";
+    for cases in [CASES.0, "\"yes\", \"\\t\""] {
+        assert_eq!(
+            class_at(owner, 2, escaped, &truthy_cases(cases))?,
+            ExposureClass::WeaklyExposed,
+            "{cases}"
+        );
+    }
+    // Adding a name: no readable member to name, still no credit.
+    let named = "EXTRA = \"y\"\n\n\ndef to_bool(val):\n    if val in (True, \"yes\", \"on\", EXTRA):\n        return True\n    return False\n";
+    let finding = finding_at(
+        named,
+        5,
+        "    if val in (True, \"yes\", \"on\"):",
+        &truthy_cases(CASES.1),
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(discriminators(&finding).is_empty(), "{finding:?}");
     Ok(())
 }
 

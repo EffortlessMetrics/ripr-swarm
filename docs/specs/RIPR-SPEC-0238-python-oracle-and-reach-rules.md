@@ -1847,8 +1847,17 @@ mutant calibrates the rule; ripr reports only the static shape.
     `return`, an assignment, or a display spanning several lines. The
     display is a tuple, list or set of scalar literals (numbers,
     `True`/`False`, `None`, plain strings without escapes), at least one
-    member is kept, the subject text and operator match on both sides, and
-    nothing on the changed line outside the display differs. The subject is
+    member is kept, and the subject text and operator match on both sides.
+    When the changed line also edits code outside the display (`and` to
+    `or`, added `not` or parentheses, a one-line `if` whose body changes),
+    or some member on either side is not such a literal (`"\t"`, `1e0`,
+    `0x1`, a name, `b"y"`), the change reads `weakly_exposed` without
+    reading rows, naming the first readable altered member when there is
+    one. A removed-only line inside a multi-line display is read from the
+    old file and the new one: the old comparison holding the line pairs with
+    the new comparison whose members are the old ones without the line's
+    elements, and the same hit rule applies; when no such new comparison is
+    found the change reads `weakly_exposed`. The subject is
     a bare owner parameter `p`, or `p.lower()`, `p.casefold()`,
     `p.upper()`, `p.strip()` or `str(p)`. The altered members are those
     present on one side only under Python equality (`True == 1`,
@@ -1875,11 +1884,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     its comparisons do not match the new ones), reads `weakly_exposed` the
     same way. Removing `1` while `True` stays alters nothing, so a row
     passing `1` never hits it. Not engaged, so the existing verdict stands:
-    a whole-collection replacement (no member kept), a non-literal or
-    computed display (`TRUTHY + ("t",)`, a named constant), a subject that
-    is not a parameter or one of the transforms above, a line that also
-    changes something outside the display, an owner source that does not
-    parse, a deleted display line, and a `match` arm pattern edit
+    a whole-collection replacement (no member kept) with nothing else on the
+    line changed, a non-literal or computed display (`TRUTHY + ("t",)`, a
+    named constant), a subject that is not a parameter or one of the
+    transforms above (an alias bound from the parameter, `self.attr`,
+    `cfg["key"]`), an owner source that does not parse, and a `match` arm
+    pattern edit
     (`case "yes" | "y":` -> `case "yes":` still reads `exposed` with rows
     that skip `"y"`; a separate gap).
 
