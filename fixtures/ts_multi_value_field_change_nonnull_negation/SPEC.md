@@ -41,9 +41,7 @@ the owner-call credit read `exposed`.
 The expected class is pinned per finding (`expected/check.json`, checked by
 `check-fixture-contracts`):
 
-```expected-classes
-PROBE_ID -> weakly_exposed
-```
+EXPECTED_CLASSES_PLACEHOLDER
 
 This fixture ships no `expected/human.txt`, for the same reason as
 `ts_multi_value_field_change_sibling`: the default human output prints a state token
