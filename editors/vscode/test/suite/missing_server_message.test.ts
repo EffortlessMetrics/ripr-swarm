@@ -140,7 +140,7 @@ suite('Missing-server message actions (#8588)', () => {
     for (const autoDownload of [true, false]) {
       const guidance = resolutionFailureGuidance(failure('network'), autoDownload);
       assert.ok(/network connection/.test(guidance), guidance);
-      assert.ok(/http\.proxy or HTTPS_PROXY/.test(guidance), guidance);
+      assert.ok(/http\.proxy\b/.test(guidance), guidance);
       assert.ok(/offline/.test(guidance), guidance);
       assert.ok(guidance.includes('ripr.server.path'), guidance);
       assert.ok(guidance.includes('ripr.server.downloadBaseUrl'), guidance);

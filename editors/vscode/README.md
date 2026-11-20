@@ -73,17 +73,11 @@ can be downloaded.
 
 ### Behind a proxy
 
-The managed server download honors VS Code `http.proxy`, then the
-`HTTPS_PROXY` / `https_proxy` environment variables, and skips hosts listed in
-`NO_PROXY` / `no_proxy` (loopback is always direct). Redirects follow the same
-rule. Only `http://host:port` proxies are supported, with optional
-`http://user:password@host:port` basic auth; credentials are sent only to the
-proxy and never logged. A `socks://` or `https://` proxy fails the download
-with a message naming the workaround: set `ripr.server.path` or install `ripr`
-on `PATH`. CIDR ranges in `NO_PROXY` are not supported (they do not exempt a
-host, so it goes through the proxy); a bare IP entry matches only that exact
-address. The download still verifies the archive checksum and the host
-certificate, so `http.proxyStrictSSL` is not used to relax them.
+The managed server download uses VS Code's proxy support: set `http.proxy`
+(or `HTTPS_PROXY` in the environment VS Code starts from), list hosts that
+should go direct in `http.noProxy`, and leave `http.proxySupport` on. The
+download still verifies the archive checksum. If no proxy route works, set
+`ripr.server.path` to a `ripr` binary or install `ripr` on `PATH`.
 
 ## What ripr Does
 

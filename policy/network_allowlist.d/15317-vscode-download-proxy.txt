@@ -1,1 +1,0 @@
-editors/vscode/test/suite/download_proxy.test.ts|https.get|1|lsp/editor-test|#15317: one loopback-only request through ProxyTunnelAgent proves a synchronous TLS setup failure reaches the caller; targets 127.0.0.1 via a local test proxy, no external network.

@@ -6,13 +6,6 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import {
-  ambientNoProxy,
-  ProxySettings,
-  ProxyTunnelAgent,
-  redactProxyCredentials,
-  resolveProxy
-} from './downloadProxy';
-import {
   distributionGeneration,
   installManagedServer,
   ManagedServerInstallation,
@@ -394,26 +387,7 @@ export function isAllowedHttpsRedirect(fromUrl: string, toUrl: string): boolean 
   return REDIRECT_ALLOWED_HOSTS.has(to.host);
 }
 
-/**
- * The proxy inputs for a download: VS Code `http.proxy` plus the process
- * environment, with loopback always exempt (#15317).
- */
-export function ambientProxySettings(): ProxySettings {
-  let httpProxy: string | undefined;
-  try {
-    httpProxy = vscode.workspace.getConfiguration('http').get<string>('proxy');
-  } catch {
-    httpProxy = undefined;
-  }
-  const env = process.env;
-  return { httpProxy, env: { ...env, NO_PROXY: ambientNoProxy(env), no_proxy: undefined } };
-}
-
-export function fetchManifestBytesOverHttps(
-  url: string,
-  maxBytes = MANIFEST_MAX_BYTES,
-  proxySettings: () => ProxySettings = ambientProxySettings
-): Promise<ManifestFetchOutcome> {
+export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX_BYTES): Promise<ManifestFetchOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (outcome: ManifestFetchOutcome): void => {
@@ -442,15 +416,7 @@ export function fetchManifestBytesOverHttps(
           });
           return;
         }
-        // Every hop, redirects included, is resolved on its own so the
-        // proxy and NO_PROXY apply to the redirected host too (#15317).
-        const route = resolveProxy(target, proxySettings());
-        if (route.kind === 'unsupported') {
-          finish({ kind: 'transport_failure', url: target, message: route.message });
-          return;
-        }
-        const agent = route.kind === 'proxy' ? new ProxyTunnelAgent(route) : undefined;
-        request = https.get(target, { agent }, (response) => {
+        request = https.get(target, (response) => {
           const statusCode = response.statusCode ?? 0;
           const location = response.headers.location;
           if (statusCode >= 300 && statusCode < 400 && location) {
@@ -549,7 +515,7 @@ export function fetchManifestBytesOverHttps(
           });
         });
         request.on('error', (error) => {
-          finish({ kind: 'transport_failure', url: target, message: redactProxyCredentials(requestErrorMessage(target, error)) });
+          finish({ kind: 'transport_failure', url: target, message: requestErrorMessage(target, error) });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));
