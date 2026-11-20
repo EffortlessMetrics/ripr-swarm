@@ -1,7 +1,7 @@
 use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, reconcile_root};
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
@@ -931,7 +931,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 let reconciled = reconcile_root(
                     &options.root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    init_flag_value(args, i, "--root")?,
                     "init",
                 )?;
                 options.root = reconciled;

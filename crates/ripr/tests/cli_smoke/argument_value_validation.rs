@@ -44,6 +44,11 @@ fn init_value_flags_followed_by_a_flag_report_a_missing_value() -> Result<(), St
     }
     refused(
         &root,
+        &["init", "--root", "--ci", "github"],
+        &["missing value for --root"],
+    )?;
+    refused(
+        &root,
         &["init", "--ci", "github", "--ci", "gitlab"],
         &[
             "init --ci takes one provider per run",
@@ -86,6 +91,16 @@ fn pr_comments_plan_validates_pull_request_and_conflicting_toggles() -> Result<(
         &root,
         &["pr-comments", "plan", "--token-available", "--no-token"],
         &["either --token-available or --no-token"],
+    )?;
+    refused(
+        &root,
+        &[
+            "pr-comments",
+            "plan",
+            "--write-permission",
+            "--no-write-permission",
+        ],
+        &["either --write-permission or --no-write-permission"],
     )?;
     ignore_remove_dir_all(&root);
     Ok(())
