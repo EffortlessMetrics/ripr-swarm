@@ -444,7 +444,17 @@ fn step_run_block(step_id: &str) -> Result<String, String> {
 
 #[test]
 fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), String> {
-    let (work, _) = admitted_merge("goldens-fresh-move", |w| {
+    for (name, explicit_build_dir) in [
+        ("goldens-configured-build-dir", true),
+        ("goldens-fallback-build-dir", false),
+    ] {
+        verify_fresh_build(name, explicit_build_dir)?;
+    }
+    Ok(())
+}
+
+fn verify_fresh_build(name: &str, explicit_build_dir: bool) -> Result<(), String> {
+    let (work, _) = admitted_merge(name, |w| {
         commit_file(w, "other.txt", "fresh-main\n", "base moved")
     })?;
     if !merge_tree_supported(&work) {
@@ -510,29 +520,71 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
     // Two binaries have the same package identity and differ only in the input
     // compiled into the executable. Sharing undifferentiated artifacts can
     // otherwise silently run the first binary on the second tree.
+    // Supply the locked registry dependency from a directory source so the test
+    // works offline with a new Cargo home and no populated registry cache.
+    let cargo_home = root.join("cargo-home");
+    let vendor = root.join("vendor/golden-dep-1.0.0");
+    fs::create_dir_all(&cargo_home).map_err(|e| e.to_string())?;
+    fs::create_dir_all(vendor.join("src")).map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join("Cargo.toml"),
+        "[package]\nname='golden-dep'\nversion='1.0.0'\nedition='2024'\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join("src/lib.rs"),
+        "pub const REPORT: &str = \"target/ripr/reports/sample\";",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join(".cargo-checksum.json"),
+        r#"{"files":{},"package":null}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        cargo_home.join("config.toml"),
+        "[source.crates-io]\nreplace-with='fixture'\n[source.fixture]\ndirectory='vendor'\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let cargo_home = cargo_home.to_str().ok_or("non-UTF-8 Cargo home")?;
     let fixture = r#"fn main() -> std::io::Result<()> {
         std::fs::create_dir_all("target/ripr/reports")?;
-        std::fs::write("target/ripr/reports/sample", include_bytes!("../other.txt"))
+        std::fs::write(golden_dep::REPORT, include_bytes!("../other.txt"))
     }"#;
     for checkout in [work.as_path(), fresh_dir] {
         fs::create_dir_all(checkout.join(".cargo")).map_err(|e| e.to_string())?;
         fs::create_dir_all(checkout.join("src")).map_err(|e| e.to_string())?;
         fs::write(
             checkout.join("Cargo.toml"),
-            "[package]\nname='golden-probe'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+            "[package]\nname='golden-probe'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ngolden-dep='=1.0.0'\n[workspace]\n",
         )
         .map_err(|e| e.to_string())?;
         fs::write(checkout.join("src/main.rs"), fixture).map_err(|e| e.to_string())?;
         fs::write(
             checkout.join(".cargo/config.toml"),
-            "[alias]\nxtask='run --quiet --'\n",
+            "[alias]\nxtask='run --locked --offline --message-format=json --'\n",
         )
         .map_err(|e| e.to_string())?;
     }
+    let locked = run_bash(
+        &work,
+        "cargo generate-lockfile --offline",
+        &[("CARGO_HOME", cargo_home)],
+    )?;
+    if !locked.status.success() {
+        return Err(String::from_utf8_lossy(&locked.stderr).into());
+    }
+    fs::copy(work.join("Cargo.lock"), fresh_dir.join("Cargo.lock")).map_err(|e| e.to_string())?;
     let gate = step_run_block("id: goldens_fixtures")?;
     let target = work.join("target");
     let binary = target.join("debug/golden-probe");
-    let probe = |tree| -> Result<(), String> {
+    let configured = root.join("configured-intermediates");
+    let gate = if explicit_build_dir {
+        gate
+    } else {
+        format!("unset CARGO_BUILD_BUILD_DIR\n{gate}")
+    };
+    let probe = |tree, expect_fresh| -> Result<(), String> {
         let result = run_bash(
             &work,
             &gate,
@@ -547,24 +599,32 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
                 ),
                 (
                     "CARGO_BUILD_BUILD_DIR",
-                    target.to_str().ok_or("non-UTF-8 build directory")?,
+                    configured.to_str().ok_or("non-UTF-8 build directory")?,
                 ),
-                ("CARGO_NET_OFFLINE", "true"),
+                ("CARGO_HOME", cargo_home),
             ],
         )?;
-        if result.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&result.stderr).into())
+        if !result.status.success() {
+            return Err(String::from_utf8_lossy(&result.stderr).into());
         }
+        if !stdout(&result).lines().any(|line| {
+            line.contains("\"reason\":\"compiler-artifact\"")
+                && line.contains("\"name\":\"golden_dep\"")
+                && line.contains(&format!("\"fresh\":{expect_fresh}"))
+        }) {
+            return Err(format!(
+                "{name}: expected registry dependency fresh={expect_fresh}"
+            ));
+        }
+        Ok(())
     };
-    probe("")?;
+    probe("", false)?;
     let bytes = fs::read(&binary).map_err(|e| e.to_string())?;
     let report = target.join("ripr/reports/sample");
     if fs::read_to_string(&report).map_err(|e| e.to_string())? != "x\n" {
         return Err("admitted producer used the wrong source".into());
     }
-    probe(fresh)?;
+    probe(fresh, true)?;
     if !fs::read_to_string(wrapper_log)
         .map_err(|e| e.to_string())?
         .lines()
@@ -582,8 +642,13 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
     }
     let reused = run_bash(
         &work,
-        "cargo build --locked --offline --message-format=json",
+        if explicit_build_dir {
+            "cargo build --locked --offline --message-format=json"
+        } else {
+            "unset CARGO_BUILD_BUILD_DIR\ncargo build --locked --offline --message-format=json"
+        },
         &[
+            ("CARGO_HOME", cargo_home),
             ("RUSTC_WORKSPACE_WRAPPER", wrapper),
             ("WRAPPER_LOG", wrapper_log),
             (
@@ -592,7 +657,7 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
             ),
             (
                 "CARGO_BUILD_BUILD_DIR",
-                target.to_str().ok_or("non-UTF-8 build directory")?,
+                configured.to_str().ok_or("non-UTF-8 build directory")?,
             ),
         ],
     )?;
@@ -641,7 +706,7 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
             return Err("failed cleanup must retain the admitted checkout readback".into());
         }
     }
-    probe("")?;
+    probe("", true)?;
     if fs::read_to_string(report).map_err(|e| e.to_string())? != "x\n" {
         return Err("restored producer read the fresh source".into());
     }
