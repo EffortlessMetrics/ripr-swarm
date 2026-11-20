@@ -924,7 +924,11 @@ impl ReExportIndex {
         let canonical = self.canonical_module(source);
         [&self.local_exports, &self.commonjs_own_names]
             .iter()
-            .any(|names| names.get(&canonical).is_some_and(|names| names.contains(name)))
+            .any(|names| {
+                names
+                    .get(&canonical)
+                    .is_some_and(|names| names.contains(name))
+            })
     }
 
     fn canonical_module(&self, module: &str) -> String {

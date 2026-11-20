@@ -169,7 +169,9 @@ fn chained_barrels_link_within_the_hop_bound() -> Result<(), String> {
         &[("index.js", "module.exports = require('./lib');\n")],
     )?;
     if class == ExposureClass::NoStaticPath || !chained {
-        return Err(format!("cjs-b-chain: expected a chained link, got {class:?}"));
+        return Err(format!(
+            "cjs-b-chain: expected a chained link, got {class:?}"
+        ));
     }
     Ok(())
 }
@@ -201,7 +203,9 @@ fn chain_past_the_hop_bound_stays_unlinked() -> Result<(), String> {
         &extra_refs,
     )?;
     if class != ExposureClass::NoStaticPath {
-        return Err(format!("cjs-b-deep: expected no_static_path, got {class:?}"));
+        return Err(format!(
+            "cjs-b-deep: expected no_static_path, got {class:?}"
+        ));
     }
     Ok(())
 }
