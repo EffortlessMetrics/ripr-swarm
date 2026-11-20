@@ -19,6 +19,7 @@
 mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
+mod partial_scope_narrow;
 mod probe_shape;
 pub(crate) mod probes;
 mod proof_harness;
@@ -1003,8 +1004,11 @@ impl PartialDiffScope {
     /// selection. Named partition continuation is not available in this
     /// contract revision.
     pub(crate) fn continuation_disclosure(&self) -> String {
+        let narrow = self
+            .narrow_diff_route()
+            .map_or(String::new(), |route| format!(". {route}"));
         format!(
-            "partial result: {}; named partition continuation is not available",
+            "partial result: {}; named partition continuation is not available{narrow}",
             self.widen_instruction()
         )
     }

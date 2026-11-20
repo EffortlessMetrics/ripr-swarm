@@ -8544,11 +8544,16 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice",
-  "crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch"
+  "crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch",
+  "crates/ripr/src/analysis/diff/load/base_advice.rs::tests::commit_ids_and_version_tags_are_told_apart_from_branch_names",
+  "crates/ripr/src/analysis/diff/load/base_advice.rs::tests::the_fetch_names_one_plain_remote_or_origin_and_never_invents_one",
+  "crates/ripr/src/analysis/diff/load/base_advice.rs::tests::a_commit_id_is_fetched_by_id_and_a_tag_with_tags",
+  "crates/ripr/tests/hostile_repos.rs::unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/diff/load/base_advice.rs",
   "crates/ripr/src/app/pr_evidence.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/diff/parse/stream.rs",
@@ -21576,9 +21581,13 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern",
   "crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern",
   "crates/ripr/tests/scoped_drill_in.rs::scoped_check_prints_path_exclude_drill_ins_that_replay",
+  "crates/ripr/src/analysis/language/rust/partial_scope_narrow.rs::tests::a_diff_no_budget_can_select_whole_is_told_to_narrow",
+  "crates/ripr/src/analysis/language/rust/partial_scope_narrow.rs::tests::a_diff_a_raise_can_complete_keeps_only_the_raise",
+  "crates/ripr/tests/hostile_repos.rs::partial_scope_over_the_analysis_limit_names_the_narrowing_route",
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/language/rust/partial_scope_narrow.rs",
   "crates/ripr/src/analysis/diff_scope_filter.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis_outcome.rs",
