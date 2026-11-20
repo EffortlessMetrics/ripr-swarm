@@ -98,8 +98,8 @@ Input artifacts and context:
 The producer should still render a useful no-op plan when the guidance input is
 missing or the mode is `off`.
 
-`--pull-request` takes a positive integer and `--max-inline-comments` a
-non-negative integer; other values are refused and echoed (#15259).
+`--pull-request` and `--max-inline-comments` take a positive integer;
+other values, including 0, are refused and echoed (#15259).
 `--token-available` with `--no-token`, or `--write-permission` with
 `--no-write-permission`, is refused as `conflicting_flags` instead of letting
 the last flag win silently.
