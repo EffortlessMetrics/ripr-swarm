@@ -210,3 +210,61 @@ fn boolean_cast_pins_only_a_compared_owner_against_its_numeric_encoding() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn a_tuple_of_boolean_owner_calls_must_match_on_exactly_one_version() -> Result<(), String> {
+    for (body, expected) in [
+        ("assert_eq!((over(10), over(9)), (true, false));", "exposed"),
+        ("assert_eq!((false, true), (over(9), over(10)));", "exposed"),
+        (
+            "assert_eq!((over(10), over(9)), (false, false));",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, true));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(10)), (true, false));",
+            "weakly_exposed",
+        ),
+        ("assert_eq!((over(10), 1).1, 1);", "weakly_exposed"),
+        (
+            "assert_eq!((over(10), over(9)), (over(10), over(9)));",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); assert_eq!((over(11), over(9)), (true, false));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!((over(10), first(true, over(9))), (true, true));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!((true, false), (true, false), \"{}\", over(10));",
+            "weakly_exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let actual = finding.get("classification").and_then(Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {actual:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_tuple_without_standard_equality_cannot_pin_the_owner() -> Result<(), String> {
+    let calls = ["over(10)"; 13].join(", ");
+    let expected = ["true"; 13].join(", ");
+    let finding = predicate_finding(&format!("assert_eq!(({calls}), ({expected}));"))?;
+    let class = finding.get("classification").and_then(Value::as_str);
+    if class != Some("weakly_exposed") {
+        return Err(format!(
+            "expected weakly_exposed for a 13-tuple, got {class:?}"
+        ));
+    }
+    Ok(())
+}

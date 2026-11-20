@@ -54,6 +54,7 @@ mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
 mod nominal_observer;
+mod predicate_tuple;
 pub(super) use nominal_observer::NominalObserverMemo;
 mod selected_error;
 pub(in crate::analysis) use selected_error::selected_unit_error_return;
@@ -4881,6 +4882,7 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
     whole_boolean_tail: bool,
+    probe: &Probe,
 ) -> bool {
     if !matches!(owner.item.container, FunctionContainer::Free)
         || !(test.start_line..=test.end_line).contains(&assertion.line)
@@ -4891,6 +4893,15 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
     let Some(compared) = assertion_comparison_operands(&assertion.text) else {
         return false;
     };
+    if whole_boolean_tail
+        && compared
+            .iter()
+            .all(|side| side.trim_start().starts_with('('))
+    {
+        return predicate_tuple::distinguishes(owner, probe, test, compared, index, syntax)
+            && builtin_type_unshadowed("bool", index, syntax)
+            && syntax.admits(test, assertion, index);
+    }
     let normalized = primitive_bool_negated_operands(compared).or_else(|| {
         if !whole_boolean_tail || !assertion.text.contains("u8") {
             return None;
@@ -8832,6 +8843,23 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+fn tuple_tail(source: &str) -> Option<ast::TupleExpr> {
+    let parsed = parse_clean_source_file(source)?;
+    let function = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    if body.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::TupleExpr(tuple) = body.tail_expr()? else {
+        return None;
+    };
+    Some(tuple)
+}
+
 /// The only changed slot of a whole returned tuple is an Option's
 /// presence, stored from one plain self field. Numeric sibling projections
 /// cannot borrow this identity. Type/equality and receiver gates run later.
@@ -8839,29 +8867,13 @@ fn changed_tuple_option_projection(
     owner: &FunctionSummary,
     probe: &Probe,
 ) -> Option<(String, String)> {
-    fn tuple(source: &str) -> Option<ast::TupleExpr> {
-        let parsed = parse_clean_source_file(source)?;
-        let function = parsed
-            .tree()
-            .syntax()
-            .descendants()
-            .find_map(ast::Fn::cast)?;
-        let body = function.body()?.stmt_list()?;
-        if body.statements().next().is_some() {
-            return None;
-        }
-        let ast::Expr::TupleExpr(tuple) = body.tail_expr()? else {
-            return None;
-        };
-        Some(tuple)
-    }
-    let after = tuple(&owner.body)?;
+    let after = tuple_tail(&owner.body)?;
     if collapse_whitespace(&after.syntax().text().to_string())
         != collapse_whitespace(&probe.expression)
     {
         return None;
     }
-    let before = tuple(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
+    let before = tuple_tail(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
     let old: Vec<_> = before.fields().collect();
     let new: Vec<_> = after.fields().collect();
     if old.len() != new.len() {

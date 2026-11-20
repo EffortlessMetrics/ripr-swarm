@@ -35,7 +35,7 @@ use value_contradiction::{
 };
 pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
-    fold_owner_body_at,
+    fold_boolean_owner_call, fold_owner_body_at,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -4654,6 +4654,24 @@ pub(in crate::analysis) fn test_has_contradicted_assertion(
     })
 }
 
+/// Reconstruct an owner only when the changed expression occurs exactly once.
+pub(in crate::analysis) fn baseline_owner(
+    owner: &FunctionSummary,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Option<FunctionSummary> {
+    let (Some(before), Some(after)) = (before, after) else {
+        return None;
+    };
+    if before == after || owner.body.matches(after).count() != 1 {
+        return None;
+    }
+    let mut baseline_owner = owner.clone();
+    baseline_owner.body =
+        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
+    Some(baseline_owner)
+}
+
 /// The diff-mode whole-test contradiction (#10980). A related test carries
 /// the diff surface's credit only when it passes SOMEWHERE: it is withheld
 /// when it fails on BOTH versions — some assertion row contradicts the
@@ -4677,15 +4695,9 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     after: Option<&str>,
     index: &RustIndex,
 ) -> bool {
-    let (Some(before), Some(after)) = (before, after) else {
+    let Some(baseline_owner) = baseline_owner(owner, before, after) else {
         return false;
     };
-    if before == after || owner.body.matches(after).count() != 1 {
-        return false;
-    }
-    let mut baseline_owner = owner.clone();
-    baseline_owner.body =
-        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
     let mut fails_on_candidate = false;
     let mut fails_on_base = false;
     for oracle in &test.assertions {

@@ -1250,6 +1250,7 @@ impl ClassifiedProbeEvidence {
                                 owner_return_pin
                                     .as_ref()
                                     .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
+                                context.probe,
                             )
                         })
                 },

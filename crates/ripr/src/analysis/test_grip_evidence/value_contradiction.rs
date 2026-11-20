@@ -174,7 +174,10 @@ fn integer_literal_in_type(text: &str, ty: &str) -> Option<i128> {
 /// Reuse the fold only where integer comparison has primitive Rust semantics.
 /// No arithmetic, overloadable operand, pointer-sized type or hidden statement
 /// can obtain the new boolean credit from the fold's integer approximation.
-fn fold_boolean_owner_call(owner: &FunctionSummary, arguments: &[String]) -> Option<bool> {
+pub(in crate::analysis) fn fold_boolean_owner_call(
+    owner: &FunctionSummary,
+    arguments: &[String],
+) -> Option<bool> {
     let parse = parse_clean_source_file(owner.body.as_str())?;
     let function = parse
         .tree()
