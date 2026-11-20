@@ -268,10 +268,22 @@ pub(super) fn static_limit_for_focused_change(
                 "static_limit decorator_indirection: test activation for `{}` is controlled by `{decorator}`",
                 test.qualified_name
             ),
-            missing: format!(
-                "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
-                test.qualified_name
-            ),
+            missing: if decorator == "pytest.collection(unevaluated conftest)" {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` above related test `{}` sets `collect_ignore`, `collect_ignore_glob` or a collection hook in a form the Python preview adapter does not evaluate, so static evidence does not establish that pytest collects the test. Inspect that conftest, or give the ignore list as plain string literals.",
+                    test.qualified_name
+                )
+            } else if decorator == "pytest.collection(collect_ignore)" {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` `collect_ignore` / `collect_ignore_glob` entry (possibly behind a conditional) may exclude related test `{}`, so static evidence does not establish that pytest collects it. Add an independent collected test or inspect the conftest.",
+                    test.qualified_name
+                )
+            } else {
+                format!(
+                    "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
+                    test.qualified_name
+                )
+            },
         });
     }
     // A mocked test keeps the limit unless its substitutions are literal

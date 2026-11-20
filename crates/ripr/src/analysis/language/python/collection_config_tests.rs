@@ -264,8 +264,12 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
     for (label, conftest) in [
         ("computed", "collect_ignore = [name for name in NAMES]\n"),
         (
-            "conditional",
-            "if SLOW:\n    collect_ignore = ['test_calc.py']\n",
+            "conditional-computed",
+            "if SLOW:\n    collect_ignore = [name for name in NAMES]\n",
+        ),
+        (
+            "conditional-hook",
+            "if SLOW:\n    def pytest_ignore_collect(collection_path):\n        return True\n",
         ),
         ("class-set", "collect_ignore_glob = ['[a-z]*.py']\n"),
         ("parent", "collect_ignore = ['../x.py']\n"),
@@ -283,6 +287,31 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
             ],
             "pytest.collection(unevaluated conftest)",
         )?;
+    }
+    Ok(())
+}
+
+const GUARDED_IGNORE: &str = "import sys\n\ncollect_ignore = []\nif sys.version_info < (3, 14):\n    collect_ignore.extend([\"test_other.py\"])\nelse:\n    collect_ignore_glob = [\"legacy_*.py\"]\n";
+
+/// A guarded `collect_ignore` withholds only the paths either branch could
+/// ignore (#15631): a test elsewhere in the directory keeps credit.
+#[test]
+fn guarded_collect_ignore_withholds_only_the_paths_it_could_ignore() -> Result<(), String> {
+    let files = [
+        ("tests/conftest.py", GUARDED_IGNORE),
+        ("tests/test_calc.py", TEST_BODY),
+        ("tests/test_other.py", TEST_BODY),
+        ("tests/legacy_calc.py", TEST_BODY),
+    ];
+    assert_credited("guarded-other-file", &files)?;
+    for ignored in ["tests/test_other.py", "tests/legacy_calc.py"] {
+        let got = controls_of("guarded-ignored", &files, ignored)?;
+        if !got
+            .iter()
+            .any(|name| name == "pytest.collection(collect_ignore)")
+        {
+            return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
+        }
     }
     Ok(())
 }

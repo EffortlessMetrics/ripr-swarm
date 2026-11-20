@@ -230,23 +230,38 @@ impl ConftestRules {
             return Self::unevaluated();
         };
         for stmt in &module.body {
-            if rules.evaluate(stmt) {
-                continue;
-            }
-            let range = stmt.range();
-            let text = source
-                .get(usize::from(range.start())..usize::from(range.end()))
-                .unwrap_or(source);
-            if COLLECTION_NAMES.iter().any(|name| text.contains(name)) {
-                rules.unevaluated = true;
-            }
+            rules.visit(stmt, source, false);
         }
         rules
     }
 
+    /// Evaluate one statement. A version- or environment-guarded `if` is
+    /// evaluated as the union of both branches (every branch is treated as
+    /// taken, and an assignment inside a branch only adds), so the files it
+    /// could ignore are withheld and nothing else is. A statement that names
+    /// a collection switch in a form not understood marks the conftest
+    /// unevaluated.
+    fn visit(&mut self, stmt: &Stmt, source: &str, branch: bool) {
+        if let Stmt::If(node) = stmt {
+            if mentions_collection_name(source, node.test.range()) {
+                self.unevaluated = true;
+            }
+            for inner in node.body.iter().chain(&node.orelse) {
+                self.visit(inner, source, true);
+            }
+            return;
+        }
+        if self.evaluate(stmt, branch) {
+            return;
+        }
+        if mentions_collection_name(source, stmt.range()) {
+            self.unevaluated = true;
+        }
+    }
+
     /// Evaluate a plain top-level `collect_ignore` statement. False when the
     /// statement is not one of the understood forms.
-    fn evaluate(&mut self, stmt: &Stmt) -> bool {
+    fn evaluate(&mut self, stmt: &Stmt, branch: bool) -> bool {
         match stmt {
             Stmt::Assign(assign) if assign.targets.len() == 1 => {
                 let (Some(list), Some(name)) =
@@ -254,7 +269,11 @@ impl ConftestRules {
                 else {
                     return false;
                 };
-                *self.slot(name) = list;
+                if branch {
+                    self.slot(name).extend(list);
+                } else {
+                    *self.slot(name) = list;
+                }
                 true
             }
             Stmt::AugAssign(assign) if matches!(assign.op, ast::Operator::Add) => {
@@ -324,6 +343,13 @@ impl ConftestRules {
         }
         excluded.then_some(COLLECT_IGNORE)
     }
+}
+
+fn mentions_collection_name(source: &str, range: rustpython_parser::text_size::TextRange) -> bool {
+    let text = source
+        .get(usize::from(range.start())..usize::from(range.end()))
+        .unwrap_or(source);
+    COLLECTION_NAMES.iter().any(|name| text.contains(name))
 }
 
 fn switch_name(expr: &Expr) -> Option<&str> {
