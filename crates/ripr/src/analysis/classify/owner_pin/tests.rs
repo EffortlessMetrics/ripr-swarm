@@ -15063,6 +15063,7 @@ fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
         // declared type has that name: a `type` alias, an `as` rename, and a
         // blanket impl's parameter beside a declared `struct T`.
         "pub mod aliases {\n    pub type Line = super::Square;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod raw_alias {\n    pub type r#Line = super::Square;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
         "pub mod renamed {\n    use super::Square as Line;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
         "pub mod unrelated {\n    pub struct T;\n}\npub trait Any3 { fn area(self) -> u32; }\nimpl<T> Any3 for T {\n    fn area(self) -> u32 { 9 }\n}\n",
     ] {

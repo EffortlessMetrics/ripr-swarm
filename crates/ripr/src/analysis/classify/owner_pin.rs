@@ -14057,6 +14057,7 @@ fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<S
     let rebinds = index.files().values().any(|facts| {
         let source = facts.source.as_ref();
         file_aliases_type(source, &name)
+            || file_aliases_type(source, &raw)
             || file_renames_to(source, &name)
             || file_renames_to(source, &raw)
     });
