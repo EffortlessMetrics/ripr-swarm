@@ -1,5 +1,6 @@
-# Seam activation reads every same-line free-owner call, matching the probe
-# path's #13373 input rows, so check and the gate agree (#14487).
+# Seam activation reads a test line's first owner call plus each further
+# same-line call a discriminating assertion directly observes, when the
+# owner-identity guard holds, so check and the gate agree (#14487).
 [[extend]]
 id = "RIPR-SPEC-0005"
 tests = [

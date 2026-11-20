@@ -1698,6 +1698,44 @@ fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_re
             ));
         }
     }
+    // The rival negative must fail on the identity guard, not on the shape
+    // reading: the observed-call reader does list `other::ok(11)`'s row, so
+    // only `qualified_owner_calls_resolve` keeps it from the seam.
+    let rival_src = "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(other::ok(11), false); }\n";
+    let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub fn ok(n: u32) -> bool { n > 11 }\n",
+        ),
+        (PathBuf::from("tests/t.rs"), rival_src),
+    ])?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "ok" && function.file.as_path() == Path::new("src/lib.rs")
+        })
+        .ok_or_else(|| "rival fixture lost the owner `ok`".to_string())?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "b")
+        .ok_or_else(|| "rival fixture lost test `b`".to_string())?;
+    let call_line = test
+        .body_calls()
+        .find(|call| call.name == "ok")
+        .map(|call| call.line)
+        .ok_or_else(|| "rival fixture lost its owner call".to_string())?;
+    let rows =
+        crate::analysis::classify::observed_owner_call_rows_on_line(test, call_line, owner, &index);
+    if !rows
+        .iter()
+        .any(|row| row.len() == 1 && row.first().map(|value| value.trim()) == Some("11"))
+    {
+        return Err(format!(
+            "the rival line's observed rows should list `other::ok(11)`, so the guard is what refuses it: {rows:?}"
+        ));
+    }
     Ok(())
 }
 

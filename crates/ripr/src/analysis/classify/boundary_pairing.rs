@@ -885,16 +885,24 @@ fn assertion_observes_boundary_owner_call(
 /// with its assertion on a multi-occurrence line (#13373). The seam path
 /// uses it to credit a second same-line call only when an assertion observes
 /// that call's result (#14487): a call under an operator, inside another
-/// call's arguments, or outside any assertion lends no input.
+/// call's arguments, or outside any assertion lends no input. Only the
+/// test's own discriminating assertions count: an assertion credited from a
+/// check helper on another file or line never shares the call's line, and a
+/// weak or relational assertion (`assert!(ok(11))`, which the probe admits
+/// only through its owner-return pin) does not add a row, so this reading is
+/// never looser than the probe's pairing.
 pub(in crate::analysis) fn observed_owner_call_rows_on_line(
     test: &TestSummary,
     line: usize,
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> Vec<Vec<String>> {
+    if !(test.start_line..=test.end_line).contains(&line) {
+        return Vec::new();
+    }
     test.assertions
         .iter()
-        .filter(|assertion| assertion.line == line)
+        .filter(|assertion| assertion.line == line && assertion_is_discriminating(assertion))
         .flat_map(|assertion| {
             let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
                 .unwrap_or_else(|| assertion.text.clone());
