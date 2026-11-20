@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from verify_installed_wheel import verify
 
@@ -26,11 +27,23 @@ class InstalledWheelIdentity(unittest.TestCase):
         }
         self.download = {"url": "file:///ripr_rs-0.11.0-py3-none-win_amd64.whl",
                          "archive_info": {"hashes": {"sha256": "c" * 64}}}
+        self.metadata = {"name": "ripr-rs", "version": "0.11.0"}
+        self.producer = {
+            "kind": "ripr_native_python_wheel", "schema_version": 1,
+            "target": self.identity["target"], "version": "0.11.0", "python_version": "0.11.0",
+            "source_commit": "a" * 40, "source_tree": "b" * 40, "platform_tag": "win_amd64",
+            "wheel": "ripr_rs-0.11.0-py3-none-win_amd64.whl", "wheel_sha256": "c" * 64,
+            "payload_identity_sha256": hashlib.sha256(json.dumps(self.identity).encode()).hexdigest(),
+        }
+        wheels = self.root / "packages" / "wheels"
+        wheels.mkdir(parents=True)
+        self.producer_file = wheels / "wheel-native-receipt-x86_64-pc-windows-msvc.json"
 
     def verify(self):
         self.identity_file.write_text(json.dumps(self.identity), encoding="utf-8")
-        (self.root / "pip-report.json").write_text(
-            json.dumps({"install": [{"download_info": self.download}]}), encoding="utf-8")
+        self.producer_file.write_text(json.dumps(self.producer), encoding="utf-8")
+        package = {"download_info": self.download, "metadata": self.metadata}
+        (self.root / "pip-report.json").write_text(json.dumps({"install": [package]}), encoding="utf-8")
         return verify(self.root, self.root, "x86_64-pc-windows-msvc", "0.11.0", "a" * 40, "win_amd64")
 
     def test_smoke_path_names_verified_executable_and_receipt_distinguishes_hashes(self):
@@ -55,3 +68,20 @@ class InstalledWheelIdentity(unittest.TestCase):
         self.download["url"] = self.download["url"].replace("win_amd64", "win32")
         with self.assertRaisesRegex(ValueError, "expected win_amd64"):
             self.verify()
+
+    def test_same_executable_in_alternate_wheel_refuses(self):
+        self.download["archive_info"]["hashes"]["sha256"] = "e" * 64
+        with self.assertRaisesRegex(ValueError, "pip wheel SHA-256"):
+            self.verify()
+
+    def test_reported_distribution_name_and_version_are_checked(self):
+        for field in ("name", "version"):
+            with self.subTest(field=field), patch.dict(self.metadata, {field: "other"}):
+                with self.assertRaisesRegex(ValueError, "distribution name or version"):
+                    self.verify()
+
+    def test_other_source_tree_and_reserialized_payload_refuse(self):
+        for field in ("source_tree", "payload_identity_sha256"):
+            with self.subTest(field=field), patch.dict(self.producer, {field: "different"}):
+                with self.assertRaisesRegex(ValueError, "does not match the qualified payload"):
+                    self.verify()
