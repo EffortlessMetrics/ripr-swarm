@@ -753,7 +753,8 @@ remains optional in the output schema because an ineligible packet omits it.
 An ineligible item returns `isError: true` with `repair_packet_ready: false`,
 the typed ineligibility reason, `attempt: null` and a machine-readable `next`
 object (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
-`commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit`; the
+`commit_then_refresh`, `await_producer_fact`, `terminal_static_limit`, or
+`resume_durable_attempt`; the
 `reason`; an `mcp` route or `null`; and, only for `write_test_by_hand`,
 `after_editing_tests`; a
 `seam_not_found` or `seam_ambiguous` refusal also carries `stub_route`, the
@@ -796,6 +797,19 @@ completeness fact and, like `ripr agent card`, fails with the typed
 `incomplete_inventory` code (and no card) while the inventory is truncated or
 its completeness could not be established, so it never reports
 `readiness.repair_ready` true over a truncated inventory (#9231).
+
+`ripr_prepare_repair` creates no session transaction while a live durable
+attempt exists for the item's seam (the CLI rule `ripr repair` uses: awaiting
+its edit at the current HEAD). It answers the refusal shape with
+`ineligibility.reason: durable_attempt_awaiting`, `attempt: null`, an
+`existing_attempt` block and links naming the durable attempt, and
+`next.mcp` routing to `ripr_get_repair_attempt`; a session transaction would
+be superseded by the refresh that follows the edit, and only a durable
+attempt can reach `improved` (#15244).
+A ready
+item whose seam binding is missing, or whose HEAD or durable store cannot be
+read, fails closed (`no_snapshot`, `seam_not_found`, or `analysis_failed`) and
+creates no session transaction, because a rival attempt could not be ruled out.
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise

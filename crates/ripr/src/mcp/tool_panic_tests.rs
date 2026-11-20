@@ -138,6 +138,9 @@ async fn prepare_repair_panic_after_eviction_keeps_old_attempt_superseded() -> R
     for stage in ["after_tombstones", "after_eviction"] {
         let guard = fixture_root(stage)?;
         let mut server = server_at(&guard.0)?;
+        // These sessions are unit fixtures without card producers: no store
+        // root keeps them on the session route (the durable check fails closed).
+        server.analysis_root = None;
         let identity = format!("root:sha256:panic-{stage}-{}", std::process::id());
         server.root_identity = Some(identity.clone());
         *server.session.lock().await =
@@ -228,6 +231,7 @@ async fn prepare_repair_fault_hook_fires_without_containment() -> Result<(), Str
     // otherwise pass vacuously).
     let guard = fixture_root("prepare-control")?;
     let mut server = server_at(&guard.0)?;
+    server.analysis_root = None;
     let identity = format!("root:sha256:panic-control-{}", std::process::id());
     server.root_identity = Some(identity.clone());
     *server.session.lock().await =

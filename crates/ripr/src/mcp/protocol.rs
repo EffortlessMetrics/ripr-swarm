@@ -2108,6 +2108,7 @@ fn repair_packet_output_schema() -> Value {
                     "recovery": { "type": "string" },
                     "item": { "type": "object" },
                     "attempt": { "type": ["object", "null"] },
+                    "existing_attempt": { "type": "object" },
                     "changed_behavior": { "type": ["object", "null"] },
                     "discriminator": { "type": ["string", "null"] },
                     "fix_site": { "type": ["object", "null"] },

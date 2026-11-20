@@ -823,6 +823,54 @@ fn refusal_next(
     next
 }
 
+/// The live durable attempt for a ready item's seam, by the CLI's own
+/// single-attempt rule. Fail closed (#15244): an item that cannot be mapped to
+/// a seam, or a HEAD/store that cannot be read, refuses instead of creating a
+/// session attempt that might be a rival the store would have shown.
+fn live_durable_attempt(
+    snapshot: &super::workspace::Snapshot,
+    item: &GapItem,
+    root: &Path,
+) -> Result<Option<crate::app::task_first::ReusableAttempt>, AttemptFailure> {
+    let Some(producers) = &snapshot.card_producers else {
+        return Err(AttemptFailure::new(
+            super::workspace::CODE_NO_SNAPSHOT,
+            "the current snapshot carries no repair-card producers, so the durable attempt store cannot be checked for this item's seam; no session attempt was created",
+            "re-run ripr_refresh to commit a complete snapshot, then retry",
+        ));
+    };
+    let Some(binding) = producers
+        .bindings
+        .iter()
+        .find(|binding| binding.item_canonical_id == item.canonical_id)
+    else {
+        return Err(AttemptFailure::new(
+            super::repair_card::CODE_SEAM_NOT_FOUND,
+            format!(
+                "canonical item {} is not bound to a seam, so the durable attempt store cannot be checked for it; no session attempt was created",
+                item.canonical_id
+            ),
+            "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
+        ));
+    };
+    durable_attempt_for_seam(root, binding.seam.seam.id().as_str())
+}
+
+fn durable_attempt_for_seam(
+    root: &Path,
+    seam_id: &str,
+) -> Result<Option<crate::app::task_first::ReusableAttempt>, AttemptFailure> {
+    crate::app::task_first::checked_reusable_awaiting_attempt(root, seam_id).map_err(|error| {
+        AttemptFailure::new(
+            super::workspace::CODE_ANALYSIS_FAILED,
+            format!(
+                "no session attempt was created: the durable attempt store could not be read, so a live attempt for this seam cannot be ruled out: {error}"
+            ),
+            "run `ripr agent status` in the repository for the full diagnostic, then retry",
+        )
+    })
+}
+
 impl WorkspaceSession {
     /// The live session transaction for one canonical item of one committed
     /// snapshot, if prepare created one.
@@ -843,11 +891,28 @@ impl WorkspaceSession {
     /// ineligible item returns an honest negative document with
     /// `repair_packet_ready: false` and no attempt — never a fabricated
     /// field and never a misleading transaction.
+    #[cfg(test)]
     pub(crate) fn prepare_repair(
         &mut self,
         canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
+        self.prepare_repair_with_store(canonical_id, requested, root_identity, None)
+    }
+
+    /// `prepare_repair` plus the durable attempt store (#15170): when
+    /// `store_root` names the workspace root and the CLI's own single-attempt
+    /// rule (`reusable_awaiting_attempt`) finds a live durable attempt for the
+    /// item's seam, no rival session transaction is created. The document
+    /// discloses the durable attempt and routes to it instead, exactly as
+    /// `ripr repair` refuses a second attempt.
+    pub(crate) fn prepare_repair_with_store(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        store_root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
@@ -900,6 +965,62 @@ impl WorkspaceSession {
                     "no attempt was created: the tool must not create a misleading transaction",
                 ],
                 "claim_boundary": "Repair-packet evaluation for one canonical item. This negative document authorizes nothing and creates nothing.",
+            });
+            return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
+        }
+
+        // A live durable attempt for this seam wins over a session one: the
+        // CLI refuses a second attempt, and a session transaction would be
+        // superseded by the very refresh the flow prescribes after editing
+        // tests, while only a durable attempt can reach `improved`.
+        if let Some(root) = store_root
+            && let Some(existing) = live_durable_attempt(snapshot, item, root)?
+        {
+            let existing_id = existing.attempt_id;
+            let document = json!({
+                "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
+                "snapshot_id": snapshot_id,
+                "requested_snapshot_id": requested,
+                "item": {
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "repair_packet_ready": false,
+                "ineligibility": {
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "a durable repair attempt for this seam is already awaiting its focused test edit at the current HEAD; no second attempt was started, as `ripr repair` also refuses one",
+                },
+                "attempt": Value::Null,
+                "existing_attempt": {
+                    "attempt_id": existing_id,
+                    "state": "awaiting_edit",
+                    "origin": "durable_cli",
+                    "snapshot_id": snapshot_id,
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "next": {
+                    "kind": "resume_durable_attempt",
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "read the existing durable attempt, edit the focused test it names, then re-check; only a durable attempt can reach `improved`, and a session transaction would be superseded by the refresh that follows the edit",
+                    "mcp": {
+                        "tool": "ripr_get_repair_attempt",
+                        "arguments": { "attempt_id": existing_id },
+                    },
+                    "after_editing_tests": verify_after_editing_tests(snapshot.base.as_deref()),
+                },
+                "recovery": "do not retry ripr_prepare_repair for this item: it creates nothing while the durable attempt awaits its edit. Continue with ripr_get_repair_attempt",
+                "limitations": [
+                    "no session transaction was created: the durable attempt is the one attempt for this seam",
+                    "the durable attempt's liveness is the CLI's own awaiting-at-current-HEAD reading, taken when this tool ran",
+                ],
+                "links": {
+                    "gap": format!("ripr://gap/{}", item.canonical_id),
+                    "snapshot": format!("ripr://snapshot/{snapshot_id}"),
+                    "repair_attempt": format!("ripr://repair-attempt/{existing_id}"),
+                    "receipt": format!("ripr://receipt/{existing_id}"),
+                },
+                "claim_boundary": "Disclosure of an existing durable attempt for one canonical item. This document authorizes nothing and creates nothing.",
             });
             return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
         }
@@ -1730,6 +1851,31 @@ pub(super) mod tests {
                 session.repairs.len()
             ));
         }
+        Ok(())
+    }
+
+    /// #15244: a ready item that cannot be mapped to a seam cannot rule out a
+    /// durable attempt, so a store-aware prepare refuses instead of creating a
+    /// session attempt; without a store the session route is unchanged.
+    #[test]
+    fn store_aware_prepare_fails_closed_when_the_item_has_no_seam_binding() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let root = unique_test_dir("store-aware")?;
+        let refused = session.prepare_repair_with_store(
+            "gap:test:1",
+            None,
+            Some("root:sha256:a"),
+            Some(&root),
+        );
+        let failure = refused.err().ok_or("a store-aware prepare must refuse")?;
+        assert_eq!(failure.code, super::super::workspace::CODE_NO_SNAPSHOT);
+        if !session.repairs.is_empty() {
+            return Err("a refusal must not create a session transaction".to_string());
+        }
+        let created = session
+            .prepare_repair_with_store("gap:test:1", None, Some("root:sha256:a"), None)
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
         Ok(())
     }
 

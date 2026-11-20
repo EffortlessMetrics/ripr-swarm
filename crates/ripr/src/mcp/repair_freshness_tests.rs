@@ -1334,3 +1334,107 @@ fn durable_command_routes_refuse_a_spec_under_the_wrong_role_or_invalid_shape() 
     assert!(limitations.is_empty());
     Ok(())
 }
+
+/// #15244: the durable check MCP prepare uses finds the live awaiting attempt
+/// the CLI's single-attempt rule finds, for its own seam only.
+#[test]
+fn durable_attempt_for_seam_finds_the_live_attempt_for_its_seam_only() -> Result<(), String> {
+    let (root, id) = prepared("dup-live")?;
+    let found = durable_attempt_for_seam(&root, "seam:freshness")
+        .map_err(|failure| failure.detail)?
+        .ok_or_else(|| "the live awaiting attempt must be found".to_string())?;
+    assert_eq!(found.attempt_id, id.as_str());
+    // Negative control: another seam has no live attempt.
+    let other = durable_attempt_for_seam(&root, "seam:other").map_err(|failure| failure.detail)?;
+    assert!(other.is_none(), "another seam must not match");
+    Ok(())
+}
+
+/// #15244: an unreadable HEAD/store is a typed failure, never "no attempt".
+#[test]
+fn durable_attempt_for_seam_fails_closed_on_an_unreadable_store() -> Result<(), String> {
+    let root = fixture_root("dup-unreadable")?;
+    // A Git checkout with no commit: HEAD cannot be read.
+    git(&root, &["init"])?;
+    let failure = match durable_attempt_for_seam(&root, "seam:freshness") {
+        Err(failure) => failure,
+        Ok(found) => {
+            return Err(format!(
+                "an unreadable store must fail closed: {}",
+                found.is_some()
+            ));
+        }
+    };
+    assert_eq!(failure.code, super::super::workspace::CODE_ANALYSIS_FAILED);
+    assert!(failure.detail.contains("no session attempt was created"));
+    Ok(())
+}
+
+/// #15244: HEAD is readable but the store is a file where its directory
+/// belongs, so the inventory fails: a typed failure, not "no attempt".
+#[test]
+fn durable_attempt_for_seam_fails_closed_when_the_store_is_not_a_directory() -> Result<(), String> {
+    let root = fixture_root("dup-store-file")?;
+    git(&root, &["init"])?;
+    git(
+        &root,
+        &["config", "user.email", "ripr-test@example.invalid"],
+    )?;
+    git(&root, &["config", "user.name", "RIPR Test"])?;
+    write(&root.join("README.md"), "store in the way\n")?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "--no-gpg-sign", "-m", "base"])?;
+    // Positive control: with no store at all the same call reads cleanly.
+    let clean = durable_attempt_for_seam(&root, "seam:freshness").map_err(|f| f.detail)?;
+    assert!(clean.is_none(), "an absent store holds no live attempt");
+    std::fs::create_dir_all(root.join("target/ripr")).map_err(|error| error.to_string())?;
+    write(
+        &root.join("target/ripr/repair-attempts"),
+        "a file, not a store\n",
+    )?;
+    let failure = match durable_attempt_for_seam(&root, "seam:freshness") {
+        Err(failure) => failure,
+        Ok(found) => {
+            return Err(format!(
+                "a blocked store must fail closed: {}",
+                found.is_some()
+            ));
+        }
+    };
+    assert_eq!(failure.code, super::super::workspace::CODE_ANALYSIS_FAILED);
+    assert!(failure.detail.contains("no session attempt was created"));
+    Ok(())
+}
+
+/// #15244: only a live awaiting attempt at the current HEAD blocks prepare.
+/// A moved HEAD and a finished attempt for the same seam do not.
+#[test]
+fn durable_attempt_for_seam_ignores_a_moved_head_and_a_finished_attempt() -> Result<(), String> {
+    let (moved, moved_id) = prepared("dup-head-moved")?;
+    assert_eq!(
+        durable_attempt_for_seam(&moved, "seam:freshness")
+            .map_err(|f| f.detail)?
+            .map(|found| found.attempt_id),
+        Some(moved_id.as_str().to_string()),
+        "control: the awaiting attempt blocks at its own HEAD"
+    );
+    write(&moved.join("README.md"), "moved head\n")?;
+    git(&moved, &["add", "README.md"])?;
+    git(&moved, &["commit", "--no-gpg-sign", "-m", "move head"])?;
+    assert!(
+        durable_attempt_for_seam(&moved, "seam:freshness")
+            .map_err(|f| f.detail)?
+            .is_none(),
+        "an attempt prepared at an older HEAD must not block"
+    );
+
+    let (finished, finished_id) = prepared("dup-finished")?;
+    finish_without_receipt(&finished, &finished_id)?;
+    assert!(
+        durable_attempt_for_seam(&finished, "seam:freshness")
+            .map_err(|f| f.detail)?
+            .is_none(),
+        "a finished attempt is not awaiting its edit and must not block"
+    );
+    Ok(())
+}

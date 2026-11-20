@@ -416,10 +416,11 @@ impl McpServer {
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let mut session = self.session.lock().await;
-        match session.prepare_repair(
+        match session.prepare_repair_with_store(
             &canonical_id,
             requested.as_deref(),
             self.root_identity.as_deref(),
+            self.analysis_root.as_deref(),
         ) {
             Ok(document) => {
                 // A refused item created no transaction: say so with

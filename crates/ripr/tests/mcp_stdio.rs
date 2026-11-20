@@ -6491,6 +6491,21 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
             )?;
             let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
             check_prepare_schema_fields(&schema, &prepare)?;
+            if prepare["repair_packet_ready"] == true {
+                // Replay before the CLI starts a durable attempt: identical bytes.
+                let replay = session.call_tool(
+                    "prepare-replay-early",
+                    "ripr_prepare_repair",
+                    json!({ "canonical_id": id }),
+                    REPLY_TIMEOUT,
+                )?;
+                let replay = structured_prepare_document(&replay, "inline prepare replay")?;
+                if replay != prepare {
+                    return Err(format!(
+                        "inline prepare replay changed the packet: {replay}"
+                    ));
+                }
+            }
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -6531,9 +6546,14 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                     REPLY_TIMEOUT,
                 )?;
                 let replay = structured_prepare_document(&replay, "inline prepare replay")?;
-                if replay != prepare {
+                // The CLI start above made a live durable attempt for this
+                // seam (#15244): prepare now discloses it instead of replaying.
+                if replay["ineligibility"]["reason"] != "durable_attempt_awaiting"
+                    || !replay["attempt"].is_null()
+                    || replay["existing_attempt"]["origin"] != "durable_cli"
+                {
                     return Err(format!(
-                        "inline prepare replay changed the packet: {replay}"
+                        "prepare after the CLI start must disclose the durable attempt: {replay}"
                     ));
                 }
                 check_prepare_schema_fields(&schema, &replay)?;
@@ -7032,6 +7052,102 @@ fn install_weak_boundary_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "widen boundary")?;
     Ok(root)
+}
+
+/// #15244: a live durable attempt (made by `ripr repair`) for the item's seam
+/// is disclosed by `ripr_prepare_repair` instead of a rival session attempt
+/// being created; without one the same call still creates the session attempt.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn prepare_repair_discloses_a_live_durable_attempt_instead_of_a_rival() -> Result<(), String> {
+    const BOUNDARY: &str = "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18";
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_weak_boundary_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let gap = session.call_tool(
+        "gap",
+        "ripr_get_gap",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+    let finding_id = gap["item"]["finding_id"]
+        .as_str()
+        .ok_or("gap omitted finding_id")?
+        .to_string();
+
+    // Negative control: no durable attempt, so prepare creates the session one.
+    let before = session.call_tool(
+        "prepare-before",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let before = structured_prepare_document(&before, "ripr_prepare_repair")?;
+    if before["repair_packet_ready"] != true
+        || before["attempt"]["origin"] != "mcp_session"
+        || !before["existing_attempt"].is_null()
+    {
+        return Err(format!(
+            "no durable attempt must keep the session route: {before}"
+        ));
+    }
+
+    // The CLI starts the durable attempt for the same seam.
+    if let Some(refusal) = cli_repair_refusal(&root, &finding_id)? {
+        return Err(format!("`ripr repair` must admit the boundary: {refusal}"));
+    }
+    let refresh = session.call_tool("refresh2", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let after = session.call_tool(
+        "prepare-after",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let after = structured_prepare_document(&after, "ripr_prepare_repair")?;
+    let durable_id = after["existing_attempt"]["attempt_id"]
+        .as_str()
+        .ok_or_else(|| format!("prepare must disclose the durable attempt: {after}"))?
+        .to_string();
+    if after["repair_packet_ready"] != false
+        || !after["attempt"].is_null()
+        || after["ineligibility"]["reason"] != "durable_attempt_awaiting"
+        || after["existing_attempt"]["origin"] != "durable_cli"
+        || after["next"]["kind"] != "resume_durable_attempt"
+        || after["next"]["mcp"]["tool"] != "ripr_get_repair_attempt"
+        || after["next"]["mcp"]["arguments"]["attempt_id"] != durable_id.as_str()
+        || after["links"]["repair_attempt"] != format!("ripr://repair-attempt/{durable_id}")
+    {
+        return Err(format!("durable attempt disclosure drifted: {after}"));
+    }
+    // The disclosed id is the one the card and attempt read serve, and it
+    // survives the refresh that supersedes session attempts.
+    let card = session.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let card = structured_tool_success(&card, "ripr_get_repair_card")?;
+    if card["card"]["attempt"]["attempt_id"] != durable_id.as_str() {
+        return Err(format!(
+            "card and prepare disagree on the attempt: {card} {after}"
+        ));
+    }
+    let read = session.call_tool(
+        "attempt",
+        "ripr_get_repair_attempt",
+        json!({ "attempt_id": durable_id }),
+        REPLY_TIMEOUT,
+    )?;
+    structured_tool_success(&read, "ripr_get_repair_attempt")?;
+    Ok(())
 }
 
 /// #8717: a weakly gripped boundary that names its missing discriminator is
