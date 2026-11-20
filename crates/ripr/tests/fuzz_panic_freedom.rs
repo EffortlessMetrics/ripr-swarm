@@ -885,12 +885,19 @@ fn output_oracle_rejects_planted_faults() -> Result<(), String> {
 }
 
 #[test]
-fn determinism_oracle_rejects_differing_runs() {
-    let a = b"first report".as_slice();
-    let b = b"second report".as_slice();
+fn determinism_oracle_rejects_differing_runs() -> Result<(), String> {
+    let report = good_report()?.to_string();
+    let first = format!("{report} ");
+    let second = format!("{report}\n");
+    let a = first.as_bytes();
+    let b = second.as_bytes();
+    judge_output(Some(0), a)?;
+    judge_output(Some(0), b)?;
+    assert_eq!(a.len(), b.len());
     assert_eq!(judge_repeat((Some(0), a), (Some(0), a)), Ok(()));
     assert!(judge_repeat((Some(0), a), (Some(0), b)).is_err());
     assert!(judge_repeat((Some(0), a), (Some(2), a)).is_err());
+    Ok(())
 }
 
 /// The vocabulary the oracle checks against is the domain owner's, not a
