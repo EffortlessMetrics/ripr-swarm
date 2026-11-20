@@ -276,43 +276,49 @@ impl StopReason {
     }
 }
 
-/// One changed behavior that ripr checks the tests against: a single changed
-/// line, the family of change it is, and what a test would need to observe
-/// to notice the change.
+/// One behavior that ripr checks the tests against: a source location, the
+/// family of behavior there, and what a test would need to observe to notice
+/// a change in it.
 ///
-/// A probe is static evidence about the diff. It names where the change is
-/// and what kind of oracle could discriminate it; it does not claim that any
-/// mutant of the line survives or is killed.
+/// Most diff probes sit on a changed line. Some sit on an unchanged use of a
+/// changed value, such as a predicate that reads a changed binding, and
+/// repo-mode probes cover existing code with no diff at all.
+///
+/// A probe is static evidence. It names where the behavior is and what kind
+/// of oracle could discriminate it; it does not claim that any mutant of the
+/// line survives or is killed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
     /// Identifier for this probe within one run. A [`Finding`] built from the
     /// probe reuses it as the finding id.
     pub id: ProbeId,
-    /// Where the changed line is. For a diff probe the line is the new-file
+    /// Where the probed source is. For a diff probe the line is the new-file
     /// (head-side) coordinate, also for a removed line.
     pub location: SourceLocation,
-    /// The function or other owner that contains the changed line, when one
-    /// was found. `None` for a change outside any owner and for a line of a
-    /// function the diff removed entirely.
+    /// The function or other owner that contains the probed source, when one
+    /// was found. `None` otherwise, including for a line of a function the
+    /// diff removed entirely.
     pub owner: Option<SymbolId>,
-    /// What kind of change this is.
+    /// What kind of behavior this probe is about.
     pub family: ProbeFamily,
     /// What kind of program delta the family implies.
     pub delta: DeltaKind,
-    /// Base-side text of the changed line, when the diff removed or replaced
-    /// one. `None` for a purely added line.
+    /// Base-side text of the change, when the producer has one. `None` for a
+    /// purely added line and for probes with no base side, such as repo-mode
+    /// probes.
     pub before: Option<String>,
-    /// Head-side text of the changed line, when the diff added or replaced
-    /// one. `None` for a removed-only line.
+    /// Head-side text of the change or of the probed source, when the
+    /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
-    /// The changed source text, trimmed, as the analysis read it.
+    /// The source expression the probe is about, as the producer read it. For
+    /// a probe on a changed line this is the trimmed line; a probe placed on
+    /// another site carries that site's expression.
     pub expression: String,
     /// Places a test could observe this change, such as `return value` or
-    /// `field:<name>`. Sorted and deduplicated; empty when none are named.
+    /// `field:<name>`. Empty when none are named.
     pub expected_sinks: Vec<String>,
     /// Oracle shapes that would discriminate this change, such as
-    /// `exact error variant assertion`. Sorted and deduplicated; empty when
-    /// none are named.
+    /// `exact error variant assertion`. Empty when none are named.
     pub required_oracles: Vec<String>,
 }
 
