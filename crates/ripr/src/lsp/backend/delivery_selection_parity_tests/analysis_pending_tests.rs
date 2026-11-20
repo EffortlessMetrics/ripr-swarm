@@ -197,6 +197,27 @@ fn analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt() -
     if result_id(&document_report(&harness, &uri, Some(failed_id.clone()))?)? != failed_id {
         return Err("the same failure must keep its result id".to_string());
     }
+    // Same kind, different detail: the result id folds the detail too, so
+    // two distinct analysis errors never share a cached marker.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let same_kind = document_report(&harness, &uri, Some(failed_id.clone()))?;
+    let same_kind_id = result_id(&same_kind)?;
+    if same_kind_id == failed_id
+        || !same_kind["items"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("could not read the Git index")
+    {
+        return Err(format!(
+            "a same-kind failure with new detail must re-render: {same_kind}"
+        ));
+    }
     harness
         .service
         .inner()
