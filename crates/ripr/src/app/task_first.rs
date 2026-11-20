@@ -5490,7 +5490,7 @@ pub(crate) mod tests {
         use crate::analysis::seams::SeamGripClass;
         use crate::domain::{ExposureClass, Finding};
         let classified = vec![gate_entry(
-            SeamGripClass::Exposed,
+            SeamGripClass::StronglyGripped,
             vec![weak_related_test()],
         )];
         let gripped = || {
