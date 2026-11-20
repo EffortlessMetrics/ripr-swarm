@@ -160,6 +160,19 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+Both carriers screen later lines the same way, so a residual written as plain
+narration (`Residual: the hosted lane on this head has not run.`) admits under
+either, while a retraction word used as narration (`the withdrawn attribution`)
+refuses under either. A `| Verdict | Notes |` column header row above a table
+delimiter states nothing under either carrier (the VERDICT carrier used to refuse
+it). A later refused body from the same login supersedes that
+login's earlier attesting review even at an unchanged head. A refusal therefore
+prints `source review refusal detail:` lines after the generic message, naming
+the review, the refusing line and the phrase it matched (or the short, overlong,
+uppercase or wrong VERDICT SHA), and saying when that review superseded an
+earlier attesting review at the same head. Review text, logins and timestamps
+are folded to one line with `::` split and `%` escaped before they are printed. The details only explain the decision; they never change it
+(#14929).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
@@ -1192,7 +1205,10 @@ cargo xtask release-readiness --version "$release_version"
 ```
 
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
-`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+`ripr-contract`, packages `ripr` from the publish stage (a copy of the
+workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
+against a vendored source tree, fails when a packaged crate is over the
+crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
 catches a dependency that only compiles under the committed lock (#3787). A
@@ -3170,6 +3186,15 @@ unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
+
+Markdown contract tests (#14986, #14998): the docs-gate always runs the `xtask`
+test binaries that pin agent/public-guide markdown. When a docs-only PR changes
+`README.md`, a top-level `docs/*.md`, `docs/interop/*.md`, `docs/status/*.md`,
+`docs/how-to/first-rust-test.md` or `docs/ci/coverage.md`, it also runs the
+`ripr` binaries `cli_reference_doc`, `troubleshooting_guide`, `user_journeys`,
+`documented_commands` and `generated_review_workflow` (which pins this file's
+`Run RIPR` step) and the `repo-policy` binary `future_clippy`; other docs-only
+PRs skip those test builds.
 
 ## Changelog Fold
 

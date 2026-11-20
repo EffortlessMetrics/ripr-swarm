@@ -1,0 +1,22 @@
+{
+  "case_id": "authored-14087-raw-use-leaf-glob-render",
+  "subject_id": "authored-14087-raw-use-leaf",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "glob_namesake_shadowed_by_raw_use_leaf",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

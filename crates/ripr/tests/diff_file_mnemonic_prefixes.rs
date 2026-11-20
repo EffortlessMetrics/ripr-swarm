@@ -3,7 +3,8 @@
 //! of the path, reported every changed file as absent from the working tree
 //! and produced no findings. Each mnemonic spelling must give the result of
 //! the default `a/`/`b/` patch, while prefix-free patches that only look
-//! similar keep their own reading.
+//! similar keep their own reading. A patch with unrecognized custom prefixes
+//! still reports the file as absent, but names the prefix cause.
 
 #![cfg(feature = "lang-rust")]
 
@@ -37,6 +38,16 @@ type Observed = (String, Vec<String>, Vec<(String, u64, String)>);
 /// Run `ripr check --diff` over a one-library workspace whose source file
 /// lives at `source_path` (the diff's post-image).
 fn check(source_path: &str, diff: &str) -> Result<Observed, String> {
+    Ok(check_with_limitations(source_path, diff)?.0)
+}
+
+/// [`check`], plus each limitation's `(path, recovery detail, bounded detail)`.
+type LimitationText = (String, String, String);
+
+fn check_with_limitations(
+    source_path: &str,
+    diff: &str,
+) -> Result<(Observed, Vec<LimitationText>), String> {
     let call = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = std::env::temp_dir();
     fs::create_dir_all(&temp).map_err(|error| format!("mkdir temp root: {error}"))?;
@@ -109,7 +120,20 @@ fn check(source_path: &str, diff: &str) -> Result<Observed, String> {
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok((kind, limitations, findings))
+    let texts = document
+        .pointer("/analysis_outcome/outcome/limitations")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|limitation| {
+            Ok((
+                text(limitation.get("path"), "limitation path")?,
+                text(limitation.pointer("/recovery/detail"), "recovery detail")?,
+                text(limitation.get("bounded_detail"), "bounded detail")?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(((kind, limitations, findings), texts))
 }
 
 /// A one-file patch in git's layout with the given side tokens.
@@ -218,6 +242,52 @@ fn prefix_free_paths_under_a_mnemonic_letter_stay_real_paths() -> Result<(), Str
         failures.push(format!(
             "custom prefixes changed their disclosed reading: {custom:?}"
         ));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Plan step 2: custom prefixes are still not guessed, but when the changed
+/// path without its first component is present, the limitation names the
+/// prefix cause and the git option that fixes it instead of asking for a
+/// checkout of a file that is there.
+#[test]
+fn unread_custom_prefix_names_the_prefix_cause() -> Result<(), String> {
+    let mut failures = Vec::new();
+    let (observed, texts) =
+        check_with_limitations("src/lib.rs", &patch("old/src/lib.rs", "new/src/lib.rs"))?;
+    if observed.1 != ["changed_file_absent_from_worktree"] || !observed.2.is_empty() {
+        failures.push(format!(
+            "custom prefixes changed their reading: {observed:?}"
+        ));
+    }
+    match texts.as_slice() {
+        [(path, recovery, detail)] => {
+            if path != "new/src/lib.rs"
+                || !recovery.contains("custom side prefix (`new/`)")
+                || !recovery.contains("git diff --src-prefix=a/ --dst-prefix=b/")
+                || !recovery.contains("check out the missing file or disable sparse checkout")
+                || !detail.contains("without its first component (`new/`)")
+            {
+                failures.push(format!("prefix cause not named: {texts:?}"));
+            }
+        }
+        _ => failures.push(format!("expected one limitation: {texts:?}")),
+    }
+
+    // A truly absent file keeps the checkout recovery: the source lives at
+    // `lib/lib.rs`, so neither `new/src/lib.rs` nor `src/lib.rs` exists.
+    let (_, texts) =
+        check_with_limitations("lib/lib.rs", &patch("old/src/lib.rs", "new/src/lib.rs"))?;
+    match texts.as_slice() {
+        [(_, recovery, _)]
+            if recovery.contains("Check out the missing file")
+                && !recovery.contains("side prefix") => {}
+        _ => failures.push(format!("absent file lost its checkout recovery: {texts:?}")),
     }
 
     if failures.is_empty() {
