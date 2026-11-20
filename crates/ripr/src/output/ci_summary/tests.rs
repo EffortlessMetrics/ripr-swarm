@@ -1967,7 +1967,7 @@ fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn s
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    Ok(String::from_utf8(render_ci_summary(&input, true))?)
+    Ok(String::from_utf8(render_ci_summary(&input, false))?)
 }
 
 /// The First-run status section: up to any collapsed block or the next heading.
@@ -2015,6 +2015,17 @@ fn a_blocked_start_here_packet_shows_its_reason() -> TestResult {
         )),
         "{visible}"
     );
+
+    fixture.json(super::COMMENTS_JSON, &json!({"comments": []}))?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(compact.contains("### Reports in the `ripr-reports` artifact"));
+    assert!(
+        compact.contains(&format!(
+            "- Start-here packet: blocked.\n- Reason: ``{reason}``"
+        )),
+        "{compact}"
+    );
+    fs::remove_file(fixture.root.join(super::COMMENTS_JSON))?;
 
     fixture.json(
         "target/ripr/reports/start-here.json",

@@ -148,6 +148,13 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput, full: bool) -> Vec<u8> {
         summary.analysis_refusal_status();
         summary.pilot_deadline();
         if let Some(doc) = summary.doc(START_HERE_JSON) {
+            if doc.optional(&["status"]) == "blocked" {
+                let reason = doc.optional(&["selected.message"]);
+                summary.line("- Start-here packet: blocked.");
+                if !reason.is_empty() {
+                    summary.line(&format!("- Reason: {}", code_span(&reason)));
+                }
+            }
             let limit = doc.optional(&["selected.static_limit_kind"]);
             if !limit.is_empty() && limit != "none" {
                 let detail = doc.optional(&["selected.static_limit_detail"]);
