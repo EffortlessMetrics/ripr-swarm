@@ -7754,6 +7754,66 @@ fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() ->
 }
 
 #[test]
+fn unguarded_allow_requires_its_own_reason() {
+    let source = r####"
+        #![allow(clippy::never_loop)]
+        // #[allow(comment_only)]
+        const SAMPLE: &str = "#[allow(string_only)]";
+        #[cfg_attr(unix, cfg_attr(test, allow(clippy::never_loop)), allow(other, reason = "conditional"))]
+        #[allow(clippy::documented, reason /* explanation */ = r#"conditional"#)]
+        #[allow(clippy::mixed, GUARDED)]
+        #[r#cfg_attr(test, cfg_attr(windows, r#allow(clippy::raw_missing)))]
+        #[r#allow(clippy::raw_documented, r#reason = "documented")]
+        #[expect(clippy::outside_budget)]
+        fn example() {}
+    "####;
+    let findings = super::unguarded_allows_without_reason(
+        &source.replace("GUARDED", "dead_code"),
+        &guarded_allow_attribute_lints(),
+    );
+    assert_eq!(
+        findings,
+        vec![
+            (2, "clippy::never_loop".to_owned()),
+            (5, "clippy::never_loop".to_owned()),
+            (7, "clippy::mixed".to_owned()),
+            (8, "clippy::raw_missing".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attributes_gate_requires_a_reason_outside_the_budget() -> Result<(), String> {
+    with_temp_cwd("allow-attributes-unguarded", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        let source = "#[cfg_attr(windows, allow(clippy::never_loop))]\nfn example() {}";
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            source,
+        );
+        write(&root.join("fixtures/demo/src/lib.rs"), source);
+        badge_fixture_git(&["add", "."])?;
+        assert!(super::check_allow_attributes_impl().is_err());
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            report.contains("xtask/src/reports/fixtures/preparation.rs:1 allow(clippy::never_loop) needs a written reason"),
+            "{report}"
+        );
+        assert!(!report.contains("fixtures/demo"), "{report}");
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            &source.replace(
+                "never_loop)",
+                "never_loop, reason = \"platform-specific loop\")",
+            ),
+        );
+        super::check_allow_attributes_impl()
+    })
+}
+
+#[test]
 fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
     for text in [
         concat!("#", "[cfg_attr(test, derive(Debug))]"),
