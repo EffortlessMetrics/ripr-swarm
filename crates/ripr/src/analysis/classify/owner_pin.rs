@@ -4903,9 +4903,12 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
         return false;
     };
     if whole_boolean_tail
-        && compared
+        && (compared
             .iter()
             .all(|side| side.trim_start().starts_with('('))
+            || compared
+                .iter()
+                .all(|side| side.trim_start().starts_with("Some(")))
     {
         return crate::analysis::test_grip_evidence::baseline_owner(
             owner,

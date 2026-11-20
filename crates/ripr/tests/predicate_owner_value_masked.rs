@@ -333,3 +333,46 @@ fn all_tuple_and_scalar_assertions_must_allow_the_same_version() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn option_equality_requires_a_bound_payload_and_a_shared_passing_version() -> Result<(), String> {
+    for (body, expected) in [
+        ("assert_eq!(Some(over(10)), Some(true));", "exposed"),
+        ("assert_eq!(Some(false), Some(over(10)));", "exposed"),
+        (
+            "assert_eq!(Some(over(10)), Some(over(10)));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(Some(over(10)).is_some(), true);",
+            "weakly_exposed",
+        ),
+        (
+            "fn Some(_: bool) -> u8 { 7 } assert_eq!(Some(over(10)), Some(true));",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); assert_eq!(Some(over(11)), Some(true));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_eq!(Some(false), Some(over(10)));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_ne!(Some(over(10)), Some(true));",
+            "infection_unknown",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}

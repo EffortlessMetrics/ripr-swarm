@@ -32,6 +32,26 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
     {
         tuple_cells(compared)?
     } else {
+        let compared = if compared
+            .iter()
+            .all(|side| side.trim_start().starts_with("Some("))
+        {
+            // Standard Some(T) equality compares its payload. A rebound
+            // constructor need not carry the argument into equality.
+            if super::wrapper_may_be_rebound("Some", index)
+                || syntax.macro_may_declare("Some", index)
+                || index.files().values().any(|file| {
+                    file.used_lexical_fallback
+                        || super::source_binds_value_name(&file.source, "Some")
+                })
+            {
+                return None;
+            }
+            let [left, right] = compared;
+            [some_payload(left)?, some_payload(right)?]
+        } else {
+            compared
+        };
         let normalized = super::primitive_bool_negated_operands(compared)
             .or_else(|| super::bool_to_u8_operands(compared, index, syntax, test, assertion))
             .unwrap_or(compared);
@@ -68,6 +88,12 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         after_matches &= after == expected;
     }
     Some((before_matches != unequal, after_matches != unequal))
+}
+
+fn some_payload(operand: &str) -> Option<&str> {
+    let text = operand.trim();
+    let closing = super::constructor_call_span(text, "Some")?;
+    Some(text.get("Some(".len()..closing)?.trim())
 }
 
 fn tuple_cells([left, right]: [&str; 2]) -> Option<Vec<(String, bool)>> {
