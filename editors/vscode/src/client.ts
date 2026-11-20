@@ -2856,12 +2856,21 @@ export class RiprClientController {
     const reportsDir = riprReportsDir(workspaceRoot);
     const fileExists = this.runtime.fileExists ?? fileExistsOnDisk;
     let resolvedPath: string | undefined;
-    for (const name of OPEN_REPORT_CANDIDATES) {
-      const candidate = path.join(reportsDir, name);
-      if (await fileExists(candidate)) {
-        resolvedPath = candidate;
-        break;
+    try {
+      for (const name of OPEN_REPORT_CANDIDATES) {
+        const candidate = path.join(reportsDir, name);
+        if (await fileExists(candidate)) {
+          resolvedPath = candidate;
+          break;
+        }
       }
+    } catch (error) {
+      // A stat error other than "not found" (EACCES, ENOTDIR) is not a missing
+      // report; say so instead of leaving an unhandled command rejection.
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr open report could not check ${reportsDir}: ${message}`);
+      this.warnWithOutput(`ripr could not check ${reportsDir} for a report.`);
+      return;
     }
     if (!resolvedPath) {
       this.runtime.showInformationMessage(

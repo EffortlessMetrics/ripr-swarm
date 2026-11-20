@@ -6,6 +6,7 @@ tests = [
   "editors/vscode/test/suite/open_report.test.ts::falls back to start-here.md when the summary is absent",
   "editors/vscode/test/suite/open_report.test.ts::a custom cargo target dir does not redirect: the server writes under <root>/target/ripr",
   "editors/vscode/test/suite/open_report.test.ts::a missing report names where it looked and how to produce one",
+  "editors/vscode/test/suite/open_report.test.ts::a stat error other than not-found warns instead of rejecting the command",
 ]
 code = [
   "editors/vscode/src/client.ts",

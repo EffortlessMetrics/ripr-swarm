@@ -16,10 +16,14 @@ interface Recording {
   existsCalls: string[];
   readCalls: string[];
   opened: string[];
+  warnings: string[];
 }
 
-function controllerWith(existing: string[]): { controller: RiprClientController; rec: Recording } {
-  const rec: Recording = { infoMessages: [], existsCalls: [], readCalls: [], opened: [] };
+function controllerWith(
+  existing: string[],
+  statError?: Error
+): { controller: RiprClientController; rec: Recording } {
+  const rec: Recording = { infoMessages: [], existsCalls: [], readCalls: [], opened: [], warnings: [] };
   const runtime = {
     getConfig: () => ({ enabled: true }) as unknown as RiprConfig,
     workspaceRootState: () => ({ kind: 'singleRoot', root: ROOT, roots: [ROOT] }),
@@ -30,6 +34,9 @@ function controllerWith(existing: string[]): { controller: RiprClientController;
     },
     fileExists: async (p: string) => {
       rec.existsCalls.push(p);
+      if (statError) {
+        throw statError;
+      }
       return existing.includes(p);
     },
     openFileInEditor: async (p: string) => {
@@ -40,7 +47,10 @@ function controllerWith(existing: string[]): { controller: RiprClientController;
       rec.infoMessages.push(m);
       return Promise.resolve(undefined);
     },
-    showWarningMessage: async () => undefined,
+    showWarningMessage: async (m: string) => {
+      rec.warnings.push(m);
+      return undefined;
+    },
     showErrorMessage: async () => undefined
   } as unknown as RiprClientRuntime;
   const output = { appendLine: () => undefined, show: () => undefined } as unknown as vscode.LogOutputChannel;
@@ -78,7 +88,10 @@ suite('ripr.openReport (#15318)', () => {
       const { controller, rec } = controllerWith([elsewhere]);
       await controller.openReport();
       assert.deepStrictEqual(rec.opened, [], 'the server never writes there, so it is not a report location');
-      assert.ok(rec.existsCalls.every((p) => p.startsWith(REPORTS)), rec.existsCalls.join(','));
+      assert.deepStrictEqual(rec.existsCalls, [
+        path.join(REPORTS, 'pr-evidence-summary.md'),
+        path.join(REPORTS, 'start-here.md')
+      ]);
     } finally {
       if (saved === undefined) {
         delete process.env.CARGO_TARGET_DIR;
@@ -95,5 +108,15 @@ suite('ripr.openReport (#15318)', () => {
     assert.strictEqual(rec.infoMessages.length, 1);
     assert.ok(rec.infoMessages[0].includes(riprReportsDir(ROOT)), rec.infoMessages[0]);
     assert.ok(rec.infoMessages[0].includes('ripr pr-summary'), rec.infoMessages[0]);
+  });
+
+  test('a stat error other than not-found warns instead of rejecting the command', async () => {
+    const denied = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    const { controller, rec } = controllerWith([], denied);
+    await controller.openReport();
+    assert.deepStrictEqual(rec.opened, []);
+    assert.deepStrictEqual(rec.infoMessages, [], 'a stat error is not a missing report');
+    assert.strictEqual(rec.warnings.length, 1);
+    assert.ok(rec.warnings[0].includes(riprReportsDir(ROOT)), rec.warnings[0]);
   });
 });
