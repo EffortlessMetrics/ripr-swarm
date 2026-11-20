@@ -6,7 +6,8 @@ Owner: product-analysis
 
 Created: 2026-10-13
 
-Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393).
+Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393),
+[#15149](https://github.com/EffortlessMetrics/ripr-swarm/issues/15149).
 
 Support-tier impact: None
 
@@ -73,6 +74,30 @@ alone:
 - When the strongest related oracle is not exact (broad error check, smoke
   assertion, unreadable shape), or no related test row exists, the existing
   family template stands unchanged; that advice is honest for those shapes.
+- Boolean owners (#15149). For an owner that declares `-> bool`,
+  `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
+  `assert!(!owner(..))` is `assert_eq!(owner(..), false)`, so each already
+  checks the exact result, even though the oracle extractor grades the
+  bare `assert!` as a weak relational check. For a `return_value` probe of
+  such an owner, when every contributing reach-establishing row asserts the
+  owner call's result directly in one of those forms (plain, `std::` or
+  `core::` rooted, through an optional plain path, with optional message
+  arguments) and every matched row is listed, the "replace broad
+  assertions" template is not emitted: rewriting those assertions with
+  exact equality would check the same values. The step says the related
+  tests already assert the exact boolean result of the owner and asks for a
+  test with an input whose boolean result differs between the old and new
+  code. It names no input value, since the return-value finding carries no
+  deciding-input fact. Any other row on the owner (a compound condition, a
+  method receiver, a turbofish, a bound result, a double negation, a
+  closure call, an unreadable oracle, or a row annotated
+  `missing_exact_assertion`) keeps the family template. A row's relation
+  reason is test-level reach, so the asserted call itself must be the owner
+  (#15537 review): with a same-package rival the shared owner-call identity
+  (`OwnerCallIdentity::resolve_call`) must settle the spelled call on the
+  owner; with no such identity only a bare call, with no other same-named
+  function in the index, counts. A test that calls the owner but asserts a
+  same-named rival keeps the family template.
 - Shapes with dedicated guidance are untouched: boxed wrapper-error seams
   keep the typed `wrapper_error_binding_unresolved` limitation step, and a
   changed `Err(...)` construction keeps the "reaches the changed error path"
@@ -96,6 +121,31 @@ classifications, stage states and evidence facts unchanged. The later
 reach-based eligibility refinement re-blesses
 `fixtures/owner_parameter_token_coincidence` under the same confinement: its
 `same_test_file` token-coincidence row no longer dictates the step.
+
+The boolean-owner step is covered by
+`bool_owner_exact_result_rows_name_the_deciding_input` and its controls
+`bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+(a compound, wrapped, method-receiver, renamed, turbofish, bound-result,
+double-negation, closure, `debug_assert!` or `assert_ne!` row, a
+`missing_exact_assertion` row, a non-`bool` owner, a non-weak class, a
+predicate probe, no owner, no rows, an unreadable oracle, and a
+proximity-only row), and
+`bool_owner_step_needs_the_asserted_call_to_be_the_owner` plus
+`crates/ripr/tests/bool_owner_next_step.rs`
+(`the_owners_own_boolean_assertions_get_the_deciding_input_step`,
+`a_rivals_assertion_beside_an_owner_call_keeps_the_template`) cover the
+asserted-call identity end to end; the positive case covers the plain, `std::`, `core::`,
+`::std::` and `::core::` rooted forms, a message argument and a path-qualified
+call. It
+re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,
+`fixtures/rust_predicate_appended_str_arm_false_side_only`,
+`fixtures/rust_predicate_appended_char_arm_old_input` and
+`fixtures/guard_operand_dropped_agreement`, each confined to the
+`recommended_next_step` / `suggested_next_action` string and its human
+rendering. `fixtures/rust_nested_use_owner` keeps the family template: its
+`thr` owner has a same-named function in another package, so no shared
+owner-call identity settles the qualified asserted calls and the step fails
+closed.
 
 ## Non-Goals
 
@@ -137,6 +187,9 @@ fact, and it does not cover probe families outside `error_path` and
   eligible.
 - `analysis::classify::decision::tests::missing_exact_assertion_row_keeps_the_family_template`
   covers the `missing_exact_assertion` exclusion.
+- `analysis::classify::decision::tests::bool_owner_exact_result_rows_name_the_deciding_input`
+  and `analysis::classify::decision::tests::bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+  cover the boolean-owner step and its controls (#15149).
 - `fixtures/human_full_shared_parse_port` and the re-blessed golden set
   cover the rendered output end to end.
 
@@ -149,6 +202,10 @@ fact, and it does not cover probe families outside `error_path` and
   only for `weakly_exposed` findings after the wrapper-seam and `Err(...)`
   construction special cases, passing the annotated related tests, the
   activation missing discriminators, and whether the owner is a function.
+- `crates/ripr/src/analysis/classify/decision.rs::bool_owner_exact_result_next_step`
+  owns the boolean-owner step; `build_finding` invokes it for
+  `weakly_exposed` findings of non-assertion-shaped owners after the exact
+  oracle step, only when every matched related row is listed.
 
 ## Metrics
 

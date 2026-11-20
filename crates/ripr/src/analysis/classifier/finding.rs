@@ -1,9 +1,10 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
-    is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
+    ASSERTION_CONTEXT_UNESTABLISHED, CallTarget, OwnerPinSyntax, ProbeContext,
+    body_contains_owner_call, bool_owner_exact_result_next_step, ensure_unknown_stop_reason,
+    exact_error_variant, exact_oracle_gap_next_step, is_partial_eq_method, missing_evidence,
+    oracle_crediting_relations, recommended_next_step, recommended_next_step_with_boundary,
+    shared_owner_call_identity, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -18,6 +19,46 @@ const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do 
 /// instead of leaving the two lines to read as unrelated.
 const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.";
 const NO_BOUNDARY_INPUT_MISSING: &str = "No detected boundary input for the changed predicate";
+
+/// #15537 review: whether the asserted call of the owner's name in `row`'s
+/// oracle, spelled with `qualifier`, is the owner itself. A row's relation
+/// reason is test-level reach, so a test that calls the owner and asserts a
+/// same-named rival must not count. With a same-package rival, the shared
+/// owner-call identity resolves the spelled call in the row's test. Without
+/// one, only a bare call with no other same-named function in the index is
+/// unambiguous. Anything else is unsettled and answers `false` (the family
+/// template stands).
+fn asserted_call_settles_on_owner(
+    context: &ProbeContext<'_>,
+    row: &RelatedTest,
+    qualifier: &[String],
+) -> bool {
+    let Some(owner) = context.owner_fn else {
+        return false;
+    };
+    let tests: Vec<&TestSummary> = context
+        .related_tests
+        .iter()
+        .map(|(test, _)| *test)
+        .filter(|test| test.file == row.file && test.name == row.name)
+        .collect();
+    if tests.is_empty() {
+        return false;
+    }
+    match shared_owner_call_identity(context.index, owner) {
+        Some(identity) => tests
+            .iter()
+            .all(|test| identity.resolve_call(test, context.index, qualifier) == CallTarget::Owner),
+        None => {
+            qualifier.is_empty()
+                && !context
+                    .index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == owner.name && function.id != owner.id)
+        }
+    }
+}
 
 #[cfg(test)]
 pub(in crate::analysis) fn build_finding(
@@ -284,6 +325,23 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // #7393: the family template presumes an assertion shape the
         // related test does not have; the strongest related oracle is
         // already exact, so name the input that is actually missing.
+        Some(step)
+    } else if class == ExposureClass::WeaklyExposed
+        && !context.owner_assertion_shaped
+        // Every matched row must be listed: a row the window dropped could
+        // carry a genuinely broad assertion.
+        && related_tests.len() >= evidence.related_tests_matched_total
+        && let Some(step) = bool_owner_exact_result_next_step(
+            context.probe,
+            &class,
+            context.owner_fn,
+            &related_tests,
+            &|row, qualifier| asserted_call_settles_on_owner(context, row, qualifier),
+        )
+    {
+        // #15149: a `-> bool` owner's `assert!(owner(..))` already checks the
+        // exact result, so the broad-assertion template names a rewrite that
+        // checks the same values; the missing piece is a deciding input.
         Some(step)
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())

@@ -328,18 +328,20 @@ impl GuardOperandChange {
             }
             // The shorter version's operands must be the longer one's, in
             // order, with nothing rewritten; what is left over differs.
-            // Whitespace is layout only outside a string literal: inside one
-            // it is content, so `check(n, "a  b")` and `check(n, "a b")` are
+            // They are compared as Rust token sequences (#15149): whitespace
+            // between tokens is layout, but it still separates words
+            // (`a as u8` is not `aasu8`), and inside a string literal it is
+            // content, so `check(n, "a  b")` and `check(n, "a b")` are
             // different operands (#14194 review).
             let mut kept = shorter_operands
                 .iter()
-                .map(|text| compact_operand(text))
+                .map(|text| operand_tokens(text))
                 .peekable();
             let mut differing = Vec::new();
             for operand in &longer_operands {
                 if kept
                     .peek()
-                    .is_some_and(|next| *next == compact_operand(operand))
+                    .is_some_and(|next| *next == operand_tokens(operand))
                 {
                     kept.next();
                 } else {
@@ -395,27 +397,70 @@ impl GuardOperandChange {
     }
 }
 
-/// `text` with every layout whitespace removed outside a literal, and every
-/// literal copied verbatim. Layout whitespace is not part of an operand's
-/// identity (`n % 2 == 0` and `n%2==0` are the same tokens), while
-/// whitespace inside a literal is content, so an edit to it is a rewritten
-/// operand, not a retained one. The literal ranges come from the shared
-/// lexical scanner, so a quote inside a char literal (`'"'`) or a raw string
-/// cannot flip the string tracking (#14194 review).
-fn compact_operand(text: &str) -> String {
+/// `text` as the sequence of words, literals and punctuation runs it holds.
+/// Layout whitespace separates words but is not part of an operand's
+/// identity, so `n % 2 == 0` and `n%2==0` are the same sequence. Word
+/// boundaries stay significant: `a as u8` is three words and `aasu8` one, so
+/// an edit that merges an identifier, keyword, type or number across a space
+/// is a rewritten operand, not a retained one (#15149). Adjacent punctuation
+/// is one run whatever the spacing inside it (`Vec<Vec<u8> >` and
+/// `Vec<Vec<u8>>`, `> =` and `>=`), because splitting it into Rust tokens
+/// would read some layout-only edits as rewrites and so drop the
+/// withholding (#15537 review). Every literal is one entry copied verbatim,
+/// since whitespace inside it is content. The literal ranges come from the
+/// shared lexical scanner, so a quote inside a char literal (`'"'`) or a raw
+/// string cannot flip the string tracking (#14194 review).
+fn operand_tokens(text: &str) -> Vec<String> {
     let spans = rust_identity_spans(text);
-    let mut out = String::with_capacity(text.len());
+    let mut tokens = Vec::new();
+    let mut punctuation = String::new();
     let mut at = 0;
     for (start, end) in spans.literal_ranges {
         if start < at || end >= text.len() {
             continue;
         }
-        out.extend(text[at..start].chars().filter(|ch| !ch.is_whitespace()));
-        out.push_str(&text[start..=end]);
+        push_code_tokens(&text[at..start], &mut punctuation, &mut tokens);
+        flush_punctuation(&mut punctuation, &mut tokens);
+        tokens.push(text[start..=end].to_string());
         at = end + 1;
     }
-    out.extend(text[at..].chars().filter(|ch| !ch.is_whitespace()));
-    out
+    push_code_tokens(&text[at..], &mut punctuation, &mut tokens);
+    flush_punctuation(&mut punctuation, &mut tokens);
+    tokens
+}
+
+fn flush_punctuation(punctuation: &mut String, tokens: &mut Vec<String>) {
+    if !punctuation.is_empty() {
+        tokens.push(std::mem::take(punctuation));
+    }
+}
+
+/// The words of `code`, a stretch of operand text that holds no literal,
+/// with the punctuation between them gathered into `punctuation` runs. A
+/// word is a run of identifier characters, digits included; a `.` is always
+/// punctuation, so `1.5` is `1`, `.`, `5`. Absorbing a decimal point into a
+/// number read the `0.0` of `x.0.0` as one word but `x.0 .0` as two, so a
+/// tuple-field spacing edit looked like a rewrite and dropped the withholding
+/// (#15537 review). Whitespace inside a punctuation run is dropped, so the
+/// run continues across it.
+fn push_code_tokens(code: &str, punctuation: &mut String, tokens: &mut Vec<String>) {
+    let is_word = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut rest = code;
+    while let Some(first) = rest.chars().next() {
+        if first.is_whitespace() {
+            rest = &rest[first.len_utf8()..];
+            continue;
+        }
+        if !is_word(first) {
+            punctuation.push(first);
+            rest = &rest[first.len_utf8()..];
+            continue;
+        }
+        let end = rest.find(|ch: char| !is_word(ch)).unwrap_or(rest.len());
+        flush_punctuation(punctuation, tokens);
+        tokens.push(rest[..end].to_string());
+        rest = &rest[end..];
+    }
 }
 
 /// `text` split at each `operator` outside every parenthesis, bracket and
@@ -1289,7 +1334,7 @@ mod tests {
 
     #[test]
     fn layout_whitespace_does_not_hide_a_retained_operand() {
-        // #14194 review: `compact_operand` kept the presence of a space, so
+        // #14194 review: the operand comparison kept the presence of a space, so
         // `n % 2 == 0` and `n%2==0` compared unequal and the dropped guard
         // was not read (fail-open). Layout whitespace is not part of the
         // operand's identity.
@@ -1305,6 +1350,93 @@ mod tests {
         assert_eq!(
             change.as_ref().map(|change| change.differing.len()),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn a_space_that_separates_words_is_part_of_the_retained_operand() {
+        // #15149: stripping every space read `a as u8 == 0` and `aasu8 == 0`
+        // as one retained operand, so a rewrite looked like a dropped guard.
+        // They are different token sequences; the rewritten cast operand is
+        // not an item 1 operand, so the edit is not read.
+        let merged = "fn f(n: u32, a: u32, aasu8: u8) -> bool {\n    aasu8 == 0\n}";
+        assert_eq!(
+            GuardOperandChange::read(merged, "aasu8 == 0", "n != 0 && a as u8 == 0"),
+            None
+        );
+        // The layout-only spelling of the same cast is still retained.
+        let spaced = "fn f(n: u32, a: u32) -> bool {\n    a as u8 == 0\n}";
+        assert_eq!(
+            GuardOperandChange::read(spaced, "a as u8 == 0", "n != 0 && a  as  u8==0")
+                .map(|change| change.differing.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_layout_only_generic_close_keeps_the_dropped_guard_read() -> Result<(), String> {
+        // #15537 review: splitting `>>` and `> >` into different tokens read
+        // this layout-only edit of the retained operand as a rewrite, so the
+        // withholding was dropped (fail-open toward exposed).
+        let function = "fn f(n: u32, a: usize) -> bool {\n    a == size_of::<Vec<Vec<u8>>>()\n}";
+        let change = GuardOperandChange::read(
+            function,
+            "a == size_of::<Vec<Vec<u8>>>()",
+            "n != 0 && a == size_of::<Vec<Vec<u8> > >()",
+        )
+        .ok_or("the layout-only retained operand must read as retained")?;
+        assert_eq!(change.differing.len(), 1);
+        // Every run leaves the dropped `n != 0` true: the pin is withheld.
+        assert!(change.runs_agree(&[run(&["1", "24"]), run(&["7", "0"])]));
+        Ok(())
+    }
+
+    #[test]
+    fn a_tuple_field_spacing_edit_keeps_the_dropped_guard_read() -> Result<(), String> {
+        // #15537 review: `0.0` absorbed a decimal point, so `((n,),).0 .0`
+        // and `((n,),).0.0` compared unequal and the dropped guard was not
+        // read (fail-open toward exposed). Both spacing directions.
+        let tight = "fn f(n: u32) -> bool {\n    ((n,),).0.0 == 4\n}";
+        let change =
+            GuardOperandChange::read(tight, "((n,),).0.0 == 4", "n != 0 && ((n,),).0 .0 == 4")
+                .ok_or("the spaced tuple field must read as the retained operand")?;
+        assert_eq!(change.differing.len(), 1);
+        assert!(change.runs_agree(&[run(&["4"]), run(&["5"])]));
+        let spaced = "fn f(n: u32) -> bool {\n    ((n,),).0 .0 == 4\n}";
+        let change =
+            GuardOperandChange::read(spaced, "((n,),).0 .0 == 4", "n != 0 && ((n,),).0.0 == 4")
+                .ok_or("the tight tuple field must read as the retained operand")?;
+        assert_eq!(change.differing.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn operand_tokens_split_words_and_merge_punctuation_runs() {
+        assert_eq!(operand_tokens("a as u8"), ["a", "as", "u8"]);
+        assert_eq!(operand_tokens("aasu8"), ["aasu8"]);
+        assert_ne!(operand_tokens("a as u8"), operand_tokens("aasu8"));
+        assert_eq!(operand_tokens("a%2"), operand_tokens("a % 2"));
+        assert_eq!(operand_tokens("x == -1"), ["x", "==-", "1"]);
+        assert_eq!(operand_tokens("x==-1"), operand_tokens("x == -1"));
+        assert_eq!(operand_tokens("x&&y"), ["x", "&&", "y"]);
+        // Spacing inside a punctuation run is layout only (#15537 review):
+        // reading these as different would drop the withholding.
+        assert_eq!(operand_tokens("x & &y"), operand_tokens("x&&y"));
+        assert_eq!(operand_tokens("a > = b"), operand_tokens("a >= b"));
+        assert_eq!(operand_tokens("a < < 2"), operand_tokens("a << 2"));
+        assert_eq!(
+            operand_tokens("Vec<Vec<u8> >"),
+            operand_tokens("Vec<Vec<u8>>")
+        );
+        assert_eq!(operand_tokens("v < 1.5"), ["v", "<", "1", ".", "5"]);
+        // A tuple-field chain reads the same whatever the spacing between
+        // its fields (#15537 review), in both directions.
+        assert_eq!(operand_tokens("x.0.0"), operand_tokens("x.0 .0"));
+        assert_eq!(operand_tokens("x.0 .0"), operand_tokens("x.0.0"));
+        assert_eq!(operand_tokens("x.0.0"), ["x", ".", "0", ".", "0"]);
+        assert_eq!(
+            operand_tokens("check(n, \"a  b\")"),
+            ["check", "(", "n", ",", "\"a  b\"", ")"]
         );
     }
 

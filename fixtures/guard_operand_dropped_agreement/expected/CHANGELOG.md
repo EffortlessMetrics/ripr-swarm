@@ -35,3 +35,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guard_operand_dropped_agreement (4)
+
+Reason:
+RIPR-SPEC-0259: a -> bool owner whose reaching related tests already assert its exact result with assert!(owner(..)) / assert!(!owner(..)) gets a next step naming the missing deciding input instead of the broad-assertion template (#15149); classification, stages and evidence unchanged
+
+Command:
+`cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
