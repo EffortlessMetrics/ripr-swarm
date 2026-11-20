@@ -6559,6 +6559,8 @@ fn non_rust_programming_policy_requires_retention_rule() {
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/ci/run-packed-partitions.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/ci/other-partitions.sh").is_none());
     assert!(non_rust_programming_retention_reason("tools/activate-rust.sh").is_some());
     assert!(non_rust_programming_retention_reason("tools/test-activate-rust.sh").is_some());
     assert!(non_rust_programming_retention_reason("tools/arbitrary.sh").is_none());
