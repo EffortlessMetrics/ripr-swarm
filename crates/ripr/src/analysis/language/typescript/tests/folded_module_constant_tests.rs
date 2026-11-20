@@ -226,6 +226,17 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
             "nested-function",
             "const msAbs = ms;\n  [other].map(function (ms) { return ms; });",
         ),
+        ("multiline", "const msAbs = ms\n    / 2;"),
+        ("later-declarator", "const unused = 0, msAbs = ms / 2;"),
+        (
+            "shadowed-math",
+            "const Math = scale;\n  const msAbs = Math.abs(ms);",
+        ),
+        ("unsigned-shift-write", "ms >>>= 1;\n  const msAbs = ms;"),
+        (
+            "comment-write",
+            "ms /* normalize */ = ms / 2;\n  const msAbs = ms;",
+        ),
     ];
     for (label, local) in cases {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);

@@ -5757,15 +5757,21 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
             if initializer.is_some() {
                 return None;
             }
-            initializer = Some(init.trim().trim_end_matches(';').trim());
+            // The statement must end on this line: an initializer without a
+            // `;` may continue onto the next line (`ms\n / 2`).
+            initializer = Some(init.split_once(';').map(|(expr, _)| expr.trim())?);
         }
     }
     let initializer = initializer?;
-    let parameter = initializer
+    let abs_argument = initializer
         .strip_prefix("Math.abs(")
-        .and_then(|rest| rest.strip_suffix(')'))
-        .unwrap_or(initializer)
-        .trim();
+        .and_then(|rest| rest.strip_suffix(')'));
+    // `Math` must be the builtin: any bare `Math` binding or parameter in
+    // the owner (`const Math = scale;`) refuses the `Math.abs` reading.
+    if abs_argument.is_some() && identifier_occurrences(source, "Math").next().is_some() {
+        return None;
+    }
+    let parameter = abs_argument.unwrap_or(initializer).trim();
     let idx = owner.params.iter().position(|param| param == parameter)?;
     // Every occurrence of the alias name must be the one declaration or a
     // read, and the parameter must not be written.
@@ -5776,8 +5782,11 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
         let after = after.trim_start();
         let assign = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
         let compound = [
-            "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "|=", "^=", "&&=", "||=",
-            "??=", "++", "--",
+            "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=",
+            "||=", "??=", "++", "--",
+            // A comment between the name and its operator hides the write
+            // (`ms /* c */ = ms / 2`), so any comment there refuses.
+            "/*", "//",
         ]
         .iter()
         .any(|op| after.starts_with(op));
@@ -5811,11 +5820,15 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
 }
 
 /// `true` when the owner's own text declares `name` with `const`, `let` or
-/// `var`: the operand is a local derived inside the owner, not a parameter
-/// binding (#15358 review).
+/// `var`, or binds it anywhere with an initializer (a later declarator in
+/// `const a = 0, name = x;`): the operand is a local derived inside the
+/// owner, not a parameter binding (#15358 review).
 fn declared_as_local(name: &str, owner: &TypeScriptOwner) -> bool {
     owner.source_text.as_deref().is_some_and(|source| {
-        identifier_occurrences(source, name).any(|(before, _)| {
+        identifier_occurrences(source, name).any(|(before, after)| {
+            if declaration_initializer(after).is_some() {
+                return true;
+            }
             let head = before.trim_end();
             ["const", "let", "var"].iter().any(|keyword| {
                 head.strip_suffix(keyword).is_some_and(|rest| {
