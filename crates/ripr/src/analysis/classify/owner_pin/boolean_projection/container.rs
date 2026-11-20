@@ -32,7 +32,7 @@ pub(super) fn comparison(
     let receiver = method.receiver()?;
     let arguments: Vec<_> = method.arg_list()?.args().collect();
     let method_name = method.name_ref()?;
-    let uses_some = matches!(method_name.text(), "eq" | "unwrap_or" | "first");
+    let uses_some = matches!(method_name.text(), "eq" | "unwrap_or");
     if uses_some && !standard_variant_in_scope("Some", test, assertion, index, syntax) {
         return None;
     }
@@ -75,6 +75,9 @@ pub(super) fn comparison(
             let expected = operand(expected)?;
             if standard_none(&expected) {
                 return always(call, false);
+            }
+            if !standard_variant_in_scope("Some", test, assertion, index, syntax) {
+                return None;
             }
             let expected = shared_reference(some_argument(expected)?)?;
             (call, bool_literal(&expected)?)
