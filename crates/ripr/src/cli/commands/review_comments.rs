@@ -2905,7 +2905,8 @@ mod tests {
             Err(err) => err,
         };
         assert!(read_err.contains("review-comments --gap-ledger"));
-        assert!(read_err.contains("read failed"));
+        assert!(read_err.contains("does not exist"), "{read_err}");
+        assert!(!read_err.contains("os error"), "{read_err}");
 
         // Pin the read-failure receipt before the next run overwrites it.
         let receipt_path = out.with_file_name("run-receipt.json");
