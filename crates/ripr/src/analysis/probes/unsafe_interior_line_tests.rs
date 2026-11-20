@@ -89,3 +89,31 @@ fn the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged() -> Res
     );
     Ok(())
 }
+
+/// Negative: an added closing line of a wrapped `unsafe { .. }` block holds
+/// no code of its own, so it keeps the boundary label rather than reading
+/// `Changed behavior: }`.
+#[test]
+fn a_closing_brace_line_keeps_the_boundary_label() -> Result<(), String> {
+    let before = "pub fn first(p: *const u8) -> u8 {\n    let v = 1;\n    unsafe { *p }\n}\n";
+    let after =
+        "pub fn first(p: *const u8) -> u8 {\n    let v = 1;\n    unsafe {\n        *p\n    }\n}\n";
+    let probes = git_probes(before, after)?;
+    for seeded in &probes {
+        let probe = &seeded.probe;
+        if probe.family == ProbeFamily::StaticUnknown && probe.expression.starts_with("unsafe ") {
+            let after = probe.after.as_deref().unwrap_or_default().trim();
+            assert!(
+                after.chars().any(|c| !"{}()[];,".contains(c)),
+                "a boundary probe shows punctuation as its changed text: {probe:?}"
+            );
+        }
+    }
+    let closing = probes.iter().find(|seeded| {
+        seeded.probe.location.line == 5 && seeded.probe.expression.starts_with("unsafe ")
+    });
+    if let Some(closing) = closing {
+        assert_eq!(closing.probe.after.as_deref(), Some("unsafe block"));
+    }
+    Ok(())
+}

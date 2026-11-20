@@ -834,7 +834,13 @@ pub(crate) fn probes_for_file_with_relations(
                 // the expression, so the probe id, gap id and unsafe
                 // obligation are unchanged, and `before` (the old line) and
                 // `after` now name the same edit.
-                let after = if shape.unsafe_interior {
+                // A line of only closers, separators or a comment (`}`,
+                // `})`, `);`) names no edit, so it keeps the label.
+                let carries_code = !text.starts_with("//")
+                    && text.chars().any(|character| {
+                        !character.is_whitespace() && !"{}()[];,".contains(character)
+                    });
+                let after = if shape.unsafe_interior && carries_code {
                     text.to_string()
                 } else {
                     canonical_text.clone()
