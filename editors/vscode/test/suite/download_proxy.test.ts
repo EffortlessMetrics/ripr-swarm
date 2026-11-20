@@ -8,7 +8,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { rootCertificates } from 'tls';
 import { fetchManifestBytesOverHttps } from '../../src/downloader';
-import { noProxyMatches, redactProxyCredentials, resolveProxy } from '../../src/downloadProxy';
+import { noProxyMatches, ambientNoProxy, ProxyTunnelAgent, redactProxyCredentials, resolveProxy } from '../../src/downloadProxy';
 import { classifyDownloadFailureKind, NETWORK_FAILURE_REMEDY } from '../../src/serverResolver';
 
 const TARGET = 'https://github.com/EffortlessMetrics/ripr/releases/download/v1/m.json';
@@ -60,6 +60,48 @@ suite('VS Code download proxy support (#15317)', () => {
     );
   });
 
+  test('a raw percent sign in proxy credentials is unsupported, not a throw, and leaks nothing', () => {
+    const result = resolveProxy(TARGET, { httpProxy: 'http://al%ice:pa%ss@proxy.corp:3128', env: {} });
+    assert.strictEqual(result.kind, 'unsupported');
+    const message = result.kind === 'unsupported' ? result.message : '';
+    assert.ok(message.includes('ripr.server.path') && !message.includes('pa%ss') && !message.includes('al%ice'), message);
+  });
+
+  test('a bare IP NO_PROXY entry matches the whole address only; an empty NO_PROXY does not hide no_proxy', () => {
+    assert.ok(!noProxyMatches('0.1', '10.0.0.1', 443));
+    assert.ok(!noProxyMatches('10.0.0.1', '110.0.0.1', 443));
+    assert.ok(!noProxyMatches('10.0.0.0/8', '10.0.0.1', 443));
+    assert.ok(noProxyMatches('10.0.0.1', '10.0.0.1', 443));
+    assert.ok(ambientNoProxy({ NO_PROXY: '', no_proxy: 'corp.example' }).includes('corp.example'));
+  });
+
+  test('a synchronous TLS setup failure reaches the request as an error and does not hang', async () => {
+    const proxyServer = http.createServer();
+    const sockets = new Set<{ destroy(): unknown }>();
+    proxyServer.on('connect', (_request, clientSocket) => {
+      sockets.add(clientSocket);
+      clientSocket.write('HTTP/1.1 200 OK\r\n\r\n');
+    });
+    await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve));
+    const port = (proxyServer.address() as net.AddressInfo).port;
+    const agent = new ProxyTunnelAgent(
+      { kind: 'proxy', host: '127.0.0.1', port, display: `http://127.0.0.1:${port}`, source: 'http.proxy' },
+      5000,
+      { ca: 12345 as unknown as string }
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = https.get('https://127.0.0.1:9/x', { agent }, () => reject(new Error('unexpected response')));
+        req.on('error', () => resolve());
+        setTimeout(() => reject(new Error('request never settled')), 3000).unref();
+      });
+    } finally {
+      agent.destroy();
+      sockets.forEach((socket) => socket.destroy());
+      proxyServer.close();
+    }
+  });
+
   test('the transport-failure hint names the proxy settings and a tunnel failure is a network failure', () => {
     assert.ok(/http\.proxy/.test(NETWORK_FAILURE_REMEDY) && /HTTPS_PROXY/.test(NETWORK_FAILURE_REMEDY));
     assert.strictEqual(
@@ -71,9 +113,12 @@ suite('VS Code download proxy support (#15317)', () => {
   suite('through a local CONNECT proxy', () => {
     let key: Buffer;
     let cert: Buffer;
+    let otherKey: Buffer;
+    let otherCert: Buffer;
     let previousCa: unknown;
     let origin: https.Server;
     let originPort = 0;
+    const originAuth: Array<string | undefined> = [];
     let proxy: http.Server;
     let proxyPort = 0;
     const connects: Array<{ target: string; authorization?: string }> = [];
@@ -87,10 +132,16 @@ suite('VS Code download proxy support (#15317)', () => {
         '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
       key = fs.readFileSync(path.join(dir, 'k.pem'));
       cert = fs.readFileSync(path.join(dir, 'c.pem'));
+      cp.execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-days', '1', '-nodes',
+        '-keyout', path.join(dir, 'k2.pem'), '-out', path.join(dir, 'c2.pem'), '-subj', '/CN=127.0.0.1',
+        '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
+      otherKey = fs.readFileSync(path.join(dir, 'k2.pem'));
+      otherCert = fs.readFileSync(path.join(dir, 'c2.pem'));
       fs.rmSync(dir, { recursive: true, force: true });
       previousCa = https.globalAgent.options.ca;
       https.globalAgent.options.ca = [...rootCertificates, cert];
       origin = https.createServer({ key, cert }, (request, response) => {
+        originAuth.push(request.headers['proxy-authorization'] as string | undefined);
         if (request.url === '/redirect') {
           response.writeHead(302, { location: `https://127.0.0.1:${originPort}/final` });
           response.end();
@@ -149,7 +200,57 @@ suite('VS Code download proxy support (#15317)', () => {
       assert.strictEqual(outcome.kind, 'ok');
       assert.strictEqual(outcome.kind === 'ok' && outcome.bytes.toString(), 'payload');
       assert.deepStrictEqual(connects.map((c) => c.target), [`127.0.0.1:${originPort}`, `127.0.0.1:${originPort}`]);
+      assert.deepStrictEqual(originAuth.filter((value) => value !== undefined), []);
       assert.strictEqual(connects[0].authorization, `Basic ${Buffer.from('alice:s3cret').toString('base64')}`);
+    });
+
+    test('the origin never sees Proxy-Authorization, and an untrusted origin cert fails closed through the tunnel', async () => {
+      const seen: Array<string | undefined> = [];
+      const rogue = https.createServer({ key: otherKey, cert: otherCert }, (request, response) => {
+        seen.push(request.headers['proxy-authorization'] as string | undefined);
+        response.end('rogue');
+      });
+      await new Promise<void>((resolve) => rogue.listen(0, '127.0.0.1', resolve));
+      const roguePort = (rogue.address() as net.AddressInfo).port;
+      try {
+        const outcome = await fetchManifestBytesOverHttps(
+          `https://127.0.0.1:${roguePort}/x`,
+          1024,
+          () => ({ httpProxy: `http://alice:s3cret@127.0.0.1:${proxyPort}`, env: {} })
+        );
+        assert.strictEqual(outcome.kind, 'transport_failure');
+        assert.deepStrictEqual(connects.map((c) => c.target), [`127.0.0.1:${roguePort}`]);
+        assert.deepStrictEqual(seen, []);
+        const message = outcome.kind === 'transport_failure' ? outcome.message : '';
+        assert.ok(!message.includes('s3cret'), message);
+      } finally {
+        rogue.closeAllConnections();
+        rogue.close();
+      }
+    });
+
+    test('a hostname that is not in the origin certificate SAN fails closed through the tunnel', async () => {
+      const seen: Array<string | undefined> = [];
+      // Trusted cert, but its SAN covers 127.0.0.1/localhost only; reach it by 127.0.0.2.
+      const origin2 = https.createServer({ key, cert }, (request, response) => {
+        seen.push(request.headers['proxy-authorization'] as string | undefined);
+        response.end('x');
+      });
+      await new Promise<void>((resolve) => origin2.listen(0, '0.0.0.0', resolve));
+      const port2 = (origin2.address() as net.AddressInfo).port;
+      try {
+        const outcome = await fetchManifestBytesOverHttps(
+          `https://127.0.0.2:${port2}/x`,
+          1024,
+          () => ({ httpProxy: `http://127.0.0.1:${proxyPort}`, env: {} })
+        );
+        assert.strictEqual(outcome.kind, 'transport_failure');
+        assert.deepStrictEqual(connects.map((c) => c.target), [`127.0.0.2:${port2}`]);
+        assert.deepStrictEqual(seen, []);
+      } finally {
+        origin2.closeAllConnections();
+        origin2.close();
+      }
     });
 
     test('NO_PROXY sends the request direct without touching the proxy', async () => {

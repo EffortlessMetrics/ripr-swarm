@@ -49,7 +49,7 @@ export const IMPLICIT_NO_PROXY = 'localhost,127.0.0.1,::1';
 
 /** The ambient settings: `http.proxy` plus the process environment. */
 export function ambientNoProxy(env: Readonly<Record<string, string | undefined>>): string {
-  const configured = env.NO_PROXY ?? env.no_proxy ?? '';
+  const configured = firstNonblank(env.NO_PROXY, env.no_proxy) ?? '';
   return configured.length > 0 ? `${configured},${IMPLICIT_NO_PROXY}` : IMPLICIT_NO_PROXY;
 }
 
@@ -84,6 +84,14 @@ export function noProxyMatches(noProxy: string | undefined, host: string, port: 
     }
     entry = entry.replace(/^\[|\]$/g, '').replace(/^\*?\./, (m) => (m.endsWith('.') ? '.' : m));
     if (entryPort !== undefined && entryPort !== port) {
+      continue;
+    }
+    // An IP literal matches only the whole address, never a label suffix
+    // (`0.1` must not exempt `10.0.0.1`); CIDR ranges are not supported.
+    if (net.isIP(target) !== 0) {
+      if (target === entry) {
+        return true;
+      }
       continue;
     }
     if (entry.startsWith('.')) {
@@ -147,9 +155,17 @@ export function resolveProxy(targetUrl: string, settings: ProxySettings): ProxyR
         PROXY_WORKAROUND
     };
   }
-  const auth = proxy.username
-    ? `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
-    : undefined;
+  let auth: string | undefined;
+  try {
+    auth = proxy.username
+      ? `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
+      : undefined;
+  } catch {
+    return {
+      kind: 'unsupported',
+      message: `The proxy credentials from ${source} (${display}) are not valid percent-encoding; encode special characters such as % as %25. ${PROXY_WORKAROUND}`
+    };
+  }
   return {
     kind: 'proxy',
     host: proxy.hostname.replace(/^\[|\]$/g, ''),
@@ -200,11 +216,6 @@ export function openProxyTunnel(
       const hint = response.statusCode === 407 ? ' (proxy authentication required; put credentials in the proxy URL)' : '';
       fail(`proxy ${proxy.display} refused CONNECT to ${authority} with HTTP ${response.statusCode}${hint}.`);
     });
-    request.on('response', (response) => {
-      // A proxy that answers a CONNECT with a plain response never tunnels.
-      response.resume();
-      fail(`proxy ${proxy.display} refused CONNECT to ${authority} with HTTP ${response.statusCode}.`);
-    });
     request.on('error', (error: NodeJS.ErrnoException) => {
       fail(`could not reach proxy ${proxy.display} (${error.code ?? error.message}).`, error);
     });
@@ -220,7 +231,8 @@ export function openProxyTunnel(
 export class ProxyTunnelAgent extends https.Agent {
   constructor(
     private readonly proxy: ResolvedProxy,
-    private readonly connectTimeoutMs = 30_000
+    private readonly connectTimeoutMs = 30_000,
+    private readonly tlsOverrides: tls.ConnectionOptions = {}
   ) {
     super();
   }
@@ -235,13 +247,21 @@ export class ProxyTunnelAgent extends https.Agent {
     const port = Number(options.port ?? 443);
     openProxyTunnel(this.proxy, host, port, this.connectTimeoutMs).then(
       (tunnel) => {
-        const secure = tls.connect({
-          ...(https.globalAgent.options as tls.ConnectionOptions),
-          ...(options as tls.ConnectionOptions),
-          socket: tunnel,
-          servername: net.isIP(host) ? undefined : host
-        });
-        callback?.(null, secure);
+        try {
+          const secure = tls.connect({
+            ...(https.globalAgent.options as tls.ConnectionOptions),
+            ...(options as tls.ConnectionOptions),
+            ...this.tlsOverrides,
+            socket: tunnel,
+            servername: net.isIP(host) ? undefined : host
+          });
+          callback?.(null, secure);
+        } catch (error) {
+          // A synchronous TLS setup failure must not leak the tunnel or leave
+          // the request pending.
+          tunnel.destroy();
+          callback?.(error instanceof Error ? error : new Error(String(error)), undefined as unknown as Duplex);
+        }
       },
       (error: Error) => callback?.(error, undefined as unknown as Duplex)
     );

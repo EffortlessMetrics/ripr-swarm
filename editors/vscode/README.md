@@ -80,7 +80,7 @@ rule. Only `http://host:port` proxies are supported, with optional
 `http://user:password@host:port` basic auth; credentials are sent only to the
 proxy and never logged. A `socks://` or `https://` proxy fails the download
 with a message naming the workaround: set `ripr.server.path` or install `ripr`
-on `PATH`. The download still verifies the archive checksum and the host
+on `PATH`. The download CIDR ranges in `NO_PROXY` are not supported (they do not exempt a host, so it goes through the proxy); a bare IP entry matches only that exact address. still verifies the archive checksum and the host
 certificate, so `http.proxyStrictSSL` is not used to relax them.
 
 ## What ripr Does
