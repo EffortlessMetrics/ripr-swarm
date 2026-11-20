@@ -28,6 +28,14 @@ static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub(super) fn in_help_workspace(
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    in_help_workspace_with(Ok, test)
+}
+
+// Customize the owned scratch layout only after the cleanup guard is armed.
+pub(super) fn in_help_workspace_with(
+    prepare_input: impl FnOnce(std::path::PathBuf) -> Result<std::path::PathBuf, String>,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -35,13 +43,14 @@ pub(super) fn in_help_workspace(
     let parent = std::env::temp_dir();
     std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
     let sequence = NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let root = parent.join(format!(
+    let scratch = parent.join(format!(
         "ripr-group-help-{}-{nonce}-{sequence}",
         std::process::id()
     ));
-    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    std::fs::create_dir(&scratch).map_err(|error| error.to_string())?;
     // Arm only after exclusive creation and before any fallible population.
-    let cleanup = HelpWorkspaceCleanup(Some(root.clone()));
+    let cleanup = HelpWorkspaceCleanup(Some(scratch.clone()));
+    let root = prepare_input(scratch)?;
     // Help must neither load configuration nor write reports, even in a
     // workspace where an executing command would reject the configuration.
     let config = "deliberately invalid TOML [";

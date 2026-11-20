@@ -9,7 +9,27 @@ use help_contract::{assert_contains, normalized, undocumented_doc_flags};
 
 #[path = "common/help_workspace.rs"]
 mod help_workspace;
-use help_workspace::in_help_workspace;
+use help_workspace::{in_help_workspace, in_help_workspace_with};
+
+fn in_help_workspace_with_git_parent(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    in_help_workspace_with(
+        |scratch| {
+            // Git's persistent workflow lock belongs in the enclosing
+            // metadata, outside the command's no-write input root.
+            let git = scratch.join(".git");
+            std::fs::create_dir_all(git.join("objects")).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(git.join("refs/heads")).map_err(|error| error.to_string())?;
+            std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")
+                .map_err(|error| error.to_string())?;
+            let root = scratch.join("input");
+            std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+            Ok(root)
+        },
+        test,
+    )
+}
 
 fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
     run_ripr_in(args, None)
@@ -237,7 +257,7 @@ fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), Str
 
 #[test]
 fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
-    in_help_workspace(|root| {
+    in_help_workspace_with_git_parent(|root| {
         let attempt = "repair-attempt-0123456789abcdef01234567";
         for phase in ["after", "verify"] {
             let mut args = vec![

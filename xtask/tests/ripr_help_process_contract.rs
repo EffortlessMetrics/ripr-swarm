@@ -12,6 +12,40 @@ const FIXTURE_ROLE: &str = "RIPR_HELP_PROCESS_FIXTURE_ROLE";
 const FIXTURE_ROOT: &str = "RIPR_HELP_PROCESS_FIXTURE_ROOT";
 const BUDGET: Duration = Duration::from_secs(8);
 
+#[test]
+fn nested_cargo_uses_exact_packed_config_without_unpacked_side_effects() -> Result<(), String> {
+    use std::ffi::OsStr;
+    let scratch = ripr_help::Scratch::new("packed-cargo-config")?;
+    let root = &scratch.0;
+    let configs = root.join("target/nextest/ci");
+    std::fs::create_dir_all(&configs).map_err(|error| error.to_string())?;
+
+    let ordinary = ripr_help::cargo_for(root, None)?;
+    assert_eq!(ordinary.get_args().len(), 0);
+    for part in ["1", "2"] {
+        let config = configs.join(format!("packed-partition-{part}.toml"));
+        assert!(ripr_help::cargo_for(root, Some(OsStr::new(part))).is_err());
+        std::fs::write(&config, "[env]\n").map_err(|error| error.to_string())?;
+        let command = ripr_help::cargo_for(root, Some(OsStr::new(part)))?;
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [OsStr::new("--config"), config.as_os_str()]
+        );
+    }
+    for malformed in ["", "3", "../unrelated"] {
+        assert!(ripr_help::cargo_for(root, Some(OsStr::new(malformed))).is_err());
+    }
+    #[cfg(unix)]
+    {
+        let config = configs.join("packed-partition-1.toml");
+        std::fs::remove_file(&config).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(configs.join("packed-partition-2.toml"), config)
+            .map_err(|error| error.to_string())?;
+        assert!(ripr_help::cargo_for(root, Some(OsStr::new("1"))).is_err());
+    }
+    Ok(())
+}
+
 fn fixture_command(root: &Path, role: &str) -> Result<Command, String> {
     let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
     command

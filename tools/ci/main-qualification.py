@@ -3,7 +3,7 @@
 This advisory reader accepts only G=M, the installed Actions producer, and its
 current complete attempt. The existing required Result owns applicability and
 proof aggregation. These checks bind that result to native facts and recognize
-the current hosted two-shard/docs layouts; they are not another proof planner.
+the current hosted parallel/packed two-partition and docs layouts; they are not another proof planner.
 """
 
 import argparse
@@ -24,7 +24,17 @@ RESULT = "Ripr Rust Small Result"
 GATES = "Ripr Rust Small on GitHub Hosted / Rust gates"
 TESTS = "Ripr Rust Small tests on GitHub Hosted"
 SHARDS = {f"{TESTS} / Rust tests shard {i} of 2" for i in (1, 2)}
+PACKED = f"{TESTS} / Rust tests packed workspace"
+PACKED_STEPS = (
+    "Build the test binaries one memory-heavy crate at a time",
+    "Check covered-by with the prepared workspace binary",
+    "Upload the xtask binary",
+    "Execute two native partitions on the prepared workspace",
+    "Upload partition 1 results",
+    "Upload partition 2 results",
+)
 VERIFY = f"{TESTS} / Rust test shards verify"
+VERIFY_STEP = "Check the shards are a complete, disjoint, green cover"
 DOCS = "Ripr Docs Gate"
 CORE = {"Route Ripr Rust Small", "Detect Docs-Only Surface", "Admit PR Candidate", "vscode surface"}
 UNSELECTED = {f"Ripr Rust Small on {runner}" for runner in ("CX43", "CPX42", "CX53")}
@@ -162,6 +172,20 @@ def native_result(api, run, jobs, sha):
     return result
 
 
+def require_ordered_steps(job, names):
+    steps = job.get("steps")
+    require(type(steps) is list and all(type(step) is dict for step in steps),
+            "missing_packed_producer_steps")
+    positions = []
+    for name in names:
+        matches = [(index, step) for index, step in enumerate(steps) if step.get("name") == name]
+        require(len(matches) == 1 and matches[0][1].get("status") == "completed"
+                and matches[0][1].get("conclusion") == "success",
+                "missing_or_failed_packed_producer_control")
+        positions.append(matches[0][0])
+    require(positions == sorted(positions), "misordered_packed_producer_controls")
+
+
 def judge(run, jobs, result):
     require(run.get("status") == "completed" and result.get("status") == "completed", "qualification_incomplete")
     if result.get("conclusion") in {"failure", "timed_out", "action_required", "startup_failure"}:
@@ -184,6 +208,12 @@ def judge(run, jobs, result):
     if jobs.get(DOCS, {}).get("conclusion") == "success":
         required = {DOCS}
         skipped = {"Ripr Rust Small on GitHub Hosted", TESTS}
+    elif PACKED in jobs:
+        require(not (SHARDS & jobs.keys()), "mixed_packed_and_parallel_layout")
+        require_ordered_steps(jobs[PACKED], PACKED_STEPS)
+        require_ordered_steps(jobs.get(VERIFY, {}), (VERIFY_STEP,))
+        required = {GATES, VERIFY, PACKED}
+        skipped = {DOCS}
     else:
         required = {GATES, VERIFY, *SHARDS}
         skipped = {DOCS}
