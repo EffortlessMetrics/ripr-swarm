@@ -100,7 +100,7 @@ Progress:
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
   reports them, including `processed_<n>_of_<total>` once the inventory has
   an honest seam denominator. Non-TTY / CI output is newline-delimited with
-  no control sequences; stdout and the pilot packet stay byte-clean. When
+  no control sequences and starts after the first 2s of a run; stdout and the pilot packet stay byte-clean. When
   the default timeout passes, the same run continues under the same progress
   stream. `--quiet` turns this stream off.
 
@@ -458,7 +458,9 @@ Progress:
   github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
   missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
-  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
+  `RIPR_PROGRESS=1` restores it. A terminal keeps it. A human format on a
+  non-terminal stderr holds it for the first 2s, so a run that finishes
+  sooner prints nothing; `RIPR_PROGRESS=1` makes those lines immediate. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
