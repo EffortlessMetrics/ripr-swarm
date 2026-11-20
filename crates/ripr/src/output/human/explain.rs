@@ -343,9 +343,11 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
             }
-            RelatedTestMiss::AssertionNotCredited
-            | RelatedTestMiss::AssertionInert
-            | RelatedTestMiss::AssertionAdmissionUnproven => {
+            // An admission limit alone cannot tell the reader to replace a check.
+            RelatedTestMiss::AssertionNotCredited | RelatedTestMiss::AssertionAdmissionUnproven => {
+                continue;
+            }
+            RelatedTestMiss::AssertionInert => {
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {
@@ -486,6 +488,25 @@ mod tests {
             miss_support: None,
             role: crate::domain::RelatedTestRole::Contributing,
         }
+    }
+
+    #[test]
+    fn legacy_refusal_adds_no_recipe_to_an_independent_weak_assertion() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![row(
+            "assert!(value.is_some())",
+            OracleStrength::Weak,
+            RelatedTestMiss::WeakAssertion,
+        )];
+        let weak_recipe = verdict_changers(&finding, None);
+        assert!(weak_recipe.iter().any(|need| need.contains("exact value")));
+
+        finding.related_tests.push(row(
+            "assert_eq!(value, expected)",
+            OracleStrength::None,
+            RelatedTestMiss::AssertionNotCredited,
+        ));
+        assert_eq!(verdict_changers(&finding, None), weak_recipe);
     }
 
     #[test]

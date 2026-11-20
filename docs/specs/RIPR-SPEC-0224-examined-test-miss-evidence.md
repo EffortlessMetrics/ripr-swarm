@@ -573,6 +573,10 @@ written and must not copy these gaps.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
+  A refused assertion contributes the always-run assertion recipe only when its
+  row records `assertion_inert`. Rows with `assertion_admission_unproven` or
+  legacy `assertion_not_credited` leave the recipe to independently established
+  test or input evidence (#5446).
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
