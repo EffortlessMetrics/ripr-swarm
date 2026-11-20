@@ -606,10 +606,11 @@ fn inventory_classified_seams_report_collect(
     let fingerprint_miss_gated = fingerprint_miss_key.is_some();
     let (state, prebuilt_index) = if fingerprint_miss_gated {
         let mut state = workspace_state_from_paths(root, config, rust_files);
+        let build_started = Instant::now();
         let cached_index = match state.build_index_single_pass(config) {
             Ok(cached) => {
                 trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
-                cached
+                (cached, build_started.elapsed())
             }
             Err(err) => {
                 trace_latency_phase(
@@ -706,10 +707,12 @@ fn inventory_classified_seams_report_collect(
     // Legacy (non-gated) path: the cache load above missed, so only
     // now pay the index build; `build_index` refuses a corpus that
     // moved after the hashing read, as before #8643.
-    let cached_index = match prebuilt_index {
-        Some(cached) => cached,
-        None => match state.build_index(config) {
-            Ok(cached) => cached,
+    // The measured index build travels with the index so the
+    // `file_fact_cache` phase reports it (`inventory.parse_index`).
+    let (cached_index, index_build) = match prebuilt_index {
+        Some(built) => built,
+        None => match build_index_timed(&state, config) {
+            Ok(built) => built,
             Err(err) => {
                 trace_latency_phase("total", "error", total_started.elapsed());
                 return Err(err);
@@ -722,6 +725,7 @@ fn inventory_classified_seams_report_collect(
         match inventory_classified_seams_from_state_with_config(
             &state,
             cached_index,
+            index_build,
             config,
             &analyzed_production_files,
         ) {
@@ -1281,8 +1285,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     // so a warm compact hit pays only the hashing read.
     let (state, prebuilt_index) = if fingerprint_miss_key.is_some() {
         let mut state = workspace_state_from_paths(root, config, rust_files);
+        let build_started = Instant::now();
         let cached_index = state.build_index_single_pass(config)?;
-        (state, Some(cached_index))
+        (state, Some((cached_index, build_started.elapsed())))
     } else {
         let state = collect_workspace_state_from_files(root, config, rust_files)?;
         (state, None)
@@ -1330,12 +1335,17 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
     }
 
-    let cached_index = match prebuilt_index {
-        Some(cached) => cached,
-        None => state.build_index(config)?,
+    let (cached_index, index_build) = match prebuilt_index {
+        Some(built) => built,
+        None => build_index_timed(&state, config)?,
     };
     let (classified, lexical_fallback_files) =
-        inventory_compact_classified_seams_from_state_with_config(&state, cached_index, config)?;
+        inventory_compact_classified_seams_from_state_with_config(
+            &state,
+            cached_index,
+            index_build,
+            config,
+        )?;
     let store_started = Instant::now();
     trace_latency_phase(
         "compact_cache_store",
@@ -1406,9 +1416,21 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     Ok(counts)
 }
 
+/// Build the index on the legacy two-pass order and measure the build, so
+/// the `file_fact_cache` phase reports the real duration.
+fn build_index_timed(
+    state: &OwnedWorkspaceState,
+    config: &RiprConfig,
+) -> Result<(super::facts::CachedRustIndex, Duration), String> {
+    let build_started = Instant::now();
+    let cached = state.build_index(config)?;
+    Ok((cached, build_started.elapsed()))
+}
+
 fn inventory_compact_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     mut cached: super::facts::CachedRustIndex,
+    index_build: Duration,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>), String> {
     let production_files = production_files_from_state_with_role(state, config);
@@ -1425,7 +1447,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
-        Duration::ZERO,
+        index_build,
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
@@ -1476,6 +1498,7 @@ type ClassifiedSeamInventory = (
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     mut cached: super::facts::CachedRustIndex,
+    index_build: Duration,
     config: &RiprConfig,
     production_files: &[PathBuf],
 ) -> Result<ClassifiedSeamInventory, String> {
@@ -1491,7 +1514,7 @@ fn inventory_classified_seams_from_state_with_config(
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
-        Duration::ZERO,
+        index_build,
     );
     trace_file_fact_cache(&cached.file_fact_cache);
     let policy_started = Instant::now();
@@ -9148,6 +9171,127 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             ),
             _ => false,
         }
+    }
+
+    /// Paths that still read the corpus twice (the counts path always, and
+    /// the full and compact paths when no fingerprint-derived key proves a
+    /// miss, so they keep the hash collect -> cache load -> build order)
+    /// refuse a source edited between the hashing read and the index build,
+    /// and store nothing from the refused run (#4996). Run unprimed, each
+    /// entry point takes that two-read order on every platform.
+    #[test]
+    fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
+    -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
+        const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
+        const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
+        let config = RiprConfig::default();
+        for path in ["full", "compact", "counts"] {
+            let root = make_tempdir(&format!("stream-moved-{path}"))?;
+            let lib = root.join("src/lib.rs");
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(&lib, ORIGINAL)?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            let original_key = collect_workspace_state(&root, &config)?.cache_key();
+
+            let edit = lib.clone();
+            between_passes::install(&root, move || {
+                let _ = std::fs::write(&edit, EDITED);
+            });
+            let refused = run_inventory_path(path, &root, &config);
+            if std::fs::read_to_string(&lib).map_err(|err| err.to_string())? != EDITED {
+                return Err(format!("{path}: the between-passes edit must have run"));
+            }
+            let edited_key = collect_workspace_state(&root, &config)?.cache_key();
+            if edited_key == original_key {
+                return Err(format!("{path}: the edit must change the workspace key"));
+            }
+            match refused {
+                Err(message) if message.contains("changed during analysis") => {}
+                other => {
+                    return Err(format!(
+                        "{path}: a moved source must be refused, got {other:?}"
+                    ));
+                }
+            }
+            for key in [&original_key, &edited_key] {
+                if stored_inventory_entry(path, &root, key) {
+                    return Err(format!("{path}: a refused build must store no entry"));
+                }
+            }
+
+            // Control: the same workspace, unmoved, completes and stores.
+            run_inventory_path(path, &root, &config)?;
+            if !stored_inventory_entry(path, &root, &edited_key) {
+                return Err(format!("{path}: an unmoved build must store its entry"));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    /// The `file_fact_cache` completion carries the measured index build, on
+    /// the legacy two-pass order and on the gated single-pass order, for the
+    /// full and compact inventories. A constant-zero duration (the index
+    /// built by the caller, outside the phase) would make the pilot
+    /// `inventory.parse_index` read 0 ms whatever the build cost.
+    #[test]
+    fn file_fact_cache_phase_reports_the_measured_index_build() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
+        let config = RiprConfig::default();
+        let mut orders = vec![("full", false), ("compact", false)];
+        if cfg!(unix) {
+            orders.extend([("full", true), ("compact", true)]);
+        }
+        for (path, gated) in orders {
+            let root = make_tempdir(&format!("phase-build-{path}-{gated}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                "pub fn check(value: i32) -> bool { value > 0 }\n",
+            )?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            if gated {
+                // Priming the fingerprint mapping proves the key misses, so
+                // the run builds single-pass before the cache load.
+                workspace_cache_key_at_with_config(&root, &config)?;
+            }
+            let (result, phases) = crate::analysis::resource_cost::record_latency_phases(|| {
+                run_inventory_path(path, &root, &config)
+            });
+            result?;
+            let completions: Vec<_> = phases
+                .iter()
+                .filter(|phase| {
+                    phase.phase == "file_fact_cache" && !phase.status.starts_with("start_")
+                })
+                .collect();
+            if completions.len() != 1 {
+                return Err(format!(
+                    "{path} gated={gated}: expected one file_fact_cache completion, got {phases:?}"
+                ));
+            }
+            if completions[0].duration.is_zero() {
+                return Err(format!(
+                    "{path} gated={gated}: file_fact_cache completion must carry the measured \
+                     index build, got a zero duration"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
     }
 
     /// #8643: on the gated single-pass path there is no hash/index gap
