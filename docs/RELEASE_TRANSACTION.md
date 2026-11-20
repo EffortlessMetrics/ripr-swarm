@@ -745,7 +745,10 @@ record_crate_version() {
       "https://crates.io/api/v1/crates/${crate}/${VERSION}")" || return 1
     case "$status" in
       200)
-        verify_registry_response "$crate" "$expected_sha" "$response" || return 1
+        if ! verify_registry_response "$crate" "$expected_sha" "$response"; then
+          echo "Registry identity mismatch for $crate $VERSION. Expected SHA-256 $expected_sha. Inspect $response." >&2
+          return 1
+        fi
         mv "$response" "$PACKET_ROOT/registry-${crate}-${VERSION}.json" || return 1
         return 0 ;;
       404) if [ "$attempt" -lt 6 ]; then sleep 5; fi ;;
