@@ -454,6 +454,28 @@ pub(crate) fn covered_rust_source_manifest_dirs(
     )
 }
 
+/// A standalone package can autodiscover a symlink as a crate root even
+/// though source discovery omits it. Inspect only the candidate packages
+/// with the same entry limit and output exclusions as the workspace scan.
+pub(crate) fn standalone_packages_have_no_source_aliases(
+    analysis_root: &Path,
+    packages: &BTreeSet<PathBuf>,
+) -> bool {
+    let root = lexical(&normalize(analysis_root));
+    let directories = packages
+        .iter()
+        .filter(|package| {
+            !package
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| packages.contains(ancestor))
+        })
+        .map(|package| root.join(package))
+        .collect();
+    list_workspace_from(analysis_root, false, directories)
+        .is_some_and(|listing| listing.symlink_targets.is_empty())
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the
@@ -466,6 +488,18 @@ fn list_workspace_including_targets(
     workspace_root: &Path,
     include_targets: bool,
 ) -> Option<WorkspaceListing> {
+    list_workspace_from(
+        workspace_root,
+        include_targets,
+        vec![lexical(&normalize(workspace_root))],
+    )
+}
+
+fn list_workspace_from(
+    workspace_root: &Path,
+    include_targets: bool,
+    mut pending: Vec<PathBuf>,
+) -> Option<WorkspaceListing> {
     if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
         .is_empty()
     {
@@ -476,7 +510,6 @@ fn list_workspace_including_targets(
         manifest_dirs: Vec::new(),
         symlink_targets: Vec::new(),
     };
-    let mut pending = vec![lexical(&normalize(workspace_root))];
     let mut visited_entries = 0usize;
     while let Some(dir) = pending.pop() {
         // A workspace root given as the current directory normalizes to the

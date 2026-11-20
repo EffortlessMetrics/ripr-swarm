@@ -308,6 +308,31 @@ fn an_unreadable_or_malformed_root_manifest_keeps_uncertainty() -> Result<(), St
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn a_standalone_autodiscovered_test_symlink_keeps_its_source() -> Result<(), String> {
+    let scratch = nested_package_fixture()?;
+    scratch.write(
+        "a/benchmarks/hay.rs",
+        &format!("{HAY_SOURCE}\nmacro_rules! declare {{ ($name:ident) => {{ mod $name; }}; }}\n"),
+    )?;
+    let alias = scratch.0.join("a/tests/alias.rs");
+    std::os::unix::fs::symlink("../benchmarks/hay.rs", &alias)
+        .map_err(|error| error.to_string())?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["a/benchmarks/hay.rs", "a/tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    std::fs::remove_file(alias).map_err(|error| error.to_string())?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(analyze(&scratch, &mode)?.related_files, ["a/tests/api.rs"]);
+    }
+    Ok(())
+}
+
 #[test]
 fn a_nested_governing_workspace_keeps_an_unselected_sibling_mount() -> Result<(), String> {
     let scratch = Scratch::create()?;

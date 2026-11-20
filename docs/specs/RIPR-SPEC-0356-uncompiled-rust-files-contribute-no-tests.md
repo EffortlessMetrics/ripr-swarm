@@ -86,8 +86,10 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    must be covered by the index and its manifests examined. A member can use
    `#[path]` into another member without a Cargo dependency. Explicit source
    roots and build paths in the relevant manifests must also be covered,
-   including roots that discovery skips. The path inventory still skips
-   conventional Cargo build output.
+   including roots that discovery skips. For a standalone candidate package,
+   a bounded path scan must find no symlink that could hide an autodiscovered
+   Cargo root or another source spelling. Both scans skip conventional Cargo
+   build output.
 
 The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
@@ -232,6 +234,9 @@ running test; no named stop reason is added on this issue.
 - A nested governing workspace and a declared test root under `target/` also
   preserve possible mounts. Removing the declared target restores the data-only
   verdict with the same generated-output directory on disk.
+- An autodiscovered test symlink in a standalone package keeps its source
+  eligible as related evidence. Removing the alias restores the data-only
+  verdict in Draft, Fast and Deep.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while

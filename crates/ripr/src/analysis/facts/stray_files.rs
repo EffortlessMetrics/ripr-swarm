@@ -171,6 +171,7 @@ fn cargo_scope_is_covered(
 ) -> bool {
     use crate::analysis::workspace::{
         covered_rust_source_manifest_dirs, explicit_target_roots_are_covered,
+        standalone_packages_have_no_source_aliases,
     };
 
     let mut packages = BTreeSet::new();
@@ -189,7 +190,11 @@ fn cargo_scope_is_covered(
         }
     }
     let indexed = |path: &Path| index.files().get(path).is_some();
-    if !workspaces.is_empty() {
+    if workspaces.is_empty() {
+        if !standalone_packages_have_no_source_aliases(analysis_root, &packages) {
+            return false;
+        }
+    } else {
         if !workspaces.iter().all(|dir| {
             manifests
                 .get(dir)
