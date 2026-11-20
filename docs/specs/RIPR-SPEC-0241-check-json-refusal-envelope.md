@@ -414,7 +414,11 @@ Every refusal in the envelope also carries its next step as data. Each
 gains an optional `remedy` object, additive and without a schema-version bump:
 `kind` (`command`, `mcp_tool`, `flags` or an explicit `none`), the stated
 `command`, `alternatives`, `tool`, `flags`, `fill_in` placeholders and
-`retry_stated` (what the message says, not a promise an unchanged retry succeeds), `env`, `conditional` (the only stated step is a fallback) and `prose_has_more` (the command omits flags or environment prerequisites the prose states). The prose in `message` is the source of truth: the owner
+`retry_stated` (what the message says, not a promise an unchanged retry succeeds),
+`env`, `conditional` (the only stated step is a fallback) and `prose_has_more`
+(a stated step has flags or environment prerequisites elsewhere in the message,
+or a flags-only remedy exceeds the 16-distinct-flag cap). The prose in `message`
+is the source of truth: the owner
 (`RefusalRemedy::from_prose`, derived once in `CoreError::refusal_notice`)
 copies only a backticked `ripr ...` command, an MCP tool name or a flag the
 message states, and yields `none` otherwise. The renderer serializes it and
