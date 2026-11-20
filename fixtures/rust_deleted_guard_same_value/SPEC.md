@@ -28,6 +28,11 @@ analyzer.
   `exposed`: `pick_nine(0)` returned an empty vector on the base side and
   returns `[9]` on the candidate side.
 
+```expected-classes
+probe:src_lib.rs:return_value:9e0c05e4 -> weakly_exposed
+probe:src_lib.rs:return_value:a31b578c -> exposed
+```
+
 ## Must Not
 
 - Read the same-value deletion as `exposed`.

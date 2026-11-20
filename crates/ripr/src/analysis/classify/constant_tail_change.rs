@@ -245,11 +245,14 @@ pub(in crate::analysis) fn deleted_guard_agreement(
     let (guard_value, guard_text, guard_offset) = first_statement_return_guard(&base.old_text)?;
     let guard_line = base.old_first_line + base.old_text.get(..guard_offset)?.matches('\n').count();
     // The guard is exactly the removed line this probe stands on.
-    if compact(&guard_text) != compact(before)
+    // Compare trimmed text, not whitespace-collapsed text: a collapse would
+    // also merge whitespace inside string literals, so a second deleted guard
+    // returning `"a  b"` could borrow the first guard's `"a b"` agreement.
+    if guard_text.trim() != before.trim()
         || !changed.removed_lines.iter().any(|line| {
             line.line == guard_line
                 && line.new_side_line == probe.location.line
-                && compact(&line.text) == compact(before)
+                && line.text.trim() == before.trim()
         })
     {
         return None;
@@ -1473,7 +1476,7 @@ mod tests {
         let mut index = RustIndex::default();
         index.insert_file(PathBuf::from(path), facts, true);
         let modules = ModuleDeclarations::read(
-            std::iter::once(new),
+            std::iter::once((Path::new(path), new)),
             std::iter::once((
                 &changed_file,
                 find_file_facts(&index, Path::new(path)).map(|facts| facts.data().source.as_ref()),
@@ -1564,6 +1567,23 @@ mod tests {
             read_deleted_guard(old, new, "pick", "if x == 0 { return zero(); }")?,
             None
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_deleted_guard_differing_only_inside_a_string_borrows_no_agreement()
+    -> Result<(), String> {
+        // Both guards are deleted and share one candidate-side line. Only the
+        // first returns the tail's value; the second differs only by the
+        // whitespace inside its string literal.
+        let first = "if x == \"a b\" { return \"a b\"; }";
+        let second = "if x == \"a  b\" { return \"a  b\"; }";
+        let old = format!(
+            "pub fn pick(x: &str) -> &'static str {{\n    {first}\n    {second}\n    \"a b\"\n}}\n"
+        );
+        let new = "pub fn pick(x: &str) -> &'static str {\n    \"a b\"\n}\n";
+        assert!(read_deleted_guard(&old, new, "pick", first)?.is_some());
+        assert_eq!(read_deleted_guard(&old, new, "pick", second)?, None);
         Ok(())
     }
 }
