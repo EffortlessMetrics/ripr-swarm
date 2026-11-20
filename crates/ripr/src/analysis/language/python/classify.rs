@@ -1129,9 +1129,14 @@ fn classify_change_for_owner_inner<'a>(
         &related_candidates,
         &focus,
     );
+    // Fail closed (#15287): a boundary no strong related call is established to
+    // reach is a gap whether the calls were readable and off the boundary
+    // (`Missing`) or unreadable (`Unresolved`: a `*args` row, a named constant
+    // the table does not bind, a rebound operand). An input the analysis cannot
+    // read cannot discriminate the changed boundary, so neither earns `exposed`.
     let boundary_gap = boundary
         .as_ref()
-        .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
+        .filter(|evidence| evidence.activation != BoundaryActivation::Observed);
     let mut boundary_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the

@@ -1497,11 +1497,12 @@ fn predicate_boundary_scope_computed_and_non_relational_predicates() -> Result<(
 }
 
 /// Without any literal owner argument the gate cannot see the activating
-/// input in either direction (Rust's empty `call_values` rule). The verdict
-/// stays with the oracle rules and the finding names the limitation, so the
-/// unresolved activation stays visible rather than silently credited.
+/// input in either direction. #15287: an input the analysis cannot read
+/// cannot discriminate the changed boundary, so the strong oracle no longer
+/// credits `exposed`; the finding fails closed to `weakly_exposed` and names
+/// the unresolved activation as the reason, without inventing a witness.
 #[test]
-fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<(), String> {
+fn predicate_boundary_without_literal_inputs_fails_closed() -> Result<(), String> {
     for tests in [
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    quantity += 1\n    assert bulk_discount(quantity) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_list():\n    assert bulk_discount(*[100]) == 0.15\n",
@@ -1514,15 +1515,92 @@ fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<()
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
         assert!(finding.activation.observed_values.is_empty());
         assert!(
-            finding.evidence.iter().any(|line| line
-                == "boundary_activation_unresolved: no strong related test call to `bulk_discount` binds a literal argument, so static evidence cannot place an input at the changed boundary of `quantity >= 100`"),
-            "{:?}",
-            finding.evidence
+            finding.activation.missing_discriminators.is_empty(),
+            "an unreadable input names no repair target: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert!(
+            format!("{finding:?}").contains(
+                "no strong related test call to `bulk_discount` binds a literal argument, so static evidence cannot place an input at the changed boundary of `quantity >= 100`"),
+            "{finding:?}"
         );
     }
+    Ok(())
+}
+
+/// #15287 shape 1 (humanize `clamp`): parametrized rows called as
+/// `clamp(*args)` hide every input from the reader, so a `<` -> `<=` flip with
+/// no row on the boundary must not read `exposed`. Controls: the same owner
+/// called with inline literals keeps its on-boundary `exposed` and its
+/// off-boundary `weakly_exposed`.
+#[test]
+fn star_args_parametrized_rows_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let source = "def clamp(value, floor=None):\n    if floor is not None and value < floor:\n        return f\"<{floor}\"\n    return str(value)\n";
+    let (old, new) = (
+        "    if floor is not None and value < floor:",
+        "    if floor is not None and value <= floor:",
+    );
+    let star = classify_case(
+        source,
+        "import pytest\nfrom src.subject import clamp\n\n@pytest.mark.parametrize(\"args, expected\", [([1], \"1\"), ([0.0001, 0.01], \"<0.01\"), ([5, 1], \"5\")])\ndef test_clamp(args, expected):\n    assert clamp(*args) == expected\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    let off = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_off():\n    assert clamp(0.0001, 0.01) == \"<0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
+    let on = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_on():\n    assert clamp(0.01, 0.01) == \"0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
+    Ok(())
+}
+
+/// #15287 shape 2 (packaging `_musllinux`): inputs passed as test-module
+/// constants the reader does not bind are unreadable, not witnesses.
+#[test]
+fn named_constant_inputs_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        "from src.subject import bulk_discount\n\nBELOW = 50\nAT = 100\n\ndef test_bulk_discount_named():\n    assert bulk_discount(BELOW) == 0.0\n    assert bulk_discount(AT) == 0.15\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+/// #15287 shape 3 (marshmallow `from_timestamp`): the owner coerces its
+/// parameter (`value = float(value)`) before the predicate, so the literal
+/// `-10` the test passes is not established as the compared value and, being
+/// off the `0` boundary anyway, must not read `exposed`.
+#[test]
+fn coerced_parameter_with_off_boundary_literal_does_not_credit_a_boundary_flip()
+-> Result<(), String> {
+    let source = "def from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    return value\n";
+    let finding = classify_case(
+        source,
+        "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10)\n",
+        3,
+        "    if value < 0:",
+        "    if value <= 0:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
 
@@ -1665,7 +1743,7 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
 /// unresolved verdict: argvalues named by a variable and an argname the test
 /// body rebinds before the call.
 #[test]
-fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
+fn uncertain_parametrize_cases_fail_closed() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
@@ -1678,15 +1756,9 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
-        assert!(
-            finding
-                .evidence
-                .iter()
-                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
-            "{tests}: {:?}",
-            finding.evidence
-        );
+        // #15287: argvalues the reader cannot certify are unreadable inputs,
+        // which fail closed instead of keeping the oracle's `exposed`.
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     Ok(())
 }
