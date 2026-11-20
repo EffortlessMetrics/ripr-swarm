@@ -6172,9 +6172,10 @@ fn price_boundary_discriminator() {
             (r#"write!(sink(), r"{expected}")"#, true),
             (r#"write!(sink(), "{}", r"{expected}")"#, false),
             (r#"concat!(r"{expected}")"#, false),
+            (r#"render!("{expected}")"#, true),
         ] {
             let body = format!(
-                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+                "fn t() {{\n use std::format as render;\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
             );
             let fact = only_fact(&body)?;
             let wanted = if reads {

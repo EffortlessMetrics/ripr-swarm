@@ -157,7 +157,7 @@ fn reads_local_name(masked: &str, name: &str) -> bool {
 }
 
 /// Is the next literal in the template slot of a standard formatting macro?
-fn opens_format_string(prefix: &str) -> bool {
+fn opens_format_string(prefix: &str, raw: bool) -> bool {
     let prefix = prefix.trim_end();
     let (before, destination) = if let Some(head) = prefix.strip_suffix(',') {
         let mut depth = 0usize;
@@ -190,6 +190,12 @@ fn opens_format_string(prefix: &str) -> bool {
         .trim_end()
         .rsplit(|ch: char| !(ch == '_' || ch.is_alphanumeric()))
         .next();
+    // An unresolved macro can be an imported formatting alias. Preserve the
+    // previous conservative read for quoted templates. Raw literals require
+    // a recognized formatting slot before braces count as captures.
+    if !raw && !destination {
+        return true;
+    }
     if destination {
         matches!(name, Some("write" | "writeln"))
     } else {
@@ -224,7 +230,7 @@ fn mask_assertion_reads(text: &str) -> String {
         } else {
             open
         };
-        if !opens_format_string(&masked[..prefix]) {
+        if !opens_format_string(&masked[..prefix], raw) {
             continue;
         }
         let mut content = &text[open + 1..close];
