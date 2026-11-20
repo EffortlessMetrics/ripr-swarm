@@ -1,0 +1,17 @@
+# Registers the non-git / bare root no-loop routes (#15297) under RIPR-SPEC-0009.
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/non_git_root_routes.rs::pilot_in_a_non_git_root_never_routes_back_to_a_refused_check",
+  "crates/ripr/tests/non_git_root_routes.rs::pilot_in_a_work_tree_keeps_its_check_route",
+  "crates/ripr/tests/non_git_root_routes.rs::bare_repository_is_named_by_doctor_and_refused_by_init",
+  "crates/ripr/tests/non_git_root_routes.rs::init_in_a_work_tree_still_writes_its_config",
+  "crates/ripr/tests/non_git_root_routes.rs::doctor_agrees_with_itself_about_a_detected_but_disabled_language",
+  "crates/ripr/src/cli/commands/init.rs::bare_root_refusal_names_a_work_tree_not_git_init",
+]
+code = [
+  "crates/ripr/src/output/pilot/language_routes.rs",
+  "crates/ripr/src/cli/commands/pilot.rs",
+  "crates/ripr/src/cli/commands/init.rs",
+  "crates/ripr/src/output/doctor.rs",
+]

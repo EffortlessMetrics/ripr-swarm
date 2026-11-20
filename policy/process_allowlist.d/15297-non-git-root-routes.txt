@@ -1,0 +1,2 @@
+crates/ripr/tests/non_git_root_routes.rs|Command::new|3|cli-tests|#15297: runs `git` (probe, init, commit, bare init) and the built ripr binary (pilot, check, init, doctor) in throwaway scratch directories outside any work tree to prove no next step routes back into a non-git refusal. Direct argv spawns, no shell, network, or user-repository mutation.
+crates/ripr/tests/non_git_root_routes.rs|use std::process::Command|1|cli-tests|Import for the git and exact-binary spawn sites described above.
