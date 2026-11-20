@@ -640,6 +640,16 @@ violations fail the command, and a valid one adds
 `✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
 advisory case above loads no config, so it does not check the manifest.
 
+Exact-path keys must also name a file under `--root`:
+`analysis.production_like_targets`, each `analysis.test_harnesses[].target`,
+and `languages.rust.handwritten_files`, `languages.python.handwritten_files`
+and `languages.typescript.handwritten_files`. Analysis treats a path that
+names no file as a setting that matches nothing, so a typo would otherwise
+switch the setting off without a word. `config validate` lists every missing
+entry with its key and fails (#15495). Glob keys such as
+`generated_file_patterns` are not checked, because a pattern that matches no
+file today is legitimate.
+
 ### `ripr lsp`
 
 ```text
