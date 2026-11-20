@@ -6737,6 +6737,52 @@ mod tests {
         }
     }
 
+    /// #15325: a JavaScript finding is analyzed by the shared TypeScript
+    /// adapter, whose producer strings say "TypeScript preview". The human
+    /// block (digest and full) names the finding's own language; a TypeScript
+    /// finding keeps its label.
+    #[test]
+    fn javascript_finding_human_text_names_javascript_not_typescript() {
+        for complete_packet in [false, true] {
+            let mut js = typescript_preview_finding(complete_packet);
+            js.language = Some(LanguageId::JavaScript);
+            js.probe.location = SourceLocation::new("lib/price.js", 12, 1);
+            let ts = typescript_preview_finding(complete_packet);
+
+            let js_outputs = [
+                render(&single_finding_output(js.clone())),
+                render_full_with_config(&single_finding_output(js.clone()), &RiprConfig::default()),
+                render_finding(&js),
+            ];
+            for rendered in js_outputs {
+                if !complete_packet {
+                    assert!(rendered.contains("JavaScript preview"), "{rendered}");
+                }
+                // The shared-adapter note names both languages once; it is the
+                // only permitted TypeScript mention for a JavaScript finding.
+                let rest = rendered.replace("TypeScript/JavaScript", "");
+                assert!(!rest.contains("TypeScript"), "{rendered}");
+            }
+
+            // Negative control: the same adapter text for a TypeScript finding
+            // keeps the TypeScript label.
+            let ts_rendered = render(&single_finding_output(ts.clone()));
+            assert!(
+                !ts_rendered.replace("TypeScript/JavaScript", "").contains("JavaScript"),
+                "{ts_rendered}"
+            );
+            let ts_block = render_finding(&ts);
+            assert!(ts_block.contains("TypeScript"), "{ts_block}");
+            assert!(
+                !ts_block.replace("TypeScript/JavaScript", "").contains("JavaScript"),
+                "{ts_block}"
+            );
+            if !complete_packet {
+                assert!(ts_rendered.contains("TypeScript preview"), "{ts_rendered}");
+            }
+        }
+    }
+
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),

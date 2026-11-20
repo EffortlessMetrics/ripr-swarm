@@ -261,6 +261,10 @@ pub(crate) fn render_finding_digest_with_config(
     config: &RiprConfig,
     root: &Path,
 ) -> String {
+    name_finding_language(finding, render_finding_digest_block(finding, config, root))
+}
+
+fn render_finding_digest_block(finding: &Finding, config: &RiprConfig, root: &Path) -> String {
     let mut out = String::new();
     let severity = display_severity(finding, config);
     out.push_str(&format!(
@@ -676,7 +680,58 @@ pub(crate) fn render_finding_with_config(
     render_finding_with_shared_sections(finding, config, root, wording, None, None, true)
 }
 
+/// #15325: the TypeScript preview adapter also analyzes JavaScript, and its
+/// producers phrase evidence and advice as "TypeScript preview ...". A
+/// finding whose own language is JavaScript names JavaScript in the human
+/// block; TypeScript findings and every other language keep their text. JSON
+/// and agent contracts keep the producer strings byte-identical.
+pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> String {
+    if finding.language != Some(LanguageId::JavaScript) {
+        return rendered;
+    }
+    const LABELS: [(&str, &str); 5] = [
+        ("TypeScript preview", "JavaScript preview"),
+        ("TypeScript repair packet", "JavaScript repair packet"),
+        ("TypeScript evidence:", "JavaScript evidence:"),
+        ("changed TypeScript ", "changed JavaScript "),
+        (
+            "complete-contract TypeScript finding",
+            "complete-contract JavaScript finding",
+        ),
+    ];
+    let mut named = rendered;
+    for (typescript, javascript) in LABELS {
+        if named.contains(typescript) {
+            named = named.replace(typescript, javascript);
+        }
+    }
+    named
+}
+
 pub(super) fn render_finding_with_shared_sections(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+    wording: JsonPointerWording,
+    shared: Option<&super::shared::SharedSections>,
+    files: Option<&[Option<std::path::PathBuf>]>,
+    plain_repair_card_wording: bool,
+) -> String {
+    name_finding_language(
+        finding,
+        render_finding_block(
+            finding,
+            config,
+            root,
+            wording,
+            shared,
+            files,
+            plain_repair_card_wording,
+        ),
+    )
+}
+
+fn render_finding_block(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,

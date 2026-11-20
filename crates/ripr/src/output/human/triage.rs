@@ -2112,7 +2112,10 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     let specific = specific
         .strip_prefix("is not agent-packet eligible: ")
         .unwrap_or(specific);
-    let reason = one_line(&super::evidence_lines::plain_internal_wording(specific));
+    let reason = super::sections::name_finding_language(
+        finding,
+        one_line(&super::evidence_lines::plain_internal_wording(specific)),
+    );
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
