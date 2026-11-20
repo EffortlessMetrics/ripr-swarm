@@ -2090,8 +2090,9 @@ pub(crate) fn related_test_candidates<'a>(
         candidates = indexed
             .into_iter()
             .filter_map(|test| {
-                build_entry_call(test, owner, reexport_index, map, scope.workspace_root)
-                    .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
+                build_entry_call(test, owner, reexport_index, map, scope.workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+                )
             })
             .collect();
     }
