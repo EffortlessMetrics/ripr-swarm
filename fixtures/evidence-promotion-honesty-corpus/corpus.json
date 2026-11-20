@@ -20802,6 +20802,126 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_into_from_default_generic_source",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_default_generic_source",
+      "vector": "an_into_on_another_instance_of_a_defaulted_generic_source_runs_that_instances_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_cfg_gated_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_cfg_gated_owner",
+      "vector": "an_into_whose_from_impl_is_compiled_out_of_the_test_runs_the_test_builds_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_fn_shadows_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_fn_shadows_constructor",
+      "vector": "an_into_on_a_value_a_same_named_fn_builds_runs_that_values_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_const_shadows_unit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_const_shadows_unit",
+      "vector": "an_into_on_a_const_shadowing_a_unit_struct_runs_the_consts_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_operator_fn_shadows_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_operator_fn_shadows_constructor",
+      "vector": "an_operator_on_values_a_same_named_fn_builds_runs_their_types_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
     }
   ]
 }
