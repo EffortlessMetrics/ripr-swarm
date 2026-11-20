@@ -172,7 +172,7 @@ pub(crate) fn build_agent_review_summary_report(
         LSP_COCKPIT_ARTIFACT,
         false,
     );
-    let (analysis_outcome, analysis_outcome_surface) = read_analysis_outcome(root, &root_display);
+    let (analysis_outcome, analysis_outcome_surface) = read_analysis_outcome(root);
 
     let receipt_snapshot = receipt.value.as_ref().and_then(receipt_snapshot);
     let target_seam = target_seam(

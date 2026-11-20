@@ -10479,6 +10479,7 @@ tests = [
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::preserves_incomplete_and_unsupported_kinds",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::rejects_missing_envelope_and_declared_completeness_disagreement",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::accepts_differently_spelled_same_root_and_refuses_another_directory",
+  "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::decodes_the_encoded_root_once_and_keeps_percent_named_workspaces_apart",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_preserves_incomplete_typed_outcome_and_digest",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_does_not_look_clean_without_producer_evidence",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_marks_malformed_or_stale_evidence_invalid",

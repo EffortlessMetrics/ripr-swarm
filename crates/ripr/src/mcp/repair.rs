@@ -2454,8 +2454,7 @@ pub(super) mod tests {
                 if matches!(outcome, ReceiptFixtureOutcome::Invalid) {
                     write_receipt_fixture(&path, b"{not JSON\n")?;
                 }
-                let read =
-                    read_analysis_outcome_artifact_at(root, &root.display().to_string(), &path);
+                let read = read_analysis_outcome_artifact_at(root, &path);
                 return match (outcome, read) {
                     (
                         ReceiptFixtureOutcome::Missing,

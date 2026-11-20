@@ -130,7 +130,6 @@ impl std::fmt::Display for AnalysisOutcomeArtifactError {
 
 pub(crate) fn read_analysis_outcome_artifact_at(
     root: &Path,
-    root_display: &str,
     path: &Path,
 ) -> Result<AnalysisOutcome, AnalysisOutcomeArtifactError> {
     let text = crate::bounded_input::read_to_string(path).map_err(|error| {
@@ -150,7 +149,7 @@ pub(crate) fn read_analysis_outcome_artifact_at(
             path.display()
         ))
     })?;
-    validate_analysis_outcome_artifact(root, root_display, &value)
+    validate_analysis_outcome_artifact(root, &value)
 }
 
 pub(crate) fn analysis_outcome_artifact_path_for_verify(
@@ -164,7 +163,6 @@ pub(crate) fn analysis_outcome_artifact_path_for_verify(
 
 pub(crate) fn validate_analysis_outcome_artifact(
     root: &Path,
-    root_display: &str,
     value: &Value,
 ) -> Result<AnalysisOutcome, AnalysisOutcomeArtifactError> {
     if value.get("tool").and_then(Value::as_str) != Some("ripr") {
@@ -178,11 +176,7 @@ pub(crate) fn validate_analysis_outcome_artifact(
             CHECK_OUTPUT_SCHEMA_VERSION
         )));
     }
-    if !recorded_root_matches(
-        root,
-        root_display,
-        value.get("root").and_then(Value::as_str),
-    ) {
+    if !recorded_root_matches(root, value.get("root").and_then(Value::as_str)) {
         return Err(invalid(
             "Analysis outcome artifact root does not match the review root.",
         ));
@@ -273,15 +267,19 @@ pub(crate) fn validate_analysis_outcome_artifact(
 
 /// #15239: the artifact records the producer's spelling of the root and the
 /// reviewer passes its own, so `--root .` and `--root "$PWD"` name the same
-/// directory with different strings. Accept an identical spelling, or two
-/// spellings that canonicalize to the same existing directory (a relative
-/// spelling resolves against the process working directory, as the CLI
-/// resolves `--root`). A missing root, or one that canonicalizes elsewhere,
-/// still fails closed.
-fn recorded_root_matches(root: &Path, root_display: &str, recorded: Option<&str>) -> bool {
+/// directory with different strings. The producer writes `root` through the
+/// stable path encoder (`output::path::display_path`, `%` as `%25`), so the
+/// recorded text is decoded once with its own decoder before any comparison;
+/// the raw encoded text is never treated as a path, since a literal
+/// `100%25x` directory and an encoded `100%x` root share one spelling.
+/// After decoding, accept the same path, or a spelling that canonicalizes to
+/// the same existing directory (a relative spelling resolves against the
+/// process working directory, as the CLI resolves `--root`). A missing root,
+/// or one that canonicalizes elsewhere, still fails closed.
+fn recorded_root_matches(root: &Path, recorded: Option<&str>) -> bool {
     recorded.is_some_and(|recorded| {
-        recorded == root_display
-            || crate::output::gap_source_subject::same_root(root, Path::new(recorded))
+        let decoded = crate::analysis::decode_stable_path_text(recorded);
+        decoded == root || crate::output::gap_source_subject::same_root(root, &decoded)
     })
 }
 
@@ -383,11 +381,7 @@ mod tests {
             let root = workspace_root()?;
             let declared_complete = outcome.kind.is_complete();
             assert_eq!(
-                validate_analysis_outcome_artifact(
-                    &root,
-                    &root.display().to_string(),
-                    &artifact(&outcome, declared_complete)?
-                ),
+                validate_analysis_outcome_artifact(&root, &artifact(&outcome, declared_complete)?),
                 Ok(outcome)
             );
         }
@@ -399,10 +393,9 @@ mod tests {
     {
         let outcome = complete_outcome(AnalysisOutcomeKind::CompleteWithFindings)?;
         let root = workspace_root()?;
-        let root_display = root.display().to_string();
         let control = artifact(&outcome, true)?;
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &control),
+            validate_analysis_outcome_artifact(&root, &control),
             Ok(outcome.clone())
         );
         let mut shapes = Vec::new();
@@ -422,7 +415,7 @@ mod tests {
         ]);
         shapes.push(legacy);
         for bounded in shapes {
-            let result = validate_analysis_outcome_artifact(&root, &root_display, &bounded);
+            let result = validate_analysis_outcome_artifact(&root, &bounded);
             assert!(
                 matches!(&result, Err(AnalysisOutcomeArtifactError::Invalid(reason))
                     if reason.contains("findings-bounded")),
@@ -441,11 +434,7 @@ mod tests {
             let outcome = incomplete_outcome(kind)?;
             let root = workspace_root()?;
             assert_eq!(
-                validate_analysis_outcome_artifact(
-                    &root,
-                    &root.display().to_string(),
-                    &artifact(&outcome, false)?
-                ),
+                validate_analysis_outcome_artifact(&root, &artifact(&outcome, false)?),
                 Ok(outcome)
             );
         }
@@ -456,20 +445,19 @@ mod tests {
     fn rejects_missing_envelope_and_declared_completeness_disagreement() -> Result<(), String> {
         let outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
         let root = workspace_root()?;
-        let root_display = root.display().to_string();
         let mut missing = artifact(&outcome, true)?;
         missing
             .as_object_mut()
             .ok_or_else(|| "fixture should be an object".to_string())?
             .remove("analysis_outcome");
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &missing),
+            validate_analysis_outcome_artifact(&root, &missing),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact is missing the analysis_outcome envelope.".to_string()
             ))
         );
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &artifact(&outcome, false)?,),
+            validate_analysis_outcome_artifact(&root, &artifact(&outcome, false)?,),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact completeness disagrees with its typed outcome."
                     .to_string()
@@ -485,12 +473,13 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&invalid_root);
+        // The artifact names the same (missing) root, so the root check
+        // passes and the diff re-derivation is what refuses.
+        let mut missing_root_artifact = artifact(&outcome, true)?;
+        missing_root_artifact["root"] =
+            Value::String(crate::output::path::display_path(&invalid_root));
         assert!(matches!(
-            validate_analysis_outcome_artifact(
-                &invalid_root,
-                &root_display,
-                &artifact(&outcome, true)?,
-            ),
+            validate_analysis_outcome_artifact(&invalid_root, &missing_root_artifact),
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("Current analysis input could not be established")
         ));
@@ -501,12 +490,11 @@ mod tests {
     fn rejects_invalid_producer_metadata_and_identity() -> Result<(), String> {
         let outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
         let root = workspace_root()?;
-        let root_display = root.display().to_string();
 
         let mut unknown_tool = artifact(&outcome, true)?;
         unknown_tool["tool"] = Value::String("other".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &unknown_tool),
+            validate_analysis_outcome_artifact(&root, &unknown_tool),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact has an unknown producer tool.".to_string()
             ))
@@ -515,7 +503,7 @@ mod tests {
         let mut wrong_schema = artifact(&outcome, true)?;
         wrong_schema["schema_version"] = Value::String("0.1".to_string());
         assert!(matches!(
-            validate_analysis_outcome_artifact(&root, &root_display, &wrong_schema),
+            validate_analysis_outcome_artifact(&root, &wrong_schema),
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("unsupported schema_version")
         ));
@@ -523,7 +511,7 @@ mod tests {
         let mut wrong_root = artifact(&outcome, true)?;
         wrong_root["root"] = Value::String("other-root".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &wrong_root),
+            validate_analysis_outcome_artifact(&root, &wrong_root),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact root does not match the review root.".to_string()
             ))
@@ -535,7 +523,7 @@ mod tests {
             .ok_or_else(|| "expected outcome envelope".to_string())?
             .remove("analysis_complete");
         assert!(matches!(
-            validate_analysis_outcome_artifact(&root, &root_display, &missing_complete),
+            validate_analysis_outcome_artifact(&root, &missing_complete),
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("missing boolean analysis_complete")
         ));
@@ -546,7 +534,7 @@ mod tests {
             .ok_or_else(|| "expected outcome envelope".to_string())?
             .remove("outcome");
         assert!(matches!(
-            validate_analysis_outcome_artifact(&root, &root_display, &missing_outcome),
+            validate_analysis_outcome_artifact(&root, &missing_outcome),
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("missing the typed outcome")
         ));
@@ -555,7 +543,7 @@ mod tests {
         invalid_typed["analysis_outcome"]["outcome"]["kind"] =
             Value::String("not-a-kind".to_string());
         assert!(matches!(
-            validate_analysis_outcome_artifact(&root, &root_display, &invalid_typed),
+            validate_analysis_outcome_artifact(&root, &invalid_typed),
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("invalid typed outcome")
         ));
@@ -563,7 +551,7 @@ mod tests {
         let mut wrong_base = artifact(&outcome, true)?;
         wrong_base["base"] = Value::String("origin/main".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &wrong_base),
+            validate_analysis_outcome_artifact(&root, &wrong_base),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact base does not match its typed identity.".to_string()
             ))
@@ -574,7 +562,7 @@ mod tests {
         option_like_base["analysis_outcome"]["outcome"]["identity"]["base_revision"] =
             Value::String("--output".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &option_like_base),
+            validate_analysis_outcome_artifact(&root, &option_like_base),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact base must not begin with '-'.".to_string()
             ))
@@ -584,7 +572,7 @@ mod tests {
         wrong_identity["analysis_outcome"]["outcome"]["identity"]["input_identity"] =
             Value::String("sha256:wrong".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&root, &root_display, &wrong_identity),
+            validate_analysis_outcome_artifact(&root, &wrong_identity),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact input identity does not match the current diff."
                     .to_string()
@@ -651,35 +639,103 @@ mod tests {
         ));
         let accepted = validate_analysis_outcome_artifact(
             &root,
-            &root_display,
             &artifact_for(&working_tree_identity, Some("working_tree"))?,
         );
         let committed_accepted = validate_analysis_outcome_artifact(
             &root,
-            &root_display,
             &artifact_for(&committed_identity, Some("commit"))?,
         );
         let working_tree_identity_as_commit = validate_analysis_outcome_artifact(
             &root,
-            &root_display,
             &artifact_for(&working_tree_identity, Some("commit"))?,
         );
         let committed_identity_as_working_tree = validate_analysis_outcome_artifact(
             &root,
-            &root_display,
             &artifact_for(&committed_identity, Some("working_tree"))?,
         );
-        let working_tree_identity_without_head = validate_analysis_outcome_artifact(
-            &root,
-            &root_display,
-            &artifact_for(&working_tree_identity, None)?,
-        );
+        let working_tree_identity_without_head =
+            validate_analysis_outcome_artifact(&root, &artifact_for(&working_tree_identity, None)?);
         remove_fixture_tree(&root)?;
         assert!(accepted.is_ok(), "{accepted:?}");
         assert!(committed_accepted.is_ok(), "{committed_accepted:?}");
         assert_eq!(working_tree_identity_as_commit, mismatch);
         assert_eq!(committed_identity_as_working_tree, mismatch);
         assert_eq!(working_tree_identity_without_head, mismatch);
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_the_encoded_root_once_and_keeps_percent_named_workspaces_apart() -> Result<(), String>
+    {
+        // #15239: `ripr check --format json` writes `root` through the stable
+        // path encoder, which spells a literal `%` as `%25`. Two distinct
+        // workspaces, `r_100%x` and a literal `r_100%25x`, therefore record
+        // `r_100%25x` and `r_100%2525x`. Each must accept its own artifact
+        // and refuse the other's: matching the raw recorded text as a path
+        // would let the literal `r_100%25x` workspace accept the `r_100%x`
+        // artifact.
+        let base = std::env::temp_dir().join(format!(
+            "ripr-analysis-outcome-percent-root-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let encoded_looking = base.join("r_100%x");
+        let literal = base.join("r_100%25x");
+        for dir in [&encoded_looking, &literal] {
+            std::fs::create_dir_all(dir).map_err(|error| format!("create {dir:?}: {error}"))?;
+        }
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let written_for = |root: &Path| -> Value {
+            serde_json::json!({
+                "schema_version": "0.2",
+                "tool": "ripr",
+                "root": crate::output::path::display_path(root),
+                "base": null,
+                "analysis_outcome": {
+                    "analysis_complete": true,
+                    "outcome": outcome
+                }
+            })
+        };
+        let encoded_artifact = written_for(&encoded_looking);
+        let literal_artifact = written_for(&literal);
+        let fixture = (
+            encoded_artifact["root"].as_str().map(str::to_string),
+            literal_artifact["root"].as_str().map(str::to_string),
+        );
+        let own_encoded = validate_analysis_outcome_artifact(&encoded_looking, &encoded_artifact);
+        let own_literal = validate_analysis_outcome_artifact(&literal, &literal_artifact);
+        let literal_reads_encoded = validate_analysis_outcome_artifact(&literal, &encoded_artifact);
+        let encoded_reads_literal =
+            validate_analysis_outcome_artifact(&encoded_looking, &literal_artifact);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(
+            fixture,
+            (
+                Some(format!(
+                    "{}/r_100%25x",
+                    crate::output::path::display_path(&base)
+                )),
+                Some(format!(
+                    "{}/r_100%2525x",
+                    crate::output::path::display_path(&base)
+                )),
+            ),
+            "fixture precondition: the producer encodes each literal `%`"
+        );
+        assert_eq!(own_encoded, Ok(outcome.clone()));
+        assert_eq!(own_literal, Ok(outcome));
+        let mismatch = Err(AnalysisOutcomeArtifactError::Invalid(
+            "Analysis outcome artifact root does not match the review root.".to_string(),
+        ));
+        assert_eq!(literal_reads_encoded, mismatch);
+        assert_eq!(encoded_reads_literal, mismatch);
         Ok(())
     }
 
@@ -710,14 +766,14 @@ mod tests {
 
         // Absolute recording, relative review root.
         assert_eq!(
-            validate_analysis_outcome_artifact(relative, "../..", &absolute_recorded),
+            validate_analysis_outcome_artifact(relative, &absolute_recorded),
             Ok(outcome.clone())
         );
         // Relative recording, absolute review root.
         let mut relative_recorded = absolute_recorded.clone();
         relative_recorded["root"] = Value::String("../..".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&absolute, &absolute_display, &relative_recorded),
+            validate_analysis_outcome_artifact(&absolute, &relative_recorded),
             Ok(outcome.clone())
         );
         // A non-normalized absolute spelling of the same directory.
@@ -725,7 +781,7 @@ mod tests {
         dotted_recorded["root"] =
             Value::String(absolute.join("crates").join("..").display().to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&absolute, &absolute_display, &dotted_recorded),
+            validate_analysis_outcome_artifact(&absolute, &dotted_recorded),
             Ok(outcome.clone())
         );
 
@@ -736,13 +792,13 @@ mod tests {
         let mut other_absolute = absolute_recorded.clone();
         other_absolute["root"] = Value::String(manifest.display().to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(relative, "../..", &other_absolute),
+            validate_analysis_outcome_artifact(relative, &other_absolute),
             mismatch
         );
         let mut other_relative = absolute_recorded.clone();
         other_relative["root"] = Value::String(".".to_string());
         assert_eq!(
-            validate_analysis_outcome_artifact(&absolute, &absolute_display, &other_relative),
+            validate_analysis_outcome_artifact(&absolute, &other_relative),
             mismatch
         );
         // A missing root member fails closed.
@@ -751,7 +807,7 @@ mod tests {
             object.remove("root");
         }
         assert_eq!(
-            validate_analysis_outcome_artifact(&absolute, &absolute_display, &no_root),
+            validate_analysis_outcome_artifact(&absolute, &no_root),
             mismatch
         );
         Ok(())
@@ -770,8 +826,7 @@ mod tests {
         let artifact_path = root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
         std::fs::create_dir_all(&artifact_path)
             .map_err(|error| format!("create directory artifact: {error}"))?;
-        let result =
-            read_analysis_outcome_artifact_at(&root, &root.display().to_string(), &artifact_path);
+        let result = read_analysis_outcome_artifact_at(&root, &artifact_path);
         std::fs::remove_dir_all(&root).map_err(|error| format!("remove test root: {error}"))?;
         assert!(matches!(
             result,

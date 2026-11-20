@@ -310,11 +310,9 @@ fn validate_receipt_projection(
         crate::app::analysis_outcome_artifact::analysis_outcome_artifact_path_for_verify(
             &verify_file,
         )?;
-    let root_display = crate::output::outcome::display_path(root);
     let analysis_outcome =
         crate::app::analysis_outcome_artifact::read_analysis_outcome_artifact_at(
             root,
-            &root_display,
             &analysis_path,
         )
         .map_err(|error| format!("analysis outcome artifact is unavailable: {error}"))?;
