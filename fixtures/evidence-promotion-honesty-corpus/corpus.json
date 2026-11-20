@@ -20706,6 +20706,102 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_into_from_let_annotation",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_let_annotation",
+      "vector": "an_annotated_into_runs_the_target_types_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_inherent_into",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_inherent_into",
+      "vector": "an_inherent_into_wins_over_the_blanket_into",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_other_target",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_other_target",
+      "vector": "an_into_annotated_with_another_target_runs_that_targets_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_into_from_reference_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_reference_binding",
+      "vector": "an_into_on_a_reference_binding_runs_the_reference_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
