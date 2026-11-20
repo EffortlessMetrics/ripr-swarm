@@ -107,6 +107,9 @@ pub(crate) fn assertion_reads_placeholder(
     assertion: &str,
     placeholders: &std::collections::BTreeSet<String>,
 ) -> bool {
+    if placeholders.is_empty() {
+        return false;
+    }
     let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
     let masked = mask_assertion_reads(&operand_text);
     placeholders
