@@ -177,6 +177,16 @@ read-only and without execution authority (ADR 0022):
   call for the same current snapshot, item, and root returns the identical
   document and never creates a second transaction. The transaction is
   in-memory like the snapshot: a restart drops it.
+- Single attempt per seam (#15244): when the shared CLI rule
+  (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's
+  seam, awaiting its edit at the current HEAD) finds a live durable attempt,
+  the tool refuses to create a rival session transaction. It returns the
+  refusal shape with `ineligibility.reason` `durable_attempt_awaiting`,
+  `attempt: null`, an additive `existing_attempt` (`attempt_id`, state,
+  `origin: durable_cli`) with `links.repair_attempt`/`links.receipt`, and
+  `next` routing to `ripr_get_repair_attempt`. Without a live durable attempt
+  the session route above is unchanged. MCP still creates and edits nothing
+  durable.
 - When a gate is not established, the tool returns an
   `isError: false` document with `repair_packet_ready: false`, the typed
   `ineligibility.reason`, and `attempt: null` — never a failure envelope,

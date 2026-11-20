@@ -797,6 +797,15 @@ completeness fact and, like `ripr agent card`, fails with the typed
 its completeness could not be established, so it never reports
 `readiness.repair_ready` true over a truncated inventory (#9231).
 
+`ripr_prepare_repair` creates no session transaction while a live durable
+attempt exists for the item's seam (the CLI rule `ripr repair` uses: awaiting
+its edit at the current HEAD). It answers the refusal shape with
+`ineligibility.reason: durable_attempt_awaiting`, `attempt: null`, an
+`existing_attempt` block and links naming the durable attempt, and
+`next.mcp` routing to `ripr_get_repair_attempt`; a session transaction would
+be superseded by the refresh that follows the edit, and only a durable
+attempt can reach `improved` (#15244).
+
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
 the durable attempt store of this workspace root is inventoried through the

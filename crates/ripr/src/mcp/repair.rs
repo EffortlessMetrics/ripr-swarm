@@ -843,11 +843,28 @@ impl WorkspaceSession {
     /// ineligible item returns an honest negative document with
     /// `repair_packet_ready: false` and no attempt — never a fabricated
     /// field and never a misleading transaction.
+    #[cfg(test)]
     pub(crate) fn prepare_repair(
         &mut self,
         canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
+        self.prepare_repair_with_store(canonical_id, requested, root_identity, None)
+    }
+
+    /// `prepare_repair` plus the durable attempt store (#15170): when
+    /// `store_root` names the workspace root and the CLI's own single-attempt
+    /// rule (`reusable_awaiting_attempt`) finds a live durable attempt for the
+    /// item's seam, no rival session transaction is created. The document
+    /// discloses the durable attempt and routes to it instead, exactly as
+    /// `ripr repair` refuses a second attempt.
+    pub(crate) fn prepare_repair_with_store(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        store_root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
@@ -900,6 +917,74 @@ impl WorkspaceSession {
                     "no attempt was created: the tool must not create a misleading transaction",
                 ],
                 "claim_boundary": "Repair-packet evaluation for one canonical item. This negative document authorizes nothing and creates nothing.",
+            });
+            return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
+        }
+
+        // A live durable attempt for this seam wins over a session one: the
+        // CLI refuses a second attempt, and a session transaction would be
+        // superseded by the very refresh the flow prescribes after editing
+        // tests, while only a durable attempt can reach `improved`.
+        if let Some(root) = store_root
+            && let Some(seam_id) = snapshot
+                .card_producers
+                .as_ref()
+                .and_then(|producers| {
+                    producers
+                        .bindings
+                        .iter()
+                        .find(|binding| binding.item_canonical_id == item.canonical_id)
+                })
+                .map(|binding| binding.seam.seam.id().as_str().to_string())
+            && let Some(existing) =
+                crate::app::task_first::reusable_awaiting_attempt(root, &seam_id)
+        {
+            let existing_id = existing.attempt_id;
+            let document = json!({
+                "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
+                "snapshot_id": snapshot_id,
+                "requested_snapshot_id": requested,
+                "item": {
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "repair_packet_ready": false,
+                "ineligibility": {
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "a durable repair attempt for this seam is already awaiting its focused test edit at the current HEAD; no second attempt was started, as `ripr repair` also refuses one",
+                },
+                "attempt": Value::Null,
+                "existing_attempt": {
+                    "attempt_id": existing_id,
+                    "state": "awaiting_edit",
+                    "origin": "durable_cli",
+                    "snapshot_id": snapshot_id,
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "finding_guidance": Value::Null,
+                "next": {
+                    "kind": "resume_durable_attempt",
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "read the existing durable attempt, edit the focused test it names, then re-check; only a durable attempt can reach `improved`, and a session transaction would be superseded by the refresh that follows the edit",
+                    "mcp": {
+                        "tool": "ripr_get_repair_attempt",
+                        "arguments": { "attempt_id": existing_id },
+                    },
+                    "after_editing_tests": verify_after_editing_tests(snapshot.base.as_deref()),
+                },
+                "recovery": "do not retry ripr_prepare_repair for this item: it creates nothing while the durable attempt awaits its edit. Continue with ripr_get_repair_attempt",
+                "limitations": [
+                    "no session transaction was created: the durable attempt is the one attempt for this seam",
+                    "the durable attempt's liveness is the CLI's own awaiting-at-current-HEAD reading, taken when this tool ran",
+                ],
+                "links": {
+                    "gap": format!("ripr://gap/{}", item.canonical_id),
+                    "snapshot": format!("ripr://snapshot/{snapshot_id}"),
+                    "repair_attempt": format!("ripr://repair-attempt/{existing_id}"),
+                    "receipt": format!("ripr://receipt/{existing_id}"),
+                },
+                "claim_boundary": "Disclosure of an existing durable attempt for one canonical item. This document authorizes nothing and creates nothing.",
             });
             return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
         }
