@@ -281,7 +281,7 @@ pub(crate) fn evaluate(pr: &Value, unresolved_threads: Option<u64>) -> Vec<Findi
     match review_status(&pr["reviews"], head) {
         ReviewStatus::Blocked => findings.push(Finding {
             gate: "review_disposition",
-            problem: "a reviewer's latest decisive review is CHANGES_REQUESTED".into(),
+            problem: "local preflight found a CHANGES_REQUESTED review without a later approval from that reviewer".into(),
             remediation: format!(
                 "inspect the reviews with `gh pr view {number} --json reviews`, address the requested changes and ask each blocking reviewer to re-review and approve"
             ),
@@ -639,8 +639,21 @@ mod pr_ready_tests {
         let found = evaluate(&with_changes_requested, Some(0));
         assert_eq!(gates(&found), ["review_disposition"]);
         assert!(found[0].problem.contains("CHANGES_REQUESTED"));
+        assert!(
+            found[0]
+                .problem
+                .contains("without a later approval from that reviewer")
+        );
+        assert!(found[0].remediation.contains("gh pr view 7 --json reviews"));
         assert!(found[0].remediation.contains("blocking reviewer"));
         assert!(!found[0].remediation.contains("Source review:"));
+
+        let mut approval = with_approved["reviews"][0].clone();
+        approval["author"]["login"] = json!("another-reviewer");
+        with_changes_requested["reviews"] = json!([with_changes_requested["reviews"][0], approval]);
+        assert_eq!(evaluate(&with_changes_requested, Some(0)), found);
+        with_changes_requested["reviews"][1]["author"]["login"] = json!("maintainer");
+        assert!(evaluate(&with_changes_requested, Some(0)).is_empty());
     }
 
     #[test]
