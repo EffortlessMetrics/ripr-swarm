@@ -129,7 +129,7 @@ with the defaults.
 ## Commands
 
 Start with `ripr: Show Status`, `ripr: Show Output`, and
-`ripr: Refresh Diagnostics`. Finding-specific code actions appear on diagnostics.
+`ripr: Refresh Full Analysis`. Finding-specific code actions appear on diagnostics.
 The development extension also exposes the following commands:
 
 <details>
@@ -139,6 +139,7 @@ The development extension also exposes the following commands:
 - `ripr: Select Workspace Root`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`

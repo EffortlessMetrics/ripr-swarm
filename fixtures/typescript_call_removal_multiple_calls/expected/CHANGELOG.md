@@ -221,3 +221,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_multiple_calls (18)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_call_removal_multiple_calls (19)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

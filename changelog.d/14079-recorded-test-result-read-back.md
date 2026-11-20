@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- After `ripr agent repair --phase after --test-result <file>` records a caller-reported focused test result, the finish summary, `ripr status` and `ripr agent status` now report it (`Test run: reported by the caller, not run by ripr: N test(s) ran in <file> (P passed, F failed)`, JSON `test_run.status: "caller_reported"` with the counts) instead of `Test run: none recorded` / `not_recorded`, and name a reported failure. Static movement and the receipt are unchanged; ripr still runs nothing (#14079).

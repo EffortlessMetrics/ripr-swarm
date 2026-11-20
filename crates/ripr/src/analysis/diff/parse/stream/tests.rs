@@ -722,3 +722,194 @@ fn non_unicode_changed_line_limit_env_fails_closed() {
         "got {result:?}"
     );
 }
+
+/// #14072: what follows a complete hunk is not its body. A valid diff saved
+/// with trailing blank lines, and `git format-patch` mail output, parsed as
+/// malformed and recorded mail text as changed source.
+const COMPLETE_PATCH: &str = "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n keep\n";
+
+fn changed_texts(parsed: &ParsedDiff) -> Vec<(PathBuf, Vec<String>, Vec<String>)> {
+    let texts = |lines: &[crate::analysis::diff::ChangedLine]| {
+        lines.iter().map(|line| line.text.clone()).collect()
+    };
+    parsed
+        .changed_files
+        .iter()
+        .map(|file| {
+            (
+                file.path.clone(),
+                texts(&file.removed_lines),
+                texts(&file.added_lines),
+            )
+        })
+        .collect()
+}
+
+fn assert_parses_like_the_bare_patch(input: &str) -> Result<(), String> {
+    let bare = parse_unbounded(COMPLETE_PATCH);
+    if changed_texts(&bare)
+        != vec![(
+            PathBuf::from("src/a.rs"),
+            vec!["old".to_string()],
+            vec!["new".to_string()],
+        )]
+    {
+        return Err(format!("bare control parsed unexpectedly: {bare:?}"));
+    }
+    for parsed in [
+        parse_unbounded(input),
+        parse_bounded_lines(input.lines(), 8)?,
+    ] {
+        if !parsed.limitations.is_empty() || parsed.truncated_file_sections != 0 {
+            return Err(format!("valid patch was limited for {input:?}: {parsed:?}"));
+        }
+        if changed_texts(&parsed) != changed_texts(&bare) {
+            return Err(format!(
+                "text after a complete hunk changed the parse of {input:?}: {parsed:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn blank_lines_after_a_complete_hunk_are_not_body() -> Result<(), String> {
+    for tail in ["\n", "\n\n\n", "\r\n\r\n"] {
+        assert_parses_like_the_bare_patch(&format!("{COMPLETE_PATCH}{tail}"))?;
+    }
+    // Padding between complete sections leaves both sections intact.
+    let two = format!(
+        "{COMPLETE_PATCH}\n\ndiff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +3 @@\n-before\n+after\n\n"
+    );
+    let parsed = parse_unbounded(&two);
+    if !parsed.limitations.is_empty()
+        || changed_texts(&parsed)
+            != vec![
+                (
+                    PathBuf::from("src/a.rs"),
+                    vec!["old".to_string()],
+                    vec!["new".to_string()],
+                ),
+                (
+                    PathBuf::from("src/b.rs"),
+                    vec!["before".to_string()],
+                    vec!["after".to_string()],
+                ),
+            ]
+    {
+        return Err(format!("padded sections parsed unexpectedly: {parsed:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn format_patch_mail_text_after_a_complete_hunk_is_not_body() -> Result<(), String> {
+    let id = "0123456789abcdef0123456789abcdef01234567";
+    let head = format!(
+        "From {id} Mon Sep 17 00:00:00 2001\nFrom: A U Thor <author@example.invalid>\nSubject: [PATCH 1/2] first\n\n- a bullet in the message\n---\n src/a.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n\n"
+    );
+    let signature = "-- \n2.43.0\n\n";
+    // One message, with and without the signature trailer.
+    assert_parses_like_the_bare_patch(&format!("{head}{COMPLETE_PATCH}{signature}"))?;
+    assert_parses_like_the_bare_patch(&format!("{head}{COMPLETE_PATCH}"))?;
+    // A series: the second message's headers, bullet, `---` separator and
+    // diffstat follow the first patch's last hunk directly.
+    let second = "diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +3 @@\n-before\n+after\n";
+    for separator in [signature, ""] {
+        let series = format!("{head}{COMPLETE_PATCH}{separator}{head}{second}{separator}");
+        let parsed = parse_unbounded(&series);
+        if !parsed.limitations.is_empty()
+            || changed_texts(&parsed)
+                != vec![
+                    (
+                        PathBuf::from("src/a.rs"),
+                        vec!["old".to_string()],
+                        vec!["new".to_string()],
+                    ),
+                    (
+                        PathBuf::from("src/b.rs"),
+                        vec!["before".to_string()],
+                        vec!["after".to_string()],
+                    ),
+                ]
+        {
+            return Err(format!("series parsed unexpectedly: {parsed:?}"));
+        }
+    }
+    // A 64-hex object id (SHA-256 repositories) separates messages the same way.
+    let long_id = id.repeat(2)[..64].to_string();
+    assert_parses_like_the_bare_patch(&format!(
+        "{COMPLETE_PATCH}From {long_id} Mon Sep 17 00:00:00 2001\nSubject: next\n\n- bullet\n"
+    ))
+}
+
+#[test]
+fn excess_body_after_a_complete_hunk_stays_malformed() -> Result<(), String> {
+    for tail in [
+        // A blank line does not launder the excess line behind it.
+        "\n+excess\n",
+        "\n-excess\n",
+        "\n context\n",
+        // Near-misses of the mail separators are still body.
+        "--\n",
+        "--  \n",
+        "-- x\n",
+        "-From 0123456789abcdef0123456789abcdef01234567 Mon Sep 17 00:00:00 2001\n",
+        "From: someone\n+excess\n",
+        "From 0123 Mon Sep 17 00:00:00 2001\n+excess\n",
+        "From 0123456789abcdef0123456789abcdef0123456g Mon Sep 17 00:00:00 2001\n+excess\n",
+    ] {
+        check_declared_hunk_status(&format!("{COMPLETE_PATCH}{tail}"), true)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_incomplete_hunk_still_reads_blank_and_signature_lines_as_body() -> Result<(), String> {
+    // The header still owes one old and one new line: the empty line is the
+    // stripped-space context line and `-- ` removes a line whose text is `- `.
+    let blank_context =
+        parse_unbounded("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n\n");
+    if !blank_context.limitations.is_empty() {
+        return Err(format!("owed blank context was refused: {blank_context:?}"));
+    }
+    let after_blank =
+        parse_unbounded("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,3 +1,3 @@\n-old\n+new\n\n-x\n+y\n");
+    let file = after_blank
+        .changed_files
+        .first()
+        .ok_or_else(|| "blank-context control lost its file".to_string())?;
+    if !after_blank.limitations.is_empty()
+        || file
+            .removed_lines
+            .iter()
+            .map(|l| l.line)
+            .collect::<Vec<_>>()
+            != [1, 3]
+        || file.added_lines.iter().map(|l| l.line).collect::<Vec<_>>() != [1, 3]
+    {
+        return Err(format!(
+            "owed blank context did not advance: {after_blank:?}"
+        ));
+    }
+    let signature_shaped =
+        parse_unbounded("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1 @@\n-old\n-- \n+new\n");
+    let file = signature_shaped
+        .changed_files
+        .first()
+        .ok_or_else(|| "signature-shaped control lost its file".to_string())?;
+    if !signature_shaped.limitations.is_empty()
+        || changed_texts(&signature_shaped)
+            != vec![(
+                PathBuf::from("src/a.rs"),
+                vec!["old".to_string(), "- ".to_string()],
+                vec!["new".to_string()],
+            )]
+        || file.removed_lines.len() != 2
+    {
+        return Err(format!(
+            "owed `-- ` removal was mistaken for a signature: {signature_shaped:?}"
+        ));
+    }
+    Ok(())
+}

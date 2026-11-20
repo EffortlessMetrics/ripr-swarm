@@ -2,6 +2,10 @@
 //!
 //! The warning is mode-disclosure for a completed evaluation. A missing-input
 //! usage error never used that mode, so stderr must not lead with it.
+//!
+//! Also pins the Markdown posture note (#7445): a visible-only report that
+//! recorded nothing still reads `advisory`, and says the token reflects the
+//! mode rather than a finding.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -161,5 +165,150 @@ fn gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning() -
         ));
     }
     let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Needle from the Markdown posture note (#7445). The note is rendered only
+/// when a visible-only report reads `advisory` with nothing recorded.
+const POSTURE_NOTE_NEEDLE: &str = "so the status reflects the mode, not a finding";
+
+struct GateRun {
+    status: String,
+    mode: String,
+    advisory: u64,
+    markdown: String,
+    json: String,
+}
+
+fn evaluate_guidance(label: &str, guidance: &Path, mode: &str) -> Result<GateRun, String> {
+    let dir = unique_dir(label)?;
+    let out = dir.join("gate-decision.json");
+    let out_md = dir.join("gate-decision.md");
+    let output = run_gate(
+        &dir,
+        &[
+            "gate",
+            "evaluate",
+            "--pr-guidance",
+            &guidance.display().to_string(),
+            "--mode",
+            mode,
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "{label}: expected exit 0, got {:?}; stderr={}",
+            output.status.code(),
+            stderr_text(&output)
+        ));
+    }
+    let json = std::fs::read_to_string(&out).map_err(|err| format!("read {label} json: {err}"))?;
+    let markdown =
+        std::fs::read_to_string(&out_md).map_err(|err| format!("read {label} md: {err}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|err| format!("parse {label} json: {err}"))?;
+    let run = GateRun {
+        status: value["status"].as_str().unwrap_or("").to_string(),
+        mode: value["mode"].as_str().unwrap_or("").to_string(),
+        advisory: value["summary"]["advisory"].as_u64().unwrap_or(u64::MAX),
+        markdown,
+        json,
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(run)
+}
+
+fn write_clean_guidance(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_dir(label)?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write {}: {err}", guidance.display()))?;
+    Ok((dir, guidance))
+}
+
+/// #7445: the status vocabulary is unchanged (a clean visible-only run still
+/// reads `advisory`), and the Markdown report now says the token reflects the
+/// mode and names the enforcing modes.
+#[test]
+fn clean_visible_only_report_stays_advisory_and_markdown_discloses_mode_posture()
+-> Result<(), String> {
+    let (dir, guidance) = write_clean_guidance("posture-clean")?;
+    let run = evaluate_guidance("posture-clean-run", &guidance, "visible-only")?;
+    if run.status != "advisory" || run.mode != "visible-only" || run.advisory != 0 {
+        return Err(format!(
+            "clean visible-only run must stay advisory with zero advisory candidates: {}",
+            run.json
+        ));
+    }
+    if !run
+        .markdown
+        .starts_with("# RIPR Gate Decision\n\nDecision: advisory\nMode: visible-only\n")
+    {
+        return Err(format!("heading changed: {}", run.markdown));
+    }
+    if run.markdown.matches(POSTURE_NOTE_NEEDLE).count() != 1 {
+        return Err(format!(
+            "clean visible-only Markdown must carry the posture note once: {}",
+            run.markdown
+        ));
+    }
+    for needle in [
+        "Advisory: 0\n\nVisible-only mode never blocks on findings",
+        "`--mode acknowledgeable`",
+        "`--mode baseline-check`",
+        "`--mode calibrated-gate`",
+    ] {
+        if !run.markdown.contains(needle) {
+            return Err(format!("posture note lost {needle:?}: {}", run.markdown));
+        }
+    }
+    // The JSON contract is untouched: the note is Markdown-only.
+    if run.json.contains(POSTURE_NOTE_NEEDLE) {
+        return Err(format!("posture note leaked into JSON: {}", run.json));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// #7445 negatives: an enforcing clean run reads `pass` and a visible-only run
+/// with an advisory candidate reads `advisory` for a finding; neither carries
+/// the posture note.
+#[test]
+fn posture_note_is_withheld_for_enforcing_pass_and_for_recorded_findings() -> Result<(), String> {
+    let (dir, guidance) = write_clean_guidance("posture-enforcing")?;
+    let enforcing = evaluate_guidance("posture-enforcing-run", &guidance, "acknowledgeable")?;
+    if enforcing.status != "pass" {
+        return Err(format!(
+            "clean acknowledgeable run must read pass: {}",
+            enforcing.json
+        ));
+    }
+    if enforcing.markdown.contains(POSTURE_NOTE_NEEDLE) {
+        return Err(format!(
+            "pass report must not carry the visible-only note: {}",
+            enforcing.markdown
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let finding_guidance = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json");
+    let with_finding = evaluate_guidance("posture-finding-run", &finding_guidance, "visible-only")?;
+    if with_finding.status != "advisory" || with_finding.advisory != 1 {
+        return Err(format!(
+            "fixture guidance must yield one advisory candidate in visible-only: {}",
+            with_finding.json
+        ));
+    }
+    if with_finding.markdown.contains(POSTURE_NOTE_NEEDLE) {
+        return Err(format!(
+            "a report with a recorded finding must not carry the posture note: {}",
+            with_finding.markdown
+        ));
+    }
     Ok(())
 }

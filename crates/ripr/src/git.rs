@@ -131,7 +131,7 @@ pub(crate) fn run_git_output_with_deadline(
     // spawn-failure and timeout messages, and a debug list reads as an
     // internal leak (#9604 batch E).
     let describe = format!("git -C {} {}", root.display(), args.join(" "));
-    let command = git_command(root, args);
+    let (command, timeout) = git_command_within(root, args, timeout);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
     // the spawn itself fails, preserving the established
     // `failed to run git …` error family the context/explain invalid-root
@@ -322,7 +322,268 @@ fn git_null_device_path() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
 
+/// Refusal flag for a repository whose filter-driver configuration ripr
+/// cannot neutralize. Git rejects the unknown option and exits before it
+/// reads the index or the worktree, so no filter program can start.
+const REFUSED_FILTER_CONFIG_FLAG: &str = "--ripr-refused-repository-filter-config";
+
+/// Deadline and capture bound for the filter-driver configuration listing.
+const FILTER_CONFIG_PROBE_DEADLINE: Duration = Duration::from_secs(10);
+const FILTER_CONFIG_PROBE_MAX_BYTES: usize = 1024 * 1024;
+
+/// What `git_command` adds for the repository's own filter drivers (#14242).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RepositoryFilterPins {
+    /// `key=value` overrides, each passed as `-c`. Empty when the repository
+    /// configuration defines no filter driver.
+    Overrides(Vec<String>),
+    /// The repository-defined drivers cannot be overridden; refuse the call.
+    Refused,
+}
+
+/// Overrides that stop a `filter.<driver>.clean`, `.smudge` or `.process`
+/// program named by the repository's own configuration from running (#14242).
+///
+/// `git status`, `git ls-files -m` and a worktree `git diff` pass a path
+/// through its clean filter to compare it with the index, so a planted
+/// `.git/config` driver plus an attribute line runs a program on a read-only
+/// ripr call. Git has no switch that disables filters, and an override needs
+/// the driver name, so the names are listed before each call. A driver the user
+/// configured in their system or global configuration (Git LFS, for
+/// example) keeps that definition: each repository-defined key is reset to
+/// the value the trusted scopes give it, or to nothing.
+///
+/// The listing is read again for every call and never cached: an included
+/// file, a conditional include or a worktree configuration can change the
+/// answer without touching `.git/config`, and a stale answer would let a
+/// repository program run. `budget` is the caller's own deadline; the listing
+/// never waits longer than it.
+fn repository_filter_pins(root: &Path, budget: Option<Duration>) -> RepositoryFilterPins {
+    probe_repository_filter_pins(root, budget)
+}
+
+const FILTER_CONFIG_PATTERN: &str = r"^filter\..*\.(clean|smudge|process|required)$";
+
+// Filter listings started on this test thread, so tests can show when a
+// call did and did not start one.
+#[cfg(test)]
+thread_local! {
+    static TEST_FILTER_PROBE_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn filter_config_listing(
+    root: &Path,
+    with_scope: bool,
+    deadline: Duration,
+) -> Result<Output, CoreError> {
+    let mut args = vec!["config"];
+    if with_scope {
+        args.push("--show-scope");
+    }
+    args.extend(["--includes", "-z", "--get-regexp", FILTER_CONFIG_PATTERN]);
+    // Reading configuration runs no filter, so the listing itself needs no
+    // filter pins; it keeps the other shared pins.
+    let command =
+        git_command_with_filter_pins(root, &args, &RepositoryFilterPins::Overrides(Vec::new()));
+    // The listing is bookkeeping for the caller's one git call, so it stays
+    // out of the per-thread spawn count tests use to pin call budgets.
+    #[cfg(test)]
+    let spawns_before = TEST_PROCESS_SPAWNS.with(std::cell::Cell::get);
+    #[cfg(test)]
+    TEST_FILTER_PROBE_SPAWNS.with(|count| count.set(count.get() + 1));
+    let output = collect_output_with_optional_deadline_and_limit(
+        command,
+        Some(deadline),
+        FILTER_CONFIG_PROBE_MAX_BYTES,
+        "git config --get-regexp (filter drivers)",
+    );
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(spawns_before));
+    output
+}
+
+fn probe_repository_filter_pins(root: &Path, budget: Option<Duration>) -> RepositoryFilterPins {
+    if budget.is_some_and(|budget| budget.is_zero()) {
+        // The caller's collector rejects a zero deadline before it spawns
+        // anything, so nothing is listed; the refusal keeps that true even
+        // if the command were run.
+        return RepositoryFilterPins::Refused;
+    }
+    if !root.is_dir() {
+        // The caller's own spawn fails on this root and reports it.
+        return RepositoryFilterPins::Overrides(Vec::new());
+    }
+    let started = std::time::Instant::now();
+    for with_scope in [true, false] {
+        // Both listings share the caller's budget and the listing's own cap.
+        let deadline = budget
+            .map_or(FILTER_CONFIG_PROBE_DEADLINE, |budget| {
+                budget.min(FILTER_CONFIG_PROBE_DEADLINE)
+            })
+            .saturating_sub(started.elapsed());
+        if deadline.is_zero() {
+            return RepositoryFilterPins::Refused;
+        }
+        let output = match filter_config_listing(root, with_scope, deadline) {
+            Ok(output) => output,
+            // A missing git reports itself on the caller's spawn. A listing
+            // that timed out or overran its bound is not a known-empty one.
+            Err(error) if is_git_not_found_on_path(&error.to_string()) => {
+                return RepositoryFilterPins::Overrides(Vec::new());
+            }
+            Err(_) => return RepositoryFilterPins::Refused,
+        };
+        if let Some(pins) =
+            filter_pins_for_probe_exit(output.status.code(), &output.stdout, with_scope)
+        {
+            return pins;
+        }
+    }
+    RepositoryFilterPins::Refused
+}
+
+/// What a finished filter listing means for the caller's git call, or `None`
+/// to list again without `--show-scope`.
+fn filter_pins_for_probe_exit(
+    code: Option<i32>,
+    stdout: &[u8],
+    with_scope: bool,
+) -> Option<RepositoryFilterPins> {
+    match code {
+        Some(0) => Some(filter_pins_from_listing(stdout, with_scope)),
+        // No matching key.
+        Some(1) => Some(RepositoryFilterPins::Overrides(Vec::new())),
+        // Git before 2.26 has no `--show-scope`: list again without it
+        // and treat every definition as the repository's.
+        Some(129) if with_scope => None,
+        // Unreadable configuration: the caller's git call reads the same
+        // files and fails on them with its own message.
+        Some(_) => Some(RepositoryFilterPins::Overrides(Vec::new())),
+        // Ended by a signal: the listing is unknown, not empty, and the
+        // caller's git call could still read the configuration.
+        None => Some(RepositoryFilterPins::Refused),
+    }
+}
+
+/// Parse `git config [--show-scope] -z --get-regexp` output into overrides.
+///
+/// Scoped entries are `<scope> NUL <key> LF <value> NUL`; unscoped ones are
+/// `<key> LF <value> NUL`. `system`, `global` and `command` scopes are the
+/// user's; everything else (`local`, `worktree`, an unknown scope, or any
+/// entry of an unscoped listing) is the repository's.
+fn filter_pins_from_listing(stdout: &[u8], with_scope: bool) -> RepositoryFilterPins {
+    // `None` is a key written with no value, which git reads as boolean true
+    // and which differs from an empty value (false).
+    let mut trusted: std::collections::BTreeMap<String, Option<String>> =
+        std::collections::BTreeMap::new();
+    let mut repository_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut fields = stdout.split(|byte| *byte == 0);
+    loop {
+        let scope = if with_scope {
+            match fields.next() {
+                Some(scope) if !scope.is_empty() => scope,
+                _ => break,
+            }
+        } else {
+            b"local".as_slice()
+        };
+        let Some(entry) = fields.next() else {
+            if with_scope {
+                return RepositoryFilterPins::Refused;
+            }
+            break;
+        };
+        if entry.is_empty() {
+            // The trailing field of an unscoped listing; in a scoped one, a
+            // scope with no key after it.
+            if with_scope {
+                return RepositoryFilterPins::Refused;
+            }
+            break;
+        }
+        let (key, value) = match entry.iter().position(|byte| *byte == b'\n') {
+            Some(split) => (&entry[..split], Some(&entry[split + 1..])),
+            None => (entry, None),
+        };
+        let Ok(key) = std::str::from_utf8(key) else {
+            return RepositoryFilterPins::Refused;
+        };
+        let value = match value.map(std::str::from_utf8) {
+            Some(Ok(value)) => Some(value.to_string()),
+            Some(Err(_)) => return RepositoryFilterPins::Refused,
+            None => None,
+        };
+        if matches!(scope, b"system" | b"global" | b"command") {
+            trusted.insert(key.to_string(), value);
+        } else {
+            // `git -c <key>=<value>` splits at the first `=`, so a driver
+            // name containing one cannot be overridden.
+            if key.contains('=') {
+                return RepositoryFilterPins::Refused;
+            }
+            repository_keys.insert(key.to_string());
+        }
+    }
+    RepositoryFilterPins::Overrides(
+        repository_keys
+            .into_iter()
+            .map(|key| {
+                let required = key.ends_with(".required");
+                let value = match trusted.get(&key) {
+                    Some(Some(value)) => value.as_str(),
+                    // A trusted valueless `required` is true; `key=` on the
+                    // command line would turn it off.
+                    Some(None) if required => "true",
+                    Some(None) => "",
+                    None if required => "false",
+                    None => "",
+                };
+                format!("{key}={value}")
+            })
+            .collect(),
+    )
+}
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
+    git_command_with_filter_pins(root, args, &repository_filter_pins(root, None))
+}
+
+/// `git_command` for a caller with a deadline: the filter listing runs inside
+/// that deadline, and the returned budget is what is left for the call. A
+/// zero budget starts no listing, so the caller's collector reports the
+/// timeout without spawning git. A listing that used the whole budget must
+/// not turn the caller's deadline into a zero one: the call still reports the
+/// deadline it was given, not "zero deadline (not spawned)" (#14242 review).
+fn git_command_within(
+    root: &Path,
+    args: &[&str],
+    budget: Option<Duration>,
+) -> (Command, Option<Duration>) {
+    let started = std::time::Instant::now();
+    let pins = repository_filter_pins(root, budget);
+    let remaining = budget.map(|budget| {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            budget
+        } else {
+            remaining
+        }
+    });
+    (git_command_with_filter_pins(root, args, &pins), remaining)
+}
+
+/// `git_command` for test fixture setup, which stages and commits through
+/// the repository's own filter drivers on purpose.
+#[cfg(test)]
+fn fixture_git_command(root: &Path, args: &[&str]) -> Command {
+    git_command_with_filter_pins(root, args, &RepositoryFilterPins::Overrides(Vec::new()))
+}
+
+fn git_command_with_filter_pins(
+    root: &Path,
+    args: &[&str],
+    filter_pins: &RepositoryFilterPins,
+) -> Command {
     let mut command = Command::new("git");
     // Several callers read Git's stderr for a known cause (dubious ownership,
     // no merge base, a damaged repository). A translated Git would word those
@@ -332,6 +593,18 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     // an index write fires the repository's `post-index-change` hook. ripr's
     // analysis is read-only, so no optional lock (and no index write) is taken.
     command.env("GIT_OPTIONAL_LOCKS", "0");
+    // ripr never asks Git to reach a remote, but a partial clone fetches
+    // missing objects on demand. Offline or unauthenticated, that fetch must
+    // fail at once with Git's own message instead of waiting on a terminal
+    // credential prompt or a credential-manager window nobody will answer.
+    // A configured `GIT_ASKPASS`/`core.askPass` helper still runs: CI token
+    // helpers depend on it, so it is left alone (RIPR-SPEC-0084, #14799).
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command.env("GCM_INTERACTIVE", "never");
+    // #14242: an inherited `GIT_CONFIG` redirects only `git config`, so the
+    // filter listing would read that file while every other git call still
+    // reads the repository's configuration.
+    command.env_remove("GIT_CONFIG");
     let null_device = git_null_device_path();
     command
         .current_dir(root)
@@ -344,7 +617,21 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         // an empty value still tries to open a file, so use Git's null device.
         // #9375: match `hooksPath` and use `NUL` on native Windows git builds.
         .args(["-c", &format!("diff.orderFile={null_device}")])
-        .args(args);
+        // #14242: a repository's `log.showSignature=true` makes `git log` and
+        // `git show` run its `gpg.program` on every signed commit they print.
+        // ripr never reads signature status.
+        .args(["-c", "log.showSignature=false"]);
+    match filter_pins {
+        RepositoryFilterPins::Overrides(overrides) => {
+            for pin in overrides {
+                command.args(["-c", pin]);
+            }
+        }
+        RepositoryFilterPins::Refused => {
+            command.arg(REFUSED_FILTER_CONFIG_FLAG);
+        }
+    }
+    command.args(args);
     command
 }
 
@@ -358,7 +645,8 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
 /// directory, or cannot run.
 pub(crate) fn discovered_work_tree_toplevel(dir: &Path, timeout: Duration) -> Option<PathBuf> {
     let args = ["rev-parse", "--show-toplevel"];
-    let mut command = git_command(dir, &args);
+    let (mut command, timeout) = git_command_within(dir, &args, Some(timeout));
+    let timeout = timeout.unwrap_or(Duration::ZERO);
     command
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
@@ -650,7 +938,7 @@ pub(crate) fn run_git_output_with_deadline_and_env(
     // spawn-failure and timeout messages, and a debug list reads as an
     // internal leak (#9604 batch E).
     let describe = format!("git -C {} {}", root.display(), args.join(" "));
-    let mut command = git_command(root, args);
+    let (mut command, timeout) = git_command_within(root, args, timeout);
     for (key, value) in envs {
         command.env(key, value);
     }
@@ -679,9 +967,10 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     // spawn-failure and timeout messages, and a debug list reads as an
     // internal leak (#9604 batch E).
     let describe = format!("git -C {} {}", root.display(), args.join(" "));
+    let (command, timeout) = git_command_within(root, args, Some(timeout));
     collect_output_with_deadline_and_limit(
-        git_command(root, args),
-        timeout,
+        command,
+        timeout.unwrap_or(Duration::ZERO),
         max_output_bytes,
         &describe,
     )
@@ -700,7 +989,7 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         ));
     }
     let describe = format!("isolated git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
+    let mut command = fixture_git_command(root, args);
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     command
         .env("GIT_CONFIG_GLOBAL", null_config)
@@ -750,12 +1039,8 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
     // spawn-failure and timeout messages, and a debug list reads as an
     // internal leak (#9604 batch E).
     let describe = format!("git -C {} {}", root.display(), args.join(" "));
-    collect_output_with_optional_deadline_and_limit(
-        git_command(root, args),
-        timeout,
-        max_output_bytes,
-        &describe,
-    )
+    let (command, timeout) = git_command_within(root, args, timeout);
+    collect_output_with_optional_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 
 #[cfg(test)]
@@ -779,6 +1064,14 @@ fn collect_output_with_optional_deadline_and_limit(
     max_output_bytes: usize,
     describe: &str,
 ) -> Result<Output, CoreError> {
+    // #15148: a call made after the analysis was cancelled spawns nothing.
+    // The poll loop observes cancellation only while the child runs, so a
+    // child that exits at once (a call the filter-pin probe refused, whose
+    // listing was itself cut short by the cancellation) would return its
+    // usage-error exit, and a cancelled run would report a repository error.
+    if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+        return Err(cancelled.into());
+    }
     if timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(CoreError::git_invocation_timeout(describe, 0, false));
     }
@@ -1006,11 +1299,26 @@ impl CatFileBatch {
     /// overall deadline for the whole session, enforced incrementally.
     pub(crate) fn spawn(root: &Path, budget: Duration) -> Result<Self, CoreError> {
         let describe = format!("git -C {} cat-file --batch", root.display());
-        let mut command = git_command(root, &["cat-file", "--batch"]);
+        let args = ["cat-file", "--batch"];
+        // The session enforces its budget itself, including a zero one, so
+        // only a non-zero budget is shared with the filter listing.
+        let (mut command, budget) = if budget.is_zero() {
+            (git_command(root, &args), budget)
+        } else {
+            let (command, remaining) = git_command_within(root, &args, Some(budget));
+            (command, remaining.unwrap_or(Duration::ZERO))
+        };
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // #15148: as in the output collectors, a cancelled analysis starts no
+        // session. The check follows the filter listing, so a deadline that
+        // expires during the listing cannot start a session whose refused
+        // filter-pin call would read as the session's own failure.
+        if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+            return Err(cancelled.into());
+        }
         let spawn_site = SpawnSite::of(&command);
         let mut child = OwnedProcess::spawn_without_console(command)
             .map_err(|err| spawn_site.failure_message(&describe, &err))?;
@@ -1399,6 +1707,14 @@ fn collect_output_with_deadline(
     timeout: Option<Duration>,
     describe: &str,
 ) -> Result<Output, CoreError> {
+    // #15148: a call made after the analysis was cancelled spawns nothing.
+    // The poll loop observes cancellation only while the child runs, so a
+    // child that exits at once (a call the filter-pin probe refused, whose
+    // listing was itself cut short by the cancellation) would return its
+    // usage-error exit, and a cancelled run would report a repository error.
+    if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
+        return Err(cancelled.into());
+    }
     if let Some(deadline) = timeout
         && deadline.is_zero()
     {
@@ -1637,6 +1953,10 @@ fn drain_pipe_reader(
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "git_helper_pin_tests.rs"]
+mod helper_pin_tests;
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -1647,6 +1967,18 @@ mod tests {
     use super::*;
     use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
     use serial_test::serial;
+
+    #[test]
+    fn git_commands_disable_terminal_and_gcm_credential_prompts() {
+        let command = git_command(Path::new("."), &["status"]);
+        let envs: Vec<_> = command.get_envs().collect();
+        for (key, value) in [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never")] {
+            assert!(
+                envs.contains(&(std::ffi::OsStr::new(key), Some(std::ffi::OsStr::new(value)))),
+                "{key}={value} must be set on every ripr git invocation: {envs:?}"
+            );
+        }
+    }
 
     #[test]
     fn bounded_git_output_escapes_controls_and_marks_the_cap() {
@@ -2642,6 +2974,113 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             return Err(format!(
                 "fastest poll of a fast-exiting child took {best:?}; bound {bound:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #15148: under a cancelled analysis, neither git collector spawns the
+    /// call. Before the pre-spawn check, the filter listing's cancellation
+    /// made the probe refuse, the refused call exited at once with a usage
+    /// error, and that exit could win the race with the poll loop's
+    /// cancellation check, so a cancelled refresh reported a repository error.
+    #[test]
+    fn a_cancelled_analysis_spawns_no_git_call_and_reports_the_cancellation() -> Result<(), String>
+    {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let token = AnalysisCancellationToken::new();
+        if !token.cancel(AnalysisAbortKind::Superseded) {
+            return Err("fresh token should accept cancellation".to_string());
+        }
+        let args = ["rev-parse", "--git-dir"];
+        let spawns_before = test_process_spawns();
+        let results = with_token(&token, || {
+            [
+                run_git_output_with_deadline(&root, &args, Some(Duration::from_secs(30))),
+                run_git_output_with_optional_deadline_and_limit(&root, &args, None, 4096),
+            ]
+        });
+        for result in results {
+            match result {
+                Err(error)
+                    if error.is_analysis_cancelled()
+                        && error.to_string() == "analysis cancelled: Superseded" => {}
+                Err(error) => return Err(format!("expected the cancellation, got: {error}")),
+                Ok(output) => {
+                    return Err(format!(
+                        "a cancelled analysis ran git (exit {:?})",
+                        output.status.code()
+                    ));
+                }
+            }
+        }
+        if test_process_spawns() != spawns_before {
+            return Err("a cancelled analysis must not spawn the git call".to_string());
+        }
+        // The batch session spawns outside the collectors and is held to
+        // the same rule.
+        match with_token(&token, || {
+            CatFileBatch::spawn(&root, Duration::from_secs(30))
+        }) {
+            Err(error)
+                if error.is_analysis_cancelled()
+                    && error.to_string() == "analysis cancelled: Superseded" => {}
+            Err(error) => {
+                return Err(format!(
+                    "expected the cancellation from the batch session, got: {error}"
+                ));
+            }
+            Ok(_) => return Err("a cancelled analysis started a cat-file session".to_string()),
+        }
+        // Control: the same calls run once the analysis is live again.
+        let output = run_git_output_with_deadline(&root, &args, Some(Duration::from_secs(30)))
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err("a live analysis must run the git call".to_string());
+        }
+        Ok(())
+    }
+
+    /// #15148 review: a deadline that expires after the batch session's
+    /// entry but during its filter listing still starts no session. The
+    /// budget clock answers live once (the listing's own pre-spawn check)
+    /// and expired afterwards, so an entry-only checkpoint would pass and
+    /// spawn the session with a refused filter-pin call.
+    #[test]
+    fn a_deadline_that_expires_during_the_batch_filter_listing_starts_no_session()
+    -> Result<(), String> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let checks = std::sync::Arc::new(AtomicUsize::new(0));
+        let clock_checks = std::sync::Arc::clone(&checks);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(1),
+            std::sync::Arc::new(move || {
+                if clock_checks.fetch_add(1, Ordering::Relaxed) < 1 {
+                    started
+                } else {
+                    started + Duration::from_secs(1)
+                }
+            }),
+        );
+        match with_token(&token, || {
+            CatFileBatch::spawn(&root, Duration::from_secs(30))
+        }) {
+            Err(error) if error.is_analysis_cancelled() => {}
+            Err(error) => return Err(format!("expected the cancellation, got: {error}")),
+            Ok(_) => {
+                return Err("a deadline that expired during setup started a session".to_string());
+            }
+        }
+        if token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded) {
+            return Err(format!(
+                "expected the deadline abort, got {:?}",
+                token.observed_abort()
+            ));
+        }
+        if checks.load(Ordering::Relaxed) < 2 {
+            return Err("the budget clock was not consulted after the listing".to_string());
         }
         Ok(())
     }

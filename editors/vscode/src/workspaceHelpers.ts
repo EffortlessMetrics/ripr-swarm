@@ -12,6 +12,7 @@ import { Trace } from 'vscode-languageclient';
 import type { RiprConfig } from './config';
 import type { RiprWorkspaceRootState } from './client';
 import { RIPR_DOCUMENT_SELECTORS } from './client';
+import { knownExtensionVersion } from './extensionVersion';
 
 // VS Code matches `pattern` as a glob, so glob metacharacters in the workspace
 // path would otherwise change what it matches (`[a]` as a class, `{a,b}` as
@@ -41,9 +42,9 @@ export function integerSetting(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/** The extension version for status and client capabilities; `unknown` only when no manifest can be read (#14647). */
 export function extensionVersion(context: vscode.ExtensionContext): string {
-  const version = context.extension?.packageJSON?.version;
-  return typeof version === 'string' && version.trim() !== '' ? version.replace(/^v/, '') : '0.8.0';
+  return knownExtensionVersion(context) ?? 'unknown';
 }
 
 export function traceFromConfig(trace: RiprConfig['traceServer']): Trace {
@@ -132,7 +133,8 @@ const RUST_OR_RIPR_PROJECT_MARKERS = ['Cargo.toml', 'ripr.toml'] as const;
 /** Matches the README: tsconfig/jsconfig enable TypeScript; package.json alone does not. */
 export const TYPESCRIPT_PROJECT_MARKERS = ['tsconfig.json', 'jsconfig.json'] as const;
 
-const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
+/** Every root marker `workspaceHasAnalyzableProject` accepts; `activationEvents` lists the same set (#14647). */
+export const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
   ...RUST_OR_RIPR_PROJECT_MARKERS,
   ...PYTHON_PROJECT_MARKERS,
   ...TYPESCRIPT_PROJECT_MARKERS,

@@ -151,6 +151,14 @@ pub(super) fn reference_probe_shapes(
                 );
             }
         }
+        // #14385: tail `if`/`else` branch values; one shared helper, not a walk.
+        super::probe_shapes::push_tail_if_branch_return_values(
+            &mut shapes,
+            line_index,
+            text,
+            source,
+            &tail_expr,
+        );
     }
 
     for call_expr in function
@@ -524,6 +532,14 @@ fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(),
             "use std::hint::unreachable_unchecked;\nfn f(unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
         ),
         (
+            "raw-spelled parameter shadows an import",
+            "use std::hint::unreachable_unchecked;\nfn f(r#unreachable_unchecked: fn()) { unsafe { r#unreachable_unchecked() }; }\n",
+        ),
+        (
+            "raw-spelled parameter shadows a plain call",
+            "use std::hint::unreachable_unchecked;\nfn f(r#unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
             "absolute path to another crate",
             "fn f() { unsafe { ::other::hint::unreachable_unchecked() }; }\n",
         ),
@@ -677,8 +693,8 @@ fn probe_walk_full_facts_equal_sort_keys_keep_first_span() -> Result<(), String>
         .collect();
     assert_eq!(calls.len(), 1);
     let start = text.find("notify()").ok_or("missing literal call")?;
-    assert_eq!(calls[0].start_byte, start);
-    assert_eq!(calls[0].end_byte, start + "notify()".len());
+    assert_eq!(calls[0].start_byte(), start);
+    assert_eq!(calls[0].end_byte(), start + "notify()".len());
     assert!(!calls[0].value_consumed);
     Ok(())
 }

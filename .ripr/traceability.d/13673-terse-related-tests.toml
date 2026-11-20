@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_codes_related_test_oracle_and_why_and_round_trips",
+]
