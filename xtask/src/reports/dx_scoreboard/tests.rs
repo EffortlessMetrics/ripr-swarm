@@ -4765,41 +4765,65 @@ fn warm_check_mode_checkout(
 
 fn scoreboard_test_ripr_binary() -> Result<String, String> {
     static BINARY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            // `cargo test -p xtask` runs with cwd at the xtask package, so a
-            // relative `target/debug/ripr` lookup misses the workspace binary
-            // that `cargo build -p ripr` actually writes.
-            crate::run::run("cargo", &["build", "-p", "ripr"]).map(|_| ())?;
-            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
+    BINARY.get_or_init(|| build_scoreboard_ripr(&[])).clone()
+}
+
+fn build_scoreboard_ripr(envs: &[(&str, &str)]) -> Result<String, String> {
+    let args = [
+        "build",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr",
+        "--message-format=json-render-diagnostics",
+    ]
+    .map(String::from);
+    let output = crate::run::run_output_owned_with_envs("cargo", &args, envs)?;
+    let manifest = crate::repo_root()?.join("crates/ripr/Cargo.toml");
+    scoreboard_ripr_artifact(&output, &manifest)
+}
+
+fn scoreboard_ripr_artifact(output: &str, manifest: &Path) -> Result<String, String> {
+    let manifest = manifest
+        .canonicalize()
+        .map_err(|err| format!("resolve ripr manifest: {err}"))?;
+    let mut executables = Vec::new();
+    for line in output.lines() {
+        let message: Value = serde_json::from_str(line)
+            .map_err(|err| format!("invalid scoreboard Cargo message: {err}"))?;
+        if message["reason"] != "compiler-artifact"
+            || message["target"]["name"] != "ripr"
+            || message["target"]["kind"] != json!(["bin"])
+            || message["profile"]["test"] != false
+        {
+            continue;
+        }
+        let path = message["manifest_path"]
+            .as_str()
+            .ok_or("Cargo omitted the ripr manifest path")?;
+        if Path::new(path)
+            .canonicalize()
+            .map_err(|err| format!("resolve Cargo manifest {path}: {err}"))?
+            != manifest
+        {
+            continue;
+        }
+        let executable = message["executable"]
+            .as_str()
+            .ok_or("Cargo omitted the ripr executable")?;
+        executables.push(PathBuf::from(executable));
+    }
+    match executables.as_slice() {
+        [path] if path.is_absolute() && path.is_file() => {
+            let path = path
                 .canonicalize()
-                .map_err(|err| format!("workspace root: {err}"))?;
-            let target = match std::env::var_os("CARGO_TARGET_DIR") {
-                Some(dir) => {
-                    let path = PathBuf::from(dir);
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        workspace.join(path)
-                    }
-                }
-                None => workspace.join("target"),
-            };
-            let binary = target
-                .join("debug")
-                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-            binary
-                .canonicalize()
-                .map(|path| path.display().to_string())
-                .map_err(|err| {
-                    format!(
-                        "ripr binary {} missing after cargo build -p ripr: {err}",
-                        binary.display()
-                    )
-                })
-        })
-        .clone()
+                .map_err(|err| format!("resolve Cargo executable {}: {err}", path.display()))?;
+            crate::path_to_utf8(&path, "scoreboard Cargo executable").map(str::to_owned)
+        }
+        _ => Err(format!(
+            "expected one existing absolute executable for the workspace ripr bin, got {executables:?}"
+        )),
+    }
 }
 
 fn run_measured_check(args: &[String], cache: &Path) -> Result<MeasuredOutput, String> {
