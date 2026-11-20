@@ -1054,7 +1054,7 @@ owner = "analysis-fixtures"
 surface = "fixtures"
 classification = "fixture"
 reason = "Pins the public check JSON evidence for direct dependent tests, a specific facade witness and an independent Cargo package."
-covered_by = ["cargo test -p ripr --lib dependent_test_host_hint_yields_to_the_facade_witness", "cargo xtask check-file-policy"]
+covered_by = ["cargo test -p ripr --lib analysis::language::rust::facade_reach_tests", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
