@@ -1110,7 +1110,9 @@ impl CallInputs<'_> {
     /// literal argument; `None` for anything computed or rebound.
     fn shape(&self, name: &str) -> Option<Shape> {
         // A shadowed `Array` would make `Array.isArray` something else.
-        if self.params.iter().any(|param| param == "Array") {
+        if self.params.iter().any(|param| param == "Array")
+            || owner_may_shadow_array(self.owner_source)
+        {
             return None;
         }
         if let Some(literal) = self.lookup(name) {
@@ -1491,6 +1493,19 @@ enum Shape {
     Array,
     Object,
     Function,
+}
+
+/// Whether the owner mentions `Array` other than as `Array.member` or a
+/// type `Array<..>`: a local binding (`const Array`, `{ Array }`) may
+/// shadow the global. A module-level import is not visible here.
+fn owner_may_shadow_array(owner_source: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    super::mock_payload_guard::identifier_offsets(&masked, "Array")
+        .into_iter()
+        .any(|at| {
+            let rest = masked[at + "Array".len()..].trim_start();
+            !(rest.starts_with('.') || rest.starts_with('<'))
+        })
 }
 
 fn is_plain_identifier(text: &str) -> bool {
@@ -1927,6 +1942,21 @@ mod tests {
             (15, "e();", "{}", false),
             (18, "g();", "[1]", true),
             (18, "g();", "5", false),
+            // A non-literal argument must not read as an array: a wrong
+            // `Shape::Array` would exclude `g()` here.
+            (18, "g();", "[1][0]", false),
+            (18, "g();", "[1].concat(y)", false),
+            (18, "g();", "[1] as any", false),
+            (18, "g();", "{}.a", false),
+            (18, "g();", "make()", false),
+            (18, "g();", "y", false),
+            // A non-literal must not read as an object or a function: a
+            // wrong shape would exclude `b()` (`typeof x === 'number'`).
+            (6, "b();", "{}.a", false),
+            (6, "b();", "{}[0]", false),
+            (6, "b();", "(x) + 1", false),
+            (6, "b();", "x ? a : (b) => c", false),
+            (6, "b();", "foo(x => x)", false),
         ] {
             assert_eq!(
                 excludes_plain(array, line, text, &[argument]),
@@ -1934,6 +1964,11 @@ mod tests {
                 "{text} on line {line} with {argument}"
             );
         }
+        // A local that may shadow `Array` makes `Array.isArray` unreadable.
+        let shadowed = "function f(x) {\n  const Array = { isArray: () => true };\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
+        assert!(!excludes_plain(shadowed, 4, "a();", &["5"]));
+        let typed = "function f(x: Array<number> | number) {\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
+        assert!(excludes_plain(typed, 3, "a();", &["5"]));
         // A body that rebinds the parameter is not read.
         let rebound = "function f(x) {\n  x = [1];\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
         assert!(!excludes_plain(rebound, 4, "a();", &["5"]));
