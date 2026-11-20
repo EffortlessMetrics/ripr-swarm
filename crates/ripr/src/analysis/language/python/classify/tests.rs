@@ -1525,7 +1525,7 @@ fn predicate_boundary_without_literal_inputs_fails_closed() -> Result<(), String
         );
         assert!(
             format!("{finding:?}").contains(
-                "every strong related test call to `bulk_discount` passes its inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `quantity >= 100`"),
+                "no strong related test call to `bulk_discount` binds a literal argument, and some pass inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `quantity >= 100`"),
             "{finding:?}"
         );
         assert!(
@@ -1625,10 +1625,38 @@ fn coerced_parameter_reads_the_literal_through_the_conversion() -> Result<(), St
     // round it, but never onto the `0` bound, so it does not block the read.
     let with_overflow = negative.replace(
         "        from_timestamp(-10)\n",
-        "        from_timestamp(-10)\n\ndef test_overflow():\n    with pytest.raises(ValueError):\n        from_timestamp(9223372036854775)\n",
+        "        from_timestamp(-10)\n\ndef test_large():\n    assert from_timestamp(9223372036854775) == 9223372036854776.0\n",
     );
     let overflow = classify_edit_case(source, &with_overflow, 3, old, new)?;
     assert_eq!(overflow.class, ExposureClass::WeaklyExposed, "{overflow:?}");
+    assert_eq!(
+        overflow
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value == 0"],
+        "the large strong row is read, not refused: {overflow:?}"
+    );
+    // An `int` coercion of an integer literal is read through too.
+    let int_source = source.replace("float(value)", "int(value)");
+    let int_off = classify_edit_case(&int_source, negative, 3, old, new)?;
+    assert_eq!(int_off.class, ExposureClass::WeaklyExposed, "{int_off:?}");
+    // A rebound operand fed through a `*` unpack is unread test input: it
+    // fails closed instead of keeping the oracle verdict.
+    let star = classify_edit_case(
+        &source.replace("float(value)", "abs(value)"),
+        "import pytest\nfrom src.subject import from_timestamp\n\n@pytest.mark.parametrize(\"args\", [[-10]])\ndef test_negative(args):\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(*args)\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    assert!(
+        star.activation.missing_discriminators.is_empty(),
+        "{star:?}"
+    );
     // The real owner passes `value` on as a keyword-adjacent argument
     // (`fromtimestamp(value, tz=...)`), which the line reader takes for a
     // tuple target; the parsed body shows it is not a binding.
@@ -1826,9 +1854,9 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
-/// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable and an argname the test
-/// body rebinds before the call.
+/// Shapes whose cases are not statically certain bind no case value:
+/// argvalues named by a variable and an argname the test body rebinds before
+/// the call. Since #15287 that unread input fails closed to weak.
 #[test]
 fn uncertain_parametrize_cases_fail_closed() -> Result<(), String> {
     for tests in [

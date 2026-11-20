@@ -1351,8 +1351,11 @@ operand the owner rebinds keeps the same limitation. One rebinding is read
 through: when the owner's first statement is `name = float(name)` or
 `name = int(name)`, it is the only binding of that parameter, and every strong
 call binds it to a numeric literal the conversion leaves equal (integers for
-`int`; floats and integers within 2**53 for `float`), the call's literal is the
-compared value (#15287).
+`int`; floats and integers within 2**53 for `float`, or a larger integer when
+the other operand is a literal below 2**53, which rounding can never reach),
+the call's literal is the compared value (#15287). An operand the owner
+rebinds in any other way still keeps the limitation, unless the tests also
+pass unread inputs as above, which fail closed.
 
 For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It

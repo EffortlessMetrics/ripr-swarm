@@ -286,9 +286,16 @@ pub(super) fn python_boundary_evidence(
                 // `start -= 1`), so the call argument does not stay the
                 // value the predicate reads and the boundary may be reached
                 // inside the owner. Static evidence cannot place the input
-                // either way: unknown, never a missing-boundary gap.
+                // either way: unknown, never a missing-boundary gap. When
+                // the tests also pass inputs the reader could not see, the
+                // unread input fails closed the same as an unrebound one
+                // (#15287), still without naming a repair target.
                 return Some(PythonBoundaryEvidence {
-                    activation: BoundaryActivation::Unresolved,
+                    activation: if unread_inputs {
+                        BoundaryActivation::UnreadInput
+                    } else {
+                        BoundaryActivation::Unresolved
+                    },
                     discriminator: None,
                     observed_values: Vec::new(),
                     reason: format!(
@@ -343,7 +350,7 @@ pub(super) fn python_boundary_evidence(
                 discriminator: None,
                 observed_values,
                 reason: format!(
-                    "every strong related test call to `{}` passes its inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `{condition}`",
+                    "no strong related test call to `{}` binds a literal argument, and some pass inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `{condition}`",
                     owner.name
                 ),
             });
