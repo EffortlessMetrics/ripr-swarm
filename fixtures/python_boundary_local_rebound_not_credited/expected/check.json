@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 2 related Python test(s) found for owner `tier`", "infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if score >= 50: (line 2)", "related test tests/test_pricing.py:8 test_edge uses strong exact value oracle: assert tier(s) == \"basic\"", "related test tests/test_pricing.py:4 test_gold uses strong exact value oracle: assert tier(80) == \"gold\"", "source function argument value score = 80 at line 5"],
       "flow_sinks": [
         {"kind":"unknown","text":"if score >= 50:","line":2}

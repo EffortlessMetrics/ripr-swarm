@@ -68,6 +68,7 @@ const ANALYSIS_INCOMPLETE: &str = "analysis_incomplete";
 const NO_FINDING: &str = "no_finding_on_mutated_lines";
 const AMBIGUOUS_VERDICT: &str = "ambiguous_verdict";
 const SYNTHETIC_SEAM_KIND: &str = "diff_probe";
+pub(crate) const RECORDED_DIFF_MISSING: &str = "recorded_diff_missing";
 
 /// The language a mutation report is scored for.
 #[derive(Clone, Copy, Debug)]
@@ -76,16 +77,38 @@ pub(crate) struct LanguageProfile {
     pub(crate) language: &'static str,
     /// Lowercase file extensions (no dot) the language's adapter analyzes.
     pub(crate) extensions: &'static [&'static str],
+    /// Build-output directories skipped at the checkout root when copying the
+    /// scratch tree, on top of the shared skip list. Only the root: a source
+    /// module directory that happens to share a name (`src/target/`) is kept.
+    pub(crate) skip_dirs: &'static [&'static str],
+    /// A mutant without a recorded diff is excluded as
+    /// `recorded_diff_missing` instead of being rebuilt from its span, because
+    /// the tool's edit cannot be reconstructed faithfully (cargo-mutants
+    /// before 27 records no diff).
+    pub(crate) requires_recorded_diff: bool,
 }
 
 pub(crate) const TYPESCRIPT: LanguageProfile = LanguageProfile {
     language: "typescript",
     extensions: &["ts", "tsx", "mts", "cts"],
+    skip_dirs: &[],
+    requires_recorded_diff: false,
 };
 
 pub(crate) const PYTHON: LanguageProfile = LanguageProfile {
     language: "python",
     extensions: &["py"],
+    skip_dirs: &[],
+    requires_recorded_diff: false,
+};
+
+/// Rust scored through the diff path with each cargo-mutants mutant's own
+/// recorded diff (see [`super::cargo_mutants_diff`]).
+pub(crate) const RUST: LanguageProfile = LanguageProfile {
+    language: "rust",
+    extensions: &["rs"],
+    skip_dirs: &["target", "mutants.out", "mutants.out.old"],
+    requires_recorded_diff: true,
 };
 
 /// One mutant in the join's language-neutral form.
@@ -106,6 +129,9 @@ pub(crate) struct SyntheticMutant {
     pub(crate) status: String,
     /// `caught`, `missed`, or another token that is never scored.
     pub(crate) outcome: String,
+    /// The tool's own unified diff for this mutant (cargo-mutants records
+    /// one); when present it is applied instead of synthesizing an edit.
+    pub(crate) recorded_diff: Option<String>,
 }
 
 /// A source file the report mutated, with the text the tool mutated.
@@ -217,6 +243,21 @@ pub(crate) fn synthesize_edit(
     })
 }
 
+/// The edit a mutant makes: the tool's recorded diff when it has one,
+/// otherwise a synthesized one-hunk diff.
+fn edit_for(
+    path: &str,
+    source: &str,
+    mutant: &SyntheticMutant,
+    profile: &LanguageProfile,
+) -> Result<SyntheticEdit, &'static str> {
+    match &mutant.recorded_diff {
+        Some(diff) => super::cargo_mutants_diff::apply_recorded_diff(path, source, diff),
+        None if profile.requires_recorded_diff => Err(RECORDED_DIFF_MISSING),
+        None => synthesize_edit(path, source, mutant),
+    }
+}
+
 /// What `ripr check` said about the mutated lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Verdict {
@@ -241,14 +282,26 @@ const LIMITATIONS_THAT_EXPLAIN_NO_FINDING: &[&str] =
 
 /// Read the verdict for lines `first_line..=last_line` of `file` from a
 /// `ripr check --format json` report.
-pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line: u64) -> Verdict {
+pub(crate) fn read_verdict(
+    check: &Value,
+    file: &str,
+    first_line: u64,
+    last_line: u64,
+    language: &str,
+) -> Verdict {
     let matched: Vec<&Value> = check
         .get("findings")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter(|finding| {
-            finding.pointer("/probe/file").and_then(Value::as_str) == Some(file)
+            // The Rust adapter reports `./src/lib.rs`; the other adapters
+            // report the bare relative path.
+            finding
+                .pointer("/probe/file")
+                .and_then(Value::as_str)
+                .map(|probe_file| probe_file.strip_prefix("./").unwrap_or(probe_file))
+                == Some(file)
                 && finding
                     .pointer("/probe/line")
                     .and_then(Value::as_u64)
@@ -283,6 +336,16 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
     if !complete {
         return Verdict::Incomplete;
     }
+    // TypeScript and Python name the owner on the probe; the Rust adapter names
+    // it on the canonical gap. Two findings on the line with no owner at all
+    // cannot be told apart, so they fail closed as ambiguous.
+    if matched.len() > 1
+        && matched
+            .iter()
+            .any(|finding| finding_owner(finding).is_empty())
+    {
+        return Verdict::Ambiguous;
+    }
     let verdicts: BTreeSet<(&str, &str)> = matched
         .iter()
         .map(|finding| {
@@ -291,26 +354,53 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
                     .get("classification")
                     .and_then(Value::as_str)
                     .unwrap_or(""),
-                finding
-                    .pointer("/probe/owner")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
+                finding_owner(finding),
             )
         })
         .collect();
     let mut distinct = verdicts.into_iter();
     match (distinct.next(), distinct.next()) {
-        (Some((token, owner)), None) if !token.is_empty() => Verdict::Class {
-            token: token.to_string(),
-            owner: owner.to_string(),
-            expression: matched
-                .first()
-                .and_then(|finding| finding.pointer("/probe/expression"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
+        (Some((token, owner)), None) if !token.is_empty() => {
+            let has_transitive_reach_limit = matched.iter().any(|finding| {
+                finding.get("static_limit_kind").and_then(Value::as_str)
+                    == Some("python_transitive_reach_unresolved")
+                    || (language == "python"
+                        && finding
+                            .get("stop_reasons")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .any(|reason| reason.as_str() == Some("transitive_reach_unresolved")))
+            });
+            if token == "no_static_path" && has_transitive_reach_limit {
+                // The producer explicitly could not trace a bounded method
+                // path, so this is an honest unknown, not evidence that a
+                // caught mutant lacked a discriminator.
+                Verdict::Limited("python_transitive_reach_unresolved")
+            } else {
+                Verdict::Class {
+                    token: token.to_string(),
+                    owner: owner.to_string(),
+                    expression: matched
+                        .first()
+                        .and_then(|finding| finding.pointer("/probe/expression"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                }
+            }
+        }
         _ => Verdict::Ambiguous,
     }
+}
+
+/// The owner a finding names: on the probe for TypeScript and Python, on the
+/// canonical gap for Rust; empty when neither names one.
+fn finding_owner(finding: &Value) -> &str {
+    finding
+        .pointer("/probe/owner")
+        .or_else(|| finding.pointer("/canonical_gap/owner"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 /// The receipt grip class a ripr classification token is tallied under, so
@@ -475,7 +565,7 @@ pub(crate) fn score_mutants(
                     } else if !SCOREABLE_OUTCOMES.contains(&mutant.outcome.as_str()) {
                         Some(UNSCOREABLE_OUTCOME)
                     } else {
-                        synthesize_edit(file, &source.source, mutant).err()
+                        edit_for(file, &source.source, mutant, profile).err()
                     }
                 })
                 .collect(),
@@ -504,7 +594,7 @@ pub(crate) fn score_mutants(
                 records.push(excluded(OVER_CAP));
                 continue;
             }
-            let edit = match synthesize_edit(file, &source.source, mutant) {
+            let edit = match edit_for(file, &source.source, mutant, profile) {
                 Ok(edit) => edit,
                 Err(reason) => {
                     records.push(excluded(reason));
@@ -522,7 +612,13 @@ pub(crate) fn score_mutants(
                 }
             };
             records.push(
-                match read_verdict(&check, file, edit.first_line, edit.last_line) {
+                match read_verdict(
+                    &check,
+                    file,
+                    edit.first_line,
+                    edit.last_line,
+                    profile.language,
+                ) {
                     Verdict::Class {
                         token,
                         owner,
@@ -588,7 +684,7 @@ pub(crate) fn checkout_relative(path: &str) -> Option<PathBuf> {
         .then(|| candidate.to_path_buf())
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+fn copy_tree(from: &Path, to: &Path, skip_dirs: &[&str]) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|err| format!("create {}: {err}", to.display()))?;
     let entries = fs::read_dir(from).map_err(|err| format!("read {}: {err}", from.display()))?;
     for entry in entries {
@@ -602,10 +698,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
             continue;
         }
         if file_type.is_dir() {
-            if COPY_SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
+            let name = name.to_string_lossy();
+            if COPY_SKIP_DIRS.contains(&name.as_ref()) || skip_dirs.contains(&name.as_ref()) {
                 continue;
             }
-            copy_tree(&entry.path(), &target)?;
+            // `skip_dirs` names root-level build output only.
+            copy_tree(&entry.path(), &target, &[])?;
         } else {
             fs::copy(entry.path(), &target)
                 .map_err(|err| format!("copy {}: {err}", entry.path().display()))?;
@@ -618,6 +716,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 /// told otherwise (or a marker file is found), so the language under test is
 /// enabled explicitly. It replaces any `ripr.toml` the checkout carries.
 pub(crate) fn scratch_ripr_toml(profile: &LanguageProfile) -> String {
+    if profile.language == RUST.language {
+        return "[languages]\nenabled = [\"rust\"]\n".to_string();
+    }
     format!(
         "[languages]\nenabled = [\"rust\", \"{}\"]\n",
         profile.language
@@ -665,9 +766,15 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
     if tree.exists() {
         fs::remove_dir_all(&tree).map_err(|err| format!("clear {}: {err}", tree.display()))?;
     }
-    copy_tree(checkout, &tree)?;
-    fs::write(tree.join("ripr.toml"), scratch_ripr_toml(profile))
-        .map_err(|err| format!("write scratch ripr.toml: {err}"))?;
+    copy_tree(checkout, &tree, profile.skip_dirs)?;
+    // Rust is enabled by default, so a Rust run keeps the checkout's own
+    // ripr.toml (and its oracle overrides) and matches the developer's check.
+    let keep_checkout_config =
+        profile.language == RUST.language && tree.join("ripr.toml").is_file();
+    if !keep_checkout_config {
+        fs::write(tree.join("ripr.toml"), scratch_ripr_toml(profile))
+            .map_err(|err| format!("write scratch ripr.toml: {err}"))?;
+    }
     let diff_path = scratch.join(format!("{name}.synthetic.diff"));
 
     let read_checkout = |path: &str| {
@@ -779,6 +886,7 @@ mod tests {
             end_col: end.1,
             status: outcome.to_string(),
             outcome: outcome.to_string(),
+            recorded_diff: None,
         }
     }
 
@@ -968,14 +1076,66 @@ mod tests {
             None,
         );
         assert_eq!(
-            read_verdict(&check, "a.ts", 2, 2),
+            read_verdict(&check, "a.ts", 2, 2, "typescript"),
             Verdict::Class {
                 token: "exposed".to_string(),
                 owner: "typescript:a.ts::f".to_string(),
                 expression: Some("  if (qty > 10) {".to_string()),
             }
         );
-        assert_eq!(read_verdict(&check, "a.ts", 5, 6), Verdict::NoFinding);
+        assert_eq!(
+            read_verdict(&check, "a.ts", 5, 6, "typescript"),
+            Verdict::NoFinding
+        );
+    }
+
+    #[test]
+    fn verdict_matches_a_dot_slash_probe_path() {
+        // `ripr check` on Rust reports `./src/lib.rs`, not `src/lib.rs`.
+        let check = check_json(
+            &[("weakly_exposed", "./src/lib.rs", 2, "rust:src/lib.rs::f")],
+            true,
+            None,
+        );
+        assert!(matches!(
+            read_verdict(&check, "src/lib.rs", 2, 2, "rust"),
+            Verdict::Class { ref token, .. } if token == "weakly_exposed"
+        ));
+        assert_eq!(
+            read_verdict(&check, "lib.rs", 2, 2, "rust"),
+            Verdict::NoFinding
+        );
+    }
+
+    fn rust_check_json(findings: &[(&str, u64, Option<&str>)]) -> Value {
+        // The Rust adapter names the owner on `canonical_gap`, not on `probe`.
+        json!({
+            "analysis_outcome": {"analysis_complete": true, "outcome": {"limitations": []}},
+            "findings": findings.iter().map(|(class, line, owner)| json!({
+                "classification": class,
+                "probe": {"file": "./src/lib.rs", "line": line, "expression": "a > 1"},
+                "canonical_gap": owner.map_or(json!({}), |owner| json!({"owner": owner})),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn rust_owner_comes_from_the_canonical_gap_and_unowned_pairs_fail_closed() {
+        let distinct = rust_check_json(&[("exposed", 2, Some("f")), ("exposed", 3, Some("g"))]);
+        assert_eq!(
+            read_verdict(&distinct, "src/lib.rs", 2, 3, "rust"),
+            Verdict::Ambiguous
+        );
+        let one = rust_check_json(&[("exposed", 2, Some("f"))]);
+        assert!(matches!(
+            read_verdict(&one, "src/lib.rs", 2, 2, "rust"),
+            Verdict::Class { ref owner, .. } if owner == "f"
+        ));
+        let unowned = rust_check_json(&[("exposed", 2, None), ("exposed", 3, None)]);
+        assert_eq!(
+            read_verdict(&unowned, "src/lib.rs", 2, 3, "rust"),
+            Verdict::Ambiguous
+        );
     }
 
     #[test]
@@ -988,20 +1148,26 @@ mod tests {
             true,
             None,
         );
-        assert_eq!(read_verdict(&mixed, "a.ts", 2, 3), Verdict::Ambiguous);
+        assert_eq!(
+            read_verdict(&mixed, "a.ts", 2, 3, "typescript"),
+            Verdict::Ambiguous
+        );
         let owners = check_json(
             &[("exposed", "a.ts", 2, "o1"), ("exposed", "a.ts", 3, "o2")],
             true,
             None,
         );
-        assert_eq!(read_verdict(&owners, "a.ts", 2, 3), Verdict::Ambiguous);
+        assert_eq!(
+            read_verdict(&owners, "a.ts", 2, 3, "typescript"),
+            Verdict::Ambiguous
+        );
         let same = check_json(
             &[("exposed", "a.ts", 2, "o"), ("exposed", "a.ts", 3, "o")],
             true,
             None,
         );
         assert!(matches!(
-            read_verdict(&same, "a.ts", 2, 3),
+            read_verdict(&same, "a.ts", 2, 3, "typescript"),
             Verdict::Class { .. }
         ));
     }
@@ -1010,18 +1176,124 @@ mod tests {
     fn verdict_names_adapter_limitations_and_incomplete_runs() {
         let limited = check_json(&[], true, Some("language_adapter_unavailable"));
         assert_eq!(
-            read_verdict(&limited, "a.ts", 2, 2),
+            read_verdict(&limited, "a.ts", 2, 2, "typescript"),
             Verdict::Limited("language_adapter_unavailable")
         );
         let scope = check_json(&[], true, Some("language_scope_unsupported"));
         assert_eq!(
-            read_verdict(&scope, "a.ts", 2, 2),
+            read_verdict(&scope, "a.ts", 2, 2, "typescript"),
             Verdict::Limited("language_scope_unsupported")
         );
         let incomplete = check_json(&[], false, None);
-        assert_eq!(read_verdict(&incomplete, "a.ts", 2, 2), Verdict::Incomplete);
+        assert_eq!(
+            read_verdict(&incomplete, "a.ts", 2, 2, "typescript"),
+            Verdict::Incomplete
+        );
         let partial = check_json(&[("exposed", "a.ts", 2, "o")], false, None);
-        assert_eq!(read_verdict(&partial, "a.ts", 2, 2), Verdict::Incomplete);
+        assert_eq!(
+            read_verdict(&partial, "a.ts", 2, 2, "typescript"),
+            Verdict::Incomplete
+        );
+    }
+
+    #[test]
+    fn python_transitive_reach_limits_are_honest_unknowns_not_false_gaps() {
+        let mut by_kind = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_kind["findings"][0]["static_limit_kind"] = json!("python_transitive_reach_unresolved");
+        assert_eq!(
+            read_verdict(&by_kind, "a.py", 2, 2, "python"),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let mut by_stop_reason = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_stop_reason["findings"][0]["stop_reasons"] = json!(["transitive_reach_unresolved"]);
+        assert_eq!(
+            read_verdict(&by_stop_reason, "a.py", 2, 2, "python"),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let unlimited = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        assert!(matches!(
+            read_verdict(&unlimited, "a.py", 2, 2, "python"),
+            Verdict::Class { .. }
+        ));
+    }
+
+    #[test]
+    fn rust_transitive_reach_keeps_its_own_verdict_and_language_identity() {
+        let mut rust = check_json(&[("no_static_path", "src/lib.rs", 2, "o")], true, None);
+        rust["findings"][0]["static_limit_kind"] = json!("rust_transitive_reach_unresolved");
+        rust["findings"][0]["stop_reasons"] = json!(["transitive_reach_unresolved"]);
+        assert!(matches!(
+            read_verdict(&rust, "src/lib.rs", 2, 2, "rust"),
+            Verdict::Class { .. }
+        ));
+    }
+
+    /// #14083 T9: the verdict join reads a real `ripr check --diff` JSON
+    /// document, not only hand-built ones. The hand-built Rust documents fix
+    /// the field names by assumption (`./`-prefixed probe path, the owner on
+    /// `canonical_gap`, `analysis_outcome.analysis_complete`); a renamed or
+    /// moved field would keep them green while every real mutant read as
+    /// `NoFinding` or `Incomplete`.
+    #[test]
+    fn verdict_reads_a_real_rust_check_document() -> Result<(), String> {
+        const LIB: &str = "pub fn over_limit(amount: u32) -> bool {\n    amount > 10\n}\n";
+        const TEST: &str = "use real_check::over_limit;\n\n#[test]\nfn boundary() {\n    assert_eq!(over_limit(10), false);\n    assert_eq!(over_limit(11), true);\n}\n";
+        let root = std::env::temp_dir().join(format!(
+            "ripr-synthetic-diff-{}-real-rust-check",
+            std::process::id()
+        ));
+        let write = |relative: &str, text: &str| -> Result<(), String> {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+            }
+            fs::write(&path, text).map_err(|err| format!("write {relative}: {err}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"real_check\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("tests/boundary.rs", TEST)?;
+        // The mutant is applied to the file and described by a diff, as the
+        // diff-mode scorer does for each cargo-mutants mutant.
+        let edit = synthesize_edit(
+            "src/lib.rs",
+            LIB,
+            &mutant("1", (2, 4), (2, 15), "amount >= 10", "caught"),
+        )
+        .map_err(str::to_string)?;
+        write("src/lib.rs", &edit.mutated)?;
+        write("mutant.diff", &edit.diff)?;
+        let output = ripr::check_workspace(ripr::CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("mutant.diff")),
+            mode: ripr::Mode::Ready,
+            format: ripr::OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..ripr::CheckInput::default()
+        });
+        let rendered =
+            output.and_then(|output| ripr::render_check(&output, &ripr::OutputFormat::Json));
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        let check: Value = serde_json::from_str(&rendered?).map_err(|err| err.to_string())?;
+        let verdict = read_verdict(&check, "src/lib.rs", 2, 2, "rust");
+        let Verdict::Class { token, owner, .. } = &verdict else {
+            return Err(format!(
+                "expected one class on the mutated line, got {verdict:?}: {check}"
+            ));
+        };
+        if token != "exposed" || !owner.contains("over_limit") {
+            return Err(format!("unexpected verdict {verdict:?}: {check}"));
+        }
+        // The same real document has nothing on an untouched line.
+        assert_eq!(
+            read_verdict(&check, "src/lib.rs", 1, 1, "rust"),
+            Verdict::NoFinding
+        );
+        Ok(())
     }
 
     #[test]
@@ -1267,6 +1539,45 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_rust_mutant_without_a_recorded_diff_is_excluded_not_rebuilt() {
+        let m = mutant("m", (2, 6), (2, 15), "qty < 10", "missed");
+        assert_eq!(
+            edit_for("src/price.ts", SOURCE, &m, &RUST),
+            Err(RECORDED_DIFF_MISSING)
+        );
+        // Tools that report columns and replacement text still synthesize.
+        assert_eq!(
+            edit_for("src/price.ts", SOURCE, &m, &TYPESCRIPT).map(|_| ()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn root_build_dirs_are_skipped_but_a_nested_module_of_the_same_name_is_kept()
+    -> Result<(), String> {
+        let from = scratch_dir("copy-from")?;
+        let to = scratch_dir("copy-to")?;
+        let _ = fs::remove_dir_all(&to);
+        for dir in ["target/debug", "src/target", "mutants.out"] {
+            fs::create_dir_all(from.join(dir)).map_err(|err| err.to_string())?;
+        }
+        fs::write(from.join("target/debug/x"), "build").map_err(|err| err.to_string())?;
+        fs::write(from.join("src/target/mod.rs"), "pub fn f() {}")
+            .map_err(|err| err.to_string())?;
+        fs::write(from.join("mutants.out/outcomes.json"), "{}").map_err(|err| err.to_string())?;
+        copy_tree(&from, &to, RUST.skip_dirs)?;
+        let kept = to.join("src/target/mod.rs").exists();
+        let root_target = to.join("target").exists();
+        let mutants_out = to.join("mutants.out").exists();
+        let _ = fs::remove_dir_all(&from);
+        let _ = fs::remove_dir_all(&to);
+        assert!(kept, "a nested src/target module must be copied");
+        assert!(!root_target, "root target/ must be skipped");
+        assert!(!mutants_out, "root mutants.out/ must be skipped");
+        Ok(())
+    }
+
     fn scratch_dir(tag: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!("ripr-synthetic-{}-{tag}", std::process::id()));
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
@@ -1349,8 +1660,14 @@ mod tests {
         let python = LanguageProfile {
             language: "python",
             extensions: &["py"],
+            skip_dirs: &[],
+            requires_recorded_diff: false,
         };
         assert!(scratch_ripr_toml(&python).contains("\"python\""));
+        assert_eq!(
+            scratch_ripr_toml(&RUST),
+            "[languages]\nenabled = [\"rust\"]\n"
+        );
         assert!(checkout_relative("src/a.ts").is_some());
         assert!(checkout_relative("../a.ts").is_none());
         assert!(checkout_relative("/etc/passwd").is_none());

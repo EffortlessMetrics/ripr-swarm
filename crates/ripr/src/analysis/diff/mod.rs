@@ -1,3 +1,5 @@
+mod base_owner;
+mod copy_section;
 #[cfg(test)]
 mod differential_tests;
 #[cfg(test)]
@@ -6,21 +8,27 @@ mod load;
 mod model;
 mod parse;
 mod path;
+mod side_prefix;
 mod source;
-pub(crate) use source::reconstruct_old_source;
+pub(crate) use base_owner::{
+    ModuleDeclarations, may_declare_module, owner_may_be_swapped, verified_base_owner,
+};
+pub(crate) use copy_section::expand_copy_destinations;
+pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
 
+pub(crate) use load::bare_repository_message;
 #[cfg(test)]
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
-    AnalyzedRevisions, HeadRefState, LoadedDiff, probe_head_ref_state, resolve_analyzed_revisions,
-    working_tree_has_uncommitted_changes,
+    AnalyzedRevisions, HeadRefState, LoadedDiff, default_base_unresolved_message,
+    probe_head_ref_state, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
-    another_base_candidate, is_shallow_repository, load_diff_core,
-    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    resolve_effective_base_core,
+    another_base_candidate, base_is_checked_out_head_with_parent, is_shallow_repository,
+    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
+    load_diff_with_effective_base_core, load_worktree_diff_with_effective_base_core,
+    no_merge_base_diagnosis, resolve_effective_base_core,
 };
 pub use load::{
     load_diff, load_diff_range, load_pr_evidence_diff_range, load_worktree_diff,
@@ -29,6 +37,7 @@ pub use load::{
 };
 pub(crate) use parse::parse_unified_diff_with_metadata;
 
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,

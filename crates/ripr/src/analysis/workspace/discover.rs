@@ -8,6 +8,9 @@ use crate::analysis_outcome::{
 };
 use std::path::{Path, PathBuf};
 
+mod unreadable;
+pub(crate) use unreadable::refuse_unreadable_dir_over_changed_path;
+
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -16,6 +19,11 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "fixtures",
     "node_modules",
 ];
+
+/// Whether the workspace walk never enters a directory with this name.
+pub(crate) fn is_ignored_dir_name(name: &str) -> bool {
+    DEFAULT_IGNORED_DIRS.contains(&name)
+}
 
 /// Whether any directory component of a repo-relative `/`-separated path is
 /// one the workspace walk never enters. The single owner of that rule, so a
@@ -57,27 +65,65 @@ pub(crate) fn changed_source_files_absent_from_worktree<'a>(
 
 /// Shared admission disclosure for a changed source path with no regular worktree file.
 pub(crate) fn limitations_for_absent_changed_files(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
     paths
         .iter()
         .map(|path| {
             let display = super::classify::normalize_path(path);
+            let (recovery, detail) = match unread_side_prefix(root, path) {
+                Some(prefix) => (
+                    format!(
+                        "If the patch was written with a custom side prefix{prefix}, ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
+                    ),
+                    format!(
+                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component{prefix} is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
+                    ),
+                ),
+                None => (
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.".to_string(),
+                    "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld".to_string(),
+                ),
+            };
             AnalysisLimitation::new(
                 AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
-                )?,
+                AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
             )
             .with_path(&display)?
             .with_affected_items(1)?
-            .with_detail(
-                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
-            )
+            .with_detail(detail)
         })
         .collect()
+}
+
+/// The first component of an absent changed path, as a parenthesized quote
+/// for display (or empty when it is not echoed), when the path without it is a regular source file under `root` (#15103). A
+/// patch written with custom side prefixes (`--src-prefix=old/
+/// --dst-prefix=new/`) keeps the prefix in every path ripr reads; git's
+/// default and mnemonic prefixes are already stripped by the diff parser.
+/// A long first component, or one with a backtick or control character, is
+/// not echoed, so the hint never carries unbounded or markup-breaking text.
+fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
+    let mut components = path.components();
+    let first = match components.next()? {
+        std::path::Component::Normal(first) => first.to_str()?,
+        _ => return None,
+    };
+    let rest = components.as_path();
+    // The exact stripped path only: the crate-subdirectory suffix matching
+    // of `worktree_regular_source_file` would let a real directory pass.
+    if rest.as_os_str().is_empty() || !is_regular_source_below_root(root, rest) {
+        return None;
+    }
+    let echoable =
+        first.chars().count() <= 32 && !first.chars().any(|c| c == '`' || c.is_control());
+    Some(if echoable {
+        format!(" (`{first}/`)")
+    } else {
+        String::new()
+    })
 }
 
 /// Absent-file disclosure for a consumer that keeps earlier evidence, such as
@@ -87,9 +133,10 @@ pub(crate) fn limitations_for_absent_changed_files(
 /// canonical per-file limitations, or one bounded, path-less limitation
 /// naming the refusal so the withheld coverage stays disclosed.
 pub(crate) fn supplement_absent_file_limitations(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
-    match limitations_for_absent_changed_files(paths) {
+    match limitations_for_absent_changed_files(root, paths) {
         Ok(limitations) => Ok(limitations),
         Err(error) => {
             // `bounded_detail` rejects over-long text instead of truncating,
@@ -112,15 +159,21 @@ pub(crate) fn supplement_absent_file_limitations(
 }
 
 pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    worktree_regular_source_file(root, relative).is_some()
+}
+
+/// Where the changed path `relative` is on disk as a regular file reached
+/// through real directories below `root`, when it is.
+pub(crate) fn worktree_regular_source_file(root: &Path, relative: &Path) -> Option<PathBuf> {
     if relative.is_absolute()
         || relative
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
-        return false;
+        return None;
     }
     if is_regular_source_below_root(root, relative) {
-        return true;
+        return Some(root.join(relative));
     }
     // Git diffs keep the repository-relative path. `--root` is often a
     // crate subdirectory, so `root.join(diff_path)` misses a file that
@@ -140,10 +193,10 @@ pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path
             continue;
         }
         if is_regular_source_below_root(root, Path::new(suffix)) {
-            return true;
+            return Some(root.join(suffix));
         }
     }
-    false
+    None
 }
 
 fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
@@ -257,6 +310,59 @@ pub(crate) fn split_unreadable_unchanged_files(
     files
         .into_iter()
         .partition(|file| keep.contains(file) || std::fs::File::open(root.join(file)).is_ok())
+}
+
+/// Readable Rust files plus the sorted repo-relative paths (unreadable
+/// directories and unopenable files) the walk skipped. Never drops a path in
+/// `keep`; an unreadable root is still an error. The one tolerant discovery
+/// the repo-wide callers share, so each discloses the same skipped set.
+pub(crate) fn discover_readable_rust_files(
+    root: &Path,
+    keep: &std::collections::BTreeSet<PathBuf>,
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    let (files, unreadable_dirs) = discover_rust_files_tolerating_unreadable(root)?;
+    unreadable::refuse_unreadable_dir_over_changed_path(&unreadable_dirs, keep)?;
+    let (files, unreadable_files) = split_unreadable_unchanged_files(root, files, keep);
+    Ok((
+        files,
+        merge_unreadable_paths(unreadable_dirs, unreadable_files),
+    ))
+}
+
+fn merge_unreadable_paths(dirs: Vec<UnreadableDir>, files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut paths = dirs
+        .into_iter()
+        .map(|(path, _)| path)
+        .chain(files)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// One bounded partial-run sentence naming the unreadable paths, for a
+/// surface whose existing disclosure is a single partial reason string.
+/// `None` when nothing was skipped.
+pub(crate) fn unreadable_paths_partial_reason(paths: &[PathBuf]) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let mut listed = paths
+        .iter()
+        .take(3)
+        .map(|path| super::classify::normalize_path(path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if paths.len() > 3 {
+        listed.push_str(&format!(" and {} more", paths.len() - 3));
+    }
+    if listed.chars().count() > 200 {
+        listed = format!("{}…", listed.chars().take(199).collect::<String>());
+    }
+    Some(format!(
+        "{} Rust path(s) could not be read (permissions) and were skipped, so tests and owners in them are not considered: {listed}; restore read access and re-run",
+        paths.len()
+    ))
 }
 
 /// One typed limitation per unchanged path the walk could not read, sharing
@@ -638,6 +744,37 @@ mod tests {
     }
 
     #[test]
+    fn unread_side_prefix_echoes_only_a_short_plain_first_component() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-side-prefix-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "fn a() {}\n").map_err(io)?;
+        let long = "p".repeat(33);
+        for (path, expected) in [
+            ("new/src/lib.rs".to_string(), Some(" (`new/`)".to_string())),
+            (
+                format!("{}/src/lib.rs", "q".repeat(32)),
+                Some(format!(" (`{}/`)", "q".repeat(32))),
+            ),
+            (format!("{long}/src/lib.rs"), Some(String::new())),
+            ("n`w/src/lib.rs".to_string(), Some(String::new())),
+            ("new/src/missing.rs".to_string(), None),
+            ("new/src".to_string(), None),
+            ("lib.rs".to_string(), None),
+            ("../src/lib.rs".to_string(), None),
+        ] {
+            assert_eq!(
+                unread_side_prefix(&root, Path::new(&path)),
+                expected,
+                "{path}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn split_unreadable_unchanged_files_separates_unopenable_and_keeps_changed()
     -> Result<(), String> {
         let root = std::env::temp_dir().join(format!("ripr-split-unread-{}", std::process::id()));
@@ -682,6 +819,30 @@ mod tests {
         Ok(())
     }
 
+    /// #14078: the human headline for an unchanged path the walk could not
+    /// read must not call it a changed file. The detail says "unchanged", so
+    /// a headline saying "changed" contradicts its own line.
+    #[test]
+    fn unreadable_unchanged_path_limitation_headline_does_not_call_it_changed() -> Result<(), String>
+    {
+        let limitations =
+            limitations_for_unreadable_unchanged_paths(&[PathBuf::from("src/locked.rs")])?;
+        let [limitation] = limitations.as_slice() else {
+            return Err(format!("expected one limitation, got {limitations:?}"));
+        };
+        let headline = limitation.kind.plain_label();
+        assert_eq!(headline, "some files were not fully analyzed");
+        assert!(!headline.contains("changed"), "{headline}");
+        assert!(
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("unchanged")),
+            "{limitation:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn unreadable_unchanged_path_limitation_survives_a_refused_name() -> Result<(), String> {
         let limitations =
@@ -696,9 +857,138 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_paths_partial_reason_names_and_bounds_the_paths() {
+        assert_eq!(unreadable_paths_partial_reason(&[]), None);
+        let one =
+            unreadable_paths_partial_reason(&[PathBuf::from("src/locked")]).unwrap_or_default();
+        assert!(one.starts_with("1 Rust path(s) could not be read"), "{one}");
+        assert!(one.contains("src/locked"), "{one}");
+        let many = (0..5)
+            .map(|i| PathBuf::from(format!("d{i}")))
+            .collect::<Vec<_>>();
+        let many = unreadable_paths_partial_reason(&many).unwrap_or_default();
+        assert!(many.contains("d0, d1, d2 and 2 more"), "{many}");
+        assert!(!many.contains("d3"), "{many}");
+        // The listing is bounded to 200 characters with an ellipsis.
+        let long = (0..3)
+            .map(|i| PathBuf::from(format!("{i}{}", "x".repeat(100))))
+            .collect::<Vec<_>>();
+        let truncated = unreadable_paths_partial_reason(&long).unwrap_or_default();
+        assert!(truncated.contains("…; restore read access"), "{truncated}");
+        assert!(
+            !truncated.contains(&"x".repeat(100)[..99].repeat(2)),
+            "{truncated}"
+        );
+    }
+
+    #[test]
+    fn merge_unreadable_paths_sorts_and_dedups_dirs_and_files() {
+        let merged = merge_unreadable_paths(
+            vec![
+                (PathBuf::from("b"), "x".to_string()),
+                (PathBuf::from("a"), "x".to_string()),
+            ],
+            vec![PathBuf::from("b"), PathBuf::from("c.rs")],
+        );
+        assert_eq!(
+            merged,
+            vec![
+                PathBuf::from("a"),
+                PathBuf::from("b"),
+                PathBuf::from("c.rs")
+            ]
+        );
+    }
+
+    #[test]
+    fn discover_readable_rust_files_keeps_an_unreadable_root_an_error() {
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-noroot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let refused = discover_readable_rust_files(&root, &Default::default()).err();
+        assert!(refused.is_some(), "an absent root must stay an error");
+    }
+
+    /// A mode-000 directory is still readable by root, so the case is skipped
+    /// there (the pattern of the black-box `unreadable_unchanged_rust_*` tests).
+    #[cfg(unix)]
+    #[test]
+    fn discover_readable_rust_files_skips_a_locked_directory_and_discloses_it() -> Result<(), String>
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-locked-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src/locked")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").map_err(io)?;
+        fs::write(root.join("src/locked/inner.rs"), "pub fn b() {}\n").map_err(io)?;
+        let locked = root.join("src/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).map_err(io)?;
+        let result = if fs::read_dir(&locked).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 path");
+            Ok(())
+        } else {
+            discover_readable_rust_files(&root, &Default::default()).and_then(|(files, skipped)| {
+                if files != vec![PathBuf::from("src/lib.rs")]
+                    || skipped != vec![PathBuf::from("src/locked")]
+                {
+                    return Err(format!("files {files:?} skipped {skipped:?}"));
+                }
+                // The strict walk still refuses, and the verdict helper
+                // does not read an unreadable-only tree as "no Rust".
+                if discover_rust_files(&root).is_ok() {
+                    return Err("strict walk must still refuse".to_string());
+                }
+                Ok(())
+            })
+        };
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).map_err(io)?;
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// A changed file under an unreadable directory is hidden evidence, so
+    /// the strict error stands (root can read mode-000, so it skips there).
+    #[cfg(unix)]
+    #[test]
+    fn discover_readable_rust_files_refuses_a_changed_file_under_a_locked_directory()
+    -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("ripr-readable-changed-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src/locked")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").map_err(io)?;
+        fs::write(root.join("src/locked/inner.rs"), "pub fn b() {}\n").map_err(io)?;
+        let locked = root.join("src/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).map_err(io)?;
+        let result = if fs::read_dir(&locked).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 path");
+            Ok(())
+        } else {
+            let keep = std::collections::BTreeSet::from([PathBuf::from("src/locked/inner.rs")]);
+            match discover_readable_rust_files(&root, &keep) {
+                Err(message) if message.contains("failed to read") => {
+                    // Unchanged stays tolerant.
+                    discover_readable_rust_files(&root, &Default::default()).map(|_| ())
+                }
+                other => Err(format!("expected strict error, got {other:?}")),
+            }
+        };
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).map_err(io)?;
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
     fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>
     {
-        let limitations = supplement_absent_file_limitations(&[PathBuf::from("src/z_hidden.rs")])?;
+        let limitations = supplement_absent_file_limitations(
+            Path::new("/nonexistent-ripr-root"),
+            &[PathBuf::from("src/z_hidden.rs")],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
         assert_eq!(
@@ -717,7 +1007,8 @@ mod tests {
         // running instead of failing, so the refused disclosure degrades to
         // one bounded, path-less stand-in naming the refusal (#6976).
         let absent = [PathBuf::from("src/kept.rs"), PathBuf::from("C:missing.rs")];
-        let limitations = supplement_absent_file_limitations(&absent)?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &absent)?;
         assert_eq!(limitations.len(), 1, "one bounded stand-in, not an error");
         let fallback = &limitations[0];
         assert_eq!(fallback.path, None, "the refused name cannot be a path");
@@ -734,7 +1025,8 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_names_nothing_when_no_file_is_absent()
     -> Result<(), String> {
-        let limitations = supplement_absent_file_limitations(&[])?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &[])?;
         assert!(limitations.is_empty());
         Ok(())
     }

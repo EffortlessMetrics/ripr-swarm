@@ -6576,6 +6576,48 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/python-bulk-discount/project/pricing/core.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/typescript-discount-threshold/strengthened/pricing.test.ts"
+        )
+        .is_some()
+    );
+    assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
+    assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+}
+
+#[test]
+fn shard_verifier_bootstrap_retention_is_exact() -> Result<(), String> {
+    for path in [
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        let reason = non_rust_programming_retention_reason(path).ok_or_else(|| {
+            format!("the pre-execution verifier needs explicit retention: {path}")
+        })?;
+        assert!(reason.contains("#14580"), "{path}: {reason}");
+    }
+    for path in [
+        "tools/ci/other.py",
+        "tools/ci/shard-verifier-artifact-extra.py",
+        "tools/ci/test_shard_verifier_artifact_extra.py",
+        "tools/ci/nested/shard-verifier-artifact.py",
+        "tools/ci/shard-verifier-artifact.py.extra.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -6775,6 +6817,10 @@ fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Resu
         ".github/actions/pr-candidate-admission/release_cut_admission.py",
         "tools/activate-rust.sh",
         "tools/test-activate-rust.sh",
+        "tools/ci/shard-verifier-artifact.py",
+        "tools/ci/test_shard_verifier_artifact.py",
+        "tools/ci/main-qualification.py",
+        "tools/ci/test_main_qualification.py",
     ] {
         let enforced_reason = non_rust_programming_retention_reason(path)
             .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
@@ -6827,6 +6873,11 @@ fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> 
         ".agents/skills/finish-pr/scripts/other.rb",
         "tools/python/installed-provider-recovery/other.py",
         "tools/python/other.py",
+        "tools/ci/main-qualification-extra.py",
+        "tools/ci/test_main_qualification_extra.py",
+        "tools/ci/nested/main-qualification.py",
+        "tools/ci/main-qualification.py.extra.py",
+        "tools/ci/main-qualification.sh",
         "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
         "scripts/check.py",
     ] {
@@ -7890,6 +7941,35 @@ fn windows_absolute_path_tokens_find_tokens_without_trailing_punctuation() {
 }
 
 #[test]
+fn windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode() {
+    let first = concat!("C:", "/café:stream/雪");
+    let second = concat!("d:", "\\資料");
+    let line = format!(":: Type::member é:/ignored αC:/ignored `{first}`; '{second}' :z");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![first.to_string(), second.to_string()]
+    );
+    for line in ["", ":", "::", "x:", "α:", "Type::member", "wordC:/ignored"] {
+        assert!(windows_absolute_path_tokens(line).is_empty(), "{line}");
+    }
+}
+
+#[test]
+fn windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths() {
+    let first = concat!("C:", "/");
+    let second = concat!("Z:", "\\");
+    let line = format!("`{first}`,\"{second}\" {first}{second}");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![
+            first.to_string(),
+            second.to_string(),
+            format!("{first}{second}")
+        ]
+    );
+}
+
+#[test]
 fn workflow_run_extraction_handles_step_shorthand_and_blocks() {
     let workflow = r#"
 jobs:
@@ -8168,6 +8248,95 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
     Ok(())
 }
 
+/// The package family the rehearsal builds (#5378) stays read-only: it is only
+/// reachable from the rehearsal, holds no write or OIDC permission, reads no
+/// secret, and has no registry upload, release or publish step.
+#[test]
+fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/package-family-qualification.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let caller_path = root.join(".github/workflows/release-server-binaries.yml");
+    let caller = fs::read_to_string(&caller_path)
+        .map_err(|error| format!("failed to read {}: {error}", caller_path.display()))?;
+    // Only the `packages` job body (lines indented deeper than job keys).
+    let calls_after_archives = |candidate: &str| {
+        let job: String = candidate
+            .split("\n  packages:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        job.contains("uses: ./.github/workflows/package-family-qualification.yml")
+            && job.contains("needs: rehearse")
+    };
+    if !calls_after_archives(&caller) {
+        return Err("the rehearsal must call the package family after the archives".to_string());
+    }
+    if calls_after_archives(&caller.replace("    needs: rehearse\n", "")) {
+        return Err("package-family caller negative control was accepted".to_string());
+    }
+    let validate = |candidate: &str| -> Result<(), String> {
+        let on_block = candidate
+            .split("\non:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\npermissions:").next())
+            .unwrap_or_default();
+        if !candidate.contains("permissions:\n  contents: read")
+            || on_block
+                .lines()
+                .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+                .ne(["  workflow_call:"])
+            || candidate.contains(": write")
+            || candidate.contains("id-token")
+            || candidate.contains("secrets.")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("NODE_AUTH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("registry-url")
+            || candidate.contains("npm publish")
+            || candidate.contains("twine")
+            || candidate.contains("gh-action-pypi-publish")
+            || candidate.contains("gh release")
+            || candidate.contains("release-upload-assets")
+            || !candidate.contains("persist-credentials: false")
+        {
+            return Err(
+                "package-family qualification must stay a read-only, called-only build and install proof"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        workflow.replace("contents: read", "contents: read\n  id-token: write"),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_dispatch:\n  workflow_call:",
+        ),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_call:\n  schedule:\n    - cron: '0 0 * * *'",
+        ),
+        format!("{workflow}\n      - run: npm publish --tag next ./pkg.tgz\n"),
+        format!("{workflow}\n      - run: python -m twine upload wheels/*\n"),
+        format!("{workflow}\n        env:\n          TOKEN: ${{{{ secrets.NPM_TOKEN }}}}\n"),
+        workflow.replace("persist-credentials: false", "persist-credentials: true"),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("package-family publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
@@ -8263,7 +8432,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 5
+            != 6
             || candidate
                 .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()
@@ -9571,7 +9740,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -9707,8 +9881,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -9716,11 +9890,23 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -19527,7 +19713,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19587,6 +19773,30 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // A heading alone cannot rescue a stale or wrong artifact destination.
+    for path in [
+        "start-here.md",
+        "target/ripr/reports/start-here.md",
+        "ripr/review/start-here.md",
+    ] {
+        let wrong_path = dogfood_generated_ci_cockpit_run_from_surfaces(
+            "wrong-start-here-artifact-path",
+            command,
+            10,
+            workflow,
+            &summary.replace("ripr/reports/start-here.md", path),
+        );
+        assert!(!wrong_path.start_here, "accepted {path}");
+        assert!(
+            wrong_path
+                .errors
+                .iter()
+                .any(|error| error.contains("Start here")),
+            "missing path error for {path}: {:?}",
+            wrong_path.errors
+        );
+    }
 
     // Dropping the gate boundary wording must fail the scenario (#12261).
     let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
@@ -28005,6 +28215,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -28031,6 +28242,7 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           ANTHROPIC_BASE_URL: ""
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
@@ -28214,6 +28426,34 @@ fn check_droid_security_scan_flags_missing_contents_read() {
         violations
             .iter()
             .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_self_hosted_runner() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("runs-on: ubuntu-latest", "runs-on: self-hosted");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("GitHub-hosted runner")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_github_token() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("          github_token: ${{ secrets.GITHUB_TOKEN }}\n", "");
+    assert!(
+        !yaml.contains("github_token:"),
+        "token mutation must engage"
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations.iter().any(|v| v.contains("GITHUB_TOKEN")),
+        "{violations:?}"
     );
 }
 
@@ -48927,6 +49167,44 @@ fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String>
 }
 
 #[test]
+fn vsix_inventory_rejects_extension_development_tests() -> Result<(), String> {
+    for name in [
+        "extension/out/test/suite/required_journeys.test.js",
+        "extension/out/test/clientLaunch.js",
+        "extension/out/src/test/helper.js",
+        "extension/test/fixtures/workspace/Cargo.toml",
+        "extension/test-fixtures/tls/a.pem",
+        "extension/out/src/client.spec.js",
+        "extension/out/src/__tests__/client.js",
+        "extension/tsconfig.setup.json",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!(
+                "{name} must be rejected as an extension test entry"
+            ));
+        };
+        assert!(error.contains(name), "{error}");
+        assert!(error.contains("1 extension test entries"), "{error}");
+    }
+    // The shipped runtime and a production dependency's own layout pass:
+    // names that merely contain "test" are not test directories.
+    let shipped = vec![
+        vsix_entry("extension/package.json", 2),
+        vsix_entry("extension/out/src/attemptStatus.js", 2),
+        vsix_entry("extension/out/src/latestRelease.js", 2),
+        vsix_entry("extension/walkthrough/setup.md", 2),
+        vsix_entry("extension/node_modules/semver/test/index.js", 2),
+        vsix_entry("extension/node_modules/dep/lib/a.test.js", 2),
+        vsix_entry("extension.vsixmanifest", 2),
+    ];
+    super::check_vsix_inventory(&shipped, 10, 1_000)
+}
+
+#[test]
 fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
     with_temp_cwd("vsix-inventory-unreadable", |root| {
         // A package step that produced no archive must fail, not pass an empty inventory.
@@ -49915,21 +50193,21 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
             .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
-    assert!(
-        !boundary_gap
-            .action_titles
-            .contains(&"Write targeted test: copy brief".to_string()),
-        "repair-packet brief is gated on fix_site_ready (#1663)"
-    );
+    // #13716: the boundary seam passes the repair-packet flip, so the real
+    // seam diagnostic offers the brief and the repair start.
+    for title in [
+        "Write targeted test: copy brief",
+        "Start repair: copy repair command",
+    ] {
+        assert!(
+            boundary_gap.action_titles.contains(&title.to_string()),
+            "boundary_gap must offer {title}: {:?}",
+            boundary_gap.action_titles
+        );
+    }
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(
-        !boundary_gap.context.targeted_test_brief_available,
-        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
-    );
-    assert!(
-        !boundary_gap.context.agent_repair_command_available,
-        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
-    );
+    assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49960,14 +50238,10 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(
-        !editor_fixture.context.targeted_test_brief_available,
-        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
-    );
-    assert!(
-        !editor_fixture.context.agent_repair_command_available,
-        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
-    );
+    // #13716: the seam passes the repair-packet flip, so the brief and the
+    // repair start are offered on the real seam diagnostic.
+    assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -52610,7 +52884,7 @@ fn mutation_calibration_reports_are_advisory_and_structured() -> Result<(), Stri
 }
 
 #[test]
-fn parse_workspace_lints_section_extracts_clippy_levels() {
+fn parse_workspace_lints_section_extracts_clippy_levels() -> Result<(), String> {
     let cargo = r#"
 [workspace]
 members = ["crates/ripr"]
@@ -52627,7 +52901,7 @@ allow_attributes_without_reason = "deny" # trailing comment
 [profile.release]
 lto = true
 "#;
-    let clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     assert_eq!(clippy.get("panic").map(String::as_str), Some("deny"));
     assert_eq!(clippy.get("todo").map(String::as_str), Some("deny"));
     assert_eq!(
@@ -52638,9 +52912,10 @@ lto = true
     );
     assert!(!clippy.contains_key("unsafe_code"));
 
-    let rust = super::parse_workspace_lints_section(cargo, "rust");
+    let rust = super::parse_workspace_lints_section(cargo, "rust")?;
     assert_eq!(rust.get("unsafe_code").map(String::as_str), Some("forbid"));
     assert!(!rust.contains_key("panic"));
+    Ok(())
 }
 
 #[test]
@@ -52954,7 +53229,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
 required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
@@ -53172,7 +53447,7 @@ fn proof_pack_command_known_set_accepts_xtask_roots_and_repo_commands() {
 }
 
 #[test]
-fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() {
+fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "deny"
@@ -53186,7 +53461,7 @@ level = "deny"
 name = "clippy::map_err_ignore"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, parse_violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(parse_violations.is_empty());
     let mut violations = Vec::new();
@@ -53197,10 +53472,11 @@ level = "deny"
         }
     }
     assert_eq!(violations, vec!["clippy::map_err_ignore".to_string()]);
+    Ok(())
 }
 
 #[test]
-fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() {
+fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 indexing_slicing = "deny"
@@ -53211,7 +53487,7 @@ name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut leaks = Vec::new();
     for entry in entries.iter().filter(|entry| entry.is_planned) {
@@ -53221,6 +53497,7 @@ activate_when_msrv = "1.93"
         }
     }
     assert_eq!(leaks, vec!["clippy::indexing_slicing".to_string()]);
+    Ok(())
 }
 
 #[test]
@@ -53436,7 +53713,7 @@ rust-version = '1.95'
 }
 
 #[test]
-fn check_lint_policy_detects_level_drift() {
+fn check_lint_policy_detects_level_drift() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "warn"
@@ -53446,7 +53723,7 @@ panic = "warn"
 name = "clippy::panic"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut drift = Vec::new();
     for entry in entries.iter().filter(|entry| !entry.is_planned) {
@@ -53464,6 +53741,7 @@ level = "deny"
             "warn".to_string()
         )]
     );
+    Ok(())
 }
 
 #[test]
@@ -53923,6 +54201,334 @@ fn reusable_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+/// #14906: the `ci` nextest profile's hang window must fit inside the shard
+/// test step, so a hung test is terminated and named by nextest instead of
+/// being ended by the step cap with its log lost.
+///
+/// These are measurements, not guesses. Run 43943282726 (2026-11-16, PR
+/// #14866, head 235641bfe9) uploaded each shard's JUnit and build metrics:
+/// - slowest legitimate test: 210s, `xtask::ripr_public_guide_contract::
+///   doctor_exit_code_guide_distinguishes_analysis_and_source_build`;
+/// - longest build step: 774s (shard 4);
+/// - longest test step: 494s (shard 4).
+///
+/// Refresh them from a green run's `nextest-*` artifacts when the suite grows;
+/// the cap and the window are read live, so only the measurements are pinned.
+const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
+const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
+const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
+
+/// Parse a nextest duration string (`"120s"`, `"10m"`, `"10h"`) into seconds.
+fn parse_nextest_duration_seconds(raw: &str) -> Result<u64, String> {
+    let trimmed = raw.trim();
+    let (digits, multiplier) = if let Some(s) = trimmed.strip_suffix('s') {
+        (s, 1u64)
+    } else if let Some(m) = trimmed.strip_suffix('m') {
+        (m, 60u64)
+    } else if let Some(h) = trimmed.strip_suffix('h') {
+        (h, 3600u64)
+    } else {
+        return Err(format!("cannot read a s/m/h period from {raw:?}"));
+    };
+    let count = digits
+        .parse::<u64>()
+        .map_err(|err| format!("cannot read a s/m/h period from {raw:?}: {err}"))?;
+    count
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("period {raw:?} overflows u64 seconds"))
+}
+
+/// One `slow-timeout = { period = "Ns", terminate-after = N }` value as its
+/// window in seconds: `period` seconds of silence marked SLOW, terminated
+/// after `terminate-after` periods.
+fn parse_nextest_slow_timeout(value: &toml::Value) -> Result<u64, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| format!("slow-timeout must be a table, got {value}"))?;
+    let period_raw = table
+        .get("period")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("cannot read a s/m/h period from {value}"))?;
+    let period = parse_nextest_duration_seconds(period_raw)?;
+    let terminate_after_i64 = table
+        .get("terminate-after")
+        .and_then(toml::Value::as_integer)
+        .ok_or_else(|| format!("cannot read terminate-after from {value}"))?;
+    let terminate_after = u64::try_from(terminate_after_i64).map_err(|err| {
+        format!("negative terminate-after {terminate_after_i64} in {value}: {err}")
+    })?;
+    period
+        .checked_mul(terminate_after)
+        .ok_or_else(|| format!("slow-timeout window overflows u64 seconds in {value}"))
+}
+
+/// The `[profile.ci]` `slow-timeout` window plus every
+/// `[[profile.ci.overrides]]` entry that sets its own `slow-timeout`, as
+/// `(name, window_seconds)`. A per-test override is a real execution window,
+/// so a check that read only the profile-level value would pass a test whose
+/// own window is far past the budget.
+///
+/// Fails closed: an override that sets `slow-timeout` (by inline table, dotted
+/// key, or quoted key) but cannot be parsed is an error, not a skip.
+fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), String> {
+    let doc: toml::Value =
+        toml::from_str(config).map_err(|err| format!("nextest.toml is not valid TOML: {err}"))?;
+    let ci = doc
+        .get("profile")
+        .and_then(|p| p.get("ci"))
+        .and_then(toml::Value::as_table)
+        .ok_or("nextest.toml has no [profile.ci] section")?;
+    let profile_value = ci
+        .get("slow-timeout")
+        .ok_or("[profile.ci] has no slow-timeout")?;
+    let profile_window = parse_nextest_slow_timeout(profile_value)?;
+
+    let mut overrides = Vec::new();
+    if let Some(entries) = ci.get("overrides") {
+        let entries = entries
+            .as_array()
+            .ok_or("[profile.ci.overrides] must be an array")?;
+        for (idx, entry) in entries.iter().enumerate() {
+            let ordinal = idx + 1;
+            let table = entry
+                .as_table()
+                .ok_or_else(|| format!("[[profile.ci.overrides]] #{ordinal} must be a table"))?;
+            let Some(timeout) = table.get("slow-timeout") else {
+                continue;
+            };
+            let filter = table
+                .get("filter")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned);
+            let name = filter
+                .clone()
+                .unwrap_or_else(|| format!("[[profile.ci.overrides]] #{ordinal}"));
+            let window = parse_nextest_slow_timeout(timeout).map_err(|err| {
+                format!(
+                    "cannot parse the slow-timeout of override {}: {err}",
+                    filter.as_deref().unwrap_or("<unnamed>")
+                )
+            })?;
+            overrides.push((format!("override {name}"), window));
+        }
+    }
+    Ok((profile_window, overrides))
+}
+
+/// The `timeout-minutes` of the first step whose `- name:` contains
+/// `name_fragment` in a workflow, in seconds.
+fn workflow_step_timeout_seconds(workflow: &str, name_fragment: &str) -> Result<u64, String> {
+    let mut in_step = false;
+    for line in workflow.lines() {
+        if line.starts_with("      - ") {
+            if in_step {
+                break;
+            }
+            in_step = line.contains(name_fragment);
+            continue;
+        }
+        if in_step && let Some(value) = line.trim().strip_prefix("timeout-minutes: ") {
+            let minutes = value
+                .trim()
+                .parse::<u64>()
+                .map_err(|err| format!("bad timeout-minutes {value:?}: {err}"))?;
+            return Ok(minutes * 60);
+        }
+    }
+    Err(format!(
+        "rust-test-shards.yml has no step named like {name_fragment:?} with a timeout-minutes"
+    ))
+}
+
+fn check_nextest_hang_window_budget(config: &str, shard_workflow: &str) -> Result<(), String> {
+    let (window, overrides) = nextest_ci_hang_windows(config)?;
+    let cap = workflow_step_timeout_seconds(shard_workflow, "Required Rust tests")?;
+
+    if window <= NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS {
+        return Err(format!(
+            "ci hang window {window}s does not sit above the measured slowest legitimate test {}s; a legitimate test would be killed as hung",
+            NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS
+        ));
+    }
+    for (name, window) in std::iter::once(("ci profile".to_string(), window)).chain(overrides) {
+        for (phase, measured) in [
+            ("build", NEXTEST_CI_MEASURED_BUILD_SECONDS),
+            ("test phase", NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS),
+        ] {
+            let bound = window + measured;
+            if bound >= cap {
+                return Err(format!(
+                    "{name}: ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #14906 acceptance: the hang window plus the measured build and test-phase
+/// time stays inside the shard step's cap, and the window sits above the
+/// slowest legitimate test. Widening `terminate-after` past the budget fails
+/// here, naming the window and the cap.
+#[test]
+fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
+    let root = repo_root()?;
+    let config = std::fs::read_to_string(root.join(".config/nextest.toml"))
+        .map_err(|err| format!("read nextest.toml: {err}"))?;
+    let shard_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
+            .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
+    check_nextest_hang_window_budget(&config, &shard_workflow)
+}
+
+const SAMPLE_SHARD_WORKFLOW_40M: &str =
+    "      - name: Required Rust tests\n        timeout-minutes: 40\n";
+
+#[test]
+fn nextest_ci_hang_windows_reads_dotted_key_override() -> Result<(), String> {
+    let oversized = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=dotted_keys)'
+slow-timeout.period = "10h"
+slow-timeout.terminate-after = 10
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(oversized)?;
+    assert_eq!(profile_window, 1200);
+    assert_eq!(
+        overrides,
+        vec![("override test(=dotted_keys)".to_string(), 360_000)]
+    );
+    let err = check_nextest_hang_window_budget(oversized, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized dotted-key override must fail budget check");
+    assert!(
+        err.contains("test(=dotted_keys)") && err.contains("360000s"),
+        "unexpected error: {err}"
+    );
+
+    let in_budget = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=dotted_keys_ok)'
+slow-timeout.period = "10m"
+slow-timeout.terminate-after = 2
+"#;
+    let (_, ok_overrides) = nextest_ci_hang_windows(in_budget)?;
+    assert_eq!(
+        ok_overrides,
+        vec![("override test(=dotted_keys_ok)".to_string(), 1200)]
+    );
+    check_nextest_hang_window_budget(in_budget, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_reads_quoted_key_override() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=quoted_key)'
+"slow-timeout" = { period = "10h", terminate-after = 10 }
+"#;
+    let (_, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(
+        overrides,
+        vec![("override test(=quoted_key)".to_string(), 360_000)]
+    );
+    let err = check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized quoted-key override must fail budget check");
+    assert!(
+        err.contains("test(=quoted_key)") && err.contains("360000s"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nextest_ci_hang_windows_accepts_trailing_comment_on_slow_timeout() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 } # keep
+
+[[profile.ci.overrides]]
+filter = 'test(=commented)'
+slow-timeout = { period = "120s", terminate-after = 10 } # keep
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(profile_window, 1200);
+    assert_eq!(
+        overrides,
+        vec![("override test(=commented)".to_string(), 1200)]
+    );
+    check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_fails_closed_on_partial_dotted_override() {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=partial_dotted)'
+slow-timeout.period = "10h"
+"#;
+    let err = nextest_ci_hang_windows(config)
+        .expect_err("partial slow-timeout override must fail closed, not be dropped");
+    assert!(
+        err.contains("partial_dotted") && err.contains("terminate-after"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn nextest_ci_hang_windows_ignores_override_without_slow_timeout() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'package(=xtask) & test(=no_window)'
+junit.store-success-output = true
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(profile_window, 1200);
+    assert!(
+        overrides.is_empty(),
+        "expected no overrides, got {overrides:?}"
+    );
+    check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_reads_oversized_inline_override() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=oversized_inline)'
+slow-timeout = { period = "600s", terminate-after = 10 }
+"#;
+    let (_, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(
+        overrides,
+        vec![("override test(=oversized_inline)".to_string(), 6000)]
+    );
+    let err = check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized inline override must fail budget check");
+    assert!(
+        err.contains("test(=oversized_inline)") && err.contains("6000s"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
 /// Returns an error unless `lines` mention `cargo xtask precommit` exactly
 /// once as a bare invocation line. A commented-out (`# cargo xtask
 /// precommit`) or otherwise decorated mention does not count as an
@@ -53944,8 +54550,9 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// The routed Rust lanes must delegate the required gate table to the shared
 /// reusable workflow, not inline a lane-only gate command where it could drift
 /// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
-/// each gate as its own named per-producer step; the per-step shape (exact
-/// command, unconditional, ordered, outcome-reported) is owned by
+/// standalone producers; dependency, process and network policy remain required
+/// inside `ci-policy`. The producer shape (exact command, unconditional, ordered,
+/// outcome-reported) and collected leaf ownership are guarded by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
@@ -53969,11 +54576,7 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask check-dependencies",
-        "cargo xtask check-process-policy",
-        "cargo xtask check-network-policy",
-        "cargo xtask goldens check",
-        "cargo xtask fixtures",
+        "cargo xtask goldens check-with-fixtures",
     ] {
         let count = reusable.matches(lane_only).count();
         if count != 1 {

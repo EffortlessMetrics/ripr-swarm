@@ -1,6 +1,6 @@
 # RIPR-SPEC-0403: PowerShell edition, module, pipeline, stream, Pester, and system-effect evidence contracts
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / ecosystem (#5600)
 
@@ -247,7 +247,7 @@ Map or add typed stops (non-exhaustive; extend only via spec amendment):
 | `ps_edition_or_platform_unknown` | Edition, `$PSVersionTable`, or platform branch not evidenced |
 | `ps_module_or_scope_unresolved` | Auto-loading, nested modules, or scope/session identity unknown |
 | `ps_alias_or_proxy_unresolved` | Alias, proxy function, or command precedence not fixed |
-| `ps_dynamic_invocation_unresolved` | `&`, `.`, splatting, `Invoke-Expression`, dynamic parameters |
+| `ps_dynamic_invocation_unresolved` | `&`, `.` (including dot-sourcing a script into the caller's scope), splatting, `Invoke-Expression`, dynamic parameters |
 | `ps_scriptblock_binding_unknown` | Closure/binding/session state unclear |
 | `ps_provider_or_path_unresolved` | Provider, drive, wildcard, or current location unknown |
 | `ps_remoting_or_job_unresolved` | Remoting, jobs, runspaces, events, background work |

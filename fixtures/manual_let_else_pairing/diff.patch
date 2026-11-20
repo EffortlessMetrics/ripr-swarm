@@ -1,0 +1,95 @@
+diff --git a/build.rs b/build.rs
+index 20109fe..5e49e80 100644
+--- a/build.rs
++++ b/build.rs
+@@ -5,9 +5,8 @@ use std::str;
+ fn main() {
+     println!("cargo:rerun-if-changed=build.rs");
+ 
+-    let compiler = match rustc_minor_version() {
+-        Some(compiler) => compiler,
+-        None => return,
++    let Some(compiler) = rustc_minor_version() else {
++        return;
+     };
+ 
+     if compiler >= 80 {
+diff --git a/src/display.rs b/src/display.rs
+index cbf5f30..d7446e5 100644
+--- a/src/display.rs
++++ b/src/display.rs
+@@ -122,9 +122,8 @@ fn pad(
+     do_display: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
+     do_len: impl FnOnce() -> usize,
+ ) -> fmt::Result {
+-    let min_width = match formatter.width() {
+-        Some(min_width) => min_width,
+-        None => return do_display(formatter),
++    let Some(min_width) = formatter.width() else {
++        return do_display(formatter);
+     };
+ 
+     let len = do_len();
+diff --git a/src/eval.rs b/src/eval.rs
+index 270c693..a3cedd8 100644
+--- a/src/eval.rs
++++ b/src/eval.rs
+@@ -136,20 +136,16 @@ fn matches_caret(cmp: &Comparator, ver: &Version) -> bool {
+         return false;
+     }
+ 
+-    let minor = match cmp.minor {
+-        None => return true,
+-        Some(minor) => minor,
++    let Some(minor) = cmp.minor else {
++        return true;
+     };
+ 
+-    let patch = match cmp.patch {
+-        None => {
+-            if cmp.major > 0 {
+-                return ver.minor >= minor;
+-            } else {
+-                return ver.minor == minor;
+-            }
++    let Some(patch) = cmp.patch else {
++        if cmp.major > 0 {
++            return ver.minor >= minor;
++        } else {
++            return ver.minor == minor;
+         }
+-        Some(patch) => patch,
+     };
+ 
+     if cmp.major > 0 {
+diff --git a/src/impls.rs b/src/impls.rs
+index cdf93c9..5f6ec57 100644
+--- a/src/impls.rs
++++ b/src/impls.rs
+@@ -66,12 +66,11 @@ impl Ord for Prerelease {
+         let mut rhs = rhs.as_str().split('.');
+ 
+         for lhs in lhs {
+-            let rhs = match rhs.next() {
++            let Some(rhs) = rhs.next() else {
+                 // Spec: "A larger set of pre-release fields has a higher
+                 // precedence than a smaller set, if all of the preceding
+                 // identifiers are equal."
+-                None => return Ordering::Greater,
+-                Some(rhs) => rhs,
++                return Ordering::Greater;
+             };
+ 
+             let string_cmp = || Ord::cmp(lhs, rhs);
+@@ -116,9 +115,8 @@ impl Ord for BuildMetadata {
+         let mut rhs = rhs.as_str().split('.');
+ 
+         for lhs in lhs {
+-            let rhs = match rhs.next() {
+-                None => return Ordering::Greater,
+-                Some(rhs) => rhs,
++            let Some(rhs) = rhs.next() else {
++                return Ordering::Greater;
+             };
+ 
+             let is_ascii_digit = |b: u8| b.is_ascii_digit();

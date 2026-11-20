@@ -564,4 +564,371 @@ mod tests {
         }
         Ok(())
     }
+
+    const OTHER_HEAD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    type Refusal = VerificationExecutionResultValidationError;
+
+    /// Validate against the fixture context every unedited result is bound to.
+    fn check(result: &VerificationExecutionResultV1, spec: &CommandSpec) -> Result<(), Refusal> {
+        result.validate_against(spec, ROOT, HEAD_BEFORE, HEAD_AFTER)
+    }
+
+    #[test]
+    fn a_completed_result_is_accepted_whatever_its_exit_status() -> Result<(), String> {
+        let spec = command_spec();
+        assert_eq!(check(&result(&spec)?, &spec), Ok(()));
+
+        // A failing command is still a well-formed observation: the result
+        // records the process, it does not judge it.
+        let mut failed = result(&spec)?;
+        failed.exit_status = Some(101);
+        assert_eq!(check(&failed, &spec), Ok(()));
+
+        let mut dirty = result(&spec)?;
+        dirty.currentness = VerificationCurrentnessV1::DirtyWorktree;
+        assert_eq!(check(&dirty, &spec), Ok(()));
+        Ok(())
+    }
+
+    #[test]
+    fn every_non_completed_disposition_is_accepted_only_without_an_exit_status()
+    -> Result<(), String> {
+        let spec = command_spec();
+        for disposition in [
+            VerificationProcessDispositionV1::FailedToStart,
+            VerificationProcessDispositionV1::Cancelled,
+            VerificationProcessDispositionV1::TimedOut,
+            VerificationProcessDispositionV1::OutputLimitExceeded,
+        ] {
+            let mut with_status = result(&spec)?;
+            with_status.process_disposition = disposition;
+            assert_eq!(
+                check(&with_status, &spec),
+                Err(Refusal::UnexpectedExitStatus),
+                "{disposition:?} carried an exit status"
+            );
+
+            let mut without_status = with_status;
+            without_status.exit_status = None;
+            assert_eq!(
+                check(&without_status, &spec),
+                Ok(()),
+                "{disposition:?} without an exit status"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_head_that_moved_during_the_run_is_accepted_only_as_historical() -> Result<(), String> {
+        let spec = command_spec();
+        let moved = |currentness| -> Result<Result<(), Refusal>, String> {
+            let mut moved = result(&spec)?;
+            moved.head_after = OTHER_HEAD.to_string();
+            moved.currentness = currentness;
+            Ok(moved.validate_against(&spec, ROOT, HEAD_BEFORE, OTHER_HEAD))
+        };
+        let head_moved = Err(Refusal::CurrentnessHeadMismatch {
+            before: HEAD_BEFORE.to_string(),
+            after: OTHER_HEAD.to_string(),
+        });
+
+        assert_eq!(moved(VerificationCurrentnessV1::Current)?, head_moved);
+        assert_eq!(moved(VerificationCurrentnessV1::DirtyWorktree)?, head_moved);
+        assert_eq!(
+            moved(VerificationCurrentnessV1::HistoricalNoncurrent)?,
+            Ok(())
+        );
+        // Unavailable currentness is refused as itself, not as a moved head.
+        assert_eq!(
+            moved(VerificationCurrentnessV1::Unavailable)?,
+            Err(Refusal::CurrentnessUnavailable)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unsupported_schema_version_is_refused_before_any_field_is_read() -> Result<(), String> {
+        let spec = command_spec();
+        let mut future = result(&spec)?;
+        future.schema_version = "2".to_string();
+        // A second defect must not displace the version refusal: a consumer
+        // cannot interpret the other fields of a schema it does not know.
+        future.root_identity = String::new();
+        assert_eq!(
+            check(&future, &spec),
+            Err(Refusal::InvalidSchemaVersion("2".to_string()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_blank_identity_or_commitment_is_refused_under_its_own_field_name() -> Result<(), String> {
+        let spec = command_spec();
+        type Blank = fn(&mut VerificationExecutionResultV1);
+        let cases: [(&str, Blank); 4] = [
+            ("root_identity", |result| {
+                result.root_identity = "  ".to_string();
+            }),
+            ("command_spec_sha256", |result| {
+                result.command_spec_sha256 = String::new();
+            }),
+            ("stdout_sha256", |result| {
+                result.stdout_sha256 = String::new();
+            }),
+            ("stderr_sha256", |result| {
+                result.stderr_sha256 = "\t".to_string();
+            }),
+        ];
+        for (field, blank) in cases {
+            let mut blanked = result(&spec)?;
+            blank(&mut blanked);
+            assert_eq!(check(&blanked, &spec), Err(Refusal::EmptyField(field)));
+        }
+
+        // The producer's own context is held to the same rule.
+        assert_eq!(
+            result(&spec)?.validate_against(&spec, " ", HEAD_BEFORE, HEAD_AFTER),
+            Err(Refusal::EmptyField("expected_root_identity"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_head_that_is_not_a_full_lowercase_sha_is_refused_on_either_side() -> Result<(), String> {
+        let spec = command_spec();
+        let short = "a".repeat(39);
+        let long = "a".repeat(41);
+        let not_hex = format!("{}g", "a".repeat(39));
+
+        let mut short_before = result(&spec)?;
+        short_before.head_before = short.clone();
+        assert_eq!(
+            check(&short_before, &spec),
+            Err(Refusal::InvalidHead {
+                field: "head_before",
+                value: short.clone(),
+            })
+        );
+
+        for value in [&long, &not_hex, &"HEAD".to_string()] {
+            let mut bad_after = result(&spec)?;
+            bad_after.head_after = value.clone();
+            assert_eq!(
+                check(&bad_after, &spec),
+                Err(Refusal::InvalidHead {
+                    field: "head_after",
+                    value: value.clone(),
+                })
+            );
+        }
+
+        // An abbreviated or symbolic expectation cannot bind an exact head.
+        assert_eq!(
+            result(&spec)?.validate_against(&spec, ROOT, "HEAD", HEAD_AFTER),
+            Err(Refusal::InvalidHead {
+                field: "expected_head_before",
+                value: "HEAD".to_string(),
+            })
+        );
+        assert_eq!(
+            result(&spec)?.validate_against(&spec, ROOT, HEAD_BEFORE, &short),
+            Err(Refusal::InvalidHead {
+                field: "expected_head_after",
+                value: short,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_commitment_that_is_not_a_prefixed_lowercase_sha256_is_refused() -> Result<(), String> {
+        let spec = command_spec();
+        let hex = "0".repeat(64);
+        let malformed = [
+            hex.clone(),
+            format!("sha256:{}", "0".repeat(63)),
+            format!("sha256:{}", "0".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha256:{}z", "0".repeat(63)),
+            format!("sha512:{hex}"),
+            format!(" sha256:{hex}"),
+        ];
+        type Set = fn(&mut VerificationExecutionResultV1, String);
+        let fields: [(&str, Set); 3] = [
+            ("command_spec_sha256", |result, value| {
+                result.command_spec_sha256 = value;
+            }),
+            ("stdout_sha256", |result, value| {
+                result.stdout_sha256 = value;
+            }),
+            ("stderr_sha256", |result, value| {
+                result.stderr_sha256 = value;
+            }),
+        ];
+        for (field, set) in fields {
+            for value in &malformed {
+                let mut bad = result(&spec)?;
+                set(&mut bad, value.clone());
+                assert_eq!(
+                    check(&bad, &spec),
+                    Err(Refusal::InvalidSha256 {
+                        field,
+                        value: value.clone(),
+                    })
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_result_for_another_head_is_refused_naming_the_side_that_differs() -> Result<(), String> {
+        let spec = command_spec();
+        assert_eq!(
+            result(&spec)?.validate_against(&spec, ROOT, OTHER_HEAD, HEAD_AFTER),
+            Err(Refusal::HeadMismatch {
+                field: "head_before",
+                expected: OTHER_HEAD.to_string(),
+                actual: HEAD_BEFORE.to_string(),
+            })
+        );
+        assert_eq!(
+            result(&spec)?.validate_against(&spec, ROOT, HEAD_BEFORE, OTHER_HEAD),
+            Err(Refusal::HeadMismatch {
+                field: "head_after",
+                expected: OTHER_HEAD.to_string(),
+                actual: HEAD_AFTER.to_string(),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_verify_command_on_the_verification_route_binds_a_result() -> Result<(), String> {
+        let verify = command_spec();
+        let other_routes = [
+            (
+                CommandRole::Receipt,
+                CommandAuthorityBoundary::ReceiptRouteOnly,
+            ),
+            (
+                CommandRole::Regeneration,
+                CommandAuthorityBoundary::RegenerationRouteOnly,
+            ),
+            (
+                CommandRole::Inspection,
+                CommandAuthorityBoundary::InspectionRouteOnly,
+            ),
+            (
+                CommandRole::TargetedRerun,
+                CommandAuthorityBoundary::TargetedRerunRouteOnly,
+            ),
+            (
+                CommandRole::RepairStart,
+                CommandAuthorityBoundary::RepairStartRouteOnly,
+            ),
+        ];
+        for (role, authority_boundary) in other_routes {
+            let mut spec = command_spec();
+            spec.role = role;
+            spec.authority_boundary = authority_boundary;
+            // Bound to this spec's own digest, so the role is the only defect.
+            assert_eq!(
+                check(&result(&spec)?, &spec),
+                Err(Refusal::NonVerificationCommandRole {
+                    role,
+                    authority_boundary,
+                })
+            );
+        }
+
+        // A verify role claiming another route's authority is not a valid
+        // command at all, so it is refused before the role is considered.
+        let mut mismatched = command_spec();
+        mismatched.authority_boundary = CommandAuthorityBoundary::ReceiptRouteOnly;
+        assert_eq!(
+            check(&result(&verify)?, &mismatched),
+            Err(Refusal::CommandSpecInvalid(
+                "authority boundary does not match command role".to_string()
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_invalid_command_spec_is_refused_with_the_spec_error() -> Result<(), String> {
+        let verify = command_spec();
+        let mut unbounded = command_spec();
+        unbounded.timeout_ms = 0;
+        let refusal = check(&result(&verify)?, &unbounded);
+        assert!(
+            matches!(&refusal, Err(Refusal::CommandSpecInvalid(reason)) if reason.contains("timeout")),
+            "got {refusal:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_messages_name_the_field_and_the_offending_value() {
+        let cases = [
+            (
+                Refusal::EmptyField("stdout_sha256"),
+                "stdout_sha256 must not be empty",
+            ),
+            (
+                Refusal::InvalidHead {
+                    field: "head_after",
+                    value: "HEAD".to_string(),
+                },
+                "head_after must be a full 40-character Git SHA, got \"HEAD\"",
+            ),
+            (
+                Refusal::InvalidSha256 {
+                    field: "stderr_sha256",
+                    value: "sha256:UPPER".to_string(),
+                },
+                "stderr_sha256 must be sha256:<64 lowercase hex>, got \"sha256:UPPER\"",
+            ),
+            (
+                Refusal::HeadMismatch {
+                    field: "head_before",
+                    expected: HEAD_BEFORE.to_string(),
+                    actual: OTHER_HEAD.to_string(),
+                },
+                "verification result head_before mismatch: expected \
+                 \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", got \
+                 \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+            ),
+            (
+                Refusal::RootIdentityMismatch {
+                    expected: ROOT.to_string(),
+                    actual: "root:other".to_string(),
+                },
+                "verification result root identity mismatch: expected \"root:fixture\", got \
+                 \"root:other\"",
+            ),
+            (
+                Refusal::CurrentnessHeadMismatch {
+                    before: HEAD_BEFORE.to_string(),
+                    after: OTHER_HEAD.to_string(),
+                },
+                "current verification result changed HEAD during execution: before \
+                 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, after \
+                 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            (
+                Refusal::NonVerificationCommandRole {
+                    role: CommandRole::Receipt,
+                    authority_boundary: CommandAuthorityBoundary::ReceiptRouteOnly,
+                },
+                "verification result requires a verify command with verification_route_only, \
+                 got role Receipt and authority ReceiptRouteOnly",
+            ),
+        ];
+        for (refusal, message) in cases {
+            assert_eq!(refusal.to_string(), message);
+        }
+    }
 }

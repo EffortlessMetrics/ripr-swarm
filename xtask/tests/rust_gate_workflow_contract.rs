@@ -4,13 +4,23 @@
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
 const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
+const POLICY_SOURCE: &str = include_str!("../src/main.rs");
+const COLLECT_ALL_SOURCE: &str = include_str!("../src/policy/all.rs");
+const COLLECTED_POLICY_COMMANDS: &[&str] = &[
+    "check-dependencies",
+    "check-process-policy",
+    "check-network-policy",
+];
+#[cfg(target_os = "linux")]
+#[path = "rust_gate_workflow_contract/matcher_replay.rs"]
+mod matcher_replay;
 /// The only condition the required test step may carry: the hosted caller passes
-/// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
+/// `test-shards: 2` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
 const SHARDED_TEST_COMMAND: &str =
-    "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4";
-const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
-const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/4\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
+    "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2";
+const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
+const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/2\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
 const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
@@ -20,9 +30,6 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
         "promotion_honesty",
         "cargo xtask check-evidence-promotion-honesty",
     ),
-    ("dependencies", "cargo xtask check-dependencies"),
-    ("process_policy", "cargo xtask check-process-policy"),
-    ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
         "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
@@ -31,8 +38,10 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
         "clippy",
         "cargo clippy --workspace --all-targets -- -D warnings",
     ),
-    ("goldens", "cargo xtask goldens check"),
-    ("fixtures", "cargo xtask fixtures"),
+    (
+        "goldens_fixtures",
+        "cargo xtask goldens check-with-fixtures",
+    ),
     (
         "capability_producers",
         "cargo xtask check-capability-producers",
@@ -47,6 +56,13 @@ fn step_id(block: &str) -> Option<&str> {
     block
         .lines()
         .find_map(|line| line.strip_prefix("        id: "))
+}
+
+/// The step's single-line `run:` command, or `|` for a block scalar.
+fn step_run(block: &str) -> Option<&str> {
+    block
+        .lines()
+        .find_map(|line| line.strip_prefix("        run: "))
 }
 
 fn contract_violations(workflow: &str) -> Vec<String> {
@@ -93,6 +109,47 @@ fn contract_violations(workflow: &str) -> Vec<String> {
         }
         previous = Some(index);
     }
+    // ci-policy already owns these required leaves. Reintroducing their shell
+    // commands repeats the same source scans, rather than adding qualification.
+    for command in COLLECTED_POLICY_COMMANDS {
+        if blocks.iter().any(|block| {
+            block.lines().any(|line| {
+                let line = line.trim();
+                !line.starts_with('#') && line.contains(&format!("cargo xtask {command}"))
+            })
+        }) {
+            findings.push(format!("{command}: already executed by ci-policy"));
+        }
+    }
+    if workflow.lines().any(|line| {
+        let line = line.trim();
+        matches!(
+            line.strip_prefix("run: ").unwrap_or(line),
+            "cargo xtask goldens check" | "cargo xtask fixtures"
+        )
+    }) {
+        findings
+            .push("goldens_fixtures: standalone producer repeats fixture evaluation".to_owned());
+    }
+    for (name, id) in [
+        ("Prepare independent user-text base", "user_text_base"),
+        (
+            "Recover pinned base compiler arity if needed",
+            "user_text_recovery",
+        ),
+        (
+            "User-text goldens judged by the merge-base matcher",
+            "user_text_matcher",
+        ),
+    ] {
+        let matches: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.lines().next() == Some(&format!("name: {name}")))
+            .collect();
+        if matches.len() != 1 || step_id(matches[0]) != Some(id) {
+            findings.push(format!("{name}: expected unique step with id {id}"));
+        }
+    }
     let summaries: Vec<_> = blocks
         .iter()
         .filter(|block| step_id(block) == Some("gate_summary"))
@@ -127,10 +184,82 @@ fn contract_violations(workflow: &str) -> Vec<String> {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
     }
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let variable = format!("{}_RESULT", id.to_ascii_uppercase());
+        let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
+        if !summary.lines().any(|line| line == binding) {
+            findings.push(format!("summary: {id} must bind its actual outcome"));
+        }
+    }
     if !summary.lines().any(|line| {
         line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
     }) {
         findings.push("summary: pr_evidence scope must retain its actual output".to_owned());
+    }
+    for id in ["dependencies", "process_policy", "network_policy"] {
+        if summary.contains(&format!("steps.{id}.outcome"))
+            || summary.contains(&format!("| {id} |"))
+        {
+            findings.push(format!("summary: {id} has no separate execution outcome"));
+        }
+    }
+    findings
+}
+
+fn policy_owner_violations(source: &str, collect_all: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let policy = source
+        .split_once("fn precommit_policy(")
+        .and_then(|(_, tail)| tail.split_once(") -> Result<(), String> {"))
+        .and_then(|(_, tail)| tail.split_once("\n/// Prefix of a `precommit` failure"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    if !policy.contains("if collect_all {\n        policy::check_policy_all()?;\n    } else {") {
+        findings.push("ci-policy: collect-all errors must propagate".to_owned());
+    }
+    let remaining = source
+        .split_once("fn precommit_policy_remaining(")
+        .and_then(|(_, tail)| tail.split_once(") -> Result<(), String> {"))
+        .and_then(|(_, tail)| tail.split_once("\n/// Output-surface diffs"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    // This small owner contains no brace-bearing strings. Count the retained
+    // statement at function scope, not inside local-only or optional branches.
+    let mut depth = 0isize;
+    let mut dependencies = 0;
+    for line in remaining.lines().map(str::trim) {
+        if line.starts_with("//") {
+            continue;
+        }
+        if depth == 0 && line == "check_dependencies()?;" {
+            dependencies += 1;
+        }
+        depth += line.matches('{').count() as isize - line.matches('}').count() as isize;
+    }
+    if dependencies != 1 {
+        findings.push("ci-policy: dependencies must execute once and propagate errors".to_owned());
+    }
+    let outcomes = collect_all
+        .split_once("let outcomes = [")
+        .and_then(|(_, tail)| tail.split_once("];"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    for (command, call) in [
+        ("check-process-policy", "check_process_policy"),
+        ("check-network-policy", "check_network_policy"),
+    ] {
+        let expected = format!("(\"{command}\", {call}()),");
+        if outcomes
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == expected.as_str())
+            .count()
+            != 1
+        {
+            findings.push(format!(
+                "ci-policy: {command} must execute once in collect-all"
+            ));
+        }
     }
     findings
 }
@@ -142,13 +271,369 @@ fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
 }
 
 #[test]
+fn shared_golden_fixture_producer_cannot_drop_either_obligation_or_run_twice() {
+    let joint = "cargo xtask goldens check-with-fixtures";
+    for command in ["cargo xtask goldens check", "cargo xtask fixtures"] {
+        let changed = WORKFLOW.replace(joint, command);
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .contains(&"goldens_fixtures: exact command missing".to_owned())
+        );
+    }
+    for changed in [
+        WORKFLOW.replace(joint, &format!("{joint} || true")),
+        format!("{WORKFLOW}\n          {joint}\n"),
+        format!("{WORKFLOW}\n        run: cargo xtask goldens check\n"),
+        format!("{WORKFLOW}\n        run: cargo xtask fixtures\n"),
+        WORKFLOW.replace(
+            "        id: goldens_fixtures",
+            "        id: goldens_fixtures\n        if: false",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW);
+        assert!(!contract_violations(&changed).is_empty());
+    }
+}
+
+#[test]
+fn shared_golden_fixture_summary_must_report_its_actual_combined_outcome() {
+    for replacement in [
+        "success",
+        "steps.precommit.outcome",
+        "steps.fixtures.outcome",
+    ] {
+        let changed = WORKFLOW.replace("steps.goldens_fixtures.outcome", replacement);
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .contains(&"summary: goldens_fixtures must retain its actual outcome".to_owned())
+        );
+    }
+}
+
+#[test]
+fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let binding = format!("steps.{id}.outcome");
+        for replacement in ["success", "steps.precommit.outcome"] {
+            let changed = WORKFLOW.replace(&binding, replacement);
+            assert_ne!(changed, WORKFLOW);
+            assert!(
+                contract_violations(&changed)
+                    .contains(&format!("summary: {id} must bind its actual outcome"))
+            );
+        }
+        let step = format!("        id: {id}");
+        let changed = WORKFLOW.replace(&step, "        id: wrong_step");
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .iter()
+                .any(|finding| finding.contains(id))
+        );
+    }
+}
+
+#[cfg(unix)]
+struct SummaryScratch(std::path::PathBuf);
+
+#[cfg(unix)]
+impl SummaryScratch {
+    fn new(case: &str) -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-user-text-summary-{}-{case}",
+            std::process::id()
+        ));
+        std::fs::File::create_new(&path)?;
+        Ok(Self(path))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SummaryScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_reports_each_actual_outcome_and_missing_value()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::process::Command;
+
+    let summary = WORKFLOW
+        .split("\n      - ")
+        .find(|block| step_id(block) == Some("gate_summary"))
+        .ok_or("gate summary missing")?;
+    let script = summary
+        .split_once("        run: |\n")
+        .ok_or("summary shell missing")?
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let variables = [
+        "USER_TEXT_BASE_RESULT",
+        "USER_TEXT_RECOVERY_RESULT",
+        "USER_TEXT_MATCHER_RESULT",
+    ];
+    let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
+    let scratch = SummaryScratch::new("outcomes")?;
+    let path = &scratch.0;
+    for target in 0..3 {
+        for outcome in ["success", "failure", "skipped", "cancelled", ""] {
+            let mut command = Command::new("bash");
+            command
+                .arg("-eo")
+                .arg("pipefail")
+                .arg("-c")
+                .arg(&script)
+                .env_clear()
+                .env("GITHUB_STEP_SUMMARY", path)
+                .env("GITHUB_SHA", "workflow-sha")
+                .env("SUBJECT_HEAD", "subject-head")
+                .env("INTEGRATION_SUBJECT", "integration-sha")
+                .env("INTEGRATION_TREE", "integration-tree")
+                .env("GITHUB_RUN_ID", "run-id")
+                .env("GITHUB_RUN_ATTEMPT", "attempt-id")
+                .env("EXECUTION_ROUTE", "route")
+                .env("PRECOMMIT_RESULT", "skipped");
+            for (index, variable) in variables.iter().enumerate() {
+                if index != target || !outcome.is_empty() {
+                    command.env(variable, if index == target { outcome } else { "success" });
+                }
+            }
+            fs::write(path, "")?;
+            assert!(command.status()?.success());
+            let rendered = fs::read_to_string(path)?;
+            for (index, label) in labels.iter().enumerate() {
+                let expected = if index == target {
+                    if outcome.is_empty() {
+                        "not_reported"
+                    } else {
+                        outcome
+                    }
+                } else {
+                    "success"
+                };
+                assert!(
+                    rendered.contains(&format!("| {label} | {expected} |")),
+                    "missing or wrong row: {rendered}"
+                );
+            }
+            for expected in [
+                "workflow-sha",
+                "subject-head",
+                "integration-sha",
+                "integration-tree",
+                "run-id",
+                "attempt-id",
+                "route",
+                "| precommit | skipped |",
+            ] {
+                assert!(
+                    rendered.contains(expected),
+                    "missing identity or downstream result {expected}: {rendered}"
+                );
+            }
+        }
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = SummaryScratch::new("normal")?;
+    let normal_path = scratch.0.clone();
+    drop(scratch);
+    assert!(!normal_path.exists());
+
+    let error_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-error",
+        std::process::id()
+    ));
+    let error = (|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("error")?;
+        // Pin the exact scratch path so a naming-scheme change cannot let the
+        // error and unwind arms inspect an unrelated path.
+        assert_eq!(scratch.0, error_path);
+        assert!(error_path.exists());
+        Err(std::io::Error::other("injected error"))
+    })();
+    assert!(matches!(error, Err(ref error) if error.to_string() == "injected error"));
+    assert!(!error_path.exists());
+
+    let unwind_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-unwind",
+        std::process::id()
+    ));
+    let unwind = std::panic::catch_unwind(|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("unwind")?;
+        assert_eq!(scratch.0, unwind_path);
+        assert!(unwind_path.exists());
+        std::panic::resume_unwind(Box::new("injected unwind"));
+    });
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states and
+    // `unwrap_err` trips clippy::unwrap_used; `matches!` keeps the intent and
+    // pins the injected payload so an unrelated panic cannot pass as it.
+    assert!(matches!(unwind, Err(ref payload)
+        if payload.downcast_ref::<&str>() == Some(&"injected unwind")));
+    assert!(!unwind_path.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_preserves_replacement_directory()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    let scratch = SummaryScratch::new("replacement")?;
+    let replacement = scratch.0.clone();
+    fs::remove_file(&replacement)?;
+    fs::create_dir(&replacement)?;
+    let sentinel = replacement.join("summary.md");
+    fs::write(&sentinel, "must survive")?;
+    drop(scratch);
+    assert_eq!(fs::read_to_string(&sentinel)?, "must survive");
+    fs::remove_file(sentinel)?;
+    fs::remove_dir(replacement)?;
+    Ok(())
+}
+
+#[test]
+fn verdict_corpus_gate_cannot_be_replaced_by_check_affected() {
+    let changed = WORKFLOW.replace(
+        "cargo xtask verdict-corpus check-all",
+        "cargo xtask verdict-corpus check-affected",
+    );
+    assert_ne!(changed, WORKFLOW);
+    let findings = contract_violations(&changed);
+    assert!(
+        findings.contains(&"verdict_corpus: exact command missing".to_owned()),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn rust_gate_workflow_rejects_missing_required_command() {
     let changed = WORKFLOW.replace(
-        "        run: cargo xtask check-network-policy",
+        "        run: cargo xtask ci-policy",
         "        run: echo policy omitted",
     );
     let findings = contract_violations(&changed);
-    assert!(findings.contains(&"network_policy: exact command missing".to_owned()));
+    assert!(findings.contains(&"precommit: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_repeated_collected_policy_commands() {
+    for command in COLLECTED_POLICY_COMMANDS {
+        let changed = format!("{WORKFLOW}\n      - run: cargo xtask {command}\n");
+        assert!(
+            contract_violations(&changed)
+                .contains(&format!("{command}: already executed by ci-policy"))
+        );
+    }
+}
+
+#[test]
+fn rust_gate_policy_owner_accepts_compatible_signature_changes() -> Result<(), String> {
+    let (_, tail) = POLICY_SOURCE
+        .split_once("fn precommit_policy(")
+        .ok_or("precommit_policy function is missing")?;
+    let (parameters, _) = tail
+        .split_once(") -> Result<(), String> {")
+        .ok_or("precommit_policy body is missing")?;
+    let original = format!("fn precommit_policy({parameters}) -> Result<(), String> {{");
+    assert_eq!(POLICY_SOURCE.matches(&original).count(), 1);
+    for signature in [
+        "fn precommit_policy(collect_all: bool) -> Result<(), String> {",
+        "fn precommit_policy(\n    collect_all: bool,\n    coverage: policy::CoverageEnumeration,\n) -> Result<(), String> {",
+    ] {
+        let changed = POLICY_SOURCE.replacen(&original, signature, 1);
+        assert!(policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+        for replacement in [
+            "let _ = policy::check_policy_all();",
+            "Ok::<(), String>(())?;",
+        ] {
+            let omitted = changed.replacen("policy::check_policy_all()?;", replacement, 1);
+            assert_ne!(omitted, changed);
+            assert!(!policy_owner_violations(&omitted, COLLECT_ALL_SOURCE).is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_gate_workflow_keeps_collected_policy_owners_required() {
+    assert!(policy_owner_violations(POLICY_SOURCE, COLLECT_ALL_SOURCE).is_empty());
+    for replacement in [
+        "",
+        "let _ = check_dependencies();",
+        "if !collect_all { check_dependencies()?; }",
+        "check_dependencies()?;\n    check_dependencies()?;",
+    ] {
+        let changed = POLICY_SOURCE.replacen("    check_dependencies()?;", replacement, 1);
+        assert_ne!(changed, POLICY_SOURCE);
+        assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+    }
+    for replacement in [
+        "let _ = policy::check_policy_all();",
+        "Ok::<(), String>(())?;",
+    ] {
+        let changed = POLICY_SOURCE.replacen("policy::check_policy_all()?;", replacement, 1);
+        assert_ne!(changed, POLICY_SOURCE);
+        assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+    }
+    for (command, call) in [
+        ("check-process-policy", "check_process_policy"),
+        ("check-network-policy", "check_network_policy"),
+    ] {
+        let original = format!("(\"{command}\", {call}()),");
+        for replacement in [
+            String::new(),
+            format!("(\"{command}\", Ok(())),"),
+            format!("{original}\n        {original}"),
+        ] {
+            let changed = COLLECT_ALL_SOURCE.replace(&original, &replacement);
+            assert_ne!(changed, COLLECT_ALL_SOURCE);
+            assert!(!policy_owner_violations(POLICY_SOURCE, &changed).is_empty());
+        }
+    }
+}
+
+#[test]
+fn rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes() {
+    for extra in ["        if: false", "        continue-on-error: true"] {
+        let changed = WORKFLOW.replace(
+            "        id: precommit",
+            &format!("        id: precommit\n{extra}"),
+        );
+        assert!(
+            contract_violations(&changed)
+                .contains(&"precommit: required step must remain unconditional".to_owned())
+        );
+    }
+    let summary_header = "            printf '| Gate | Outcome |\\n| --- | --- |\\n'";
+    assert_eq!(WORKFLOW.matches(summary_header).count(), 1);
+    for id in ["dependencies", "process_policy", "network_policy"] {
+        let changed = WORKFLOW.replace(
+            summary_header,
+            &format!("{summary_header}\n            printf '| {id} | success |\\n'"),
+        );
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .contains(&format!("summary: {id} has no separate execution outcome"))
+        );
+    }
 }
 
 #[test]
@@ -227,8 +712,7 @@ fn rust_gate_workflow_rejects_policy_after_workspace_tests() {
 #[test]
 fn rust_gate_workflow_pins_fast_gates_before_workspace_tests() {
     for id in [
-        "goldens",
-        "fixtures",
+        "goldens_fixtures",
         "capability_producers",
         "capability_docs",
         "verdict_corpus",
@@ -483,6 +967,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             ));
         }
     }
+    // The partition lists come from the prepared binaries before the run. Taken after
+    // it, one shard spent four to six minutes in the listing on every run (#12915).
+    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
+        (Some(list), Some(test)) if list < test => {}
+        _ => findings.push("shards: the partition list must precede the test run".to_string()),
+    }
     if shards
         .lines()
         .filter(|line| line.trim() == "tool: nextest@0.9.149")
@@ -494,20 +985,24 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     if count(shards, "continue-on-error") != 0 {
         findings.push("shards: no step may continue on error".to_owned());
     }
-    if !shards.contains("        shard: [1, 2, 3, 4]\n") {
-        findings.push("shards: the matrix must stay shards 1 to 4".to_owned());
+    if !shards.contains("        shard: [1, 2]\n") {
+        findings.push("shards: the matrix must stay shards 1 to 2".to_owned());
     }
-    // `verify` is what makes four partitions equal the one command: a missing,
+    // `verify` is what makes two partitions equal the one command: a missing,
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
-        "\"$xtask\" verify-test-shards \\\n",
-        "xtask=\"$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)\"\n",
-        "pattern: ${{ inputs.artifact-name }}-xtask-*\n          path: xtask-binary\n",
-        "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
-        "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
+        "python3 tools/ci/shard-verifier-artifact.py launch \\\n",
+        "            --prefix \"$ARTIFACT_PREFIX\" --runner-temp \"$RUNNER_TEMP\" \\\n",
+        "            --provenance target/nextest/ci/verifier-artifact.json \\\n",
+        "            -- verify-test-shards \\\n",
+        "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: ${{ steps.xtask-artifact.outputs.path }}\n",
+        "        id: xtask-artifact\n        if: matrix.shard == 1\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
+        "          strip --strip-debug -o \"$stripped\" target/debug/xtask\n",
+        "          python3 tools/ci/shard-verifier-artifact.py retain \\\n            --binary \"$stripped\" --destination \"$staging/payload\" \\\n",
+        "          printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"\n",
         "if-no-files-found: error\n          retention-days: 1\n",
-        "            --shards 4 \\\n",
+        "            --shards 2 \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
         "name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}\n          path: |\n            target/nextest/ci/junit.xml\n            target/nextest/ci/run-context.txt\n",
@@ -516,11 +1011,23 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             findings.push(format!("shards: verify lost `{required}`"));
         }
     }
-    // The hosted route must run the shards behind its gates job and may not report
-    // the required result green without them.
+    for forbidden in [
+        "find xtask-binary",
+        "pattern: ${{ inputs.artifact-name }}-xtask-*",
+    ] {
+        if shards.contains(forbidden) {
+            findings.push(format!(
+                "shards: obsolete executable selection `{forbidden}`"
+            ));
+        }
+    }
+    // The hosted route must start the shards on the hosted gates job's own
+    // condition (alongside it, so the required context fits the merge queue's
+    // status-check timeout, #4838) and may not report the required result green
+    // without them.
     for required in [
-        "      test-shards: 4\n",
-        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
+        "      test-shards: 2\n",
+        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n    if: >-\n      !cancelled() &&\n      needs.admission.result == 'success' &&\n      needs.detect-docs-only.result == 'success' &&\n      needs.admission.outputs.docs_only != 'true' &&\n      (needs.route.outputs.router_target == 'github' ||\n      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml\n",
         "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
@@ -582,6 +1089,22 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
 }
 
 #[test]
+fn sharded_hosted_tests_list_the_partition_before_the_run() {
+    let expected = "shards: the partition list must precede the test run".to_string();
+    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    // Swap the two commands: the run then precedes the listing again.
+    let swapped = SHARDS
+        .replace(SHARDED_LIST_COMMAND, "\u{0}")
+        .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
+        .replace('\u{0}', SHARDED_TEST_COMMAND);
+    assert_ne!(swapped, SHARDS);
+    assert!(
+        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        "a listing after the run was not rejected"
+    );
+}
+
+#[test]
 fn sharded_hosted_tests_reject_a_changed_nextest_version() {
     for replacement in ["tool: nextest", "tool: nextest@0.9.148"] {
         let changed = SHARDS.replace("tool: nextest@0.9.149", replacement);
@@ -632,21 +1155,42 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "cargo nextest run --workspace --profile ci",
         ),
         ("fail-fast: false", "continue-on-error: true"),
-        ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
-        ("\"$xtask\" verify-test-shards", "true"),
+        ("shard: [1, 2]", "shard: [1]"),
+        ("-- verify-test-shards", "-- other-command"),
         (
-            "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
-            "find xtask-binary -type f -name xtask | head -n 1",
+            "python3 tools/ci/shard-verifier-artifact.py launch",
+            "target/xtask-binary/xtask verify-test-shards",
+        ),
+        ("--runner-temp \"$RUNNER_TEMP\"", "--runner-temp \"$PWD\""),
+        (
+            "--provenance target/nextest/ci/verifier-artifact.json",
+            "--provenance discarded.json",
+        ),
+        (
+            "path: ${{ steps.xtask-artifact.outputs.path }}",
+            "path: target/xtask-binary/",
+        ),
+        (
+            "staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"",
+            "staging=target/xtask-binary",
+        ),
+        (
+            "--destination \"$staging/payload\"",
+            "--destination target/xtask-binary",
+        ),
+        (
+            "printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"",
+            "printf 'path=target/xtask-binary\\n' >> \"$GITHUB_OUTPUT\"",
         ),
         (
             "if-no-files-found: error\n          retention-days: 1",
             "if-no-files-found: warn\n          retention-days: 1",
         ),
         (
-            "-xtask-${{ github.run_attempt }}\n          path: target",
-            "-xtask-0\n          path: target",
+            "-xtask-${{ github.run_attempt }}\n          path:",
+            "-xtask-0\n          path:",
         ),
-        ("            --shards 4 \\\n", "            --shards 3 \\\n"),
+        ("            --shards 2 \\\n", "            --shards 3 \\\n"),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (
             "    if: ${{ !cancelled() }}\n    runs-on",
@@ -666,9 +1210,25 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
 }
 
 #[test]
+fn sharded_verifier_rejects_obsolete_download_or_selector_beside_bound_handoff() {
+    for obsolete in [
+        "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
+        "pattern: ${{ inputs.artifact-name }}-xtask-*",
+    ] {
+        let changed = format!("{SHARDS}\n{obsolete}\n");
+        assert!(
+            shard_contract_violations(&changed, ROUTED)
+                .iter()
+                .any(|finding| finding.contains("obsolete executable selection")),
+            "obsolete executable selection was not rejected: {obsolete}"
+        );
+    }
+}
+
+#[test]
 fn routed_result_cannot_pass_without_the_hosted_shards() {
     for (from, to) in [
-        ("test-shards: 4\n", "test-shards: 1\n"),
+        ("test-shards: 2\n", "test-shards: 1\n"),
         (
             "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
             "elif false; then status=fail",
@@ -678,8 +1238,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "rust-github, docs-gate,",
         ),
         (
-            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
-            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail')) || always()\n    uses: ./.github/workflows/rust-test-shards.yml",
         ),
     ] {
         let changed = ROUTED.replace(from, to);
@@ -714,8 +1274,8 @@ fn checks_with_prepared_xtask(workflow: &str) -> bool {
     let commands = [
         "          build_phase workspace cargo test --no-run --locked --workspace",
         "        run: target/debug/xtask check-covered-by",
-        "          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask",
-        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)",
+        "          strip --strip-debug -o \"$stripped\" target/debug/xtask",
+        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 2)",
     ];
     let mut previous = None;
     for command in commands {
@@ -968,7 +1528,7 @@ exit "$status"
                 "checkout_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "run_id=123",
                 "run_attempt=4",
-                "shard=2/4",
+                "shard=2/2",
                 "sample_period_seconds=5",
             ] {
                 assert!(context.contains(field), "{name}: missing {field}");
@@ -1040,4 +1600,65 @@ exit "$status"
         }
         Ok(())
     }
+}
+
+#[test]
+fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
+    let blocks: Vec<_> = WORKFLOW.split("\n      - ").skip(1).collect();
+    let idx = |id: &str| -> Result<usize, String> {
+        blocks
+            .iter()
+            .position(|block| step_id(block) == Some(id))
+            .ok_or_else(|| format!("missing step id `{id}`"))
+    };
+    let prep_idx = idx("goldens_fresh_merge")?;
+    // Anchor on the gate's command, not its step id: the id is renamed as the
+    // gate grows (`goldens` -> `goldens_fixtures`), and a stale id here would
+    // fail on the PR merge ref while passing on the branch.
+    let goldens_matches: Vec<usize> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| {
+            step_run(block).is_some_and(|run| run.starts_with("cargo xtask goldens check"))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let [goldens_idx] = goldens_matches[..] else {
+        return Err(format!(
+            "expected one goldens gate step running `cargo xtask goldens check`, found {}",
+            goldens_matches.len()
+        ));
+    };
+    let restore_idx = idx("goldens_restore_checkout")?;
+    assert!(
+        prep_idx < goldens_idx && goldens_idx < restore_idx,
+        "goldens_fresh_merge ({prep_idx}) < goldens gate ({goldens_idx}) < goldens_restore_checkout ({restore_idx})"
+    );
+    let prep = blocks[prep_idx];
+    assert!(
+        prep.contains(
+            "        if: github.event_name == 'pull_request' && inputs.subject-sha == ''"
+        ),
+        "fresh base merge must run only on pull_request legacy merge-ref checkouts:\n{prep}"
+    );
+    assert!(
+        prep.contains("git merge-tree --write-tree --no-messages"),
+        "fresh base merge must check mergeability before switching:\n{prep}"
+    );
+    assert!(
+        prep.contains("git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit"),
+        "fresh base merge must create a clean merge commit:\n{prep}"
+    );
+    let restore = blocks[restore_idx];
+    assert!(
+        restore.contains(
+            "        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'"
+        ),
+        "restore step must always run when goldens_fresh_merge switched HEAD:\n{restore}"
+    );
+    assert!(
+        restore.contains("git checkout --detach \"$ORIG_HEAD\""),
+        "restore step must restore ORIG_HEAD:\n{restore}"
+    );
+    Ok(())
 }

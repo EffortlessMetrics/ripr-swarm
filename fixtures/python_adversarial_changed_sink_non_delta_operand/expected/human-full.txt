@@ -62,7 +62,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
   ripr context --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
 
-
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
   establish a static test path. Scope analyzed: 1 changed expression(s) and 0 statically linked
   related test(s). This is not a coverage assessment. A test may already exercise these changes

@@ -115,7 +115,7 @@ pub(super) fn python_message_pin_gap(
     })
 }
 
-fn is_strong_error_variant(assertion: &PythonAssertion) -> bool {
+pub(super) fn is_strong_error_variant(assertion: &PythonAssertion) -> bool {
     assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
         && matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
 }

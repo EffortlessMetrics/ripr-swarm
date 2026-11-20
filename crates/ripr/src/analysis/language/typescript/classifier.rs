@@ -107,6 +107,11 @@ pub(crate) struct CreditFacts<'a> {
     /// The one field of a single-line returned object literal whose value
     /// changed, when the old line is known (RIPR-SPEC-0243 rule 17).
     pub(crate) changed_field: Option<&'a TypeScriptChangedField>,
+    /// Every field whose value changed on the line. Empty when the shape is
+    /// not a simple literal. `len() > 1` is the #14857 unresolvable-change
+    /// case: no single changed field exists, but a read of a field the edit
+    /// never touched still cannot witness the change.
+    pub(crate) changed_fields: &'a [TypeScriptChangedField],
 }
 
 /// Shared inputs for row-local and aggregate changed-sink observation (#5528).
@@ -228,6 +233,7 @@ pub(crate) fn ts_candidate_changed_sink_observation(
         pin_facts,
         push_facts,
         changed_field,
+        changed_fields,
     } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -413,6 +419,38 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     workspace_root,
                 )
             };
+            // #14814: a read of a SIBLING field of the returned literal
+            // observes a different field, so it cannot witness this change.
+            // `expect(f().verbose)` while the edit moves `retries` must not
+            // inherit the blanket owner-call confirmation below.
+            if let Some(field) = changed_field
+                && ts_value_observed_reads_sibling_field(
+                    observed,
+                    field,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                )
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
+            // #14857: when the edit moves TWO OR MORE values of the returned
+            // literal, `changed_field` is `None` and the guard above is
+            // skipped. A read of a field the change never touched still cannot
+            // witness it; a read of either changed field keeps the credit.
+            if changed_fields.len() > 1
+                && ts_value_observed_reads_untouched_field(
+                    observed,
+                    changed_fields,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                )
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             if ts_masked_observes_owner(
                 &observed_code,
                 &owner_names,
@@ -722,6 +760,258 @@ fn ts_effect_observed_is_affirmatively_foreign(
         return true;
     }
     ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// #14814: whether `observed` reads a SIBLING field of the owner's returned
+/// literal: the outermost plain field read of an expression whose base is the
+/// owner call (or an admitted owner alias) names a field other than the
+/// changed one.
+///
+/// `expect(f().verbose)` while the edit moves `retries` observes a different
+/// field, so it cannot witness the changed one. Only a plain trailing field
+/// read counts: a method call (`f().format()`), a nested read whose outermost
+/// field IS the changed one (`f().config.retries`) and the whole result (`f()`)
+/// keep the existing credit.
+fn ts_value_observed_reads_sibling_field(
+    observed: &str,
+    changed: &TypeScriptChangedField,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
+    let Some((base, read)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let read = read.trim();
+    if read.is_empty()
+        || read == changed.key
+        || !read
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+        || !read.chars().all(is_ident_char)
+    {
+        return false;
+    }
+    let base = base.trim();
+    if base.is_empty() {
+        return false;
+    }
+    // The read path must not name the changed field anywhere: `f().retries.n`
+    // reads THROUGH `retries`, so the outermost `n` is a projection of the
+    // changed field, not a sibling. Only a path that never names it is a
+    // sibling read (#14814 F3).
+    //
+    // The occurrence must be a MEMBER segment of an owner-rooted chain, not
+    // any identifier that happens to spell the key. `f().retries || f().verbose`
+    // reads the changed field off the owner and keeps the credit; a local
+    // named `retries` in `retries && f().verbose` is not a field read and must
+    // not, or the guard is skipped and the sibling is credited (#14814 round 3).
+    if ts_masked_reads_changed_field_as_member(
+        &masked,
+        changed.key.as_str(),
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+    ) {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14857: whether `observed` reads a field of the owner's returned literal
+/// that the edit did NOT change, when the change could not be reduced to one
+/// field (two or more values moved on the line).
+///
+/// `expect(f().timeout)` while the edit moves `retries` and `verbose` reads a
+/// field the change never touched, so it cannot witness the change. A read
+/// that names any changed field (`f().retries`, `f().retries.n`) keeps the
+/// credit, as do the whole result (`f()`) and a method call (`f().format()`).
+fn ts_value_observed_reads_untouched_field(
+    observed: &str,
+    changed: &[TypeScriptChangedField],
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    if changed.is_empty() {
+        return false;
+    }
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
+    let Some((base, read)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let read = read.trim();
+    if read.is_empty()
+        || !read
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+        || !read.chars().all(is_ident_char)
+    {
+        return false;
+    }
+    // A read of any changed field is a read of the change, not a sibling.
+    if changed.iter().any(|field| field.key == read) {
+        return false;
+    }
+    // A path that names a changed field anywhere reads THROUGH it, so the
+    // outermost segment is a projection of the change, not a sibling.
+    if changed.iter().any(|field| {
+        ts_masked_reads_changed_field_as_member(
+            &masked,
+            field.key.as_str(),
+            owner_names,
+            owner_is_method,
+            namespace_receivers,
+        )
+    }) {
+        return false;
+    }
+    let base = base.trim();
+    if base.is_empty() {
+        return false;
+    }
+    // #14857 round 1 (Devin): a compound base is not a projection of the
+    // owner's result. In `f() ?? defaults.config` the trailing `config`
+    // belongs to the fallback while the assertion receives the whole object
+    // `f()` returns, so the read does witness the change and must keep its
+    // credit. Only a plain member-access chain can be a sibling read.
+    if !ts_chain_is_plain_projection(base) {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14857: whether `base` is a plain member-access chain (`f()`, `a.f()`,
+/// `this.g()`, `f()?.n`) rather than a compound expression. A top-level
+/// operator means the assertion subject is not the owner's field projection:
+/// `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+fn ts_chain_is_plain_projection(base: &str) -> bool {
+    let chars: Vec<char> = base.chars().collect();
+    let mut depth = 0i32;
+    for (i, ch) in chars.iter().copied().enumerate() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => {
+                let next = chars.get(i + 1).copied();
+                // `?.` and a trailing `?` (the split point of `f()?.field`)
+                // are member access, not a ternary.
+                let optional_chain = ch == '?' && matches!(next, None | Some('.'));
+                let compound = matches!(
+                    ch,
+                    ',' | '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '|' | '&' | '!' | ':'
+                ) || (ch == '?' && !optional_chain);
+                if compound {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// #14814 round 3: whether `masked` reads `key` as a member segment of a chain
+/// rooted at the owner. A bare identifier that merely spells the key — a local,
+/// a parameter, a name inside a masked literal — is not a field read, so it
+/// must not keep the credit the sibling guard is about to withdraw.
+///
+/// `f().retries || f().verbose` and `f().retries?.n` qualify (the segment hangs
+/// off the owner call); `retries && f().verbose` with a local `retries` does
+/// not, and `other.retries` does not either, because its chain is not the
+/// owner's.
+fn ts_masked_reads_changed_field_as_member(
+    masked: &str,
+    key: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    if key.is_empty() {
+        return false;
+    }
+    masked.match_indices(key).any(|(at, _)| {
+        let before = masked.get(..at).unwrap_or("");
+        let after = masked.get(at + key.len()..).unwrap_or("");
+        let whole_identifier = before
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident_char(ch))
+            && after.chars().next().is_none_or(|ch| !is_ident_char(ch));
+        if !whole_identifier {
+            return false;
+        }
+        // A member segment: `.key` or `?.key`, with optional whitespace.
+        let Some(prefix) = before.trim_end().strip_suffix('.') else {
+            return false;
+        };
+        let prefix = prefix.trim_end().strip_suffix('?').unwrap_or(prefix);
+        ts_masked_observes_owner(prefix, owner_names, owner_is_method, namespace_receivers)
+    })
+}
+
+/// Rewrite bracket string-literal field reads (`f()["verbose"]`) as dotted
+/// ones (`f().verbose`) so the sibling-field guard sees a field read in either
+/// syntax (#14814 F1). Only a bracket whose contents are a bare identifier is
+/// rewritten; index expressions, computed keys and keys with spaces are left
+/// alone.
+fn ts_normalize_bracket_field_reads(text: &str) -> String {
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (head, tail) = rest.split_at(open);
+        out.push_str(head);
+        let after_bracket = &tail[1..];
+        let quote = match after_bracket.chars().next() {
+            Some(quote @ ('"' | '\'')) => quote,
+            _ => {
+                out.push('[');
+                rest = after_bracket;
+                continue;
+            }
+        };
+        let inner = &after_bracket[quote.len_utf8()..];
+        let Some(close) = inner.find(quote) else {
+            out.push('[');
+            rest = after_bracket;
+            continue;
+        };
+        let name = &inner[..close];
+        let after_name = &inner[close + quote.len_utf8()..];
+        let bare_identifier = !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+            && name.chars().all(is_ident_char);
+        if bare_identifier && after_name.starts_with(']') {
+            out.push('.');
+            out.push_str(name);
+            rest = &after_name[1..];
+        } else {
+            out.push('[');
+            rest = after_bracket;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `true` when `text` is a bare identifier reference (no member access, call,
@@ -4858,9 +5148,23 @@ pub(crate) fn owner_namespace_receivers(
                             .default_member_only_locals_in_file
                             .iter()
                             .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && !test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| {
+                                *local == import.local
+                                    && owner.default_object_unsafe_siblings.contains(member)
+                            })
                         && import_source_matches_owner(
                             import,
                             &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                        && !super::related_tests::default_object_second_binding(
+                            import,
+                            test,
                             owner,
                             alias_map,
                             workspace_root,
@@ -6905,6 +7209,12 @@ pub(crate) struct OwnerLineContext<'a> {
     /// Whole-file one-for-one replacement established by the diff-owning driver.
     /// A per-line old counterpart alone cannot rule out other removed calls.
     pub(crate) single_line_replacement: bool,
+    /// Trimmed removed lines of the changed file that could have thrown the
+    /// old side's error (#13827, [`removed_line_may_throw`]). The message pin
+    /// needs every one of them to be the changed throw's own paired old line:
+    /// content alignment can leave a moved or reshaped old throw unpaired,
+    /// and another removed throw or call can carry a containing message.
+    pub(crate) removed_throw_candidates: Vec<String>,
     /// More exports of other modules call the owner than
     /// `MAX_CROSS_MODULE_ENTRIES`, so none were followed (#13592); a
     /// `no_static_path` finding says so.
@@ -6950,6 +7260,7 @@ pub(crate) fn owner_line_context<'a>(
         named_limitations_from_ownership,
         named_limitations_from_spy,
         single_line_replacement: false,
+        removed_throw_candidates: Vec::new(),
         cross_module_fan_in_limited: false,
     }
 }
@@ -7515,7 +7826,10 @@ pub(crate) fn classify_resolved_owner(
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
-    let changed_field = ts_changed_object_field(old_line_text, line_text);
+    let changed_fields = ts_changed_object_fields(old_line_text, line_text);
+    let changed_field = changed_fields
+        .as_ref()
+        .and_then(|fields| (fields.len() == 1).then(|| fields[0].clone()));
     let error_facts = ErrorChangeFacts::read(old_line_text, line_text).with_owner_source(
         owner.source_text.as_deref(),
         &owner.params,
@@ -7778,6 +8092,7 @@ pub(crate) fn classify_resolved_owner(
                     pin_facts: &pin_facts,
                     push_facts: &push_facts,
                     changed_field: changed_field.as_ref(),
+                    changed_fields: changed_fields.as_deref().unwrap_or(&[]),
                 },
             ));
 
@@ -8046,6 +8361,7 @@ pub(crate) fn classify_resolved_owner(
             pin_facts: &pin_facts,
             push_facts: &push_facts,
             changed_field: changed_field.as_ref(),
+            changed_fields: changed_fields.as_deref().unwrap_or(&[]),
         },
         mock_paths: &context.mock_paths,
         alias_map,
@@ -8236,8 +8552,9 @@ pub(crate) fn classify_resolved_owner(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let family = probe_shape.family.clone();
-    let delta = probe_shape.delta.clone();
+    // #14381: an unrecognised plain value declaration presents as a value;
+    // every analysis decision above and below reads `probe_shape`.
+    let (family, delta) = presented_typescript_shape(&probe_shape, line_text);
     let expected_sinks = if probe_shape.specific {
         probes::expected_sinks(line_text, &family)
     } else {
@@ -8295,6 +8612,7 @@ pub(crate) fn classify_resolved_owner(
                 pin_facts: &pin_facts,
                 push_facts: &push_facts,
                 changed_field: changed_field.as_ref(),
+                changed_fields: changed_fields.as_deref().unwrap_or(&[]),
             },
             boundary_fact: missing_discriminators.first(),
         },
@@ -8501,6 +8819,12 @@ pub(crate) fn classify_resolved_owner(
         _ if !has_oracle_eligible_relation => {
             "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
+        _ if owner.owner_kind == OwnerKind::ModuleFunction && reach_only_through_module_entry => {
+            format!(
+                "TypeScript preview advisory: the related test reaches `{}` only through a same-module caller with a weak oracle; add an exact-value assertion on that caller's result that depends on `{}`, and keep the finding advisory (no repair packet is emitted).",
+                owner.name, owner.name
+            )
+        }
         _ if owner.owner_kind == OwnerKind::ModuleFunction => {
             format!(
                 "TypeScript preview advisory: related module-initializer observer reaches `{}` but no safe target shape is available; add an exact value assertion for the exported value and keep the finding advisory until repair-card fields are complete.",
@@ -8563,6 +8887,37 @@ pub(crate) fn classify_resolved_owner(
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
+    }
+    // #13827: the literal message a bare `toThrow()` repair may pin, read
+    // from both sides of the changed throw. The packet projection offers a
+    // message target only when this fact is present. Any removed line that
+    // could have thrown (a throw, a rejection, a call) must be the changed
+    // throw's own paired old line, whose message the facts already compared:
+    // alignment can leave a moved old throw unpaired, a removed helper call
+    // can throw a containing message, and another removed throw can fire
+    // first on the same input.
+    if matches!(family, ProbeFamily::ErrorPath)
+        && !missing_discriminators.is_empty()
+        && context
+            .removed_throw_candidates
+            .iter()
+            .all(|removed| old_line_text.is_some_and(|old| old.trim() == removed))
+        // Only a test that calls the owner itself: through an exported
+        // wrapper (`ModuleEntryCall`) the wrapper's own unchanged throws can
+        // fire first with a message that contains the pinned one.
+        && !related_candidates.is_empty()
+        && related_candidates.iter().all(|candidate| {
+            matches!(
+                candidate.relation,
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ReExportChainFollowed
+            )
+        })
+        && let Some(message) = error_facts.pinnable_generic_error_message()
+    {
+        evidence.push(format!("typescript_error_message_pin: {message}"));
     }
     // The call input that hits the named predicate boundary, when the owner's
     // module pins it statically (parameter read-only, literal or single
@@ -10373,6 +10728,7 @@ struct Rule8LadderFacts<'a> {
     pin_facts: &'a PinFacts,
     push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     changed_field: Option<&'a TypeScriptChangedField>,
+    changed_fields: &'a [TypeScriptChangedField],
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -10401,6 +10757,7 @@ fn ts_rule8_mocked_changed_callee(
         pin_facts,
         push_facts,
         changed_field,
+        changed_fields,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -10457,6 +10814,7 @@ fn ts_rule8_mocked_changed_callee(
                     pin_facts,
                     push_facts,
                     changed_field,
+                    changed_fields,
                 },
             )
         {

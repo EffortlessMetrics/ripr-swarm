@@ -376,6 +376,7 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_adds_binding;
 mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
@@ -387,8 +388,11 @@ mod loop_walk;
 mod may_reach;
 mod message_pin;
 mod module_value;
+mod range_activation;
 mod test_local_literal;
+mod type_checking_block;
 mod type_guard;
+mod verify_interpreter;
 mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
@@ -400,6 +404,8 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+#[cfg(test)]
+mod exception_body_call_tests;
 mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
@@ -409,7 +415,9 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
+mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
@@ -443,15 +451,14 @@ use discriminators::{
     python_return_dict_field_discriminator, python_string_literal_value, split_python_assignment,
     top_level_python_segments,
 };
+use no_behavior::{
+    BracketEvidence, header_param_line_defaults, is_python_import_line, is_python_structural_line,
+    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
+};
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
-    is_annotation_only_def_change, is_annotation_only_var_change,
-};
-use no_behavior::{
-    header_param_line_defaults, is_python_import_line, is_python_no_behavior_line,
-    is_python_structural_line, is_structural_def_header_text, multi_line_def_header_span,
-    python_quiet_lines_covered_by_run,
+    is_annotation_only_def_change, is_annotation_only_var_change, is_python_no_behavior_line,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -489,6 +496,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod callee_patch;
 mod collection_config;
 mod fixture_substitution;
 mod fixtures;
@@ -502,7 +510,7 @@ mod term_activation;
 mod test_activation;
 mod truthiness_swap;
 use static_limits::{
-    PythonStaticLimit, has_identifier_boundary, line_prefix_before,
+    PrefixScan, PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
@@ -536,6 +544,35 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
 ) {
     crate::analysis::witness::retain_finding_projection(&finding);
     findings.push(finding);
+}
+
+/// Record which related rows live in a test file the diff changed (#14027) so
+/// the one shared headline pick can prefer them. Nothing is stamped when the
+/// first row already is one (the default pick already names it) or no row is.
+/// Display evidence only: row order, class and oracle strength are untouched.
+fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    if changed_files.is_empty()
+        || finding
+            .related_tests
+            .first()
+            .is_none_or(|first| changed_files.contains(&first.file))
+    {
+        return;
+    }
+    finding.evidence.extend(
+        finding
+            .related_tests
+            .iter()
+            .filter(|row| changed_files.contains(&row.file))
+            .map(|row| {
+                format!(
+                    "{}{}:{}",
+                    crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                    normalized_path(&row.file),
+                    row.line
+                )
+            }),
+    );
 }
 
 /// Whether `text` holds `name` as a whole Python identifier.
@@ -628,6 +665,11 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Test-local modules that shadow a top-level name of this owner's module
+    /// paths for tests under pytest's prepend import mode (`related_tests.rs`,
+    /// #13706). Empty until the workspace pass fills it.
+    #[serde(default)]
+    test_local_shadows: Vec<related_tests::TestLocalShadow>,
     /// Dotted module paths of other workspace source files that define a
     /// free function with this owner's name (`related_tests.rs`, #8759). A
     /// test that imports the name from one of them (and from no module that
@@ -686,6 +728,21 @@ struct PythonOwner {
     /// click-alias decorators require this; reassigned aliases stay fail-closed.
     #[serde(default)]
     trusted_stdlib_click_alias: bool,
+    /// The owner is a route handler whose response body is its returned dict
+    /// (#13869): every static route decorator takes only keywords that leave
+    /// the body alone (no `response_model` or `response_class`), the return
+    /// annotation is absent or a bare `dict`, and the function has exactly one
+    /// `return`, of a dict literal with distinct string-literal keys, and no
+    /// `yield` or `raise`. A workspace post-pass may withdraw it.
+    /// `false` by default, which grants no response-read credit.
+    #[serde(default)]
+    route_returns_body: bool,
+    /// The route handler's return annotation is a bare `dict` (#13869). The
+    /// workspace post-pass withdraws `route_returns_body` from such an owner
+    /// when any source may rebind `dict`, which would make the annotation a
+    /// response model; an unannotated handler keeps its credit.
+    #[serde(default)]
+    route_dict_annotation: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -900,6 +957,11 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// Byte offset in `gate_text` where the exception body ends, before the
+    /// rule 14 comparison is appended (#14754 review). `None` for a
+    /// non-exception assertion or a cached fact written before this field.
+    #[serde(default)]
+    exception_body_end: Option<usize>,
     /// The call a callable-form exception assertion makes
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
@@ -1642,6 +1704,15 @@ impl PythonAdapter {
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // `from . import X` where the test package's `__init__.py` binds `X`
+        // by import (#13927). After the helper substitution, which keeps its
+        // own stricter module-attribute rule (RIPR-SPEC-0238 rule 32), and
+        // before every reach and oracle reader of test imports.
+        package_aliases::apply_package_import_aliases(
+            &mut all_tests,
+            &workspace_read.sources,
+            |path| options.root.join(path).exists(),
+        );
         // A chain conftest that exists but was never read (capped, excluded or
         // unreadable) cannot be ruled out.
         let unreadable_conftest = |conftest: &Path| {
@@ -1706,8 +1777,58 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_project_module_names(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
+            |path| options.root.join(path).exists(),
+        );
+        // Test-local helper modules are found by path as well (#13706); every
+        // discovered file counts, test files included.
+        related_tests::apply_test_local_shadows(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
+        // A rival route in an unread file cannot be ruled out, so a partial
+        // walk or read refuses the route-response credit, as does any source
+        // that reshapes responses or registers unrecorded routes (#13869).
+        // Every route decorator line of every read source (test files
+        // included, whose owners are not collected) is counted against the
+        // routes the owners record; a file that failed to parse records none.
+        related_tests::apply_route_overlaps(
+            &mut all_owners,
+            refused_files != 0
+                || !workspace_read.limits.is_empty()
+                || !workspace_read.io_failures.is_empty()
+                || !parse_failure_paths.is_empty()
+                || workspace_read
+                    .sources
+                    .values()
+                    .any(|source| related_tests::workspace_reshapes_responses(source))
+                || related_tests::workspace_registers_routes_indirectly(
+                    workspace_read.sources.values().map(String::as_str),
+                ),
+            workspace_read
+                .sources
+                .values()
+                .map(|source| related_tests::route_decorator_lines(source))
+                .sum(),
+        );
+        related_tests::withdraw_dict_annotated_routes(
+            &mut all_owners,
+            workspace_read
+                .sources
+                .values()
+                .any(|source| related_tests::rebinds_builtin_dict(source)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -1821,7 +1942,10 @@ impl PythonAdapter {
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        limitations.extend(limitations_for_absent_changed_files(
+            &options.root,
+            &absent_changed_files,
+        )?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))
@@ -2010,6 +2134,11 @@ impl PythonAdapter {
             }
         }
 
+        let changed_test_files: BTreeSet<PathBuf> = python_changed_files
+            .iter()
+            .filter(|changed| !changed.added_lines.is_empty() || !changed.removed_lines.is_empty())
+            .map(|changed| changed.path.clone())
+            .collect();
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut related_memo = related_tests::RelatedCandidateMemo::default();
@@ -2072,13 +2201,27 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges) = old_source
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
                 .as_deref()
                 .map(|source| {
                     let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let compound_loop_owners = workspace_read
+                .sources
+                .get(&changed.path)
+                .map(|source| {
+                    range_activation::compound_loop_owners(
+                        changed,
+                        source,
+                        &all_owners,
+                        old_source.as_deref(),
+                        &old_owners,
                     )
                 })
                 .unwrap_or_default();
@@ -2095,6 +2238,26 @@ impl PythonAdapter {
             let old_string_line_ranges = old_source
                 .as_deref()
                 .and_then(no_behavior::multi_line_string_line_ranges);
+            // #14156: the body of `if TYPE_CHECKING:` never runs, on either
+            // side of the diff.
+            let typing_shadowed =
+                type_checking_block::workspace_may_shadow_typing(workspace_read.sources.keys());
+            let type_checking_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
+            let old_type_checking_ranges = old_source
+                .as_deref()
+                .filter(|_| !typing_shadowed)
+                .map(|source| {
+                    type_checking_block::type_checking_only_line_ranges(&changed.path, source)
+                })
+                .unwrap_or_default();
+            let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2114,14 +2277,35 @@ impl PythonAdapter {
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
-                        !line_is_in_ranges(removed.line, &old_import_ranges)
-                            && !is_python_import_line(&removed.text)
+                        (!line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text))
+                            // #14157: the old import line with more names
+                            // is an added import in place.
+                            || old_source.as_deref().is_some_and(|old_source| {
+                                import_adds_binding::import_line_only_adds_bindings(
+                                    &removed.text,
+                                    &added.text,
+                                    old_source,
+                                )
+                            })
                     })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
+                    // A block line counts as quiet only when the line it
+                    // replaced did not run either; runtime code moved into a
+                    // block goes to the classifier, which keeps its probe.
+                    || (line_is_in_ranges(added.line, &type_checking_ranges)
+                        && counterparts.get(&added.line).is_none_or(|removed| {
+                            line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                                || line_is_in_ranges(removed.line, &old_docstring_ranges)
+                                || line_is_in_ranges(removed.line, &old_import_ranges)
+                                || is_python_import_line(&removed.text)
+                                || brackets.old_quiet(&removed.text, removed.line)
+                                || is_python_structural_line(&removed.text)
+                        }))
                     || is_added_import(added)
-                    || is_python_no_behavior_line(&added.text)
+                    || brackets.new_quiet(&added.text, added.line)
                     || is_python_structural_line(&added.text)
                     // A decorator that opens a newly added function is part of
                     // its definition; the function's own lines carry the change.
@@ -2179,6 +2363,14 @@ impl PythonAdapter {
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
+                    new_line_type_checking_only: line_is_in_ranges(
+                        added.line,
+                        &type_checking_ranges,
+                    ),
+                    old_line_type_checking_only: old_line.is_some_and(|removed| {
+                        line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                    }),
+                    brackets: brackets.line(added.line, old_line.map(|old| old.line)),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
                         added.line,
@@ -2197,7 +2389,7 @@ impl PythonAdapter {
                                 other.line > owner.start_line
                                     && other.line <= owner.end_line
                                     && !line_is_in_ranges(other.line, new_docstring_ranges)
-                                    && !is_python_no_behavior_line(&other.text)
+                                    && !brackets.new_quiet(&other.text, other.line)
                             })
                     }),
                     structural_def_header_line: in_multi_line_def_header
@@ -2211,6 +2403,12 @@ impl PythonAdapter {
                     ),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
+                    compound_loop_edit: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| compound_loop_owners.contains(&owner.symbol_id())),
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2235,6 +2433,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
+                    stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                     publish_production_finding(&mut findings, finding);
                 }
             }
@@ -2252,6 +2451,8 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    type_checking_only: &old_type_checking_ranges,
+                    brackets: brackets.old_ranges_for_deleted(),
                     source: old_source.as_deref(),
                 },
                 workspace_read
@@ -2259,12 +2460,14 @@ impl PythonAdapter {
                     .get(&changed.path)
                     .map(String::as_str),
                 &all_owners,
+                &compound_loop_owners,
                 &all_tests,
                 &findings,
                 &mut value_origins,
                 &mut related_memo,
             );
-            for finding in deleted {
+            for mut finding in deleted {
+                stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                 publish_production_finding(&mut findings, finding);
             }
         }
@@ -2287,6 +2490,9 @@ impl PythonAdapter {
             star_facts_by_file,
         );
         teardown::free_in_background(facts);
+        // #13801: the interpreter and confidence of the pytest verify route
+        // are decided once here, from static facts at the root.
+        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2300,6 +2506,7 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -2320,7 +2527,8 @@ impl PythonAdapter {
         working_set_limit: repo::RepoWorkingSetLimit,
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
-        let evidence = repo::build_repo_evidence(&input, root);
+        let mut evidence = repo::build_repo_evidence(&input, root);
+        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2465,11 +2673,18 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
 mod capability_disposition_tests;
 
+#[cfg(test)]
+mod approx_band_tests;
+#[cfg(test)]
+mod callee_patch_tests;
 #[cfg(test)]
 mod helper_inline_tests;
 #[cfg(test)]
@@ -2480,9 +2695,17 @@ mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
 #[cfg(test)]
+mod cross_module_caller_tests;
+#[cfg(test)]
+mod dunder_helper_reach_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod owner_result_field_tests;
+#[cfg(test)]
+mod repo_module_identity_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
 #[cfg(test)]
@@ -2502,12 +2725,23 @@ mod imported_call_operator_tests;
 mod may_reach_tests;
 #[cfg(test)]
 mod module_value_tests;
+
+#[cfg(test)]
+pub(crate) use module_value_tests::{
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
+
 #[cfg(test)]
 mod new_declaration_tests;
 
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod layout_tests;
+#[cfg(test)]
+mod package_alias_tests;
 #[cfg(test)]
 mod reexport_tests;
 
@@ -2527,7 +2761,13 @@ pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_
 mod tests;
 
 #[cfg(test)]
+mod import_adds_binding_tests;
+#[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod range_activation_tests;
+#[cfg(test)]
+mod type_checking_block_tests;
 #[cfg(test)]
 mod unemitted_stage_unknown_tests;
 #[cfg(test)]

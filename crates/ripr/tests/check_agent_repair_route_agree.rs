@@ -150,6 +150,17 @@ fn agree_on_startable_gap(
     {
         return Err(format!("agent header omits repairable=1:\n{agent}"));
     }
+    // #13803: the listed preview gap is counted beside `gaps=0`, so the
+    // header never claims zero gaps alone next to a listed gap record.
+    if !agent
+        .lines()
+        .next()
+        .is_some_and(|header| header.contains(" gaps=0 unconfirmed_gaps=1 "))
+    {
+        return Err(format!(
+            "agent header does not count the listed preview gap:\n{agent}"
+        ));
+    }
     let next = agent
         .lines()
         .find_map(|line| line.strip_prefix("next="))

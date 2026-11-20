@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::no_movement_class_travels_with_the_variant_not_the_message",
+  "crates/ripr/src/agent/artifact.rs::verify_movement_rejects_only_a_fully_current_same_revision_pair",
+]
+code = [
+  "crates/ripr/src/agent/artifact.rs::AgentVerifyMovementError",
+  "crates/ripr/src/agent/artifact.rs::validate_verify_movement",
+  "crates/ripr/src/cli/commands/agent.rs::AgentVerifyRenderError",
+]
+metrics = ["unit_test_pass_rate"]

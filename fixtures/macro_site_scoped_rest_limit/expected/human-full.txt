@@ -21,6 +21,7 @@ Shared evidence and guidance
   E6 [findings 1, 2]: source assertion argument value true at line 11
   E7 [findings 1, 2]: source function argument value value = 10 at line 11
   E8 [findings 1, 2]: source function argument value value == 10 at line 11
+  E9 [findings 1, 2]: assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use alloc::vec::*;` at src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `assert_eq!`
   N1 [findings 1, 2]: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
 
 Finding 1: NOTE ./src/lib.rs:4
@@ -39,7 +40,7 @@ Evidence
   shared evidence: E1
   - infection yes: Detected related test input at the changed boundary
   - propagation yes: Changed behavior appears to influence returned value: 10 <= value
-  shared evidence: E2, E3, E4, E5, E6, E7, E8
+  shared evidence: E2, E3, E4, E5, E6, E7, E8, E9
 Weakness
   - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
@@ -75,7 +76,7 @@ Evidence
   shared evidence: E1
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: 10 <= value
-  shared evidence: E2, E3, E4, E5, E6, E7, E8
+  shared evidence: E2, E3, E4, E5, E6, E7, E8, E9
 Weakness
   - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:

@@ -25,7 +25,7 @@
 //! languages project the same compact identity shape from their own changed
 //! line; each language keeps its own matcher by contract.
 
-use crate::analysis::classify::comparison_operands;
+use crate::analysis::classify::{changed_comparison_conjunct, comparison_operands};
 use crate::analysis::seams::SeamKind;
 use crate::domain::{FindingCanonicalGap, ProbeFamily, SymbolId};
 use std::path::Path;
@@ -177,7 +177,14 @@ fn rust_behavior_kind(probe_family: &ProbeFamily) -> &'static str {
 fn normalize_rust_gap_discriminator(probe_family: &ProbeFamily, expression: &str) -> String {
     let text = expression.trim();
     let stripped = match probe_family {
-        ProbeFamily::Predicate => comparison_operands(text)
+        // The same single-comparison reading as the classifier (#14719,
+        // #9637), so `a && s.len() > 1` names `s.len() == 1`, never the
+        // conjunction. Seams carry no pre-edit text, so neither side passes
+        // one, and finding and seam ids stay equal. A shape with no single
+        // comparison keeps its existing id.
+        ProbeFamily::Predicate => changed_comparison_conjunct(text, None)
+            .and_then(comparison_operands)
+            .or_else(|| comparison_operands(text))
             .map(|(left, right)| format!("{left} == {right}"))
             .unwrap_or_else(|| strip_predicate_statement(text)),
         ProbeFamily::ReturnValue | ProbeFamily::ErrorPath => strip_return_statement(text),
@@ -366,6 +373,48 @@ mod tests {
             braced.normalized_discriminator,
             "amount==discount_threshold"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn compound_predicate_names_only_its_one_comparison() -> Result<(), String> {
+        // #14719: `a && s.len() > 1` names `s.len() == 1`, the boundary the
+        // classifier reads (#9637), never the conjunction split at `>`.
+        let gap = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "flag")),
+            &ProbeFamily::Predicate,
+            "s.starts_with('-') && s.len() > 1",
+        )?;
+        assert_eq!(gap.normalized_discriminator, "s.len==1");
+        let gated = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "discount")),
+            &ProbeFamily::Predicate,
+            "if member && total >= 120 {",
+        )?;
+        assert_eq!(gated.normalized_discriminator, "total==120");
+        assert_eq!(
+            gated.id,
+            "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==120"
+        );
+        // A quoted operator in the sibling is not a second comparison.
+        let quoted = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "flag")),
+            &ProbeFamily::Predicate,
+            "s.starts_with('>') && s.len() > 1",
+        )?;
+        assert_eq!(quoted.normalized_discriminator, "s.len==1");
+        // Two comparisons have no single boundary, so the id stays the one
+        // the whole-text reading always minted.
+        let ranged = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "is_adult")),
+            &ProbeFamily::Predicate,
+            "age >= 18 && age < 65",
+        )?;
+        assert_eq!(ranged.normalized_discriminator, "age==18_age<65");
         Ok(())
     }
 

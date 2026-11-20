@@ -1,32 +1,11 @@
-//! Pin the scheduled main-health sentinel at the workflow boundary (#10991).
-//!
-//! The sentinel is advisory-detect only: it must stay a scheduled probe that
-//! never becomes a required check, never touches branch protection or
-//! rulesets, never dispatches another workflow, and never claims success from
-//! missing or empty evidence. Its red record must be durable (step summary
-//! plus the `main-red` tracking issue) and self-healing (a green probe closes
-//! the tracker). Breaking any of those invariants should fail here, not
-//! silently turn the sentinel into a gate or a false-confidence surface.
+//! The advisory sentinel observes exact landed native qualification (#14500).
+//! It does not rebuild, dispatch or become a required producer. The production
+//! Python reader and actual tracker shell have executable API-fixture controls.
 
 use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/main-health-sentinel.yml";
-const ALLOWLIST: &str = "policy/workflow_allowlist.txt";
-const SMOKE_SELECTOR: &str = "version_is_exact_and_precedes_help_or_output_flags";
-const TRACKER_MARKER: &str = "main-health-sentinel-tracker";
-
-/// Executable (non-comment) fragments that would let the sentinel gate,
-/// authorize, or mutate anything beyond its own advisory run.
-const FORBIDDEN_FRAGMENTS: &[&str] = &[
-    "actions: write",
-    "gh workflow run",
-    "required_status_checks",
-    "required_pull_request_reviews",
-    "/protection",
-    "/rules/",
-    "create-pull-request",
-];
 
 fn repo_file(path: &str) -> Result<String, String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -36,8 +15,6 @@ fn repo_file(path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| error.to_string())
 }
 
-/// Executable lines only: comment prose may explain the contract without
-/// satisfying it.
 fn executable_lines(source: &str) -> Vec<&str> {
     source
         .lines()
@@ -52,13 +29,8 @@ fn require(lines: &[&str], needle: &str, why: &str) -> Result<(), String> {
     Err(format!("main-health sentinel is missing `{needle}`: {why}"))
 }
 
-fn forbid(lines: &[&str], needle: &str, why: &str) -> Result<(), String> {
-    if !lines.iter().any(|line| line.contains(needle)) {
-        return Ok(());
-    }
-    Err(format!(
-        "main-health sentinel must not contain `{needle}`: {why}"
-    ))
+fn executable(source: &str) -> String {
+    executable_lines(source).join("\n")
 }
 
 #[test]
@@ -110,133 +82,122 @@ fn sentinel_is_bounded_and_repository_scoped() -> Result<(), String> {
     )?;
     require(
         &lines,
-        "timeout-minutes: 30",
+        "timeout-minutes: 10",
         "a hung probe is a red signal with an end, not a stuck run",
     )
 }
 
 #[test]
-fn sentinel_stays_advisory_detect_only() -> Result<(), String> {
-    let source = repo_file(WORKFLOW)?;
-    let lines = executable_lines(&source);
-    for fragment in FORBIDDEN_FRAGMENTS {
-        forbid(
-            &lines,
-            fragment,
-            "the sentinel detects; it never gates or dispatches",
-        )?;
-    }
-    // The only write authority is the tracking issue. Workflow-level
-    // permissions stay read-only so no secret-holding job inherits a broad
-    // token.
-    forbid(
-        &lines,
+fn sentinel_reads_without_product_execution_or_merge_authority() -> Result<(), String> {
+    let source = executable(&repo_file(WORKFLOW)?);
+    for forbidden in [
+        "actions: write",
+        "checks: write",
         "contents: write",
-        "the sentinel never pushes commits or opens PRs",
-    )?;
-    require(
-        &lines,
+        "pull-requests: write",
+        "gh workflow run",
+        "required_status_checks",
+        "/protection",
+        "/rules/",
+        "/rerun",
+        "cargo ",
+        "rust-toolchain@",
+        "Swatinem/rust-cache@",
+        "npm ",
+        "pip ",
+        "  pull_request:",
+        "  push:",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "advisory reader contains {forbidden}"
+        );
+    }
+    for expected in [
+        "actions: read",
+        "checks: read",
+        "contents: read",
         "issues: write",
-        "the main-red tracker is the durable record",
-    )?;
-    require(
-        &lines,
-        "GITHUB_STEP_SUMMARY",
-        "the per-probe summary table is the visible audit trail",
-    )
+        "ref: ${{ github.sha }}",
+        "sparse-checkout: tools/ci",
+        "persist-credentials: false",
+    ] {
+        assert!(source.contains(expected), "missing {expected}");
+    }
+    Ok(())
 }
 
 #[test]
-fn sentinel_probe_is_bounded_and_executes_something() -> Result<(), String> {
-    let source = repo_file(WORKFLOW)?;
-    let lines = executable_lines(&source);
-    require(
-        &lines,
-        "cargo check --locked -p ripr",
-        "the compile-health half of the probe",
-    )?;
-    // The full test command is pinned, not just the selector name: the name
-    // also appears in the summary row, so a name-only check would pass even
-    // if the cargo test invocation were removed.
-    require(
-        &lines,
-        "cargo test --locked -p ripr --test cli_smoke",
-        "the smoke half actually invokes cargo test on the built binary",
-    )?;
-    require(
-        &lines,
-        &format!("{SMOKE_SELECTOR} -- --exact"),
-        "the smoke half runs exactly one focused test, nothing broader",
-    )?;
-    // Evidence discipline: native exit statuses are captured next to the logs
-    // so a failure inside a pipe cannot vanish, a hung step classifies as the
-    // timeout status instead of skipping, and a zero-subject run fails.
-    require(
-        &lines,
-        "PIPESTATUS",
-        "a failure inside a tee pipe must survive",
-    )?;
-    require(
-        &lines,
-        "2>/dev/null || echo 124",
-        "a probe terminated at its step timeout has no status file and must read as red (124), not as success",
-    )?;
-    require(
-        &lines,
-        "^test result:",
-        "the judge reads the native test-result line, not cargo's success",
-    )?;
-    require(
-        &lines,
-        "executed zero tests",
-        "a probe that ran nothing proves nothing and must fail",
-    )
+fn actual_reader_is_invoked_for_this_exact_landed_subject() -> Result<(), String> {
+    let source = executable(&repo_file(WORKFLOW)?);
+    for expected in [
+        "python3 -I tools/ci/main-qualification.py \\",
+        "--repository \"$GITHUB_REPOSITORY\" --sha \"$GITHUB_SHA\"",
+        "--out \"$RUNNER_TEMP/main-health-sentinel/qualification.json\"",
+        "continue-on-error: true",
+        "verdict=unknown",
+        "if [ \"$verdict\" != green ]; then",
+    ] {
+        assert!(source.contains(expected), "missing {expected}");
+    }
+    Ok(())
 }
 
 #[test]
-fn sentinel_tracker_is_durable_and_self_healing() -> Result<(), String> {
-    let source = repo_file(WORKFLOW)?;
-    let lines = executable_lines(&source);
-    require(
-        &lines,
+fn unknown_never_heals_and_every_tracker_write_rechecks_native_authority() -> Result<(), String> {
+    let source = executable(&repo_file(WORKFLOW)?);
+    for expected in [
         "main-red: scheduled main-health sentinel found a broken main",
-        "the tracker title is the findable red record",
-    )?;
-    require(
-        &lines,
-        TRACKER_MARKER,
-        "the marker marks sentinel provenance in the tracker body and comments",
-    )?;
-    require(
-        &lines,
-        "select(.title == \\\"$title\\\")",
-        "tracker creation deduplicates by exact title among open issues, not by the body marker",
-    )?;
-    require(
-        &lines,
+        "<!-- main-health-sentinel-tracker -->",
+        "[ \"$VERDICT\" != unknown ] || exit 0",
+        "elif [ \"$VERDICT\" = green ] && [ -n \"$number\" ]; then",
+        "rm -f \"$recheck\"",
+        ".verdict == $verdict and .run_id == $id and .run_attempt == $attempt",
+        "grep -qxF \"$fingerprint\"",
         "-f state=closed",
-        "a green probe closes the tracker instead of leaving a stale red record",
-    )?;
-    require(
-        &lines,
-        "steps.judge.outputs.verdict != ''",
-        "only a judge that actually classified main may touch the tracker: a failure \
-         before the judge (checkout, toolchain) is a visible red run, not a main verdict",
-    )
+    ] {
+        assert!(source.contains(expected), "missing {expected}");
+    }
+    assert_eq!(
+        source.matches("still_current ||").count(),
+        4,
+        "create, failure comment, recovery comment and close each re-observe"
+    );
+    Ok(())
 }
 
 #[test]
 fn sentinel_run_block_budget_is_registered() -> Result<(), String> {
-    let allowlist = repo_file(ALLOWLIST)?;
-    if allowlist
-        .lines()
-        .any(|line| line.starts_with(".github/workflows/main-health-sentinel.yml|"))
-    {
-        return Ok(());
-    }
-    Err(
-        "check-workflows requires a run-block budget row for every workflow; \
-         the sentinel's row in policy/workflow_allowlist.txt is part of its contract"
-            .to_string(),
-    )
+    let allowlist = repo_file("policy/workflow_allowlist.txt")?;
+    assert!(
+        allowlist
+            .lines()
+            .any(|line| line.starts_with(".github/workflows/main-health-sentinel.yml|"))
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reader_and_actual_tracker_execute_native_fact_controls() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::process::Command;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("repository root")?;
+    let output = Command::new("/usr/bin/timeout")
+        .args(["--kill-after=2s", "60s", "python3", "-I"])
+        .arg(root.join("tools/ci/test_main_qualification.py"))
+        .arg("-v")
+        .current_dir(root)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "native observer controls failed: {:?}\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
 }

@@ -498,4 +498,30 @@ mod tests {
             assert_eq!(confidence.as_str(), label);
         }
     }
+
+    #[test]
+    fn only_owner_calls_establish_reach_and_assertion_affinity_only_without_a_function() {
+        for reason in [
+            RelationReason::DirectOwnerCall,
+            RelationReason::HelperOwnerCall,
+            RelationReason::ReExportChainFollowed,
+        ] {
+            assert!(reason.establishes_reach(true), "{reason:?}");
+            assert!(reason.establishes_reach(false), "{reason:?}");
+        }
+        assert!(!RelationReason::AssertionTargetAffinity.establishes_reach(true));
+        assert!(RelationReason::AssertionTargetAffinity.establishes_reach(false));
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            assert!(!reason.establishes_reach(true), "{reason:?}");
+            assert!(!reason.establishes_reach(false), "{reason:?}");
+        }
+    }
 }

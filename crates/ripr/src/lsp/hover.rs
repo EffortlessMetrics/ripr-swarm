@@ -277,7 +277,8 @@ pub(super) fn line_findings_hover_response(
             "### `{}` {} `{}`",
             finding.class.as_str(),
             finding.probe.family.as_str(),
-            finding.probe.expression
+            // #14420: a head-only arm names its result (`Size::Medium => 450`).
+            crate::output::flow_sink_line::with_arm_result(finding, &finding.probe.expression)
         ));
         lines.push(format!("Finding: `{}`", finding.id));
         lines.extend([
@@ -768,8 +769,19 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         {
             witness.explain_command = command.to_string();
         }
+        // #14420: a head-only arm names the result the flow model read on its
+        // line (`Size::Medium => 450`), the value a test must pin. Hover text
+        // only: the diagnostic's data and identity keep the head.
+        if let std::borrow::Cow::Owned(joined) =
+            crate::output::flow_sink_line::with_arm_result(finding, &witness.changed_expression)
+        {
+            witness.changed_expression = joined;
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+        // A blank line ends the witness list; without it Markdown folds this
+        // line into the last bullet (#14464).
+        lines.push(String::new());
         lines.push(format!(
             "**Fix instruction:** {}",
             fix_instruction_label(&summary)
@@ -954,49 +966,41 @@ fn push_preview_actionability(lines: &mut Vec<String>, finding: &Finding) {
         return;
     };
     lines.push("## Preview Actionability".to_string());
+    // The hover is read by a person at the code. A preview finding with no
+    // complete repair packet gets one line on why, not the packet contract's
+    // state, category, route, field list and promotion criteria: those are
+    // machine fields that diagnostic `data`, check JSON and the context packet
+    // still carry in full. "Advisory only" is already in Preview Boundary
+    // (#14353).
+    if !actionability.repair_packet_ready {
+        lines.push(format!(
+            "Repair instructions for an AI agent: not ready \u{2014} {}",
+            actionability.why_not_actionable
+        ));
+        lines.push(String::new());
+        return;
+    }
     lines.push(format!("State: {}", actionability.gap_state));
     lines.push(format!(
         "Category: {}",
         actionability.actionability_category
     ));
-    lines.push(format!(
-        "Repair instructions for an AI agent: {}",
-        if actionability.repair_packet_ready {
-            "ready"
-        } else {
-            "not ready"
-        }
-    ));
+    lines.push("Repair instructions for an AI agent: ready".to_string());
     // RIPR-SPEC-0088 §PR8: relabel for the actionable case so the hover does
     // not show blocked-case "Why not actionable" / "Evidence needed" lines that
     // contradict the complete packet.
-    if actionability.repair_packet_ready {
-        lines.push(format!(
-            "Why actionable: {}",
-            actionability.why_not_actionable
-        ));
-        lines.push(format!("Repair action: {}", actionability.repair_route));
-        push_missing_actionability_fields(lines, &actionability);
-    } else {
-        lines.push(format!(
-            "Why not actionable: {}",
-            actionability.why_not_actionable
-        ));
-        lines.push(format!("Repair route: {}", actionability.repair_route));
-        push_missing_actionability_fields(lines, &actionability);
-        lines.push(format!(
-            "Evidence needed: {}",
-            actionability.evidence_needed_to_promote
-        ));
-    }
+    lines.push(format!(
+        "Why actionable: {}",
+        actionability.why_not_actionable
+    ));
+    lines.push(format!("Repair action: {}", actionability.repair_route));
+    push_missing_actionability_fields(lines, &actionability);
     lines.push("Authority: preview advisory only".to_string());
     lines.push(String::new());
 
-    // §PR8 (RIPR-SPEC-0088): when repair_packet_ready, add a "Repair packet"
-    // section with the full work-packet from the shared GapRecord projection.
-    if actionability.repair_packet_ready {
-        push_ts_repair_packet_section(lines, finding);
-    }
+    // §PR8 (RIPR-SPEC-0088): a ready packet adds a "Repair packet" section
+    // with the full work-packet from the shared GapRecord projection.
+    push_ts_repair_packet_section(lines, finding);
 }
 
 /// Push a `## Repair instructions (TypeScript preview, advisory)` hover section for
@@ -1410,7 +1414,16 @@ fn push_editor_commands(
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
     if let Some(repair) = repair_start_command_for(entry, &root) {
-        lines.push(format!("- repair (start here): `{repair}`"));
+        // #13636: the start refuses a dirty production premise; name the
+        // commit step first, as the inert "Start repair" action does.
+        if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
+            lines.push(format!(
+                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+            ));
+            lines.push(format!("- then repair: `{repair}`"));
+        } else {
+            lines.push(format!("- repair (start here): `{repair}`"));
+        }
     }
     lines.push(format!(
         "- packet: `{}`",
@@ -2054,6 +2067,7 @@ mod seam_hover_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

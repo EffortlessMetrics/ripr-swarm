@@ -111,12 +111,12 @@ macro calls.
 
 ## Acceptance Examples
 
-1. **Direct test macro invocation**: `tests/it.rs` invokes `call_inner!`, and
+1. [abstain] **Direct test macro invocation**: `tests/it.rs` invokes `call_inner!`, and
    the same-repo macro definition mentions changed owner `inner`. Result:
    `no_static_path` plus
    `static_limit_kind: rust_macro_wrapped_test_call_unresolved`.
    Fixture: `fixtures/rust_macro_wrapped_test_call_limitation/`.
-2. **Production-entry macro boundary**: `tests/it.rs` calls `outer()`, and
+2. [abstain] **Production-entry macro boundary**: `tests/it.rs` calls `outer()`, and
    `outer()` invokes `call_inner!`. Result remains `no_static_path` plus
    `static_limit_kind: rust_macro_reach_unresolved`.
    Fixture: `fixtures/rust_macro_reach_limitation/`.

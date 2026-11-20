@@ -178,6 +178,19 @@ share one rule in `analysis/classify/call_identity.rs`:
   other globs. A `use`, item or glob inside a nested block of the test
   binds only in that block, so every call of that name in the test stays
   unsettled;
+- a `const`, a `static` or a tuple `struct` of the name in one of those
+  scopes is what a bare call runs, so the call settles away from every
+  definition (#14087). This holds for an owner with no same-named rival
+  too: a test whose every call of a free owner's name is such a bare call is
+  not related to the owner through that call. A qualified call beside it, the
+  owner passed as a value, or a formatting or method entry of a helper chain
+  keeps the test's relation. The initializer is not read, so a `const` that
+  aliases the owner itself is withheld as well; an item inside a nested
+  block stays unsettled as above;
+- scopes record every name without its raw prefix: `use crate::b::r#render;`
+  binds `render`, as do a raw rename, a raw path segment and a raw item or
+  module name (#14087). A call spelled `r#render(..)` in the test body is
+  still not read and stays unsettled;
 - a test whose every call of the name settles on another definition is not
   related to the owner through any signal (direct call, file, module or
   name affinity), so it supplies neither reach nor confirming tokens;
@@ -205,6 +218,16 @@ a residual that reads unsettled. A
 same-named `fn` in another crate of the package (an integration test's or a
 binary's root) or an `extern` declaration is no settled rival and keeps
 refusing the pin.
+
+A package is named by its directory below the analysis root, including the
+directories above a `crates/` segment (#15299). A workspace nested below the
+root (`rust/crates/alpha`, `w2/crates/alpha`), as in a mixed-language
+monorepo, keeps its members apart: `w2/crates/alpha` and `w2/crates/beta`
+are two packages whose same-named `fn`s are no rivals of each other, and
+`w1/crates/alpha` and `w2/crates/alpha` in two workspaces are two packages,
+so one workspace's test never relates to the other's owner. Reading the
+nested workspace from the repository root gives the same relation as reading
+it with `--root w2`.
 
 ## Non-Goals
 
@@ -253,7 +276,59 @@ call.
    `LevelFilter::current()`. `tracing-subscriber` defines its own
    `SpanStack::current`, which cannot be the target, so the test relates.
    The original test imports `tracing_subscriber::filter::LevelFilter`, a
-   re-export, and stays unrelated.
+   re-export chain (`pub use self::level::{LevelFilter, ..};` in the mounted
+   `filter` module, then `pub use tracing_core::metadata::{LevelFilter, ..};`
+   in `filter/level.rs`), and relates under "Re-export chain admission"
+   (#4905).
+
+## Re-export chain admission (#4905)
+
+A type-path call `T::owner(` also admits when the test imports `T` through
+its own package's library and that library re-exports it from the owner's
+package, either directly or after one crate-local hop. Every condition must
+hold, or the route refuses:
+
+- the test package is a different package from the owner's, its whole
+  package is indexed, it has a `[dependencies]` (not dev or build) edge to
+  the owner's package, and its library identifier comes from its manifest
+  (`[lib] name`, else the package name) with the default `[lib] path`;
+- the test file imports `T` by exactly one plain path
+  `use <library>::m1::..::mk::T;`, and no other `use` anywhere in the file
+  (including a function-local one) names `T`; the file has no glob, no
+  `extern crate`, and no import or binding of the library identifier or
+  of `T`;
+- every module on the chain is mounted from the library root by exactly
+  one module-level out-of-line `mod seg;` in its parent (a declaration
+  nested in an inline module does not count), never declared inline, and
+  resolves to exactly one of `seg.rs` / `seg/mod.rs`; no library file uses
+  `#[path]` (including whitespace, comments and `cfg_attr` forms) or `include!`;
+- the module the test names holds one module-level `pub use` importing `T`
+  unrenamed (brace lists are read item by item). Either it is rooted at the
+  `[dependencies]` key, or it is a crate-local `self::` / `super::` /
+  `crate::` path to a mounted module that holds one module-level `pub` (any
+  `pub(..)` form) `use` importing `T` from that key. Longer chains refuse;
+- across the library every `use` naming `T` is a hop of that chain, no
+  library file declares an item named `T`, no glob is rooted outside the
+  crate (`self`, `super`, `crate`) or the standard library, and nothing
+  rebinds a dependency key (`use .. as key;`, an import ending in the key,
+  `mod key`, `extern crate`).
+
+The `extern crate` and `include!` refusals read adjacent Rust parser tokens
+from the original source, so character literals cannot hide subsequent code
+and whitespace or comments between tokens do not bypass them. An include
+identifier inside a macro token tree also refuses: a macro may forward it to
+a metavariable invocation. An include import also refuses because it can alias
+the builtin macro. The test-side extern guard reads original source as well.
+Macros without include identifiers or include imports, and quoted include text,
+remain allowed.
+
+Re-export admission derives test-side import, binder, glob and root-alias
+scans from character-aware masking of the original indexed test source.
+Character literals cannot hide a later competing use, type alias, local
+module or glob; ordinary quote and unrelated-binding controls retain the
+owner relation. This masking remains local to the re-export fallback.
+
+The competitor and owner-crate foreign-import rules above still apply.
 
 ## Test Mapping
 
@@ -286,10 +361,27 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_the_sole_glob_of_the_owner_dependency`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_renames_and_ambiguous_glob_spellings`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_follows_one_named_reexport_hop`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_unresolved_reexport_chains`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_needs_a_library_edge_and_a_whole_test_package`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_follows_one_crate_local_hop_to_the_dependency`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_unresolved_crate_local_chains`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_path_remaps_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_include_token_spacing_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_forwarded_include_identifiers`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_guards_after_character_literals`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_aliased_include_imports`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_test_extern_after_character_literal`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_extern_crate_token_spacing_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_library_extern_crate_token_spacing`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_ignores_quoted_lexical_guard_text`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_preserves_unrelated_macro_definitions`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::a_member_of_a_workspace_below_the_root_keeps_its_own_test`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::the_same_crate_path_in_two_workspaces_names_two_packages`
 
 ## Path keywords never seed assertion-target affinity (#9171)
 
