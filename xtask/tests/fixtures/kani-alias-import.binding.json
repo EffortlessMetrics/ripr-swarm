@@ -1,0 +1,40 @@
+{
+  "schema_version": "ripr_kani_binding.v1",
+  "repository": {
+    "repository_id": "kani-alias-test",
+    "snapshot_id": "captured:sha256:ee5e3f72f4f3030fcbf71c9d7fe5bf7e6f1b216ed54d0133be4eba75d5bc23d4",
+    "source_view": "captured_source_set",
+    "source_digest": "sha256:ee5e3f72f4f3030fcbf71c9d7fe5bf7e6f1b216ed54d0133be4eba75d5bc23d4"
+  },
+  "run_id": "alias-test-import",
+  "artifact_sha256": "sha256:9dd8b96fc07406002112b9fa20ead690da553ee69918f0cac44e7a3238e47945",
+  "source_files": [
+    {
+      "path": "proof.rs",
+      "sha256": "sha256:ce3de392ea684b2222522ca2f2a05c4de7ce9c156bbc63ce155cf8967c22876e",
+      "roles": [
+        "implementation",
+        "harness"
+      ]
+    }
+  ],
+  "context": {
+    "target": "x86_64-unknown-linux-gnu",
+    "cargo_features": [],
+    "default_features": false,
+    "toolchain": "nightly-2026-10-23-x86_64-unknown-linux-gnu",
+    "environment_sha256": "sha256:a5b33891482b5fc04f8608df785ed9b213d51afcfefb19beaafc2a9cf24e08b2",
+    "invocation": [
+      "kani",
+      "proof.rs",
+      "--export-json",
+      "success.native.json"
+    ]
+  },
+  "selected_harnesses": [
+    {
+      "crate_name": "proof",
+      "name": "b_success"
+    }
+  ]
+}
