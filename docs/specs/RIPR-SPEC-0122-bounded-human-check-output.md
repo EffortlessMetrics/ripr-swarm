@@ -800,16 +800,13 @@ consumers parse the old body. An old line with a second `=>` (two arms on one
 line, or a nested match in the body) is never cut: arm selection cannot tell
 which arm changed there and keeps that arm's selection unknown. A changed
 `match` scrutinee is cut the same way (`match kind` rather than
-`match kind {`). When a condition that heads a `{` block and that block's
-body both changed on one line (`if total >= 100 { total - 10 }` to
-`if total > 200 { total - 25 }`), `before` is cut to the old condition
-(`total >= 100`) only when the unchanged text before it reaches the
-condition, the old block brace sits outside strings and comments, the cut's
-brackets balance, and both lines agree outside their brace groups (so a
-brace that opens an operand or a struct pattern is never read as the block);
-match arms keep their own rules (#15420). This cut is limited to `before`
-text; the checks that ask whether an edit stayed inside the shape do not use
-it. Otherwise `before` keeps the whole old line. The same
+`match kind {`). Otherwise `before` keeps the whole old line. Classifiers
+rebuild the old owner from `before`, so the producer never cuts it when the
+edit reaches past the shape. When a predicate's block body changed too
+(`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
+human `Changed` block prints the whole old line and the new condition, with a
+note that the after side is the condition only and where the new line is
+(#15420), the same way a head-only match arm row does (#9244). The same
 `before` reaches the MCP `changed_behavior.before` field and the LSP
 diagnostic witness; `ripr check --format json` never serializes
 `probe.before`, so it is unchanged.

@@ -816,7 +816,7 @@ pub(crate) fn probes_for_file_with_relations(
                     {
                         return with_old_arm_body(&line, changed, old_source);
                     }
-                    match removed_before_span(&shape.family, text, &canonical_text, &line) {
+                    match removed_span_of_shape(text, &canonical_text, &line) {
                         // A cut that is the whole old head line (`1..=9 =>`
                         // for `1..=8 =>`, maybe with a trailing comment) cut
                         // nothing: its body is on the next old line, so it
@@ -2948,7 +2948,7 @@ fn represented_short_replacements(
         let old_span = if after == added.text.trim() {
             Some(removed.text.trim().to_string())
         } else {
-            removed_before_span(&probe.family, added.text.trim(), after, removed.text.trim())
+            removed_span_of_shape(added.text.trim(), after, removed.text.trim())
         };
         if old_span.as_deref() == Some(before.as_str()) {
             represented.insert((removed.line, probe.family.as_str()));
@@ -3128,91 +3128,6 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
     let span = removed_line.get(start..removed_end)?.trim();
     (!span.is_empty()).then(|| span.to_string())
-}
-
-/// The old side's `before` text for a shape: the in-shape cut of
-/// [`removed_span_of_shape`], else the old block head when the body after
-/// the shape changed too ([`removed_head_span`]). Only `before` display text
-/// uses the head cut; the yes/no gates that ask whether an edit stayed inside
-/// the shape keep calling [`removed_span_of_shape`] (#15420 review).
-fn removed_before_span(
-    family: &ProbeFamily,
-    added_line: &str,
-    shape_text: &str,
-    removed_line: &str,
-) -> Option<String> {
-    removed_span_of_shape(added_line, shape_text, removed_line).or_else(|| {
-        (*family != ProbeFamily::MatchArm)
-            .then(|| removed_head_span(added_line, shape_text, removed_line))
-            .flatten()
-    })
-}
-
-/// The old condition when the shape is the head of a `{` block on the added
-/// line, the unchanged text before it reaches the shape's start, and the text
-/// after it changed too (#15420: `if total >= 100 { a }` to
-/// `if total > 200 { b }`): the old text from the shape's start up to its
-/// own opening `{`. The `{` is found in masked text, so a brace inside a
-/// string, char or comment never ends the cut, and a cut whose brackets do
-/// not balance (a parenthesized struct literal or closure body in the
-/// condition) keeps the whole line. A cut equal to the shape means only the body changed, so it
-/// keeps the whole line too.
-fn removed_head_span(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
-    if shape_text.is_empty() || added_line.matches(shape_text).count() != 1 {
-        return None;
-    }
-    let start = added_line.find(shape_text)?;
-    let end = start + shape_text.len();
-    let (prefix, _) = common_prefix_suffix(added_line, removed_line);
-    if start == 0 || prefix < start {
-        return None;
-    }
-    let masked_added = crate::analysis::extract::mask_comments_and_strings(added_line);
-    if !masked_added.get(end..)?.trim_start().starts_with('{') {
-        return None;
-    }
-    let masked_removed = crate::analysis::extract::mask_comments_and_strings(removed_line);
-    let open = start + masked_removed.get(start..)?.find('{')?;
-    // Rust needs a struct literal or a closure body in a condition to sit
-    // inside parentheses, so a `{` that opens one leaves the cut unbalanced.
-    if !crate::analysis::extract::delimiters_balance(masked_removed.get(start..open)?) {
-        return None;
-    }
-    // The chosen `{` must open the same block as the added line's: outside
-    // their brace groups, the two tails agree (`{} else {}`). A brace that
-    // opens an operand (`n >= const { 100 } { .. }`) or a struct pattern
-    // (`let Foo { a } = x { .. }`) leaves an extra group or text behind.
-    if brace_skeleton(masked_added.get(end..)?) != brace_skeleton(masked_removed.get(open..)?) {
-        return None;
-    }
-    let span = removed_line.get(start..open)?.trim();
-    (!span.is_empty() && span != shape_text.trim()).then(|| span.to_string())
-}
-
-/// The text outside `{ .. }` groups with whitespace dropped, each top-level
-/// group kept as its braces: `{ a } else { b }` reads `{}else{}`.
-fn brace_skeleton(masked: &str) -> String {
-    let mut depth = 0_usize;
-    let mut skeleton = String::new();
-    for character in masked.chars() {
-        match character {
-            '{' => {
-                if depth == 0 {
-                    skeleton.push('{');
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    skeleton.push('}');
-                }
-            }
-            _ if depth == 0 && !character.is_whitespace() => skeleton.push(character),
-            _ => {}
-        }
-    }
-    skeleton
 }
 
 /// Byte lengths of the text the two lines share at the start and at the
@@ -5375,8 +5290,10 @@ mod tests {
     }
 
     #[test]
-    fn predicate_before_is_cut_to_the_old_condition_when_the_body_changes_too() {
-        // #15420: the condition and the block body both changed.
+    fn predicate_before_keeps_the_whole_old_line_when_the_body_changes_too() {
+        // #15420: classifiers rebuild the old owner from `before`
+        // (`guard_side_flip` reads a changed `Err` payload from it), so a
+        // condition-plus-body edit must not cut the old line.
         let probes = single_shape_probes(
             "if total > 200 { total - 25 } else { total }",
             "if total >= 100 { total - 10 } else { total }",
@@ -5387,9 +5304,11 @@ mod tests {
 
         assert_eq!(probes.len(), 1);
         let probe = &probes[0];
-        assert_eq!(probe.family, ProbeFamily::Predicate);
         assert_eq!(probe.after.as_deref(), Some("total > 200"));
-        assert_eq!(probe.before.as_deref(), Some("total >= 100"));
+        assert_eq!(
+            probe.before.as_deref(),
+            Some("if total >= 100 { total - 10 } else { total }")
+        );
     }
 
     /// `with_old_arm_body` over the old source rebuilt from `index`, as the
@@ -6298,162 +6217,6 @@ mod tests {
         ));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
-    }
-
-    #[test]
-    fn removed_before_span_matches_granularity_when_operator_literal_and_body_change() {
-        let predicate = ProbeFamily::Predicate;
-        let issue_added = "if total > 200 { total - 25 } else { total }";
-        let issue_removed = "if total >= 100 { total - 10 } else { total }";
-        // #15420: the issue's exact pair reads the old condition.
-        assert_eq!(
-            removed_before_span(&predicate, issue_added, "total > 200", issue_removed).as_deref(),
-            Some("total >= 100")
-        );
-        // The in-shape gate is unchanged: the edit left the shape, so the
-        // yes/no callers still see no in-shape cut.
-        assert_eq!(
-            removed_span_of_shape(issue_added, "total > 200", issue_removed),
-            None
-        );
-        // Operator-only and literal-only edits keep their in-shape cut.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if total > 100 { total - 10 } else { total }",
-                "total > 100",
-                issue_removed
-            )
-            .as_deref(),
-            Some("total >= 100")
-        );
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if total >= 200 { total - 10 } else { total }",
-                "total >= 200",
-                issue_removed
-            )
-            .as_deref(),
-            Some("total >= 100")
-        );
-        // `while` and non-ASCII text before the shape cut the same way.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "while n > 2 { n -= 2 }",
-                "n > 2",
-                "while n >= 1 { n -= 1 }"
-            )
-            .as_deref(),
-            Some("n >= 1")
-        );
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "/* é */ if n > 2 { b }",
-                "n > 2",
-                "/* é */ if n >= 1 { a }"
-            )
-            .as_deref(),
-            Some("n >= 1")
-        );
-    }
-
-    #[test]
-    fn removed_before_span_keeps_the_whole_line_without_a_faithful_head_cut() {
-        let predicate = ProbeFamily::Predicate;
-        // A body-only edit never cuts the old line.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if total >= 100 { total - 25 }",
-                "total >= 100",
-                "if total >= 100 { total - 10 }"
-            ),
-            None
-        );
-        // A `{` inside a string in the old condition does not end the cut,
-        // and the old condition is then read up to its real block brace.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if s == \"x\" { b }",
-                "s == \"x\"",
-                "if s == \"{}\" { a }"
-            )
-            .as_deref(),
-            Some("s == \"{}\"")
-        );
-        // A closure body inside the old condition leaves the cut unbalanced.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if v.is_empty() { b }",
-                "v.is_empty()",
-                "if v.iter().any(|x| { *x > 1 }) { a }"
-            ),
-            None
-        );
-        // A brace that opens an operand or a struct pattern is not the
-        // block brace (#15584 review).
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if n > 200 { n - 25 } else { n }",
-                "n > 200",
-                "if n >= const { 100 } { n - 10 } else { n }"
-            ),
-            None
-        );
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if n > 200 { n - 25 } else { n }",
-                "n > 200",
-                "if n >= { 100 } { n - 10 } else { n }"
-            ),
-            None
-        );
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "if let Foo { b } = x { 2 }",
-                "let Foo { b } = x",
-                "if let Foo { a } = y { 1 }"
-            ),
-            None
-        );
-        // The shape does not head a block.
-        assert_eq!(
-            removed_before_span(
-                &predicate,
-                "let ok = n > 2; b",
-                "n > 2",
-                "let ok = n >= 1; a"
-            ),
-            None
-        );
-        // Nothing before the shape is shared.
-        assert_eq!(
-            removed_before_span(&predicate, "x > 1 { 2 }", "x > 1", "foo(y) { 3 }"),
-            None
-        );
-        // The old line has no block brace.
-        assert_eq!(
-            removed_before_span(&predicate, "if n > 2 { b }", "n > 2", "if n >= 1"),
-            None
-        );
-        // Match arms keep their own head/body handling.
-        assert_eq!(
-            removed_before_span(
-                &ProbeFamily::MatchArm,
-                "if n > 2 { b }",
-                "n > 2",
-                "if n >= 1 { a }"
-            ),
-            None
-        );
     }
 
     #[test]

@@ -667,6 +667,41 @@ fn match_arm_head_only_note(
     ))
 }
 
+/// The note under a predicate's `after` row when `after` is only the new
+/// condition but `before` is the whole old line (#15420).
+///
+/// The producer cuts `before` to the old condition only when the edit stays
+/// inside it. When the block body changed too (`if total >= 100 { total - 10 }`
+/// to `if total > 200 { total - 25 }`), `before` stays the whole old line,
+/// because classifiers rebuild the old owner from it and a cut would hide the
+/// body change. The bare condition then reads as if the block were deleted,
+/// so the row says it is the condition and where the new line is. The block
+/// is located on comment/string-masked text, so a `{` inside a literal is not
+/// a block. Display only: `before` and `after` are printed unchanged.
+fn condition_only_note(
+    finding: &Finding,
+    before: Option<&str>,
+    after: &str,
+    root: &Path,
+) -> Option<String> {
+    if finding.probe.family != ProbeFamily::Predicate {
+        return None;
+    }
+    let after = after.trim();
+    let before = before?.trim();
+    if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
+        return None;
+    }
+    if !crate::analysis::mask_comments_and_strings(before).contains('{') {
+        return None;
+    }
+    Some(format!(
+        "          (condition only; its block changed too, so before is the whole old line; open {}:{} to read the new line)\n",
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        finding.probe.location.line
+    ))
+}
+
 pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -715,6 +750,9 @@ pub(super) fn render_finding_with_shared_sections(
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
         if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
+            out.push_str(&note);
+        }
+        if let Some(note) = condition_only_note(finding, before_text, after, root) {
             out.push_str(&note);
         }
     } else {
