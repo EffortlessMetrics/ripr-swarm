@@ -3407,10 +3407,9 @@ pub(crate) fn dogfood_report_packet_index_run(
 }
 
 pub(crate) const GENERATED_CI_FIRST_ACTION_REPAIR: &str = "Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.";
-/// Range-scoped first-pr command `ripr reports ci-summary` prints on a first
-/// run (`--base-ref main`). The GitHub expression that used to sit in the
-/// workflow shell is no longer the text (#6958).
-pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports";
+/// Complete inline command printed by `ripr reports ci-summary` on a first
+/// run (`--base-ref main`). The backticks pin both command boundaries.
+const GENERATED_CI_FIRST_PR_REPAIR: &str = "`ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`";
 /// Receipt command for the generated-CI cockpit family. The unique fixture
 /// path is a placeholder because each live run uses a distinct directory;
 /// `duration_ms` is wall-clock across both producers (#6958).
