@@ -141,6 +141,26 @@ fn completions_suggest_a_shell_only_when_genuinely_close() -> Result<(), String>
         &["completions", "--shell", "bash"],
         &["positional argument", "ripr completions bash"],
     )?;
+    refused(
+        &root,
+        &["completions", "--shell=bash"],
+        &["positional argument", "ripr completions bash"],
+    )?;
+    // A JSON request still gets the typed refusal document.
+    let output = run(&root, &["completions", "--shell", "bash", "--json"])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    for fragment in [
+        "\"status\": \"refused\"",
+        "unknown_argument",
+        "\"--shell\"",
+        "ripr completions --help",
+    ] {
+        assert!(
+            stdout.contains(fragment),
+            "missing {fragment:?} in {stdout}"
+        );
+    }
     ignore_remove_dir_all(&root);
     Ok(())
 }

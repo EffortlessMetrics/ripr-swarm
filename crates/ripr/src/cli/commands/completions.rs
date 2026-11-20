@@ -26,11 +26,16 @@ pub(in crate::cli) fn completions(args: &[String]) -> Result<(), String> {
                 help::print_completions_help();
                 return Ok(());
             }
-            "--shell" => {
-                return Err(
-                    "completions takes the shell as a positional argument, not --shell; run `ripr completions bash` (or zsh, fish, powershell)"
-                        .to_string(),
+            flag if flag == "--shell" || flag.starts_with("--shell=") => {
+                let message = "completions takes the shell as a positional argument, not --shell; run `ripr completions bash` (or zsh, fish, powershell)".to_string();
+                // Keep the typed refusal for a JSON request, as the generic
+                // unknown-argument path did before this message (#15259).
+                crate::cli::usage_refusal::note_unknown_argument(
+                    "--shell",
+                    &message,
+                    &crate::cli::suggest::help_pointer("completions"),
                 );
+                return Err(message);
             }
             other if other.starts_with('-') => return Err(unknown_argument("completions", other)),
             other => {
