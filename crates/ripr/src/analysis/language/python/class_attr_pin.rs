@@ -58,10 +58,12 @@ pub(super) fn python_class_attr_pin_gap(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .flat_map(|candidate| candidate.test.assertions.iter())
-        .flat_map(|assertion| string_literals(&assertion.gate_text))
-        .any(|literal| {
-            let literal: Vec<char> = literal.chars().collect();
-            literal.len() >= 4 && infix_matches(&old, &literal) && !infix_matches(&new, &literal)
+        .flat_map(|assertion| pinning_literals(&assertion.text, &assertion.gate_text))
+        .any(|pin| {
+            let literal: Vec<char> = pin.text.chars().collect();
+            literal.len() >= 4
+                && infix_matches(&old, &literal, pin.regex)
+                && !infix_matches(&new, &literal, pin.regex)
         });
     if pinned {
         return None;
@@ -128,10 +130,13 @@ fn tokens(text: &str) -> Vec<Token> {
 }
 
 /// Whether some instantiation of the wildcards contains `literal` as a
-/// substring.
-fn infix_matches(tokens: &[Token], literal: &[char]) -> bool {
+/// substring. With `regex`, a `.` in the literal stands for any one character
+/// (`re.search` semantics); it never counts as fixed text.
+fn infix_matches(tokens: &[Token], literal: &[char], regex: bool) -> bool {
     (0..=tokens.len()).any(|begin| {
         let mut states = vec![(begin, 0usize, 0usize)];
+        // `fixed` stays in the key: with a regex `.`, two paths to the same
+        // `(i, j)` can align different literal characters to fixed text.
         let mut seen = std::collections::BTreeSet::new();
         while let Some((i, j, fixed)) = states.pop() {
             if !seen.insert((i, j, fixed)) {
@@ -144,7 +149,11 @@ fn infix_matches(tokens: &[Token], literal: &[char]) -> bool {
             }
             match tokens.get(i) {
                 Some(Token::Char(ch)) if literal.get(j) == Some(ch) => {
-                    states.push((i + 1, j + 1, fixed + 1))
+                    let exact = !(regex && *ch == '.');
+                    states.push((i + 1, j + 1, fixed + usize::from(exact)))
+                }
+                Some(Token::Char(ch)) if regex && literal.get(j) == Some(&'.') && *ch != '\n' => {
+                    states.push((i + 1, j + 1, fixed))
                 }
                 Some(Token::Wildcard) => {
                     states.push((i + 1, j, fixed));
@@ -159,27 +168,89 @@ fn infix_matches(tokens: &[Token], literal: &[char]) -> bool {
     })
 }
 
-/// Plain quoted literals of the source text; one with regex syntax, an
-/// escape or a brace is unreadable and dropped.
-fn string_literals(source: &str) -> Vec<String> {
+/// A literal an assertion pins the changed text with.
+struct PinLiteral {
+    text: String,
+    /// The literal is a `re.search` pattern (`match=`, `assertRaisesRegex`).
+    regex: bool,
+}
+
+/// The literals that can tell the old text from the new: the `match=` /
+/// `assertRaisesRegex` pattern of the assertion head (only `.` allowed as
+/// regex syntax), and the string operand of a one-line `assert x == "..."`,
+/// `assert "..." in x` or `assertEqual(x, "...")` in the assertion's gate.
+/// Call arguments, assert messages, `!=` and `not in` operands never pin, and
+/// any statement that does not parse is skipped.
+fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
     let mut out = Vec::new();
-    let mut chars = source.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '"' && ch != '\'' {
+    if let Some(pattern) = super::message_pin::literal_message_pattern(text)
+        && !pattern.chars().any(|c| "\\^$*+?()[]{}|\n".contains(c))
+    {
+        out.push(PinLiteral {
+            text: pattern,
+            regex: true,
+        });
+    }
+    for line in gate_text.lines() {
+        let Ok(Mod::Module(module)) =
+            parse_module_result(Path::new("<class-attr-pin>"), line.trim())
+        else {
             continue;
-        }
-        let mut literal = String::new();
-        let mut closed = false;
-        for inner in chars.by_ref() {
-            if inner == ch {
-                closed = true;
-                break;
-            }
-            literal.push(inner);
-        }
-        if closed && !literal.chars().any(|c| "\\^$*+?()[]{}|\n".contains(c)) {
-            out.push(literal);
+        };
+        let [statement] = module.body.as_slice() else {
+            continue;
+        };
+        let literal = match statement {
+            Stmt::Assert(assertion) => compared_literal(&assertion.test),
+            Stmt::Expr(expression) => assert_equal_literal(&expression.value),
+            _ => None,
+        };
+        if let Some(text) = literal {
+            out.push(PinLiteral { text, regex: false });
         }
     }
     out
+}
+
+/// The string operand of `x == "..."`, `"..." == x` or `"..." in x`.
+fn compared_literal(test: &Expr) -> Option<String> {
+    let Expr::Compare(compare) = test else {
+        return None;
+    };
+    let ([op], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice()) else {
+        return None;
+    };
+    match op {
+        ast::CmpOp::Eq => str_constant(right).or_else(|| str_constant(&compare.left)),
+        ast::CmpOp::In => str_constant(&compare.left),
+        _ => None,
+    }
+}
+
+/// The string argument of `self.assertEqual(x, "...")`.
+fn assert_equal_literal(value: &Expr) -> Option<String> {
+    let Expr::Call(call) = value else {
+        return None;
+    };
+    let callee = super::expr_full_name(&call.func)?;
+    if !matches!(callee.rsplit('.').next(), Some("assertEqual" | "assertIn")) {
+        return None;
+    }
+    let [first, second, ..] = call.args.as_slice() else {
+        return None;
+    };
+    if callee.ends_with("assertIn") {
+        return str_constant(first);
+    }
+    str_constant(second).or_else(|| str_constant(first))
+}
+
+fn str_constant(expr: &Expr) -> Option<String> {
+    let Expr::Constant(constant) = expr else {
+        return None;
+    };
+    let ast::Constant::Str(text) = &constant.value else {
+        return None;
+    };
+    Some(text.clone())
 }

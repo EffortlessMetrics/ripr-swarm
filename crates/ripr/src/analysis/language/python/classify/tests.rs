@@ -5850,3 +5850,54 @@ fn plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate() ->
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+// #15294 review: a `.` in a `match=` pattern is a regex wildcard, and a
+// literal outside an equality operand (a call input, an assert message, a
+// `!=` operand) cannot tell the old text from the new.
+#[test]
+fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() -> Result<(), String>
+{
+    let source = "class Error(Exception):\n    pass\n\n\nclass Limit:\n    message = \"Value too long!\"\n\n    def check(self, value):\n        if len(value) > 3:\n            raise Error(self.message)\n        return value\n";
+    let old_line = "    message = \"Value too long.\"";
+    let new_line = "    message = \"Value too long!\"";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for tests in [
+        "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error, match=\"too long.\"):\n        Limit().check(\"abcd\")\n",
+        "from src.subject import Limit\n\ndef test_input():\n    assert Limit().check(\"too long.\") == \"abc\"\n",
+        "from src.subject import Limit\n\ndef test_message():\n    assert Limit().check(\"abc\") == \"abc\", \"Value too long.\"\n",
+        "from src.subject import Limit\n\ndef test_ne():\n    assert Limit().check(\"abc\") != \"too long.\"\n",
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            new_line,
+            Some(old_line),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    // Control: an equality on the old text pins the edit.
+    let tests = "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error) as exc:\n        Limit().check(\"abcd\")\n    assert str(exc.value) == \"Value too long.\"\n";
+    let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+    let finding = classify_change_with_source(
+        file,
+        6,
+        new_line,
+        Some(old_line),
+        &owners,
+        &tests_facts,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

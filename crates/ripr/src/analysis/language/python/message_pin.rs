@@ -375,7 +375,7 @@ fn single_raise_argument(line: &str) -> Option<(String, RaiseArgument)> {
 /// `assertRaisesRegex(E, pattern, ...)` assertion text. `None` for every
 /// other shape (the callable form of `pytest.raises` hands `match=` to the
 /// callable, RIPR-SPEC-0238 rule 13).
-fn literal_message_pattern(assertion_text: &str) -> Option<String> {
+pub(super) fn literal_message_pattern(assertion_text: &str) -> Option<String> {
     let Ok(Mod::Module(module)) =
         parse_module_result(Path::new("<message-pattern>"), assertion_text.trim())
     else {
