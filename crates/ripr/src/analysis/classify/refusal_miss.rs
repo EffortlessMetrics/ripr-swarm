@@ -18,7 +18,7 @@ pub(in crate::analysis) struct RefusalMemo {
     local_refusals: RefCell<BTreeMap<TestKey, Option<Vec<Option<AssertionRefusal>>>>>,
     test_cfg_gates: RefCell<BTreeMap<TestKey, Option<BTreeSet<String>>>>,
     owner_cfg_gates: OnceCell<Option<BTreeSet<String>>>,
-    module_gates: RefCell<BTreeMap<(PathBuf, usize), Option<bool>>>,
+    module_gates: RefCell<BTreeMap<(PathBuf, usize, String), Option<bool>>>,
 }
 
 pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
@@ -173,30 +173,7 @@ fn owner_compiled_only_under_refused_declaration_with_local(
     {
         return false;
     }
-    let gate_of = |edge: &SourceRoleProvenanceEdge| {
-        if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-            return None;
-        }
-        let key = (edge.parent.clone(), edge.line);
-        local
-            .module_gates
-            .borrow_mut()
-            .entry(key)
-            .or_insert_with(|| {
-                index
-                    .files()
-                    .get(&edge.parent)
-                    .filter(|facts| !facts.used_lexical_fallback)
-                    .and_then(|facts| {
-                        crate::analysis::syntax::module_declaration_unestablished_gate(
-                            &facts.source,
-                            edge.line,
-                            &edge.declaration,
-                        )
-                    })
-            })
-            .to_owned()
-    };
+    let gate_of = |edge: &SourceRoleProvenanceEdge| module_edge_gate(index, local, edge);
     let chain_admitted = test_context.edges.iter().all(|edge| match gate_of(edge) {
         // Shared with the owner: any unevaluated gate binds both.
         Some(_) if owner_edges.contains(&edge_key(edge)) => true,
@@ -232,6 +209,38 @@ fn owner_compiled_only_under_refused_declaration_with_local(
                 })
         });
     refused_is_unknown_gate && chain_admitted && in_file_shared && test_local_admitted
+}
+
+/// The memoized unestablished-gate reading of a module edge's declaration.
+/// The memo key is the full edge identity: two `mod` declarations on one line
+/// are distinct declarations with distinct gates.
+fn module_edge_gate(
+    index: &RustIndex,
+    local: &RefusalMemo,
+    edge: &SourceRoleProvenanceEdge,
+) -> Option<bool> {
+    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+        return None;
+    }
+    let key = (edge.parent.clone(), edge.line, edge.declaration.clone());
+    local
+        .module_gates
+        .borrow_mut()
+        .entry(key)
+        .or_insert_with(|| {
+            index
+                .files()
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+                .and_then(|facts| {
+                    crate::analysis::syntax::module_declaration_unestablished_gate(
+                        &facts.source,
+                        edge.line,
+                        &edge.declaration,
+                    )
+                })
+        })
+        .to_owned()
 }
 
 /// A module edge's identity: declaring file, line and declaration text.
@@ -548,5 +557,50 @@ mod returned_type_tests {
         ] {
             assert!(!property(body), "{body}");
         }
+    }
+}
+
+#[cfg(test)]
+mod module_gate_memo_tests {
+    use super::{RefusalMemo, module_edge_gate};
+    use crate::analysis::facts::{
+        FileFacts, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    };
+    use crate::analysis::rust_index::RustIndex;
+    use std::path::PathBuf;
+
+    fn edge(declaration: &str) -> SourceRoleProvenanceEdge {
+        SourceRoleProvenanceEdge {
+            kind: SourceRoleProvenanceEdgeKind::Module,
+            parent: PathBuf::from("lib.rs"),
+            child: PathBuf::from("child.rs"),
+            declaration: declaration.to_string(),
+            line: 1,
+            requires_test: false,
+        }
+    }
+
+    #[test]
+    fn same_line_sibling_modules_do_not_share_a_memoized_gate() {
+        let source = "#[cfg(feature = \"v4\")] mod v4; mod helpers;\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("lib.rs"),
+            FileFacts {
+                path: PathBuf::from("lib.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let memo = RefusalMemo::default();
+        // Gated sibling first, so a line-only key would poison the second.
+        assert_eq!(
+            module_edge_gate(&index, &memo, &edge("mod v4;")),
+            Some(true)
+        );
+        assert_eq!(
+            module_edge_gate(&index, &memo, &edge("mod helpers;")),
+            Some(false)
+        );
     }
 }
