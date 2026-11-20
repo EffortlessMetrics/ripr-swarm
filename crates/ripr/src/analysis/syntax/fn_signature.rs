@@ -908,7 +908,7 @@ fn stub_parameter_projections_are_nameable(function: &ast::Fn) -> bool {
                     _ => return false,
                 };
                 declared.is_some_and(|declared| {
-                    rust_ident_name(&declared.text()) == rust_ident_name(name)
+                    rust_ident_name(declared.text()) == rust_ident_name(name)
                 }) && attrs.all(|attr| {
                     attribute_test_build_availability(&attr.syntax().text().to_string())
                         == Some(true)
