@@ -305,6 +305,23 @@ macro invocation outside a short list of position-free standard macros. A
 statement, field or variant reordered inside its parent, a move into another
 owner, a fragment of an item and a move with an edit keep their probes.
 
+A replaced line whose code is unchanged seeds no probe on either side when
+the only difference is a trailing `//` comment, its line ending, or a block
+comment inside the line (`if x > 1 /* old */ {`) added, removed or reworded
+(#14175, #15232). For a block comment, each line is read on its own: its code
+with comment and literal contents masked and whitespace kept only where it
+separates two word characters or two characters of a longer Rust token
+(`&&`, `==`, `::`), and the raw text of each string and character literal,
+must equal the other line's. At least one side must hold an actual block
+comment before any line comment.
+These keep their probes:
+- a comment that held two tokens apart (`a/*x*/b` against `ab`);
+- a documentation comment (`///`, `//!`, `/**`, `/*!`) on either side;
+- a line that ends inside a comment or string, or that reads differently in
+  its file than alone (inside a multi-line comment or string);
+- a changed literal;
+- a position macro or string continuation on either line.
+
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
 files do not change those inputs. Formatting whitespace outside Rust literals

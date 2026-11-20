@@ -1883,6 +1883,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -3322,11 +3325,9 @@ impl RustAdapter {
                             // lexical test keeps a file the index could not
                             // parse, which then reads as unreadable.
                             !facts.module_declarations.is_empty()
-                                || facts.source.lines().any(|line| {
-                                    line.contains("mod ") && line.trim_end().ends_with(';')
-                                })
+                                || crate::analysis::diff::may_declare_module(&facts.source)
                         })
-                        .map(|(_, facts)| facts.data().source.as_ref()),
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                     changed_files.iter().map(|changed| {
                         (
                             changed,

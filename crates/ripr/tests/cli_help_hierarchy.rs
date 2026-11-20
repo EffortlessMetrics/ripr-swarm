@@ -19,14 +19,51 @@ fn run_ripr_in(
     args: &[&str],
     root: Option<&std::path::Path>,
 ) -> Result<std::process::Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    run_program_in(env!("CARGO_BIN_EXE_ripr"), args, root)
+}
+
+/// The single process spawn point for this target (process-policy bound).
+fn run_program_in(
+    program: &str,
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(program);
     command.args(args);
     if let Some(root) = root {
         command.current_dir(root);
     }
     command
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+        .map_err(|error| format!("failed to run {program} {args:?}: {error}"))
+}
+
+/// Run `test` in a fresh Git repository root. Cargo runs this target from the
+/// package directory, which sits below the checkout's Git top level when built
+/// from the repository, and `init --ci` refuses a root below the top level
+/// (#15389); an adopter runs it at the repository root.
+fn in_git_root(
+    label: &str,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-help-{label}-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let result = run_program_in("git", &["init", "-q"], Some(&root))
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git init failed: {output:?}"))
+            }
+        })
+        .and_then(|()| test(&root));
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
 }
 
 #[test]
@@ -61,11 +98,17 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
             "provider {value:?}"
         );
     }
-    let gitlab = run_ripr(&["init", "--ci", "gitlab", "--dry-run", "--force"])?;
-    assert!(gitlab.status.success(), "{gitlab:?}");
-    let stdout = String::from_utf8_lossy(&gitlab.stdout);
-    assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
-    assert!(stdout.contains("allow_failure: true"), "{stdout}");
+    in_git_root("init-gitlab", |root| {
+        let gitlab = run_ripr_in(
+            &["init", "--ci", "gitlab", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(gitlab.status.success(), "{gitlab:?}");
+        let stdout = String::from_utf8_lossy(&gitlab.stdout);
+        assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
+        assert!(stdout.contains("allow_failure: true"), "{stdout}");
+        Ok(())
+    })?;
     let missing = run_ripr(&["init", "--ci"])?;
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty());
@@ -78,16 +121,21 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
 
 #[test]
 fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String> {
-    let output = run_ripr(&["init", "--ci", "github", "--dry-run", "--force"])?;
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
-    assert!(stdout.contains("continue-on-error: true"), "{stdout}");
-    assert!(
-        stdout.contains("Rerun without --dry-run to apply."),
-        "{stdout}"
-    );
-    Ok(())
+    in_git_root("init-github", |root| {
+        let output = run_ripr_in(
+            &["init", "--ci", "github", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
+        assert!(stdout.contains("continue-on-error: true"), "{stdout}");
+        assert!(
+            stdout.contains("Rerun without --dry-run to apply."),
+            "{stdout}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
