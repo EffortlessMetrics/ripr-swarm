@@ -240,8 +240,10 @@ fn member_sources(member_dir: &Path, file_cap: usize) -> Option<Vec<PathBuf>> {
 
 /// The UTF-8 text of the regular file at `path`, counted against the
 /// member's byte budget before it is read: at most the remaining budget plus
-/// one byte is ever read or allocated, so a file past the budget (or one that
-/// grows while it is read) fails closed without being loaded. A symlink, a
+/// one byte is consumed from the file, so a file past the budget (or one that
+/// grows while it is read) fails closed without its remainder being read. The
+/// buffer grows with the bytes consumed; its exact capacity is not bounded
+/// here beyond that. A symlink, a
 /// directory, a FIFO, a device or any other non-regular file is refused.
 fn read_bounded(path: &Path, bytes_read: &mut usize) -> Option<String> {
     let remaining = MEMBER_BYTES.checked_sub(*bytes_read)?;
@@ -251,8 +253,9 @@ fn read_bounded(path: &Path, bytes_read: &mut usize) -> Option<String> {
 }
 
 /// The bytes of the regular file at `path` when it holds at most `limit`
-/// bytes. Reads at most `limit + 1` bytes, so an oversized or growing file is
-/// refused without being loaded; a non-regular file is refused before open.
+/// bytes. Consumes at most `limit + 1` bytes, so an oversized or growing file
+/// is refused without its remainder being read; a non-regular file is
+/// refused before open.
 fn read_regular(path: &Path, limit: usize) -> Option<Vec<u8>> {
     use std::io::Read;
     if !std::fs::symlink_metadata(path).ok()?.file_type().is_file() {
