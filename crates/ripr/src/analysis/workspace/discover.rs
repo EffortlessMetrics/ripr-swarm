@@ -549,7 +549,9 @@ pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str
 /// discovery walks; only regular files count, so a dangling link or FIFO
 /// named like a source file does not make a root look inspectable (#9922).
 /// Inside virtualenv and tool-cache directories an unanalyzed-language file
-/// does not count, matching [`discover_unanalyzed_source_files`] (#15283).
+/// does not count, matching [`discover_unanalyzed_source_files`] (#15283); a
+/// Rust or preview-language file there still counts, as routed discovery
+/// still reads it.
 pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
     fn inspectable(path: &Path, in_vendored: bool) -> bool {
         RustAdapter.accepts_path(path)
@@ -696,6 +698,12 @@ mod tests {
             ("python", "app.py", true),
             ("go", "main.go", true),
             ("ignored", "node_modules/pkg/index.js", false),
+            // #15283: an unanalyzed-language file inside a virtualenv is not
+            // repository source, by name or by `pyvenv.cfg` marker; a Python
+            // file there still routes, matching routed discovery.
+            ("venv-script", ".venv/bin/activate.ps1", false),
+            ("marked-venv", "env/pyvenv.cfg", false),
+            ("venv-python", ".venv/lib/site.py", true),
         ] {
             let case = root.join(dir);
             let path = case.join(file);
@@ -703,6 +711,9 @@ mod tests {
                 fs::create_dir_all(parent).map_err(io)?;
             }
             fs::write(&path, "x\n").map_err(io)?;
+            if dir == "marked-venv" {
+                fs::write(case.join("env/run.sh"), "x\n").map_err(io)?;
+            }
             assert_eq!(has_inspectable_source_file(&case), expected, "{dir}");
         }
         #[cfg(unix)]
