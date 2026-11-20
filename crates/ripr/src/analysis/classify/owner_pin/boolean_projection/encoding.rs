@@ -24,20 +24,7 @@ pub(super) fn comparison(
             if from.expr()?.syntax().text() != "u8::from"
                 || !super::super::builtin_type_unshadowed("u8", index, syntax)
                 || !super::standard_variant_in_scope("From", test, assertion, index, syntax)
-                || !*syntax.standard_from_available.get_or_init(|| {
-                    crate::analysis::classify::call_identity::closed_method_dispatch_imports(index)
-                        && !index.functions().iter().any(|function| {
-                            function.name == "from"
-                                && matches!(
-                                    function.item.container,
-                                    super::super::FunctionContainer::Trait { .. }
-                                        | super::super::FunctionContainer::Unknown
-                                )
-                        })
-                })
-                || !*syntax
-                    .option_prelude_available
-                    .get_or_init(|| super::option_prelude_available(index))
+                || !super::standard_method_available("from", test, assertion, index, syntax)
             {
                 return None;
             }
@@ -102,7 +89,7 @@ pub(super) fn comparison(
     })
 }
 
-fn string_literal(text: &str) -> Option<String> {
+pub(super) fn string_literal(text: &str) -> Option<String> {
     let ast::Expr::Literal(value) = operand(text)? else {
         return None;
     };
@@ -117,8 +104,12 @@ fn string_literal(text: &str) -> Option<String> {
 pub(super) fn macro_operands(call: &ast::MacroCall) -> Option<Vec<String>> {
     let args = call.token_tree()?.syntax().text().to_string();
     let inner = args.get(1..args.len().checked_sub(1)?)?;
-    let ast::Expr::TupleExpr(tuple) = operand(&format!("({inner},)"))? else {
-        return None;
+    let tuple = match operand(&format!("({inner})"))? {
+        ast::Expr::TupleExpr(tuple) => tuple,
+        ast::Expr::ParenExpr(single) => {
+            return Some(vec![single.expr()?.syntax().text().to_string()]);
+        }
+        _ => return None,
     };
     Some(
         tuple

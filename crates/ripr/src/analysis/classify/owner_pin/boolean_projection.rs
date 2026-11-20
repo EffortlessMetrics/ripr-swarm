@@ -12,10 +12,14 @@ use crate::analysis::test_grip_evidence::fold_boolean_owner_call;
 use ra_ap_syntax::{AstNode, ast};
 
 mod conditional;
+mod container;
 mod encoding;
 
 pub(super) fn has_mapped_operand(sides: [&str; 2]) -> bool {
-    conditional::has_conditional_operand(sides) || sides.into_iter().any(encoding::recognizes)
+    conditional::has_conditional_operand(sides)
+        || sides
+            .into_iter()
+            .any(|side| encoding::recognizes(side) || container::recognizes(side))
 }
 
 /// Admit the established single-macro assertion, or the bare outer assertion
@@ -43,7 +47,11 @@ pub(super) fn comparison_macro(text: &str, expected: &str) -> bool {
     let masked = super::mask_comments_and_strings(text);
     let names = super::macro_invocations(&masked);
     matches!(names.as_slice(), [(head, _), ("format" | "vec", _)] if *head == expected)
-        && encoding::macro_operands(&outer).is_some_and(|args| args.len() == 2)
+        && encoding::macro_operands(&outer).is_some_and(|args| match args.as_slice() {
+            [_, _] => true,
+            [_, _, diagnostic, ..] => encoding::string_literal(diagnostic).is_some(),
+            _ => false,
+        })
 }
 
 fn operand(text: &str) -> Option<ast::Expr> {
@@ -97,13 +105,17 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
     }
     let compared = assertion_comparison_operands(&assertion.text)?;
     let [left, right] = compared;
-    let cells = if encoding::recognizes(left) || encoding::recognizes(right) {
-        let (projection, expected) = if encoding::recognizes(left) {
-            (left, right)
-        } else {
-            (right, left)
-        };
+    let (projection, expected) = if encoding::recognizes(left) || container::recognizes(left) {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let cells = if encoding::recognizes(projection) {
         vec![encoding::comparison(
+            projection, expected, test, assertion, index, syntax,
+        )?]
+    } else if container::recognizes(projection) {
+        vec![container::comparison(
             projection, expected, test, assertion, index, syntax,
         )?]
     } else if conditional::has_conditional_operand(compared) {
@@ -202,6 +214,69 @@ fn standard_variant_in_scope(
                 glob.as_ref().is_some_and(|path| matches!(path.as_slice(), [part] if part == "super" && !scope.modules.is_empty()))
             })
     })
+}
+
+// Method names may be introduced through local traits, including imports under aliases.
+// Cache trait declarations once and evaluate their visibility at the actual test site.
+fn standard_method_available(
+    name: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let methods = syntax.projection_traits.get_or_init(|| {
+        let mut methods = std::collections::BTreeMap::new();
+        if !crate::analysis::classify::call_identity::closed_method_dispatch_imports(index) {
+            return methods;
+        }
+        for method in ["from", "eq", "first", "contains"] {
+            if syntax.macro_may_declare(method, index) {
+                continue;
+            }
+            let mut traits = Some(std::collections::BTreeSet::new());
+            for function in index
+                .functions()
+                .iter()
+                .filter(|function| function.name == method)
+            {
+                match (&function.item.container, &mut traits) {
+                    (FunctionContainer::Trait { trait_name }, Some(names)) => {
+                        names.insert(trait_name.clone());
+                    }
+                    (FunctionContainer::Unknown, _) => {
+                        traits = None;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            methods.insert(method, traits);
+        }
+        methods
+    });
+    let Some(Some(traits)) = methods.get(name) else {
+        return false;
+    };
+    if traits.is_empty() {
+        return true;
+    }
+    let Some(scopes) = index
+        .source_syntax
+        .get(index, &test.file)
+        .and_then(|source| source.name_scopes(test))
+    else {
+        return false;
+    };
+    traits
+        .iter()
+        .all(|name| standard_variant_in_scope(name, test, assertion, index, syntax))
+        && scopes.scopes.iter().all(|scope| {
+            scope.imports.is_empty()
+                && scope.block_bindings.is_empty()
+                && scope.block_rename_targets.is_empty()
+                && !scope.block_globs
+        })
 }
 
 fn option_prelude_available(index: &RustIndex) -> bool {

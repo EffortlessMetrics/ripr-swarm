@@ -570,7 +570,7 @@ fn standard_scalar_encodings_compare_on_the_same_version() -> Result<(), String>
 
 #[test]
 fn private_encoding_names_do_not_replace_standard_scalar_observers() -> Result<(), String> {
-    let unrelated = "mod private { macro_rules! format { ($($t:tt)*) => { 0 } } struct Local(u32); impl From<u32> for Local { fn from(value: u32) -> Self { Self(value) } } }";
+    let unrelated = "mod private { trait Converts { fn from(b: bool) -> u8; } macro_rules! format { ($($t:tt)*) => { 0 } } struct Local(u32); impl From<u32> for Local { fn from(value: u32) -> Self { Self(value) } } }";
     for body in [
         r#"assert_eq!(format!("{}", over(10)), "true");"#,
         "assert_eq!(u8::from(over(10)), 1);",
@@ -580,6 +580,89 @@ fn private_encoding_names_do_not_replace_standard_scalar_observers() -> Result<(
             return Err(format!(
                 "unrelated encoding suppressed the real observer: {body}"
             ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn single_element_container_observers_compare_the_actual_boolean_payload() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, Some(over(10)).eq(&Some(true)));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).unwrap_or(false), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, Some(over(10)).unwrap_or(true));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(true).unwrap_or(over(10)), true);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(vec![over(10)].contains(&true), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, vec![over(10)].contains(&true));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(vec![over(10), true].contains(&true), true);"#,
+            "weakly_exposed",
+        ),
+        (r#"assert_eq!([over(10)].first(), Some(&true));"#, "exposed"),
+        (
+            r#"assert_eq!(Some(&false), [over(10)].first());"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!([false, over(10)].first(), Some(&false));"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(true, vec![over(10)].contains(&false)); assert_eq!(Some(over(10)).unwrap_or(false), true);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)), true); assert_eq!([over(10)].first(), Some(&false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(vec![over(10)].contains(&true), true); assert_eq!(Some(over(10)).unwrap_or(true), true);"#,
+            "exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn encoding_sibling_accepts_rust_macro_trailing_commas_and_messages() -> Result<(), String> {
+    for sibling in [
+        r#"assert_eq!(format!("{}",over(10),), "false");"#,
+        r#"assert_eq!(format!("{}",over(10)), "false",);"#,
+        r#"assert_eq!(format!("{}",over(10)), "false", "unexpected display");"#,
+    ] {
+        let body = format!(r#"assert_eq!(format!("{{}}",over(10)), "true"); {sibling}"#);
+        let finding = predicate_finding(&body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some("infection_unknown") {
+            return Err(format!("{body}: got {class:?}"));
         }
     }
     Ok(())

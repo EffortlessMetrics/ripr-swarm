@@ -523,8 +523,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     iteration_closed: OnceLock<bool>,
     /// The same closed-field premise without the array iteration restriction.
     field_projection_workspace_closed: OnceLock<bool>,
-    /// Standard scalar conversion dispatch for the once-built index.
-    standard_from_available: OnceLock<bool>,
+    /// Candidate competing trait names for each standard Boolean projection.
+    projection_traits: OnceLock<BTreeMap<&'static str, Option<BTreeSet<String>>>>,
     /// A prelude constructor requires a parsed workspace with the implicit prelude.
     option_prelude_available: OnceLock<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
