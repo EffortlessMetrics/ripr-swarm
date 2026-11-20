@@ -291,14 +291,26 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         "--at",
         "probe:missing",
     ];
-    let pretty = run_ripr(&args);
+    // Without a JSON request a selector miss is plain usage: no stdout. An
+    // explicit JSON request (either presentation) also receives the typed
+    // `selector_miss` refusal on stdout (#14980), and compaction changes only
+    // its whitespace.
+    let plain = run_ripr(&args);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty());
+    let mut pretty_args = args.to_vec();
+    pretty_args.push("--json");
+    let pretty = run_ripr(&pretty_args);
     let mut compact_args = args.to_vec();
     compact_args.extend(["--format", "json-compact"]);
     let compact = run_ripr(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
-    assert!(pretty.stdout.is_empty() && compact.stdout.is_empty());
     assert_eq!(pretty.stderr, compact.stderr);
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(refusal["error"]["code"], "selector_miss");
     Ok(())
 }
 
