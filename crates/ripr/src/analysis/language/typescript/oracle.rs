@@ -1589,14 +1589,17 @@ pub(crate) fn expect_assertion_from_expression(
     // documented built-in shape: no matcher registration in the file, no
     // `.rejects` (Jasmine has none; the reason is not the returned value),
     // and no argument to the boolean pair. Anything else stays `unknown`.
-    if matches!(matcher, "toBeTrue" | "toBeFalse" | "toHaveSize")
+    let refused_builtin_name = matches!(matcher, "toBeTrue" | "toBeFalse" | "toHaveSize")
         && (bindings.registers_matchers
             || async_modifier == Some("rejects")
-            || (matcher != "toHaveSize" && !outer_call.arguments.is_empty()))
-    {
+            || (matcher != "toHaveSize" && !outer_call.arguments.is_empty()));
+    if refused_builtin_name {
         oracle_kind = OracleKind::Unknown;
         oracle_strength = OracleStrength::Unknown;
     }
+    // The rejection-literal rendering above describes a credit this refusal
+    // withdrew; drop it so the evidence text does not name it.
+    let rendered_call = rendered_call.filter(|_| !refused_builtin_name);
 
     // Jasmine `toBeTrue()` / `toBeFalse()` carry their expected boolean in the
     // matcher name, so they read the same expected value as `toBe(true)` /

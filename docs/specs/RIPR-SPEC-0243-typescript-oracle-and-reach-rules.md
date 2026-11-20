@@ -576,7 +576,10 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 Jasmine-only names are also common names for home-grown matchers, so
 `toBeTrue`, `toBeFalse` and `toHaveSize` read `unknown` / unknown in a file
 that mentions `extend` or `addMatchers`, with `.rejects`, or (for the
-boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`.
+boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`. The
+mention check is textual (comments and strings count, which only refuses
+more); a registration in another file, such as a setup or helper file, is
+not seen, the same limit `toBe` has.
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and

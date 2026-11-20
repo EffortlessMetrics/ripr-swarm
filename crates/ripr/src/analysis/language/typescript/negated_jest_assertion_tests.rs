@@ -379,6 +379,7 @@ fn ts_jasmine_names_stay_unknown_when_the_file_registers_matchers() {
             ("toBeTrue()", OracleKind::ExactValue),
             ("toBeFalse()", OracleKind::ExactValue),
             ("toHaveSize(2)", OracleKind::RelationalCheck),
+            ("not.toBeTrue()", OracleKind::RelationalCheck),
         ] {
             let body = format!("  expect(price(150)).{call};");
             let registered = assertion_in_file(&format!(
@@ -420,6 +421,8 @@ fn ts_jasmine_boolean_matchers_outside_the_builtin_shape_stay_unknown() {
         "  expect(price(150)).toBeFalse(\"why\");",
         "  return expect(price(150)).rejects.toBeTrue();",
         "  return expect(price(150)).rejects.toBeFalse();",
+        "  expect(price(150)).not.toBeTrue(1);",
+        "  return expect(price(150)).rejects.toHaveSize(2);",
     ] {
         let got = extracted_assertion(body);
         assert_eq!(got.oracle_kind, OracleKind::Unknown, "{body}: {got:?}");

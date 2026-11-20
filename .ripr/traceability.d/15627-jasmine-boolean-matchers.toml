@@ -6,7 +6,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_boolean_matchers_read_like_tobe_boolean",
   "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_negated_jasmine_boolean_matchers_match_negated_tobe",
   "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_tohavesize_reads_like_tohavelength",
+  "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_names_stay_unknown_when_the_file_registers_matchers",
+  "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_boolean_matchers_outside_the_builtin_shape_stay_unknown",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/custom_matcher_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
