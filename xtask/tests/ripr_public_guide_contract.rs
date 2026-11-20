@@ -862,21 +862,48 @@ const PORTABLE_TESTS: &[&str] = &[
     "help_route_typos_name_the_route_that_works",
 ];
 
+/// The rendered-help harness is a development test: the published package
+/// carries none of `tests/` (#15216). Qualification compiles the same files
+/// standalone against the installed candidate
+/// (`candidate_harness/archive/help_contract.rs`); this compiles them the same
+/// way against the checkout candidate.
 #[test]
-fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
+fn help_harness_stays_out_of_the_package_and_runs_every_case_standalone() -> Result<(), String> {
+    use ripr_help::{
+        Scratch, compile_portable, extracted_package, require_success, run, workspace,
+    };
     let scratch = Scratch::new("packaged-help-contract")?;
-    let package = extracted_package(&scratch.0)?;
+    let extracted = extracted_package(&scratch.0)?;
+    if extracted.join("tests").exists() {
+        return Err(format!(
+            "the published ripr package carries development tests under {}",
+            extracted.join("tests").display()
+        ));
+    }
+    let package = scratch.0.join("help-harness");
+    for relative in [
+        "tests/cli_help_hierarchy.rs",
+        "tests/common/help_contract.rs",
+        "tests/common/help_workspace.rs",
+    ] {
+        let target = package.join(relative);
+        let parent = target
+            .parent()
+            .ok_or_else(|| format!("{relative} has no parent"))?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        std::fs::copy(workspace().join("crates/ripr").join(relative), &target)
+            .map_err(|error| format!("copy {relative}: {error}"))?;
+    }
     let executable = scratch
         .0
         .join(format!("help-tests{}", std::env::consts::EXE_SUFFIX));
     require_success(
         compile_portable(&package, &executable)?,
-        "extracted help compile",
+        "standalone help compile",
     )?;
     let mut list = std::process::Command::new(&executable);
     list.arg("--list").current_dir(&scratch.0);
-    let inventory = require_success(run(list)?, "extracted help inventory")?;
+    let inventory = require_success(run(list)?, "standalone help inventory")?;
     let inventory = String::from_utf8(inventory.stdout).map_err(|error| error.to_string())?;
     let actual = inventory
         .lines()
@@ -893,14 +920,14 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     }
     let mut execute = std::process::Command::new(&executable);
     execute.arg("--test-threads=1").current_dir(&scratch.0);
-    let result = require_success(run(execute)?, "extracted help execution")?;
+    let result = require_success(run(execute)?, "standalone help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
     if !text.contains(&format!(
         "test result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
         PORTABLE_TESTS.len()
     )) {
         return Err(format!(
-            "extracted target did not run all {} portable cases:\n{text}",
+            "standalone harness did not run all {} portable cases:\n{text}",
             PORTABLE_TESTS.len()
         ));
     }

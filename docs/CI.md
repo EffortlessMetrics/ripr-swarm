@@ -1223,7 +1223,10 @@ cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail
 ```
 
 It runs on manual dispatch or a validated frozen-subject call selecting
-`run_rust_only`. It is not a required check. The Windows advisory lane runs the
+`run_rust_only`. It is not a required check. The required run lints the
+Rust-only library with warnings denied (#14263, see
+[Clippy policy](CLIPPY_POLICY.md#required-feature-coverage)); it does not
+run the Rust-only tests. The Windows advisory lane runs the
 same command on Windows. The retained PR diff selector is legacy handling,
 not an active subscription: callable selection comes from explicit admitted
 inputs, and manual dispatch runs the lane unconditionally.

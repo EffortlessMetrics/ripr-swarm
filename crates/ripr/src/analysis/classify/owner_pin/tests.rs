@@ -14196,6 +14196,20 @@ fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<()
             "prusti-contracts = \"0.3\"\n",
             "use prusti_contracts::*;\n",
         ),
+        (
+            "proptest",
+            "1.12.0",
+            "proptest",
+            "proptest = \"1\"\n",
+            "use proptest::prelude::*;\n",
+        ),
+        (
+            "rayon",
+            "1.12.0",
+            "rayon",
+            "rayon = \"1\"\n",
+            "use rayon::prelude::*;\n",
+        ),
     ];
     for (name, version, label, dependencies, glob) in audited {
         let at = |label: &str, lock: Option<String>| {
@@ -14237,9 +14251,22 @@ fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<()
             );
         }
         // No lockfile, and a lockfile that does not lock the crate, refuse.
-        assert!(
-            prelude_rebound(at(&format!("{label}-nolock"), None)?),
-            "{name} no lock"
+        // With no lockfile of its own, the nearest lock above the fixture
+        // decides. Test temp files live under this repository's `target/`,
+        // whose lock pins proptest and rayon at their audited versions, so
+        // the expectation follows that lock; the `unlocked` case below covers
+        // a lockfile that does not lock the crate.
+        let outer_lock_audits = crate::analysis::workspace::locked_at_audited_version(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            name,
+            &[version],
+        );
+        let refusal = at(&format!("{label}-nolock"), None)?;
+        let shown = format!("{refusal:?}");
+        assert_eq!(
+            prelude_rebound(refusal),
+            !outer_lock_audits,
+            "{name} no lock: {shown}"
         );
         assert!(
             prelude_rebound(at(
@@ -14306,6 +14333,11 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "owner-pin-prelude-external",
             vstd,
             "use ::vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-external-beside-import",
+            vstd,
+            "use other::vstd;\nuse ::vstd::prelude::*;\n",
         ),
         (
             "owner-pin-prelude-workspace-dep",
@@ -14392,6 +14424,16 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "owner-pin-prelude-rename",
             vstd,
             "extern crate other as vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import",
+            vstd,
+            "use other::vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import-self",
+            prusti,
+            "use other::prusti_contracts::{self};\nuse prusti_contracts::*;\n",
         ),
     ] {
         assert!(

@@ -4935,8 +4935,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; an unparseable value fails the run) and its
-in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; results are kept by level, errors then warnings
+then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -15792,7 +15792,7 @@ ripr first-pr \
   --agent-packet target/ripr/agent/gap-packet.md \
   --gate-decision target/ripr/reports/gate-decision.json \
   --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
+  --output-dir target/ripr/reports
 ```
 
 The command writes:

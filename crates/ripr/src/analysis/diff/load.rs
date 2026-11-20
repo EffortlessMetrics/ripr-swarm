@@ -894,7 +894,7 @@ pub(crate) fn resolve_effective_base_core_with_commit(
     if explicit.starts_with('-') {
         return Err(CoreError::base_unresolvable(format!(
             "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
-             did not run). Pass `--base <ref>` for a ref this repository has."
+             did not run). Choose a ref this repository has (`git branch --all` lists its branches)."
         )));
     }
     if explicit.trim().is_empty() {
@@ -916,7 +916,8 @@ pub(crate) fn resolve_effective_base_core_with_commit(
             let fetch = missing_ref_repair(root, explicit, "--base", git_timeout);
             Err(CoreError::base_unresolvable(format!(
                 "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                 run). {fetch}, or pass `--base <ref>` for a ref this repository has."
+                 run). {fetch}, or choose another ref this repository has (`git branch --all` \
+                 lists its branches)."
             )))
         }
         Some(output) => {
@@ -1620,7 +1621,30 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         }
         (None, false, _) | (None, true, None) => String::new(),
     };
-    format!("{single_branch_note}{branch_context}")
+    let set_head_note = if origin_lacks_head_pointer(root, git_timeout) {
+        " `git fetch origin` followed by `git remote set-head origin --auto` records the \
+         remote's default branch as `origin/HEAD`, which a bare check then uses."
+    } else {
+        ""
+    };
+    format!("{single_branch_note}{branch_context}{set_head_note}")
+}
+
+/// True when an `origin` remote exists but `refs/remotes/origin/HEAD` does
+/// not: a repository set up with `git remote add` + `git fetch` never gets the
+/// pointer `git clone` writes, so a default branch like `trunk` stays
+/// unresolved for a hook that cannot pass `--base`. `git remote set-head
+/// origin --auto` creates it once the default branch's tracking ref exists,
+/// hence the `git fetch origin` before it. False when there is no `origin` or
+/// Git cannot answer, so the advice is only given where it can apply.
+fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
+    let succeeds = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(root, args, git_timeout)
+            .ok()
+            .map(|output| output.status.success())
+    };
+    succeeds(&["remote", "get-url", "origin"]) == Some(true)
+        && succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.
@@ -4758,6 +4782,9 @@ mod tests {
         assert!(!planted_exists, "git diff must not write an --output file");
         let err = resolved.expect_err("an option-shaped base must be refused");
         assert!(err.contains("starts with `-`"), "{err}");
+        // The bad value came from `--base` (or the LSP setting), so the advice
+        // must not answer it with the same flag (#15338).
+        assert!(!err.contains("--base <ref>"), "{err}");
         assert!(identity.is_none());
         Ok(())
     }
@@ -4800,6 +4827,62 @@ mod tests {
         );
 
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn default_base_failure_names_set_head_only_when_origin_lacks_a_head_pointer()
+    -> std::io::Result<()> {
+        // `git remote add` (and, before Git 2.48 or with
+        // `followRemoteHEAD=never`, a later `git fetch`) leaves no
+        // `origin/HEAD`, so a bare check (a pre-commit hook) cannot resolve a
+        // base. The literal fix is `git fetch origin` then
+        // `git remote set-head origin --auto`.
+        let dir = unique_fixture_root("resolve-base-origin-no-head")?;
+        init_git_repo(&dir, "trunk")?;
+        // Control: no `origin` remote, so the advice cannot apply.
+        let err = resolve_default_base(&dir, None).expect_err("no default candidate");
+        assert!(
+            !err.contains("set-head"),
+            "no origin remote must not get set-head advice, got: {err}"
+        );
+
+        // A bare copy taken while on `trunk` keeps the remote's own HEAD on
+        // `trunk`; pointing `origin` at `dir` itself would make
+        // `set-head --auto` follow the later feature checkout.
+        let remote_dir = unique_fixture_path("resolve-base-origin-no-head-remote");
+        let remote = remote_dir.to_string_lossy().to_string();
+        run_git_checked(&dir, &["clone", "-q", "--bare", ".", remote.as_str()])?;
+        run_git_checked(&dir, &["remote", "add", "origin", remote.as_str()])?;
+        // Git 2.48+ defaults to creating `origin/HEAD` on fetch; pin the
+        // older behavior so the fixture keeps the missing pointer on every
+        // host Git (older Git ignores the key).
+        run_git_checked(&dir, &["config", "remote.origin.followRemoteHEAD", "never"])?;
+        run_git_checked(&dir, &["checkout", "-q", "-b", "feature/discount"])?;
+        // Not yet fetched: `set-head --auto` alone would be refused because
+        // `origin/trunk` does not exist, so the fetch must be named first.
+        let err = resolve_default_base(&dir, None).expect_err("origin/HEAD is absent");
+        assert!(
+            err.contains("`git fetch origin` followed by `git remote set-head origin --auto`"),
+            "an origin without origin/HEAD must name the literal fix, got: {err}"
+        );
+        assert!(
+            err.contains("`--base trunk`"),
+            "the --base example must remain, got: {err}"
+        );
+
+        // Following the named steps in order makes the default base resolve.
+        run_git_checked(&dir, &["fetch", "-q", "origin"])?;
+        let err = resolve_default_base(&dir, None).expect_err("fetch alone writes no pointer");
+        assert!(err.contains("git remote set-head origin --auto"), "{err}");
+        run_git_checked(&dir, &["remote", "set-head", "origin", "--auto"])?;
+        assert_eq!(
+            resolve_default_base(&dir, None).as_deref(),
+            Ok("origin/trunk"),
+            "the named commands must make the default base resolve"
+        );
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&remote_dir);
         Ok(())
     }
 
@@ -5184,12 +5267,14 @@ mod tests {
         // #9277: the repair sentence and the alternative join with a comma, not
         // a bare "or" that fuses onto the previous clause.
         assert!(
-            err.contains(", or pass `--base <ref>` for a ref this repository has."),
+            err.contains(", or choose another ref this repository has (`git branch --all` lists its branches)."),
             "expected the repair and the alternative to be separate clauses, got: {err}"
         );
+        // The user's own input was the bad `--base`, so the closing advice
+        // must not tell them to pass `--base <ref>` again.
         assert!(
-            err.contains("--base <ref>"),
-            "expected the next action, got: {err}"
+            !err.contains("pass `--base <ref>`"),
+            "the failing --base must not be answered with the same flag, got: {err}"
         );
         // Discriminator: git's usage advice for a different mistake must be gone.
         assert!(

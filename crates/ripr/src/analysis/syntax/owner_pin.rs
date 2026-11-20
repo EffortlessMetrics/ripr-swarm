@@ -1601,10 +1601,14 @@ fn macro_binding_sites_in_tree(
                     continue;
                 }
                 // RIPR-SPEC-0369: an exact verification-prelude glob exports no
-                // assertion macro, so it cannot rebind a trusted name.
+                // assertion macro, so it cannot rebind a trusted name. A plain
+                // import that binds the root name (`use other::vstd;`) takes
+                // the path over for the module, as for the standard roots; an
+                // absolute `::vstd` path still names the extern crate.
                 if item.star_token().is_some()
                     && is_assertion_free_prelude_glob(&item)
                     && !drop_in_shadowed(root, external)
+                    && (external || !root_imported())
                     && drop_in_verified(root)
                 {
                     continue;
@@ -1888,16 +1892,19 @@ fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     segments
 }
 
-/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
-/// published export lists (checked against creusot-std 0.14.0, vstd
-/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
-/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
-/// kin. Each entry is the exact glob path; the crate must also resolve to the
-/// registry package (`drop_in_verified`) and not be shadowed.
+/// RIPR-SPEC-0369: glob imports of verification-framework and other common
+/// preludes whose published export lists (checked against creusot-std
+/// 0.14.0, vstd 0.0.0-2026-10-25-0158, prusti-contracts 0.3.3, proptest
+/// 1.12.0 and rayon 1.12.0) contain no macro named like a trusted assertion,
+/// so the glob cannot rebind `assert_eq!` and its kin. Each entry is the
+/// exact glob path; the crate must also resolve to the registry package
+/// (`drop_in_verified`) and not be shadowed.
 const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
     &["creusot_std", "prelude"],
     &["vstd", "prelude"],
     &["prusti_contracts"],
+    &["proptest", "prelude"],
+    &["rayon", "prelude"],
 ];
 
 fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {

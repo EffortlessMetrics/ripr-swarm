@@ -65,6 +65,11 @@ mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
+// The fixtures assert the Rust + Python enablement tip, which only names
+// adapters compiled into this build.
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
+#[path = "cli_smoke/doctor_subdirectory_root.rs"]
+mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
 #[path = "cli_smoke/findings_byte_budget.rs"]
@@ -7265,11 +7270,11 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
         .display()
         .to_string()
         .replace('\\', "/");
-    let plain = format!("--out-dir {expected_out_dir}");
-    let quoted = format!("--out-dir '{expected_out_dir}'");
+    let plain = format!("--output-dir {expected_out_dir}");
+    let quoted = format!("--output-dir '{expected_out_dir}'");
     assert!(stderr.contains(&plain) || stderr.contains(&quoted));
-    assert!(!stderr.contains("--out-dir target/ripr/reports"));
-    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
+    assert!(!stderr.contains("--output-dir target/ripr/reports"));
+    assert!(!stderr.contains("--output-dir 'target/ripr/reports'"));
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
@@ -37180,8 +37185,11 @@ fn doctor_does_not_run_a_repository_selected_toolchain_path() -> Result<(), Stri
                 return Ok(());
             }
             std::fs::remove_file(&marker).map_err(|err| format!("reset marker: {err}"))?;
+            // `--root .`: the fixture sits under the test TMPDIR, inside this
+            // repository's Cargo workspace, which implicit doctor would widen
+            // to exactly as `ripr check` does (#15304).
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .arg("doctor")
+                .args(["doctor", "--root", "."])
                 .current_dir(&root)
                 .env_remove("RUSTUP_TOOLCHAIN")
                 .output()
@@ -37245,7 +37253,9 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
             dirs.extend(std::env::split_paths(&path));
             let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .args(["--verbose", "doctor"])
+                // `--root .`: diagnose the fixture, not the enclosing Cargo
+                // workspace that holds the test TMPDIR (#15304).
+                .args(["--verbose", "doctor", "--root", "."])
                 .current_dir(&root)
                 .env("PATH", path)
                 .output()
