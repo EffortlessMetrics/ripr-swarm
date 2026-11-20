@@ -1,5 +1,86 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
+
+A macro-generated test that sits beside a rebound std macro name takes no
+invocation scopes, which bumps the analyzer cache schema to 1.184. Move the
+portable unchanged-attempt snapshots to 1.184, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.182 after module-const reach (#13592)
+
+A module-level `const` read only by a same-module function gains a reader
+entry, which bumps the analyzer cache schema to 1.182. Move the portable
+unchanged-attempt snapshots to 1.182, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending - branch-local return-value grip (#14496)
+
+A `return_value` seam inside a branch the pinned call does not take no longer
+keeps strong grip. In the portable unchanged-attempt snapshots the two tail
+`if`/`else` branch values now credit only the call that reaches them: the
+non-reaching oracle reads `weak` and sorts after the reaching one, so
+`related_tests`, `nearest_test_to_imitate`, `related_test` and the `reach`
+summary move for `src/lib.rs:3` and `src/lib.rs:5`. Refresh the artifact content
+commitment, then the dependent verify commitments and receipt byte hashes. The
+predicate seam, its weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
+
+## Pending - tail `if`/`else` branch-value seams (#14385)
+
+The portable unchanged-attempt snapshots now list the owner's two tail
+`if`/`else` branch values (`src/lib.rs:3` and `src/lib.rs:5`) as strongly
+gripped, non-headline `return_value` seams beside the predicate seam. Refresh the
+snapshot metrics and artifact content commitment, the verify artifact's
+unchanged seams and commitments, and the receipt byte hashes. The predicate seam,
+its weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated. The snapshots carry cache generation 1.181 from
+main (#12801).
+
+## Pending — corpus cache generation 1.181 after #12757 (#12801)
+
+Success-only assertions no longer discriminate a failure seam, which bumps the
+analyzer cache schema to 1.181. Move the portable unchanged-attempt snapshots
+to 1.181, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.180 after #14326
+
+A constructed field spelled with a logical-or no longer reads as an opaque
+closure, which bumps the analyzer cache schema to 1.180. Move the portable
+unchanged-attempt snapshots to 1.180, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.177 after #13432 (#13956)
+
+#13432 bumped the analyzer cache schema to 1.177 but left the portable
+unchanged-attempt snapshots at 1.175. Move the corpus generation to 1.177,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending — proposed repair-target projection (#3162)
 
 PR-guidance working-set cards now emit `suggested_test.proposed_target`
@@ -1515,3 +1596,49 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (36)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (37)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — corpus cache generation 1.178 after #12641 (#5346)
+
+The per-byte slice-counter boundary credit bumps the analyzer cache schema to
+1.178. Move the portable unchanged-attempt snapshots to 1.178, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

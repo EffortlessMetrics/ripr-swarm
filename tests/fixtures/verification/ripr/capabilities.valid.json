@@ -1,0 +1,78 @@
+{
+  "absent_cell_meaning": "not_proven",
+  "availability_note": "adapter_compiled is build availability only; it neither implies nor limits a cell's state",
+  "cells": [
+    {
+      "family": "static_facts",
+      "framework": "any",
+      "id": "perl/any/diff/static_facts",
+      "language": "perl",
+      "limit": "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet",
+      "mode": "diff",
+      "proof_refs": [
+        "RIPR-SPEC-0026",
+        "RIPR-SPEC-0064"
+      ],
+      "state": "not_proven",
+      "tier_ceiling": "preview"
+    },
+    {
+      "family": "static_facts",
+      "framework": "any",
+      "id": "perl/any/repo/static_facts",
+      "language": "perl",
+      "limit": "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet",
+      "mode": "repo",
+      "proof_refs": [
+        "RIPR-SPEC-0026",
+        "RIPR-SPEC-0064"
+      ],
+      "state": "not_proven",
+      "tier_ceiling": "preview"
+    },
+    {
+      "family": "repair_routing",
+      "framework": "any",
+      "id": "perl/any/diff/repair_routing",
+      "language": "perl",
+      "limit": "blocked on real-repository producer proof and real Perl repository receipts",
+      "mode": "diff",
+      "proof_refs": [
+        "RIPR-SPEC-0026",
+        "RIPR-SPEC-0064"
+      ],
+      "state": "not_proven",
+      "tier_ceiling": "preview"
+    }
+  ],
+  "claim_boundary": "Static capability registry for this ripr build. It states what each language, framework and mode can establish and where it must widen or stop; it does not prove an adapter's output is correct, does not report whether a language is enabled for a repository (see `ripr doctor`), and does not promote any support tier.",
+  "digest_scope": "whole_table",
+  "filtered_by": {
+    "language": "perl"
+  },
+  "kind": "ripr_language_capabilities",
+  "languages": [
+    {
+      "adapter_compiled": false,
+      "language": "perl",
+      "language_status": "preview",
+      "required_feature": "lang-perl"
+    }
+  ],
+  "non_claims": [
+    "static evidence only: no runtime mutation outcome and no sufficiency claim",
+    "a cell does not establish that the adapter is compiled or enabled",
+    "no gate, badge, baseline, or RIPR Zero authority"
+  ],
+  "schema_version": "0.1",
+  "semantic_digest": "sha256:7b983b1157e805017e50784a4ccf6b43bec566f11339028e8cd080745167f5fa",
+  "support_state_vocabulary": [
+    "exact_supported",
+    "conservative_overapproximation",
+    "supported_with_required_fallback",
+    "unsupported_with_typed_limit",
+    "not_applicable_with_evidence",
+    "stale",
+    "not_proven"
+  ]
+}

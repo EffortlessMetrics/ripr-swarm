@@ -138,6 +138,22 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
         };
+        // #13096: an omitted `source` takes `ripr check`'s default through the
+        // one shared selection owner, so an agent that just edited a tracked
+        // file analyzes that edit instead of an empty committed diff.
+        let source_defaulted = source.is_none();
+        let source = match source {
+            Some(source) => source,
+            None => {
+                let probe_root = root.clone();
+                // A probe that could not finish keeps committed history, the
+                // same fallback the selection owner takes for a failed probe;
+                // `requested_source: "default"` still discloses the choice.
+                tokio::task::spawn_blocking(move || default_refresh_source(&probe_root))
+                    .await
+                    .unwrap_or(workspace::RefreshSource::Committed)
+            }
+        };
         let root_identity = self.root_identity.clone();
         let session = self.session.clone();
         {
@@ -153,6 +169,7 @@ impl McpServer {
             session.in_flight = true;
             session.desired_base = base.clone();
             session.desired_source = source;
+            session.desired_source_defaulted = source_defaulted;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         #[cfg(test)]
@@ -219,6 +236,7 @@ impl McpServer {
                 "snapshot_id",
                 "offset",
                 "omitted_offset",
+                "independent_pages",
                 "limit",
                 "file",
                 "class",
@@ -229,6 +247,7 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
+        let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
@@ -286,6 +305,7 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
                 omitted_offset: omitted_offset.unwrap_or(0),
+                independent_pages: independent_pages.unwrap_or(false),
             },
             &workspace::GapListFilter {
                 file,
@@ -843,17 +863,43 @@ fn optional_string_argument(
     }
 }
 
-/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
-/// meaning of omission) or `worktree`. Any other value, including an empty
-/// string, wrong case or a non-string, is invalid params; nothing coerces.
+/// The source an omitted `ripr_refresh` `source` selects (#13096): the same
+/// `app::diff_source` decision `ripr check` makes with no `--worktree` or
+/// `--committed` flag. A clean or untracked-only tree, or a probe that could
+/// not run, keeps committed history. The probe runs under the same
+/// `RIPR_GIT_TIMEOUT` deadline as the refresh (#14386); an invalid value
+/// selects under the default here and the refresh itself then fails closed
+/// with `config_invalid`.
+fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let git_timeout = workspace::mcp_git_timeout()
+        .unwrap_or_else(|_invalid| Some(crate::app::default_cli_git_timeout()));
+    let selected = crate::app::diff_source::select_live_diff_source(
+        root,
+        crate::app::diff_source::DiffSourceRequest::Default,
+        git_timeout,
+    );
+    if selected.is_working_tree() {
+        workspace::RefreshSource::Worktree
+    } else {
+        workspace::RefreshSource::Committed
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed`, `worktree`, or
+/// omitted (`None`, resolved by [`default_refresh_source`]). Any other value,
+/// including an empty string, wrong case or a non-string, is invalid params;
+/// nothing coerces.
 fn refresh_source_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
-) -> Result<workspace::RefreshSource, ErrorData> {
+) -> Result<Option<workspace::RefreshSource>, ErrorData> {
     match optional_string_argument(arguments, "source")?.as_deref() {
-        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
-            Ok(workspace::RefreshSource::Committed)
+        None => Ok(None),
+        Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(Some(workspace::RefreshSource::Committed))
         }
-        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(workspace::RefreshSource::WORKTREE_NAME) => {
+            Ok(Some(workspace::RefreshSource::Worktree))
+        }
         Some(_other) => Err(ErrorData::invalid_params(
             "source must be one of: committed, worktree",
             Some(serde_json::json!({
@@ -882,7 +928,7 @@ fn optional_nonempty_string_argument(
     }
 }
 
-/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// An optional JSON boolean. Strings, integers and
 /// nulls stay invalid params instead of silently coercing.
 fn optional_bool_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -1686,8 +1732,24 @@ async fn answer_initialize_session_ping(
     Ok(result)
 }
 
-impl rmcp::Service<RoleServer> for InitializeSessionService {
-    async fn handle_request(
+/// The pinned SDK answers a method it can type but this server does not
+/// serve (`prompts/get`, `logging/setLevel`, `resources/subscribe`, the task
+/// methods, a discovery-session `ping`) with a `-32601` whose whole message is
+/// the bare method name. Give those the same `Method not found: <method>`
+/// wording as a method the SDK cannot type (#14186). Only that exact SDK
+/// shape is rewritten: the code is unchanged, and an error that already
+/// carries a message or data of its own passes through.
+fn name_missing_method(error: ErrorData, method: &str) -> ErrorData {
+    if error.code == ErrorCode::METHOD_NOT_FOUND && error.message == method && error.data.is_none()
+    {
+        unknown_method_error(method)
+    } else {
+        error
+    }
+}
+
+impl InitializeSessionService {
+    async fn route_request(
         &self,
         request: ClientRequest,
         context: RequestContext<RoleServer>,
@@ -1712,6 +1774,19 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
             context,
         ))
         .await
+    }
+}
+
+impl rmcp::Service<RoleServer> for InitializeSessionService {
+    async fn handle_request(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ServerResult, ErrorData> {
+        let method = request.method().to_owned();
+        self.route_request(request, context)
+            .await
+            .map_err(|error| name_missing_method(error, &method))
     }
 
     async fn handle_notification(
@@ -1773,3 +1848,7 @@ mod source_recovery_tests;
 #[cfg(test)]
 #[path = "worktree_custody_tests.rs"]
 mod worktree_custody_tests;
+
+#[cfg(test)]
+#[path = "owner_opt_out_tests.rs"]
+mod owner_opt_out_tests;

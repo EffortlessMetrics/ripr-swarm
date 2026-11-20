@@ -105,7 +105,7 @@ does_not_prove = "It does not demonstrate analyzer classification correctness or
 # gate from this pack without failing the check.
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "CHANGELOG.md", "crates/ripr/Cargo.toml", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+paths = ["Cargo.toml", "Cargo.lock", "CHANGELOG.md", "crates/ripr/Cargo.toml", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
 required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"

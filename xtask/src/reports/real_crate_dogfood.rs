@@ -451,7 +451,10 @@ fn metrics_of(report: &Value, diff_files: &BTreeSet<String>, seconds: f64) -> Va
                 names_diff_test = true;
                 diff_test_files.insert(file.to_string());
             }
-            if test["miss"] == "assertion_not_credited" {
+            if matches!(
+                test["miss"].as_str(),
+                Some("assertion_not_credited" | "assertion_inert" | "assertion_admission_unproven")
+            ) {
                 not_credited_rows += 1;
             }
         }
@@ -623,7 +626,9 @@ mod tests {
                 {"source_currentness": "candidate_current", "related_tests": [
                     {"file": "tests/t.rs", "name": "a", "line": 3, "miss": null},
                     {"file": "tests/t.rs", "name": "a", "line": 3, "miss": "weak_assertion"},
-                    {"file": "tests/other.rs", "name": "b", "line": 1, "miss": "assertion_not_credited"}]},
+                    {"file": "tests/other.rs", "name": "b", "line": 1, "miss": "assertion_not_credited"},
+                    {"file": "tests/other.rs", "name": "c", "line": 2, "miss": "assertion_inert"},
+                    {"file": "tests/other.rs", "name": "d", "line": 4, "miss": "assertion_admission_unproven"}]},
                 {"source_currentness": "base_deleted", "related_tests": []}
             ]
         });
@@ -631,9 +636,9 @@ mod tests {
         let metrics = metrics_of(&report, &diff, 1.25);
         assert_eq!(metrics["findings"], 2);
         assert_eq!(metrics["base_deleted_findings"], 1);
-        assert_eq!(metrics["related_test_rows"], 3);
+        assert_eq!(metrics["related_test_rows"], 5);
         assert_eq!(metrics["duplicate_test_rows"], 1);
-        assert_eq!(metrics["not_credited_rows"], 1);
+        assert_eq!(metrics["not_credited_rows"], 3);
         assert_eq!(metrics["findings_naming_a_diff_file_test"], 1);
         assert_eq!(metrics["diff_files_with_named_tests"], 1);
         assert_eq!(metrics["classes"]["static_unknown"], 1);

@@ -124,6 +124,9 @@ fn line_registers_executable_test(line: &str) -> bool {
     name == "test"
         || name == "tokio::test"
         || name == "async_std::test"
+        || name == "actix_rt::test"
+        || name == "actix_web::test"
+        || name == "test_log::test"
         || name == "rstest"
         || name.starts_with("rstest::")
 }
@@ -425,12 +428,12 @@ mod tests {
                     start_line: 1,
                     end_line: 2,
                     body: SourceText::from(source),
-                    calls: Vec::new(),
+                    calls: crate::analysis::facts::SharedFactSlice::empty(),
                     assertions: Vec::new(),
-                    literals: Vec::new(),
-                    attrs: Vec::new(),
-                    nested_fn_names: Vec::new(),
-                    let_bindings: Vec::new(),
+                    literals: crate::analysis::facts::SharedFactSlice::empty(),
+                    attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                    nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                    let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                     generated: None,
                 })
                 .collect(),
@@ -445,6 +448,8 @@ mod tests {
             source: std::sync::Arc::from(source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         }
     }
 

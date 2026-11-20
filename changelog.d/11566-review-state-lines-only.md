@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The source-review check no longer reads state words inside a review's prose. A later line changes the disposition only when it states one (a `disposition:` field, a line that opens with a state token, or a token on its own line), so quoting `SOURCE_REVIEW_READY` or calling an earlier review superseded no longer voids an attestation and ejects a green merge-queue entry (#11566).

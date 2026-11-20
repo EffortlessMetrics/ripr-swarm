@@ -15,6 +15,7 @@ mod boolean_boundary_pin;
 mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
+mod local_operand_alias;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -27,34 +28,38 @@ pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
+use local_operand_alias::boundary_local_operand_parameter_index;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
     ExactValueVerdict, boolean_assertion_verdict_for_test, contradiction_summary,
     exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
-    fold_owner_body_at,
+    InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
+    change_is_invisible_to_every_assertion, every_owner_call_separates, fold_owner_body_at,
+    owner_change_visibility, range_change_visibility, return_seam_tail_reached_by_call,
 };
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
     CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
-    find_related_tests_with_context, required_discriminator_text, sort_related_tests_for_seam,
-    strip_comments_and_strings, test_assertion_mentions_any_target_token,
+    find_related_tests_with_context, relates_to_pool_test, required_discriminator_text,
+    sort_related_tests_for_seam, strip_comments_and_strings,
+    test_assertion_mentions_any_target_token,
 };
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
     direct_collection_mutation_receiver, is_ignored, owner_call_text,
-    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
-    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
-    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
+    predicate_line_arms_all_agree, predicate_line_bool_guards,
+    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
+    relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
+    test_counts_pushed_collection_argument, whole_signature_parameters,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
-use super::resource_cost::trace_latency_phase;
+use super::resource_cost::{duration_percentiles, latency_trace_enabled, trace_latency_phase};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -63,8 +68,8 @@ use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
 use crate::{
     domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -305,8 +310,74 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
     EvidencePass::new(index).evidence_for(seams)
+}
+
+/// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
+/// `producer_failure` when the pass answered with the fail-closed stand-in
+/// because its shared-table warm panicked (#11524), else empty. A caller that
+/// persists or replays the result must not store it when the list is
+/// non-empty: the stand-in is a transient fault of one run, not a property of
+/// the inputs the cache key names (#13340). An undescribable failure is `Err`.
+pub(crate) fn evidence_for_seams_reporting_failure(
+    seams: &[RepoSeam],
+    index: &RustIndex,
+) -> Result<
+    (
+        Vec<TestGripEvidence>,
+        Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ),
+    String,
+> {
+    let pass = EvidencePass::new(index);
+    let evidence = pass.evidence_for(seams);
+    let limitations = pass.limitations()?;
+    Ok((evidence, limitations))
+}
+
+/// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
+/// (#11524): all five stages opaque with the `seam_evidence_incomplete` summary.
+/// Code before #13340 could store such a result; a loader treats an entry
+/// holding one as a miss, because the stand-in is one run's transient fault.
+pub(crate) fn is_incomplete_stand_in(evidence: &TestGripEvidence) -> bool {
+    [
+        &evidence.reach,
+        &evidence.activate,
+        &evidence.propagate,
+        &evidence.observe,
+        &evidence.discriminate,
+    ]
+    .iter()
+    .all(|stage| stage.summary == SEAM_EVIDENCE_INCOMPLETE)
+}
+
+/// Test-only: arm the shared-table warm panic of every [`EvidencePass`] built
+/// on this thread until the guard drops, and force the warm even for a stage
+/// below [`WARM_MIN_SEAMS`]. Lets a test drive a cached entry point, which
+/// builds its own pass, through the #11524 failure.
+#[cfg(test)]
+pub(crate) struct WarmPanicGuard;
+
+#[cfg(test)]
+std::thread_local! {
+    static THREAD_WARM_PANIC: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl WarmPanicGuard {
+    pub(crate) fn arm(point: u8) -> Self {
+        THREAD_WARM_PANIC.with(|slot| slot.set(point));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WarmPanicGuard {
+    fn drop(&mut self) {
+        THREAD_WARM_PANIC.with(|slot| slot.set(0));
+    }
 }
 
 /// One test context shared by several [`EvidencePass::evidence_for`]
@@ -321,6 +392,157 @@ const WARM_MIN_SEAMS: usize = 1_000;
 /// warm panicked (#11524).
 pub(crate) const SEAM_EVIDENCE_INCOMPLETE: &str = "seam_evidence_incomplete: seam evidence stopped on an internal error; no exposure claim is made";
 
+/// Paths listed in the [`EvidencePass::pass_failure`] sample.
+const PASS_FAILURE_SAMPLE_PATHS: usize = 3;
+
+/// Scope of the stand-ins a failed pass answered with; accumulates across
+/// stages, so each seam and file is counted once.
+#[derive(Default)]
+struct IncompleteScope {
+    seams: BTreeSet<String>,
+    files: BTreeSet<PathBuf>,
+}
+
+/// One seam's measured cost in an [`EvidencePass::evidence_for`] call
+/// (#9575). Records are observation only: nothing reads them back into
+/// evidence, scheduling, memoization, or ordering, so findings are
+/// identical whether the trace is collected or not.
+#[derive(Clone)]
+struct SeamCostRecord {
+    seam_id: String,
+    duration: Duration,
+    worker: Option<usize>,
+}
+
+/// Seam identities named in the last-window trace line (#9575).
+const LAST_WINDOW_SEAMS: usize = 16;
+
+/// Completion-ordered per-seam costs for one evidence call. Workers push
+/// after computing their seam, so push order approximates completion
+/// order and the tail of the vector is the straggler window.
+#[derive(Default)]
+struct SeamCostTrace {
+    records: std::sync::Mutex<Vec<SeamCostRecord>>,
+}
+
+impl SeamCostTrace {
+    fn record(&self, seam_id: &str, duration: Duration, worker: Option<usize>) {
+        if let Ok(mut records) = self.records.lock() {
+            records.push(SeamCostRecord {
+                seam_id: seam_id.to_owned(),
+                duration,
+                worker,
+            });
+        }
+    }
+
+    fn records(&self) -> Vec<SeamCostRecord> {
+        self.records
+            .lock()
+            .map(|records| records.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Per-worker seam counts and busy time, busiest first (#9575).
+fn worker_occupancy(records: &[SeamCostRecord]) -> Vec<(Option<usize>, usize, Duration)> {
+    let mut by_worker: BTreeMap<Option<usize>, (usize, Duration)> = BTreeMap::new();
+    for record in records {
+        let entry = by_worker.entry(record.worker).or_default();
+        entry.0 += 1;
+        entry.1 += record.duration;
+    }
+    let mut rows: Vec<(Option<usize>, usize, Duration)> = by_worker
+        .into_iter()
+        .map(|(worker, (count, busy))| (worker, count, busy))
+        .collect();
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    rows
+}
+
+/// Keep a seam identity inside one trace status token.
+fn trace_token(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '/' | ':' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .take(max_chars)
+        .collect()
+}
+
+/// Emit the #9575 per-seam cost summary through the existing latency
+/// trace owner. One pinned cold run can then read per-seam percentiles,
+/// worker occupancy, the last-window seam identities, and the run-memo
+/// hit/miss delta without a parallel telemetry system.
+fn emit_seam_cost_trace(
+    records: &[SeamCostRecord],
+    memo_delta: crate::analysis::syntax::run_memo::MemoStats,
+    total: Duration,
+) {
+    let durations: Vec<Duration> = records.iter().map(|record| record.duration).collect();
+    if let Some(percentiles) = duration_percentiles(&durations) {
+        let slowest = records
+            .iter()
+            .max_by_key(|record| record.duration)
+            .map(|record| trace_token(&record.seam_id, 96))
+            .unwrap_or_default();
+        trace_latency_phase(
+            "evidence_seam_durations",
+            &format!(
+                "seams_{}_p50_ms_{}_p90_ms_{}_p99_ms_{}_max_ms_{}_mean_ms_{}_slowest_{slowest}",
+                percentiles.count,
+                percentiles.p50_ms,
+                percentiles.p90_ms,
+                percentiles.p99_ms,
+                percentiles.max_ms,
+                percentiles.mean_ms,
+            ),
+            total,
+        );
+    }
+    let occupancy = worker_occupancy(records);
+    let busy_total: Duration = occupancy.iter().map(|row| row.2).sum();
+    trace_latency_phase(
+        "evidence_worker_occupancy",
+        &format!(
+            "summary_workers_{}_seams_{}_busy_ms_{}",
+            occupancy.len(),
+            records.len(),
+            busy_total.as_millis(),
+        ),
+        total,
+    );
+    for (worker, count, busy) in &occupancy {
+        let label = worker.map_or_else(|| "unknown".to_string(), |index| index.to_string());
+        trace_latency_phase(
+            "evidence_worker_occupancy",
+            &format!("worker_{label}_seams_{count}_busy_ms_{}", busy.as_millis()),
+            *busy,
+        );
+    }
+    let mut window: Vec<String> = records
+        .iter()
+        .rev()
+        .take(LAST_WINDOW_SEAMS)
+        .map(|record| trace_token(&record.seam_id, 96))
+        .collect();
+    window.reverse();
+    trace_latency_phase(
+        "evidence_last_window",
+        &format!("last_{}_{}", window.len(), window.join(",")),
+        Duration::ZERO,
+    );
+    trace_latency_phase(
+        "evidence_run_memo",
+        &format!("hits_{}_misses_{}", memo_delta.hits, memo_delta.misses),
+        Duration::ZERO,
+    );
+}
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
@@ -329,10 +551,10 @@ pub(crate) struct EvidencePass<'index> {
     /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
     /// stand-in instead.
     warm_failed: std::sync::atomic::AtomicBool,
-    /// Files of every seam answered with the stand-in. The failure is
+    /// Seams and files answered with the stand-in. The failure is
     /// pass-wide (the memos are shared), so this is the scope of the pass's
     /// stand-ins, not the file whose input caused the panic.
-    incomplete_files: std::sync::Mutex<BTreeSet<PathBuf>>,
+    incomplete_scope: std::sync::Mutex<IncompleteScope>,
     /// Test-only fault injection: 1 panics before any table is built, 2 panics
     /// after the macro-site scan memo is populated and before the rest.
     #[cfg(test)]
@@ -356,57 +578,114 @@ impl<'index> EvidencePass<'index> {
             context,
             shared_tables_warmed: std::sync::Once::new(),
             warm_failed: std::sync::atomic::AtomicBool::new(false),
-            incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
+            incomplete_scope: std::sync::Mutex::new(IncompleteScope::default()),
             #[cfg(test)]
-            inject_warm_panic: std::sync::atomic::AtomicU8::new(0),
+            inject_warm_panic: std::sync::atomic::AtomicU8::new(
+                THREAD_WARM_PANIC.with(|slot| slot.get()),
+            ),
         }
     }
 
-    /// One `producer_failure` limitation per file whose seams were answered
-    /// with the fail-closed stand-in because the shared-table warm panicked
-    /// (#11524). Empty when the warm did not fail. The seam walk has no
-    /// analysis-outcome channel yet, so only tests read this; the stage
-    /// summaries carry the named limit on every output meanwhile.
+    /// Whether the shared-table warm panicked, so every seam of this pass was
+    /// answered with the fail-closed stand-in (#11524).
+    pub(crate) fn warm_failed(&self) -> bool {
+        self.warm_failed.load(Ordering::Acquire)
+    }
+
     #[cfg(test)]
-    pub(crate) fn producer_failure_limitations(
+    fn warm_forced(&self) -> bool {
+        self.inject_warm_panic.load(Ordering::Acquire) != 0
+    }
+
+    #[cfg(not(test))]
+    fn warm_forced(&self) -> bool {
+        false
+    }
+
+    /// This pass's limitations: the one [`Self::pass_failure`] limitation, or
+    /// none for a healthy pass (#13340). A pass whose failure cannot be
+    /// described is an explicit error, never a dropped limitation, so a
+    /// walk cannot read as complete when its evidence pass failed closed.
+    pub(crate) fn limitations(
         &self,
     ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        self.pass_failure()
+            .map(|limitation| limitation.into_iter().collect())
+            .map_err(|error| {
+                format!(
+                    "seam evidence pass failure could not be described as a limitation: {error}"
+                )
+            })
+    }
+
+    /// The single pass-wide `producer_failure` limitation for a pass whose
+    /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
+    ///
+    /// The warm is shared by the whole pass, so the failing input is unknown
+    /// and every seam the pass answered is affected. The limitation therefore
+    /// carries a bounded count of affected seams and files plus a capped path
+    /// sample, states the failure is pass-wide, and sets no `path`: a named
+    /// file is scope, never the cause. The panic payload is not kept. No
+    /// output renders this yet; the stage summaries carry the named limit on
+    /// every output meanwhile.
+    pub(crate) fn pass_failure(
+        &self,
+    ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
         use crate::analysis_outcome::{
             AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-            AnalysisStage,
+            AnalysisStage, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
         };
-        let files = self
-            .incomplete_files
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let mut limitations = Vec::new();
-        for path in files {
-            let portable = path.to_string_lossy().replace('\\', "/");
-            let limitation = AnalysisLimitation::new(
-                AnalysisLimitationKind::ProducerFailure,
-                AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::InspectFailure,
-                    "Report the failure with the file and diff, then re-run; the affected seams read opaque until it is fixed.",
-                )?,
-            )
-            .with_detail(
-                format!(
-                    "{portable}: seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
-                     the affected seams are opaque stand-ins that make no exposure claim."
-                )
-                .chars()
-                .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
-                .collect::<String>(),
-            )?;
-            let limitation = match limitation.clone().with_path(&portable) {
-                Ok(with_path) => with_path,
-                Err(_) => limitation,
-            };
-            limitations.push(limitation);
+        if !self.warm_failed() {
+            return Ok(None);
         }
-        Ok(limitations)
+        let scope = self
+            .incomplete_scope
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lead = format!(
+            "Seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
+             the failure is pass-wide and its causing input is unknown. \
+             {} seams in {} files read as opaque stand-ins that make no exposure claim",
+            scope.seams.len(),
+            scope.files.len()
+        );
+        let mut detail = lead.clone();
+        let mut shown = 0usize;
+        for path in scope.files.iter().take(PASS_FAILURE_SAMPLE_PATHS) {
+            let portable = path.to_string_lossy().replace('\\', "/");
+            let next = format!(
+                "{detail}{} {portable}",
+                if shown == 0 {
+                    "; affected sample:"
+                } else {
+                    ","
+                }
+            );
+            if next.chars().count() > MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                break;
+            }
+            detail = next;
+            shown += 1;
+        }
+        if scope.files.len() > shown {
+            let next = format!(
+                "{detail}; {} more files not listed",
+                scope.files.len() - shown
+            );
+            if next.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                detail = next;
+            }
+        }
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Report the failure with the diff, then re-run; the affected seams read opaque until it is fixed.",
+            )?,
+        )
+        .with_detail(detail)?;
+        Ok(Some(limitation))
     }
 
     /// The fail-closed answer for a pass whose shared-table warm panicked
@@ -415,8 +694,8 @@ impl<'index> EvidencePass<'index> {
     /// a repair candidate. The panic payload is not kept: it can quote
     /// repository text.
     fn incomplete_evidence(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
-        let mut files = self
-            .incomplete_files
+        let mut scope = self
+            .incomplete_scope
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let stage = || {
@@ -429,7 +708,8 @@ impl<'index> EvidencePass<'index> {
         let mut out: Vec<TestGripEvidence> = seams
             .iter()
             .map(|seam| {
-                files.insert(seam.file().to_path_buf());
+                scope.files.insert(seam.file().to_path_buf());
+                scope.seams.insert(seam.id().as_str().to_owned());
                 TestGripEvidence {
                     seam_id: seam.id().clone(),
                     related_tests: Vec::new(),
@@ -449,6 +729,63 @@ impl<'index> EvidencePass<'index> {
         out
     }
 
+    /// The tests `admit(file, header_line)` accepts, as context positions,
+    /// for [`Self::seams_kept_by_scope`] (#12940). Empty when the context
+    /// could not be built.
+    pub(crate) fn related_test_pool(
+        &self,
+        admit: impl Fn(&Path, usize) -> bool,
+    ) -> BTreeSet<usize> {
+        let Some(context) = self.context.as_ref() else {
+            return BTreeSet::new();
+        };
+        context
+            .tests
+            .iter()
+            .enumerate()
+            .filter(|(_, indexed)| admit(&indexed.test.file, indexed.test.start_line))
+            .map(|(position, _)| position)
+            .collect()
+    }
+
+    /// For each of `ordinals`, whether its seam is kept: `keep` accepts it,
+    /// or it relates to a test in `pool`, by a reason `counts_relation`
+    /// accepts, under the same relation authority evidence uses. Every seam is kept when the context is missing, so a
+    /// failed build never hides a seam here. A cancelled lookup keeps its
+    /// seam; the caller's checkpoint then stops the run.
+    pub(crate) fn seams_kept_by_scope(
+        &self,
+        seams: &[RepoSeam],
+        ordinals: &[usize],
+        keep: impl Fn(&RepoSeam) -> bool + Sync,
+        pool: &BTreeSet<usize>,
+        counts_relation: fn(RelationReason) -> bool,
+    ) -> Vec<bool> {
+        let Some(context) = self.context.as_ref() else {
+            return vec![true; ordinals.len()];
+        };
+        let token = cancellation::current_token();
+        let overlay = crate::analysis::committed_source::current_overlay();
+        ordinals
+            .par_iter()
+            .map(|ordinal| {
+                let seam = &seams[*ordinal];
+                if keep(seam) {
+                    return true;
+                }
+                if pool.is_empty() {
+                    return false;
+                }
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().is_err()
+                            || relates_to_pool_test(seam, context, pool, counts_relation)
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
     /// indexes and file-bounded scalar/line facts stay reusable.
     pub(crate) fn clear_window_memos(&self) {
@@ -461,6 +798,18 @@ impl<'index> EvidencePass<'index> {
     /// could not be built. Carries the same cancellation contract as
     /// [`evidence_for_seams`].
     pub(crate) fn evidence_for(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        self.evidence_for_traced(seams, latency_trace_enabled())
+    }
+
+    /// [`Self::evidence_for`] with explicit per-seam cost collection
+    /// (#9575). Collection only observes durations, worker indices, and
+    /// memo counters; it never feeds evidence, scheduling, or ordering,
+    /// so the returned vector is byte-identical either way.
+    fn evidence_for_traced(
+        &self,
+        seams: &[RepoSeam],
+        collect_cost_trace: bool,
+    ) -> Vec<TestGripEvidence> {
         let Some(context) = self.context.as_ref() else {
             return Vec::new();
         };
@@ -469,6 +818,10 @@ impl<'index> EvidencePass<'index> {
             return Vec::new();
         }
         let evidence_started = Instant::now();
+        let cost_trace = collect_cost_trace.then(|| Arc::new(SeamCostTrace::default()));
+        let memo_before = cost_trace
+            .as_ref()
+            .map(|_| crate::analysis::syntax::run_memo::memo_stats());
         // Seams are independent and the context's memos are keyed, so the
         // pass runs on the rayon pool. Workers inherit this thread's
         // cancellation token and committed-source overlay; a cancelled
@@ -489,20 +842,41 @@ impl<'index> EvidencePass<'index> {
         // worker to ask building one in line while its siblings wait. A first
         // review stage of a few dozen seams reads none of them, and the warm
         // costs tens of seconds on a workspace the size of ripr-swarm.
-        if seams.len() >= WARM_MIN_SEAMS {
+        if seams.len() >= WARM_MIN_SEAMS || self.warm_forced() {
             self.warm_shared_tables(context, token.as_ref(), &overlay);
         }
         if self.warm_failed.load(Ordering::Acquire) {
             return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
-        let mut out: Vec<TestGripEvidence> = seams
+        // Schedule heavyweight seams first (LPT) so a single high-fanout seam
+        // does not start near the end of the pass and create a Rayon tail
+        // stall (#5363); `out` is still sorted by `seam_id` below.
+        let mut ordered_seams: Vec<&RepoSeam> = seams.iter().collect();
+        ordered_seams.sort_by(|a, b| {
+            estimated_seam_cost(b, context)
+                .cmp(&estimated_seam_cost(a, context))
+                .then_with(|| a.id().as_str().cmp(b.id().as_str()))
+        });
+        // Each worker holds a run memo scope for its share of the seams, so a
+        // pure per-source product (the shadow check's item-syntax scan of a
+        // test body) is computed once per distinct source on that worker, not
+        // once per (seam, test, oracle) ask (#13577).
+        let mut out: Vec<TestGripEvidence> = ordered_seams
             .par_iter()
-            .filter_map(|seam| {
+            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, &seam| {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
+                        let seam_started = cost_trace.as_ref().map(|_| Instant::now());
                         let evidence = evidence_for_seam_with_context(seam, context);
+                        if let (Some(trace), Some(started)) = (&cost_trace, seam_started) {
+                            trace.record(
+                                seam.id().as_str(),
+                                started.elapsed(),
+                                rayon::current_thread_index(),
+                            );
+                        }
                         let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
                         if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
                             || processed == seams.len()
@@ -521,6 +895,7 @@ impl<'index> EvidencePass<'index> {
                     })
                 })
             })
+            .flatten()
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         if out.is_empty()
@@ -532,6 +907,10 @@ impl<'index> EvidencePass<'index> {
             // #5341: a cancelled pass must not leave provisional shared-grip
             // records pinned on the generation-local pool.
             context.clear_window_memos();
+        }
+        if let (Some(trace), Some(before)) = (&cost_trace, memo_before) {
+            let memo_delta = crate::analysis::syntax::run_memo::memo_stats().since(before);
+            emit_seam_cost_trace(&trace.records(), memo_delta, evidence_started.elapsed());
         }
         out
     }
@@ -660,20 +1039,45 @@ fn credited_related_tests<'a>(
             })
         })
         .flatten();
+    // A local the assertion reads is the function that bound it, so its
+    // initializer joins the text, the same attribution `ripr check` makes
+    // (#12056, #12264).
+    let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
+        owner_reach.as_ref().is_some_and(|(_, reach)| {
+            context.other_function_pin_decision(owner, test, oracle, || {
+                let text = super::classifier::assertion_text_with_local_initializers(
+                    context.index,
+                    test,
+                    &oracle.text,
+                    owner,
+                );
+                reach.assertion_pins_other_function(owner, test, oracle, &text)
+            })
+        })
+    };
     related
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some((owner, owner_reach)) = owner_reach.as_ref()
+            if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test.assertions.iter().any(|oracle| {
-                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                })
             {
-                view.to_mut().assertions.retain(|oracle| {
-                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                });
+                // One decision per oracle: the text it reads is rebuilt from
+                // the whole test body, so ask once and drop by position
+                // rather than once to detect and again to retain.
+                let pins: Vec<bool> = test
+                    .assertions
+                    .iter()
+                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .collect();
+                if pins.contains(&true) {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !pins[position - 1]
+                    });
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -682,10 +1086,44 @@ fn credited_related_tests<'a>(
                 if !admitted.is_empty() {
                     view.to_mut().assertions.extend(admitted);
                 }
+                // #13005: a plain `assert_eq!` whose literal the current
+                // owner provably does not return fails at baseline.
+                let withheld = pin.literal_withheld(&view, context.index, context.pin_syntax());
+                if !withheld.is_empty() {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !withheld.contains(&(position - 1))
+                    });
+                }
             }
             view
         })
         .collect()
+}
+
+/// Cheap lock-free cost estimate for LPT scheduling before `par_iter()` (#5363).
+fn estimated_seam_cost(seam: &RepoSeam, context: &CompactGripContext<'_>) -> (usize, usize) {
+    let owner_name = seam.owner().rsplit("::").next().unwrap_or(seam.owner());
+    let candidate_tests = context
+        .tests_by_call_name
+        .get(owner_name)
+        .map_or(0, Vec::len)
+        + context
+            .tests_by_helper_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + context
+            .tests_by_target_affinity_owner_call_name
+            .get(owner_name)
+            .map_or(0, Vec::len)
+        + crate::analysis::classify::module_stem(seam.file())
+            .and_then(|stem| context.tests_by_file_stem.get(&stem))
+            .map_or(0, Vec::len);
+    let line_span = seam.source_lines().map_or(1, |(start, end)| {
+        end.saturating_sub(start).saturating_add(1)
+    });
+    (candidate_tests, line_span)
 }
 
 fn evidence_for_seam_with_context(
@@ -708,8 +1146,16 @@ fn evidence_for_seam_with_context(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, observed_values, missing_discriminators) =
+    let (mut activate, observed_values, mut missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
+    weaken_unselected_arm(
+        seam,
+        &related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     let pin_syntax = context.pin_syntax();
     let refuse = refuses_other_function_oracle(
         seam,
@@ -776,7 +1222,6 @@ fn evidence_for_seam_with_context(
                 .collect()
         })
         .unwrap_or_default();
-    let mut missing_discriminators = missing_discriminators;
     if activate.state == StageState::Yes {
         let reaching: Vec<&TestSummary> = related_with_reason
             .iter()
@@ -1024,6 +1469,8 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -1042,6 +1489,9 @@ thread_local! {
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times credited-view owner reach was built on this thread (#12478).
     static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times an other-function pin decision was computed rather than read
+    /// from the context's memo on this thread (#14011).
+    static PIN_DECISIONS_COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -1299,8 +1749,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
         }
         let before = before.trim_end();
         let start = before
-            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .map_or(0, |found| found + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
+            .map_or(0, |(found, ch)| found + ch.len_utf8());
         let mut original = &before[start..];
         if original == "self" {
             // `use Type::{Other, self as Name}`: the original is the segment
@@ -1321,8 +1773,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             let head = open.map_or("", |open| before[..open].trim_end());
             let head = head.strip_suffix("::").unwrap_or(head);
             let begin = head
-                .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .map_or(0, |found| found + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
+                .map_or(0, |(found, ch)| found + ch.len_utf8());
             original = &head[begin..];
         }
         if !original.is_empty() {
@@ -2546,8 +3000,19 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, mut missing_discriminators) =
+    let (mut activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    // The arm reading needs every related test, not the rank-limited slice:
+    // one test that may select the arm leaves it unnamed.
+    let every_related: Vec<&TestSummary> = ranked.iter().map(|(indexed, _)| indexed.test).collect();
+    weaken_unselected_arm(
+        seam,
+        &every_related,
+        owner_fn,
+        context.index,
+        &mut activate,
+        &mut missing_discriminators,
+    );
     if activate.state == StageState::Yes {
         // #11870: the weak-read start is asked over every test that runs the
         // owner, not the rank-limited slice.
@@ -2788,6 +3253,23 @@ fn activate_evidence(
                     boundary_equality_overlap_score(seam, indexed, context, owner_fn) > 0
                 })
         });
+    // #13037: a comparison guarded by bare bool parameters
+    // (`order_cents >= FREE_OVER_CENTS && !express`) is on its boundary only
+    // for a call that also holds every guard. Without such a call the
+    // boundary is unresolved here, as in `check`, never credited from rows
+    // that miss a guard and never an actionable missing value.
+    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
+    let boundary_guard_unheld = owner_fn.and_then(|owner_fn| {
+        guarded_boundary_unheld(
+            seam,
+            owner_fn,
+            index,
+            boundary.as_ref(),
+            boundary_constant.as_ref(),
+            &activation_credited,
+        )
+    });
+    let boundary_equality_observed = boundary_equality_observed && boundary_guard_unheld.is_none();
     // A constant whose value ripr cannot see and whose declaration it
     // cannot pin to the owner's file can never be matched by a test, so
     // it routes to the unresolved-operand limitation instead of an
@@ -2798,13 +3280,13 @@ fn activate_evidence(
             .is_some_and(|constant| !constant.lookup.is_declared_once());
     // A local boundary with no input-free value (#4228) is the same
     // dead end: `check` drops its repair ask, so grip must not grade it.
-    let boundary = owner_fn.and_then(|owner_fn| predicate_boundary_operand(seam, owner_fn));
     let boundary_local_unresolved = !boundary_equality_observed
         && boundary
             .as_ref()
             .is_some_and(PredicateBoundaryOperand::local_unresolved);
     let boundary_activation_operands_unresolved = boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
         || observed_argument_selection
             .as_ref()
             .is_some_and(|selection| {
@@ -2822,6 +3304,13 @@ fn activate_evidence(
         boundary_equality_observed,
         boundary_constant.as_ref(),
         boundary.as_ref(),
+    );
+    attach_drafted_boundary_assertion(
+        seam,
+        owner_fn,
+        boundary.as_ref(),
+        &activation_credited,
+        &mut missing,
     );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
@@ -2869,6 +3358,7 @@ fn activate_evidence(
     } else if ambiguous_constructor_field_owner
         || boundary_constant_unresolved
         || boundary_local_unresolved
+        || boundary_guard_unheld.is_some()
     {
         StageState::Unknown
     } else if !observed.is_empty()
@@ -2885,6 +3375,7 @@ fn activate_evidence(
         state,
         if !boundary_constant_unresolved
             && !boundary_local_unresolved
+            && boundary_guard_unheld.is_none()
             && (!observed.is_empty()
                 || direct_value_insensitive_owner_call
                 || helper_value_insensitive_owner_call)
@@ -2912,6 +3403,17 @@ fn activate_evidence(
             )
         } else if boundary_local_unresolved && !related.is_empty() {
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
+        } else if let Some(guards) = boundary_guard_unheld
+            .as_ref()
+            .filter(|_| !related.is_empty())
+        {
+            format!(
+                "The boundary of seam `{}` decides the result only when {guards}, and no related test call with {guards} passes the boundary value, so ripr cannot tell whether a test reaches it",
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression())
+            )
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -2984,6 +3486,39 @@ fn activate_evidence(
         &stage.state,
     ));
     (stage, observed, missing)
+}
+
+/// #12078: a `match_arm` seam whose related tests all call the owner with
+/// inputs that select other arms is not activated by them, whatever their
+/// oracle: activation reads weak and the arm's pattern is the missing
+/// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
+/// an established activation is weakened; every refusal of the shared
+/// reading keeps the stage as it was.
+fn weaken_unselected_arm(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    activate: &mut StageEvidence,
+    missing: &mut Vec<MissingDiscriminatorFact>,
+) {
+    if seam.kind() != SeamKind::MatchArm || activate.state != StageState::Yes {
+        return;
+    }
+    let Some(owner) = owner_fn else {
+        return;
+    };
+    let Some(fact) = super::classify::repo_seam_unselected_arm(
+        seam.file(),
+        seam.display_line(),
+        owner,
+        related,
+        index,
+    ) else {
+        return;
+    };
+    *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+    missing.push(fact);
 }
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {
@@ -3216,6 +3751,16 @@ fn observed_argument_selection(
     ObservedArgumentSelection::UnresolvedBoundaryOperands
 }
 
+/// The typed limit the unresolved boundary-input summary names (#14951).
+const BOUNDARY_INPUT_LIMIT: crate::domain::StaticLimitKind =
+    crate::domain::StaticLimitKind::ActivationBoundaryInputUnresolved;
+
+/// The activate-stage summary for an unresolved boundary input. It leads with
+/// the typed `activation_boundary_input_unresolved` token, so the evidence
+/// record and [`TestGripEvidence::names_static_limit`] read the kind the
+/// producer chose instead of re-deriving it from the sentence (#14951). The
+/// sentence keeps the iterator / closure / local-or-computed sub-case, which
+/// the evidence record carries as the repair route.
 fn boundary_activation_operands_unresolved_summary(
     seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
@@ -3225,19 +3770,75 @@ fn boundary_activation_operands_unresolved_summary(
         .lines()
         .next()
         .unwrap_or(seam.expression());
+    let limit = BOUNDARY_INPUT_LIMIT.as_str();
     if boundary_activation_operands_are_iterator_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
         )
     } else if boundary_activation_operands_are_closure_derived(seam, owner_fn) {
         format!(
-            "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
     } else {
         format!(
-            "Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
+            "{limit}: Boundary activation operands are local or computed for seam `{expression}`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet"
         )
     }
+}
+
+/// #14951: whether [`activate_evidence`] names
+/// `activation_boundary_input_unresolved` for a predicate seam whose owner no
+/// test calls, so `ripr check` can carry the same typed limit on the diff
+/// finding the seam withholds.
+///
+/// With no owner call there is no observed value, no boundary-equality
+/// overlap and no held guard, so the activate stage reduces to this order:
+/// an undeclared or ambiguous boundary constant names its own limit, an
+/// input-free-but-unfoldable local boundary names this one, an unheld bool
+/// guard names its own, and otherwise an operand that binds to no owner
+/// argument (or binds only through a projection nothing observed) names this
+/// one. The caller supplies the premise (no test calls the owner, at least one
+/// related test); `boundary_input_limit_agrees_with_the_seam_for_uncalled_owners`
+/// pins this against the full producer.
+pub(in crate::analysis) fn boundary_input_unresolved_for_uncalled_owner(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: &FunctionSummary,
+) -> bool {
+    if owner_fn.name.is_empty() || !requires_concrete_activation_values(seam) {
+        return false;
+    }
+    let constant = boundary_constant_operand(seam, index, owner_fn);
+    if constant
+        .as_ref()
+        .is_some_and(|constant| !constant.lookup.is_declared_once())
+    {
+        return false;
+    }
+    let boundary = predicate_boundary_operand(seam, owner_fn);
+    if boundary
+        .as_ref()
+        .is_some_and(PredicateBoundaryOperand::local_unresolved)
+    {
+        return true;
+    }
+    if guarded_boundary_unheld(
+        seam,
+        owner_fn,
+        index,
+        boundary.as_ref(),
+        constant.as_ref(),
+        &[],
+    )
+    .is_some()
+    {
+        return false;
+    }
+    let selection = observed_argument_selection(seam, owner_fn);
+    matches!(
+        selection,
+        ObservedArgumentSelection::UnresolvedBoundaryOperands
+    ) || selection.requires_projection()
 }
 
 fn boundary_activation_operands_are_iterator_derived(
@@ -3385,12 +3986,12 @@ fn boundary_operand_argument(
             projection: None,
         })
         .or_else(|| {
-            boundary_local_operand_parameter_index(owner_fn, parameters, operand).map(|index| {
-                ObservedArgumentOperand {
+            boundary_local_operand_parameter_index(&owner_fn.body, parameters, operand).map(
+                |index| ObservedArgumentOperand {
                     index,
                     projection: None,
-                }
-            })
+                },
+            )
         })
         .or_else(|| boundary_parameter_field_projection(parameters, operand))
 }
@@ -3431,95 +4032,6 @@ fn projected_argument_expression(arg: &str, projection: Option<&str>) -> String 
     } else {
         arg.to_string()
     }
-}
-
-fn boundary_local_operand_parameter_index(
-    owner_fn: &FunctionSummary,
-    parameters: &[String],
-    operand: &str,
-) -> Option<usize> {
-    if operand.is_empty() {
-        return None;
-    }
-    for (index, parameter) in parameters.iter().enumerate() {
-        if body_contains_wrapped_local_alias(&owner_fn.body, "Some", operand, parameter)
-            || body_contains_wrapped_local_alias(&owner_fn.body, "Ok", operand, parameter)
-            || body_contains_direct_local_alias(&owner_fn.body, operand, parameter)
-        {
-            return Some(index);
-        }
-    }
-    None
-}
-
-fn body_contains_wrapped_local_alias(
-    body: &str,
-    wrapper: &str,
-    operand: &str,
-    parameter: &str,
-) -> bool {
-    // Built once per body: this runs per seam, related test and parameter.
-    let prefix = format!("if let {wrapper}({operand}) = ");
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        line.strip_prefix(&prefix)
-            .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
-    }) || (body_contains_match_parameter(body, parameter)
-        && body_contains_wrapper_pattern(body, wrapper, operand))
-}
-
-fn body_contains_match_parameter(body: &str, parameter: &str) -> bool {
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        if is_comment_line(line) {
-            return false;
-        }
-        line.find("match ")
-            .map(|index| &line[index + "match ".len()..])
-            .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
-    })
-}
-
-fn body_contains_wrapper_pattern(body: &str, wrapper: &str, operand: &str) -> bool {
-    let pattern = format!("{wrapper}({operand})");
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        !is_comment_line(line) && line.contains(&pattern)
-    })
-}
-
-fn code_line_before_comment(line: &str) -> &str {
-    let line = line.trim();
-    let line = line.split_once("//").map_or(line, |(code, _comment)| code);
-    line.split_once("/*")
-        .map_or(line, |(code, _comment)| code)
-        .trim()
-}
-
-fn is_comment_line(line: &str) -> bool {
-    line.starts_with("//") || line.starts_with("/*") || line.starts_with('*')
-}
-
-fn starts_with_identifier_token(text: &str, token: &str) -> bool {
-    let text = text.trim_start();
-    let end = text
-        .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .unwrap_or(text.len());
-    end > 0 && &text[..end] == token
-}
-
-fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {
-    body.lines().any(|line| {
-        let line = line.trim().trim_end_matches(';').trim();
-        let Some(binding) = line.strip_prefix("let ") else {
-            return false;
-        };
-        let Some((left, right)) = binding.split_once('=') else {
-            return false;
-        };
-        let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
-        local_name.trim() == operand && right.trim() == parameter
-    })
 }
 
 /// The seam's owner function and its argument selection, resolved once
@@ -3779,6 +4291,56 @@ fn compact_activate_evidence(
     (stage, Vec::new())
 }
 
+/// The concrete drafted boundary call (agent-efficiency study tweak #4):
+/// when the boundary operand's observed values pin ONE equality-boundary
+/// input from the related tests' own owner-call rows and the owner's branch
+/// value folds there, the fact carries the paste-ready arguments and the
+/// folded expected value. `expected: None` keeps the `/* expected */`
+/// placeholder while the concrete input side still emits. The draft is a
+/// static model of the current behavior; ripr has not run or verified it.
+fn attach_drafted_boundary_assertion(
+    seam: &RepoSeam,
+    owner_fn: Option<&FunctionSummary>,
+    boundary: Option<&PredicateBoundaryOperand>,
+    activation_credited: &[&CompactTest<'_>],
+    missing: &mut [MissingDiscriminatorFact],
+) {
+    let Some(owner_fn) = owner_fn else {
+        return;
+    };
+    let Some(boundary) = boundary else {
+        return;
+    };
+    let Some(fact) = missing.first_mut() else {
+        return;
+    };
+    let call_rows: Vec<Vec<String>> = activation_credited
+        .iter()
+        .flat_map(|indexed| {
+            indexed
+                .test
+                .calls
+                .iter()
+                .filter(|call| call.name == owner_fn.name)
+                .filter_map(|call| {
+                    owner_call_text(&call.text, owner_fn)
+                        .and_then(|text| call_arguments(text, &owner_fn.name))
+                })
+        })
+        .collect();
+    let drafted = super::classify::drafted_boundary::drafted_boundary_assertion(
+        owner_fn,
+        &boundary.tested,
+        &boundary.token,
+        seam.expression(),
+        seam.display_line(),
+        &call_rows,
+    );
+    if let Some(drafted) = drafted {
+        fact.drafted_boundary = Some(drafted);
+    }
+}
+
 fn missing_discriminators_for(
     seam: &RepoSeam,
     observed: &[ValueFact],
@@ -3809,6 +4371,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (boundary value)"),
                     reason: "no observed activation values for boundary predicate".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }];
             }
             // We do not yet know the literal value of `boundary_token`,
@@ -3849,6 +4413,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (equality boundary)"),
                     reason,
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }]
             }
         }
@@ -3896,6 +4462,428 @@ fn boundary_constant_operand(
     })
 }
 
+/// #13037: for a predicate seam whose source line guards the comparison
+/// with bare bool parameters, the guards (`` `express = false` ``) when no
+/// related test call sits on the boundary value while holding every guard
+/// as a literal; `None` when the line has no such guards or a call holds
+/// them. A guard the owner may rebind, or a compared side that is not a
+/// plain parameter, counts as unheld: ripr cannot tell which rows reach the
+/// boundary.
+fn guarded_boundary_unheld(
+    seam: &RepoSeam,
+    owner_fn: &FunctionSummary,
+    index: &RustIndex,
+    boundary: Option<&PredicateBoundaryOperand>,
+    constant: Option<&BoundaryConstantOperand>,
+    tests: &[&CompactTest<'_>],
+) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let line = seam.display_line();
+    let source = index.files().get(&owner_fn.file)?;
+    let line_text = source.data().source.lines().nth(line.checked_sub(1)?)?;
+    let (guards, rebound) =
+        predicate_line_bool_guards(line_text, seam.expression(), owner_fn, line)?;
+    let describe = guards
+        .iter()
+        .map(|(guard, value)| format!("`{guard} = {value}`"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    // The whole signature, as the guards were read: a rustfmt-wrapped
+    // parameter list must still place each argument.
+    let parameters = whole_signature_parameters(owner_fn);
+    let (Some(boundary), false) = (boundary, rebound) else {
+        return Some(describe);
+    };
+    let position = |name: &str| parameters.iter().position(|parameter| parameter == name);
+    let reversed_value: String;
+    let (tested_at, value) = match position(&boundary.tested) {
+        Some(at) => (
+            at,
+            boundary
+                .local_value()
+                .or_else(|| constant.and_then(|constant| constant.lookup.value()))
+                .unwrap_or(&boundary.token),
+        ),
+        // A boundary constant on the left (`FREE_OVER_CENTS <= order_cents`)
+        // leaves the operand reader's sides swapped: the parameter is the
+        // token and the constant is the value, as `check` orients it.
+        None => {
+            let reversed = position(&boundary.token).and_then(|at| {
+                let name = super::value_resolution::constant_operand_name(&boundary.tested)?;
+                let value = super::value_resolution::named_constant(&source.source, name)
+                    .value()?
+                    .to_string();
+                Some((at, value))
+            });
+            let Some((at, value)) = reversed else {
+                return Some(describe);
+            };
+            reversed_value = value;
+            (at, reversed_value.as_str())
+        }
+    };
+    // A rebound compared parameter, or an earlier branch or return, means a
+    // call's boundary argument may never reach this comparison as passed.
+    let compared = parameters.get(tested_at).map(String::as_str).unwrap_or("");
+    if !super::classify::guarded_boundary_row_reaches(
+        owner_fn,
+        Some(&source.data().source),
+        compared,
+        line,
+    ) {
+        return Some(describe);
+    }
+    let held = tests.iter().any(|indexed| {
+        indexed.test.calls.iter().any(|call| {
+            // A qualified call must name this owner, as the activation
+            // reader requires (`rival::gate(..)` is another function).
+            let Some(expr) = (call.name == owner_fn.name
+                && super::classify::qualified_owner_calls_resolve(
+                    index,
+                    owner_fn,
+                    indexed.test,
+                    &call.text,
+                    call.line,
+                ))
+            .then(|| owner_call_text(&call.text, owner_fn))
+            .flatten()
+            .and_then(|text| single_owner_call(text, &owner_fn.name)) else {
+                return false;
+            };
+            call_arguments(expr, &owner_fn.name).is_some_and(|arguments| {
+                let guards_hold = guards.iter().all(|(guard, required)| {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter == guard)
+                        .and_then(|at| arguments.get(at))
+                        .is_some_and(|argument| {
+                            let wanted = if *required { "true" } else { "false" };
+                            // A literal, or an immutable local
+                            // (`let express = false;`) resolved per
+                            // call as `check` resolves its rows.
+                            argument.trim() == wanted
+                                || stable_local_values(seam, indexed, index, argument.trim(), call)
+                                    .iter()
+                                    .any(|resolved| resolved == wanted)
+                        })
+                });
+                let on_boundary = arguments.get(tested_at).is_some_and(|argument| {
+                    comparable_value(argument) == comparable_value(value)
+                                // An immutable local (`let cents = 5000;`)
+                                // resolved per call, as the activation reader
+                                // resolves it.
+                                || stable_local_values(
+                                    seam,
+                                    indexed,
+                                    index,
+                                    argument.trim(),
+                                    call,
+                                )
+                                .iter()
+                                .any(|resolved| {
+                                    comparable_value(resolved) == comparable_value(value)
+                                })
+                                || constant.is_some_and(|constant| {
+                                    super::value_resolution::argument_names_constant(
+                                        argument,
+                                        &constant.name,
+                                    )
+                                })
+                });
+                guards_hold && on_boundary && guarded_call_is_asserted(indexed.test, call, expr)
+            })
+        })
+    });
+    (!held).then_some(describe)
+}
+
+/// The one owner call a test line holds, as `name(args)`. A line with two
+/// owner calls is declined: its call facts share the line text, so which
+/// call a fact's arguments belong to is not known.
+fn single_owner_call<'t>(line: &'t str, name: &str) -> Option<&'t str> {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut opens = line.match_indices(name).filter(|(at, _)| {
+        line[..*at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && line[at + name.len()..].starts_with('(')
+    });
+    let (Some((start, _)), None) = (opens.next(), opens.next()) else {
+        return None;
+    };
+    let open = start + name.len();
+    let mut depth = 0i32;
+    for (offset, ch) in line[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&line[start..=open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the guard-holding boundary call `expr` (on `call`'s line) is
+/// itself the one a discriminating assertion observes, as `check` pairs it:
+/// the call sits in that assertion's compared operands, or the line is
+/// exactly `let r = expr;` with `r` stable and a later assertion's operands
+/// name `r`. A separate unasserted call (`let _ = f(5000, false);
+/// assert_eq!(f(5000, true), ..)`) reaches the boundary but nothing
+/// observes it there.
+fn guarded_call_is_asserted(test: &TestSummary, call: &CallFact, expr: &str) -> bool {
+    // Only an assertion's compared operands observe a value: a message
+    // argument (`assert_eq!(a, b, "{free}")`) observes nothing.
+    let observed_operands = || {
+        test.assertions
+            .iter()
+            .filter(|assertion| super::classify::assertion_is_discriminating(assertion))
+            .filter_map(|assertion| {
+                assertion_operands(&assertion.text).map(|operands| (assertion, operands))
+            })
+    };
+    let inside = observed_operands().any(|(assertion, operands)| {
+        let last = assertion.line + assertion.text.lines().count().saturating_sub(1);
+        // The call is a whole compared operand (behind at most a path or
+        // a receiver), not buried in an expression that may discard its
+        // result (`f(..) * 0`, `min(f(..), 0)`).
+        (assertion.line..=last).contains(&call.line)
+            && operands
+                .iter()
+                .any(|operand| path_or_receiver_only(unparenthesized(operand), expr))
+    });
+    if inside {
+        return true;
+    }
+    let body = test.body.as_str();
+    let Some(statement) = call
+        .line
+        .checked_sub(test.start_line)
+        .and_then(|offset| body.lines().nth(offset))
+        .map(str::trim)
+        .and_then(|line| line.strip_suffix(';'))
+    else {
+        return false;
+    };
+    let Some((binding, initializer)) = statement
+        .strip_prefix("let ")
+        .and_then(|rest| rest.split_once('='))
+        .map(|(name, initializer)| {
+            (
+                name.split(':').next().unwrap_or("").trim(),
+                initializer.trim(),
+            )
+        })
+    else {
+        return false;
+    };
+    // The whole initializer is this call, behind at most a path or a
+    // receiver (`calc.shipping_cost(..)`), never an expression around it.
+    if !path_or_receiver_only(initializer, expr) || !binding_is_stable(body, binding) {
+        return false;
+    }
+    // The binding is a whole compared operand (comments and strings
+    // masked), never inside an expression that may discard it (`free * 0`).
+    observed_operands().any(|(assertion, operands)| {
+        assertion.line > call.line
+            && operands.iter().any(|operand| {
+                unparenthesized(&crate::analysis::language::mask_rust_comments_and_strings(
+                    operand,
+                )) == binding
+            })
+    })
+}
+
+/// `text` trimmed, without parentheses that wrap all of it (`((free))` is
+/// `free`); `(a) + (b)` keeps its parentheses, since they wrap only parts.
+fn unparenthesized(text: &str) -> &str {
+    let mut text = text.trim();
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let mut depth = 0usize;
+        let wraps_all = inner.chars().all(|ch| {
+            match ch {
+                '(' => depth += 1,
+                ')' => match depth.checked_sub(1) {
+                    Some(next) => depth = next,
+                    None => return false,
+                },
+                _ => {}
+            }
+            true
+        });
+        if !wraps_all || depth != 0 {
+            break;
+        }
+        text = inner.trim();
+    }
+    text
+}
+
+/// Whether `text` is exactly the call `expr`, behind at most a path or a
+/// receiver (`calc.shipping_cost(..)`, `crate::shipping_cost(..)`).
+fn path_or_receiver_only(text: &str, expr: &str) -> bool {
+    text.strip_suffix(expr).is_some_and(|prefix| {
+        prefix
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '.')
+    })
+}
+
+/// The compared operands of an assertion macro: the first two arguments of
+/// an equality assertion, the first of `assert!`. Any other macro shape is
+/// not read.
+fn assertion_operands(text: &str) -> Option<Vec<String>> {
+    let open = text.find("!(")?;
+    let name = text[..open]
+        .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .next()?;
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return None,
+    };
+    let inner = text[open + 2..].trim_end().trim_end_matches(';').trim_end();
+    let inner = inner.strip_suffix(')')?;
+    let arguments = split_top_level_commas(inner);
+    (arguments.len() >= operands).then(|| arguments[..operands].to_vec())
+}
+
+fn ident_occurrences<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = usize> + 't {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch));
+        let after = text[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_ident(ch));
+        (before && after).then_some(at)
+    })
+}
+
+/// `resolved_argument_values` for the guarded-boundary gate, declined for a
+/// local that is not [`binding_is_stable`]: the resolver reads the
+/// initializer, and a reassigned or shadowed guard or boundary must never
+/// be credited from it.
+fn stable_local_values(
+    seam: &RepoSeam,
+    indexed: &CompactTest<'_>,
+    index: &RustIndex,
+    argument: &str,
+    call: &CallFact,
+) -> Vec<String> {
+    let identifier =
+        !argument.is_empty() && argument.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
+    if identifier && !binding_is_stable(indexed.test.body.as_str(), argument) {
+        return Vec::new();
+    }
+    resolved_argument_values(seam, indexed, index, argument, call)
+}
+
+/// Whether `name` is bound exactly once in `body` (`let name = ..`, never
+/// `mut`) and every other mention is a plain read: no second binding site
+/// (`let`, `for`, `if let`, `match` arm, closure parameter), no `&mut`
+/// borrow, no assignment, no field or format-string use. Text-level and
+/// deliberately over-cautious: anything unclear is unstable.
+fn binding_is_stable(body: &str, name: &str) -> bool {
+    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+    let mut bindings = 0usize;
+    for at in ident_occurrences(body, name) {
+        let line_start = body[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let line_end = body[at..]
+            .find('\n')
+            .map_or(body.len(), |newline| at + newline);
+        let line = &body[line_start..line_end];
+        let prefix = body[..at].trim_end();
+        let rest = body[at + name.len()..].trim_start();
+        if prefix.ends_with("let") {
+            bindings += 1;
+            if !rest.starts_with('=') && !rest.starts_with(':') {
+                return false;
+            }
+            continue;
+        }
+        let assigns = ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|op| rest.starts_with(op))
+            || (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"));
+        // A second binding site: the name inside a `let` pattern (across
+        // lines, `let (` / `r,` / `) = ..`), a `for` pattern, a match-arm
+        // pattern, or a closure's parameters. A read on a `let` line's
+        // right-hand side (`let free = f(express);`) is not one.
+        let column = at - line_start;
+        let in_span = |open: &str, close: &str| {
+            line.match_indices(open).any(|(start, _)| {
+                let from = start + open.len();
+                line[from..]
+                    .find(close)
+                    .is_some_and(|end| (from..from + end).contains(&column))
+            })
+        };
+        let arm_pattern = line.find("=>").is_some_and(|arrow| column < arrow);
+        // A typed name outside its `let` (`fn check(r: u32)`) is a
+        // parameter binding.
+        let typed = rest.starts_with(':') && !rest.starts_with("::");
+        let rebinds = in_let_pattern(body, at)
+            || in_span("for ", " in ")
+            || arm_pattern
+            || typed
+            || line.contains('|')
+            || line.contains("fn ");
+        let odd_prefix = ["mut", "|", ".", "{", "&mut"]
+            .iter()
+            .any(|marker| prefix.ends_with(marker));
+        if assigns || rebinds || odd_prefix {
+            return false;
+        }
+    }
+    bindings == 1
+}
+
+/// Whether byte `at` of `body` sits in a `let` pattern: after a `let`
+/// keyword and before that statement's binding `=`, across lines.
+fn in_let_pattern(body: &str, at: usize) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    body.match_indices("let").any(|(start, _)| {
+        let keyword = body[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident(ch))
+            && body[start + 3..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+        if !keyword || start >= at {
+            return false;
+        }
+        let from = start + 3;
+        let bytes = body.as_bytes();
+        let binding_eq = (from..body.len()).find(|&index| {
+            bytes[index] == b'='
+                && !matches!(bytes.get(index + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    index.checked_sub(1).and_then(|before| bytes.get(before)),
+                    Some(b'=' | b'<' | b'>' | b'!')
+                )
+        });
+        binding_eq.is_none_or(|end| (from..end).contains(&at))
+    })
+}
+
 /// A direct owner call whose compared argument names the boundary
 /// constant itself (`discounted_total(DISCOUNT_THRESHOLD)`), in a test whose
 /// own file does not declare a constant of the same name.
@@ -3937,6 +4925,9 @@ fn test_passes_boundary_constant(
 /// evaluator can say about it.
 struct PredicateBoundaryOperand {
     token: String,
+    /// The compared operand the boundary token is not: the tested input a
+    /// drafted boundary call varies (`amount` for `amount >= threshold`).
+    tested: String,
     local: super::classify::LocalBoundary,
 }
 
@@ -3968,12 +4959,21 @@ fn predicate_boundary_operand(
     let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
         && left_is_boundary_value(owner_fn, &left, seam.display_line())
         && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
-    let token = boundary_token(if reversed { &left } else { &right });
+    let (boundary_operand, tested_operand) = if reversed {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let token = boundary_token(boundary_operand);
     if token.is_empty() {
         return None;
     }
     let local = super::classify::local_boundary(owner_fn, &token, seam.display_line());
-    Some(PredicateBoundaryOperand { token, local })
+    Some(PredicateBoundaryOperand {
+        token,
+        tested: tested_operand.clone(),
+        local,
+    })
 }
 
 /// Whether the left operand of a predicate is a boundary value rather than
@@ -4295,13 +5295,20 @@ fn discriminate_evidence(
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
+    // The kind match of the best-ranked oracle, kept apart from whether that
+    // oracle discriminates. `best_matching` folds in every refusal gate, so
+    // reading it as "kind-match" named the wrong gate (#14496 review).
+    let mut best_kind_matches: Option<bool> = None;
+    let mut best_branch_withheld = false;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            // The same two gates `best_oracle` applies, so this stage and the
-            // related-test record cannot disagree about one assertion (#12733).
+            // The same gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733,
+            // #12757).
             if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
                 || !error_pin_can_see_return_value(seam, oracle)
+                || !success_payload_assertion_can_see_return_arm(seam, oracle)
             {
                 continue;
             }
@@ -4319,8 +5326,23 @@ fn discriminate_evidence(
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
-            if strength.rank() > best.rank() {
-                best = strength.clone();
+            // #14496: a branch-withheld return-value oracle keeps at most Weak
+            // credit, exactly as `best_oracle` grades it. Ranking the raw
+            // strength here let a Strong oracle that misses the branch set
+            // `best`, so the stage answered `Yes` while the record published
+            // `Weak` — the disagreement this PR exists to remove.
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let graded = if branch_withheld
+                && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            {
+                OracleStrength::Weak
+            } else {
+                strength.clone()
+            };
+            if graded.rank() > best.rank() {
+                best = graded;
+                best_kind_matches = Some(oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind));
+                best_branch_withheld = branch_withheld;
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
@@ -4350,12 +5372,26 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
-    let mut summary = format!(
-        "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
-        seam.kind().as_str(),
-        best.as_str(),
-        best_matching != OracleStrength::None
-    );
+    // #14496: name the gate that actually refused. The parenthetical used to
+    // print `best_matching != None` as "kind-match", so any refusal that was
+    // not a kind mismatch (a branch-reach refusal, a #8121/#12189/#11398
+    // refusal) read as one. Report the best-ranked oracle's own kind match,
+    // and name the branch refusal as itself.
+    let kind_matches = best_kind_matches.unwrap_or(false);
+    let mut summary = if best_branch_withheld && kind_matches {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind matches; the call does not reach the seam's branch)",
+            seam.kind().as_str(),
+            best.as_str()
+        )
+    } else {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
+            seam.kind().as_str(),
+            best.as_str(),
+            kind_matches
+        )
+    };
     if !contradictions.is_empty() {
         summary.push_str("; ");
         summary.push_str(&contradictions.join("; "));
@@ -4524,7 +5560,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
         );
         !contradicted
             || pin_syntax
-                .equality_assertion_refusal(probe, test, assertion, index)
+                .equality_assertion_refusal(probe, Some(owner_fn), test, assertion, index)
                 .is_none()
     })
 }
@@ -4588,6 +5624,14 @@ fn oracle_discriminates_seam_in_test(
                 )
         });
     }
+    // #14496: a return-value seam inside one branch of the owner is credited
+    // only by an oracle whose call statically reaches that branch. An exact pin
+    // of the owner's result from a call that takes the other branch observes a
+    // different value, so it is not strong grip for this seam. `None` (a shape
+    // the fold cannot read) keeps today's credit.
+    if branch_gate_withholds(seam, oracle, test, owner) {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
@@ -4605,6 +5649,27 @@ fn oracle_discriminates_seam_in_test(
                                 receiver, owner, index, test, oracle, pin_syntax,
                             )))
             })
+}
+
+/// #14496: whether the branch gate withholds credit for this oracle. Shared by
+/// the discriminate stage and the per-test record so they cannot disagree
+/// about one assertion.
+fn branch_gate_withholds(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    owner: Option<&FunctionSummary>,
+) -> bool {
+    seam.kind() == SeamKind::ReturnValue
+        && owner.is_some_and(|owner| {
+            value_contradiction::seam_branch_reached_by_call(
+                owner,
+                seam.expression(),
+                seam.display_line(),
+                &oracle.text,
+                test,
+            ) == Some(false)
+        })
 }
 
 fn collection_assertion_admitted(
@@ -4630,6 +5695,72 @@ fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool 
     seam.kind() != SeamKind::ReturnValue
         || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
         || exact_err_return_matches_error_pin(seam, &oracle.text)
+}
+
+/// #12757: the mirror of the error-pin rule above. A returned-value or
+/// error-variant seam whose changed expression constructs the failure arm (`Err(..)` or `None`) is
+/// changed only by a call that takes that exit. An exact assertion that
+/// unwraps or compares the success payload (`f(1).unwrap()`, `Ok(..)`,
+/// `Some(..)`, `assert_ok_eq!`) passes only when the call took the success
+/// exit, so it cannot notice the failure arm changing and must not be
+/// published as an oracle on it. A pin that names the failure arm itself
+/// (`Err(..)`, `None`, `unwrap_err`) keeps its grade.
+fn success_payload_assertion_can_see_return_arm(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
+        || !matches!(
+            oracle.kind,
+            OracleKind::ExactValue | OracleKind::WholeObjectEquality
+        )
+        || !constructs_failure_arm(seam.expression())
+        || !pins_success_payload_only(&oracle.text)
+}
+
+/// Whether `expression` is exactly the failure arm a `Result` / `Option`
+/// return constructs: `Err(..)` or `None`, optionally spelled `return ..;`.
+fn constructs_failure_arm(expression: &str) -> bool {
+    let trimmed = expression.trim().trim_end_matches(';').trim();
+    let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
+    trimmed == "None"
+        || trimmed
+            .strip_prefix("Err")
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+/// Whether the assertion text reads the success payload and never the
+/// failure arm. The text is masked first, so a string or comment cannot supply
+/// a token; any failure-arm spelling, or an adapter that turns the failure
+/// into a value (`unwrap_or`, `ok()`, `map_err`), refuses (fail closed:
+/// the assertion keeps its existing grade).
+fn pins_success_payload_only(text: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let mentions = |token: &str| masked.contains(token);
+    let reads_failure_arm = [
+        "Err(",
+        "Err (",
+        "unwrap_err",
+        "expect_err",
+        "is_err",
+        "map_err",
+    ]
+    .iter()
+    .any(|token| mentions(token))
+        || masked
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .any(|word| {
+                matches!(
+                    word,
+                    "None" | "unwrap_or" | "unwrap_or_else" | "unwrap_or_default" | "ok" | "err"
+                )
+            });
+    if reads_failure_arm {
+        return false;
+    }
+    mentions(".unwrap()")
+        || mentions(".expect(")
+        || mentions("Ok(")
+        || mentions("Some(")
+        || mentions("assert_ok_eq!")
+        || mentions("assert_some_eq!")
 }
 
 /// An exact error-variant assertion published at no strength is the one
@@ -4660,6 +5791,9 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     if seam.kind() == SeamKind::ReturnValue && matches!(oracle.kind, OracleKind::ExactErrorVariant)
     {
         return exact_err_return_matches_error_pin(seam, &oracle.text);
+    }
+    if !success_payload_assertion_can_see_return_arm(seam, oracle) {
+        return false;
     }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
@@ -5497,8 +6631,41 @@ fn best_oracle(
             skipped_error_pin = true;
             continue;
         }
+        if !success_payload_assertion_can_see_return_arm(seam, oracle) {
+            continue;
+        }
         let (strength, contradiction) =
             effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
+        // #12836: the classify stage grades a strong or medium oracle weak when
+        // it does not pin this error-variant seam's own variant (`kind-match
+        // false`). An exact pin on a sibling variant gets the same grade here,
+        // so the record and the stage cannot disagree about one assertion.
+        // Only the exact pin and a guarded `Result` match (#12897), which
+        // `oracle_discriminates_seam_in_test` reads by the same variant rule:
+        // a broad `is_err()` keeps the strength the operator configured for it
+        // (`oracles.broad_error_strength`).
+        let strength = if seam.kind() == SeamKind::ErrorVariant
+            && matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+            )
+            && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
+        // #14496: the per-test record must not publish strong grip for a
+        // return-value seam the branch gate refuses, or the record and the
+        // discriminate stage disagree about the same assertion.
+        let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && branch_gate_withholds(seam, oracle, test, owner_fn)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();

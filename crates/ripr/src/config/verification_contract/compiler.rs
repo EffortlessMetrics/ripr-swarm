@@ -385,16 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn tracked_configuration_location_is_repository_relative() {
-        let root = Path::new("/work/project");
+    fn tracked_configuration_location_is_repository_relative() -> Result<(), String> {
+        let parent = std::env::current_dir().map_err(|error| error.to_string())?;
+        let root = parent.join("work/project");
+        assert!(root.is_absolute());
         assert_eq!(
-            workspace_relative_location(root, Path::new("/work/project/ripr.toml")).as_deref(),
+            workspace_relative_location(&root, &root.join("ripr.toml")).as_deref(),
             Some("ripr.toml")
         );
         assert_eq!(
-            workspace_relative_location(root, Path::new("config/ripr.toml")).as_deref(),
+            workspace_relative_location(&root, Path::new("config/ripr.toml")).as_deref(),
             Some("config/ripr.toml")
         );
-        assert!(workspace_relative_location(root, Path::new("/outside/ripr.toml")).is_none());
+        assert!(workspace_relative_location(&root, &parent.join("outside/ripr.toml")).is_none());
+        Ok(())
     }
 }

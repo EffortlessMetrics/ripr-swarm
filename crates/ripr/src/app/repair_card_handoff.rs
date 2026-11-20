@@ -913,6 +913,37 @@ pub(crate) fn finding_names_seam_by_location(
         .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
 }
 
+/// The seams in `candidate_seams` that each name `finding`'s changed line as
+/// its most specific claimant, so the finding binds none of them (#15157): a
+/// changed `a < b && c == d` line holds one predicate seam per comparison, and
+/// the join above refuses to pick between same-line, same-kind twins. The
+/// check screen uses the list only to say that the changed line holds several
+/// spots instead of claiming that no spot could be tied to it; it binds
+/// nothing for repair. Fewer than two means no such tie.
+pub(crate) fn seams_tied_on_finding_line<'a>(
+    finding: &crate::domain::Finding,
+    candidate_seams: &'a [ClassifiedSeam],
+) -> Vec<&'a ClassifiedSeam> {
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return Vec::new();
+    };
+    let line = finding.probe.location.line;
+    let naming: Vec<&ClassifiedSeam> = candidate_seams
+        .iter()
+        .filter(|entry| producer_gap_names_seam(gap, &entry.seam, line))
+        .collect();
+    let tied: Vec<&ClassifiedSeam> = naming
+        .iter()
+        .copied()
+        .filter(|entry| {
+            !naming.iter().any(|other| {
+                other.seam.id() != entry.seam.id() && entry.seam.strictly_encloses(&other.seam)
+            })
+        })
+        .collect();
+    if tied.len() < 2 { Vec::new() } else { tied }
+}
+
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
 /// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
 /// not projection: this is present for a bound finding that projects no
@@ -1140,6 +1171,7 @@ mod tests {
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
     use crate::analysis::test_grip_evidence::TestGripEvidence;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{Confidence, FixInstructionState, StageEvidence, StageState};
 
     fn stage(state: StageState) -> StageEvidence {
@@ -1436,6 +1468,87 @@ mod tests {
         assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
     }
 
+    /// #15157: same-line same-kind twins that no other seam nests inside are
+    /// the tie the check screen names; a lone claimant, an enclosing outer
+    /// seam, and a seam on another line are not part of it.
+    #[test]
+    fn same_line_twins_are_the_tied_seams_on_the_finding_line() {
+        let span = |line: usize, start_column: usize, end_column: usize| {
+            crate::analysis::seams::SeamSpan {
+                start_line: line,
+                end_line: line,
+                start_column,
+                end_column,
+            }
+        };
+        let mut finding = producer_gap_finding(
+            "finding:tie",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+        let left = spanned_twin_boundary_entry(10, 88, span(88, 5, 15));
+        let right = spanned_twin_boundary_entry(30, 88, span(88, 20, 30));
+        let elsewhere = spanned_twin_boundary_entry(60, 120, span(120, 5, 15));
+
+        let pair = [left.clone(), right.clone(), elsewhere.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &pair)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        // The tie is exactly the binding refusal: neither twin binds.
+        assert!(!finding_names_seam_by_location(&finding, &left, &pair));
+
+        // A lone claimant binds, so it is no tie.
+        let sole = [left.clone(), elsewhere.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &sole).is_empty());
+        assert!(finding_names_seam_by_location(&finding, &left, &sole));
+
+        // An outer seam enclosing one claimant is not a separate tied spot.
+        let outer = spanned_twin_boundary_entry(5, 88, span(88, 1, 40));
+        let nested = [outer.clone(), left.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &nested).is_empty());
+
+        // An outer seam enclosing one claimant beside a disjoint claimant
+        // (`f(|d| d == x) == 0 ... g() == 1` on one line): the outer drops out
+        // and the two minimal seams tie.
+        let outer_left = spanned_twin_boundary_entry(5, 88, span(88, 1, 16));
+        let three = [outer_left.clone(), left.clone(), right.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &three)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        assert!(!finding_names_seam_by_location(&finding, &left, &three));
+
+        // A seam without a span encloses nothing, so it ties with a spanned
+        // claimant, matching the join's refusal to bind either.
+        let mut spanless = spanned_twin_boundary_entry(50, 88, span(88, 40, 50));
+        spanless.seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            50,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let mixed = [left.clone(), spanless.clone()];
+        assert_eq!(seams_tied_on_finding_line(&finding, &mixed).len(), 2);
+        assert!(!finding_names_seam_by_location(&finding, &left, &mixed));
+        assert!(!finding_names_seam_by_location(&finding, &spanless, &mixed));
+
+        // A finding on another line ties nothing.
+        finding.probe.location.line = 89;
+        assert!(seams_tied_on_finding_line(&finding, &pair).is_empty());
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
@@ -1491,6 +1604,8 @@ mod tests {
                 line: 88,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
@@ -2524,6 +2639,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),

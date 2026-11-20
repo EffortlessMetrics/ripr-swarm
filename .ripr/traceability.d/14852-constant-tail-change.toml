@@ -1,0 +1,41 @@
+# A returned constant replaced by a different constant (#14852).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::bool_constant_replaced_by_the_other_bool_is_admitted",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::emptied_vec_constant_is_admitted",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::char_literal_tail_keeps_its_raw_text",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_name_in_the_new_tail_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_name_in_the_old_tail_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_base_body_that_is_not_a_constant_tail_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::constants_that_fold_equal_or_unprovably_apart_are_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::another_change_inside_the_owner_span_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_rebound_vec_macro_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_vec_inside_a_standard_assertion_is_not_a_rebinding",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::only_a_return_value_probe_on_the_tail_line_is_read",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_swapped_function_of_another_scope_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_cfg_gated_or_twinned_function_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_base_side_rebinding_in_another_file_is_seen",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_base_side_rebinding_refuses_only_vec_tails",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::an_in_place_change_keeps_its_base_owner",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::swapped_modules_or_impls_are_not_the_same_owner",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_trait_impl_is_not_an_inherent_impl",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::cfg_twins_and_attribute_changes_are_refused",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_gated_owner_keeps_identity_and_reports_the_gate",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::an_enclosing_header_change_is_refused",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::an_unparsable_side_is_refused",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::an_ungated_out_of_line_module_keeps_identity",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_gate_on_the_parent_mod_declaration_is_reported",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_changed_path_declaration_refuses_every_owner",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_changed_declaration_on_the_chain_refuses",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::a_raw_identifier_twin_is_a_twin",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::a_gate_or_retarget_on_the_parent_declaration_is_refused",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::an_inner_attribute_in_the_body_is_refused",
+]
+fixtures = [
+  "fixtures/rust_constant_tail_change",
+]
+code = [
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs",
+  "crates/ripr/src/analysis/diff/base_owner.rs",
+]

@@ -65,6 +65,31 @@ consumers would have no fixture identity to reference.
   control mapping.
 - `SPEC.md` states the Given/When/Then/Must-Not fixture contract.
 
+### No-ignore fixture identity correction
+
+The active no-ignore commit is `7eaa951e85de8ede45441272f06fb99327440416`,
+newly constructed over unchanged tree `36e9bee8d075276b344af3389b3ad76510b2f930`
+with sole base parent `01821f774cb2cc2bc745b7506a3941312456fb4e`.
+`repository.variant_construction_recipe` explicitly records branch,
+snapshot, parent, author/committer names, emails and dates, and message.
+Both identities are `ripr fixture <fixture@example.invalid>` with timestamp
+`2026-10-01T00:02:00Z` (`1790812920 +0000`); `git commit -m` retains
+`variant: no-ignore` followed by one LF under verbatim cleanup.
+
+The original pin `7831d6f6e31fe47fad83d204f8644bd9618f2bb4` remains linked to
+its original source in `repository.historical_unreproduced_commits`. The
+original recipe omitted its exact message and unambiguous dates. The new
+metadata is an explicit correction, not recovered historical metadata or a
+claim that the original commit was reproduced. Positive base/head identities,
+snapshot bytes and the scripted control's terminal expectation are unchanged.
+
+The shared recipe reconstruction owner now checks all active Rust snapshots,
+including exact tree and parent history. It refuses missing metadata and
+incorrect commit/tree pins. Host templates/configuration, hooks, signing,
+external ignore rules and inherited repository/identity selectors are excluded;
+the repository object format is SHA-1 and line-ending conversion is disabled.
+This fixture proof does not execute an installed candidate or qualify a release.
+
 `fixtures/blind_journey_execute/corpus.json` gains the ten `installed_rust_*`
 scripted journeys (#4516's positive row and its ten failure controls,
 foreign-CWD decoy and second-root repeat included). They execute through the
@@ -84,7 +109,7 @@ binary.
 The dedicated validator `validate_blind_journey_installed_rust_fixture`
 (`cargo xtask check-fixture-contracts`) owns the fixture contract: the
 manifest schema, the per-file digest bindings recomputed against the bytes on
-disk, the well-formed recorded git identities, the edit-cage invariants
+disk, reconstructed active git identities, the edit-cage invariants
 (selected repair target inside the cage; cage and forbidden edits disjoint),
 and the requirement that every scripted scenario id the fixture names exists
 in the committed executor corpus.
@@ -113,6 +138,10 @@ acceptance; the real candidate-bound installed journey remains separate.
 - `cargo test -p xtask installed_rust_fixture` covers the validator units:
   committed-manifest digest binding, corpus cross-reference, unknown-scenario
   refusal, drifted-digest refusal and git-identity well-formedness.
+- `cargo test -p xtask --bin xtask installed_journey_recipe` reconstructs all
+  three languages' active identities and checks the Rust gate against forged
+  commits/trees, the historical pin, missing or changed metadata, duplicate or
+  omitted variants, and a wrong parent.
 
 ## Non-Goals
 
@@ -150,8 +179,8 @@ acceptance; the real candidate-bound installed journey remains separate.
 6. The planted workspace binary derives `candidate_identity_failure`; the
    foreign-CWD decoy row and the second-root repeat keep the selected root
    authoritative and share one portable identity.
-7. A manifest whose snapshot bytes drift, whose git identities are
-   ill-formed, or which names a scenario the corpus does not contain fails
+7. A manifest whose snapshot bytes drift, whose active git identities are
+   ill-formed or cannot be reconstructed, or which names a scenario the corpus does not contain fails
    `check-fixture-contracts`.
 
 ## Test Mapping

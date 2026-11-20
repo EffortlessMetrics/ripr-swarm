@@ -265,8 +265,8 @@ Shared rules for all three:
 
 `overload_unresolved`, `generic_constraint_unresolved`, `virtual_dispatch_unresolved`,
 `interface_dispatch_unresolved`, `dynamic_dispatch`, `reflection_route`,
-`source_generator_opaque`, `di_proxy_opaque`, `configuration_unknown`,
-`target_framework_unknown`.
+`source_generator_opaque`, `di_proxy_opaque`, `expression_tree_opaque`,
+`configuration_unknown`, `target_framework_unknown`.
 
 #### F# evidence law (`ripr-fsharp-evidence.v1`)
 
@@ -294,7 +294,8 @@ Shared rules for all three:
 **Typed limits:**
 
 `inference_unresolved`, `computation_expression_unresolved`, `type_provider_opaque`,
-`quotation_opaque`, `interop_dispatch_unresolved`, `configuration_unknown`,
+`quotation_opaque`, `active_pattern_unresolved`, `interop_dispatch_unresolved`,
+`reflection_route`, `di_proxy_opaque`, `source_generator_opaque`, `configuration_unknown`,
 `target_framework_unknown`.
 
 #### Visual Basic evidence law (`ripr-visualbasic-evidence.v1`)
@@ -320,7 +321,8 @@ Shared rules for all three:
 **Typed limits:**
 
 `late_binding`, `default_property_unresolved`, `overload_unresolved`,
-`reflection_route`, `configuration_unknown`, `target_framework_unknown`.
+`event_wiring_unresolved`, `reflection_route`, `di_proxy_opaque`,
+`source_generator_opaque`, `configuration_unknown`, `target_framework_unknown`.
 
 ### Test and oracle contract
 
@@ -368,7 +370,21 @@ test_discovered
 ```
 
 When activation is not `activation_established`, oracle families are withheld and
-the limitation `test_activation_unestablished` applies (same law as RIPR-SPEC-0028).
+the limitation `test_activation_unestablished` applies (shared activation law, #5542).
+
+Framework states map into these three activation states:
+
+| Framework state | Activation state |
+| --- | --- |
+| Statically registered test, no skip/ignore/category filter, fixtures visible | `activation_established` |
+| `Skip=`, `[Ignore]`, `[Explicit]`, Expecto `ptestCase`/`ptestList` (pending) | `activation_inactive` |
+| Expecto `ftestCase`/`ftestList` (focused), which deactivates every unfocused sibling | siblings `activation_inactive`; focused test as above |
+| Category/trait filters, conditional attributes, `fixture_lifetime_unknown` | `activation_unknown` |
+| Theory rows, FsCheck and Expecto `testProperty` generated cases (`registered_only` / `generated_case`) | `activation_unknown` until a case is statically established |
+
+FsCheck cells are F#-only. FsCheck used from C# or VB test code (for example
+FsCheck.Xunit) gets no oracle credit until a C#- or VB-scoped FsCheck cell is
+registered.
 
 ### Cross-language edges
 
@@ -377,7 +393,9 @@ Cross-project and cross-language behavior uses
 
 - A C# call into an F# module, or VB `Imports` of a C# namespace, requires a
   **registered edge** with producer basis and strength ceiling.
-- Project reference alone records `project_reference` fact only.
+- Project reference alone records `project_reference` fact only. A cross-language
+  call without a registered edge emits the typed limit
+  `cross_language_edge_unregistered`.
 - P/Invoke, COM, reflection-only loads, DI-resolved interfaces, and runtime proxies
   default to `reflection_route` or `di_proxy_opaque` unless exported facts name a
   resolved target with evidence refs.
@@ -485,6 +503,38 @@ The substrate row is identified by `scope = substrate`, not by a language code. 
 used only for project-fact exports. Semantic capability cells remain `csharp`, `fsharp`,
 and `visualbasic` only.
 
+Rows this registry does not list are unregistered, which means they are not claimed.
+That covers repo-mode semantic cells for each language and framework, actionability
+(repair-packet readiness), and verification routes (`dotnet test --filter` style
+selectors). Each needs its own row and proof before any output may depend on it.
+A diff-mode row never implies the matching repo-mode row.
+
+### Per-language non-claims
+
+Until a registered cell for that exact language, framework, and mode has
+implementation and eval evidence, ripr makes none of these claims:
+
+- **C#:** no owner, probe, or oracle finding for `.cs` files; no credit from
+  xUnit, NUnit, or MSTest attributes; no resolution of `dynamic`, reflection,
+  expression trees, source-generator output, or DI/runtime proxies. Razor
+  (`.cshtml`, `.razor`) and scripts (`.csx`) are not covered by this spec.
+- **F#:** no owner, probe, or oracle finding for `.fs`/`.fsi` files; no credit
+  from Expecto or FsCheck, and no NUnit/xUnit/MSTest credit for F# test code
+  unless an F#-scoped cell is registered for that framework. Type providers,
+  quotations, active patterns, and computation expressions stay typed limits.
+  F# scripts (`.fsx`) route to `fsharp` but yield only `static_unknown`.
+- **Visual Basic:** no owner, probe, or oracle finding for `.vb` files; no
+  credit from xUnit, NUnit, or MSTest. Late binding (`Option Strict Off`),
+  default properties, and `Handles`/`WithEvents` wiring stay typed limits.
+- **Shared limits:** `reflection_route`, `di_proxy_opaque`, `source_generator_opaque`,
+  `cross_language_edge_unregistered`, `configuration_unknown`, and
+  `target_framework_unknown` apply to all three languages even when a
+  per-language list above omits them.
+- **All three:** no support tier is inherited from another .NET language or
+  from Rust, Python, or TypeScript. Shared MSBuild project facts never
+  strengthen a language's semantic evidence. No gate, badge, baseline, RIPR
+  Zero, repair-packet readiness, or mutation-calibrated confidence.
+
 ## Required Evidence
 
 - `fixtures/dotnet-evidence-contract-corpus/corpus.json` pins positive and negative
@@ -524,8 +574,9 @@ normative examples.
    `registered_only` until activation is established; treating inline data as executed
    oracle without activation is **rejected** (`test_activation_unestablished`).
 6. **Cross-language call** — C# calls `Lib.FSharpModule.apply` with a registered edge
-   `manual_registered_bridge`; without edge, classification is `no_static_path` or
-   named limit, not C# `exposed` via project reference alone.
+   `manual_registered_bridge`; without an edge, the finding carries the typed limit
+   `cross_language_edge_unregistered` and is never C# `exposed` (or a clean
+   `no_static_path`) via project reference alone.
 7. **F# inference** — a call site lacks resolved type for an overloaded F# function;
    export emits `inference_unresolved`; no fabricated owner id.
 8. **VB late binding** — `Option Strict Off` call through `Object`; limit

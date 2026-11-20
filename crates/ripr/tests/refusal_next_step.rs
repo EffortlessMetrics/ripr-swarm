@@ -517,6 +517,16 @@ const LIVE_CASES: &[Case] = &[
         reason: "unknown check argument",
     },
     Case {
+        args: &["check", "--staged"],
+        exit: 2,
+        reason: "`git diff --cached | ripr check --diff -`",
+    },
+    Case {
+        args: &["check", "--cached"],
+        exit: 2,
+        reason: "source is still read from the working tree",
+    },
+    Case {
         args: &["gate", "evaluate"],
         exit: 2,
         reason: "requires at least one",
@@ -585,6 +595,18 @@ const LIVE_CASES: &[Case] = &[
         args: &["status", "--attempt", "nope"],
         exit: 2,
         reason: "must start with",
+    },
+    // An unresolvable pr-evidence revision names the flag that carried it. It
+    // used to print `bad base/head revision` with a Debug-formatted git argv.
+    Case {
+        args: &["pr-evidence", "--base", "no-such-ref-xyz", "--head", "HEAD"],
+        exit: 2,
+        reason: "pr-evidence --base `no-such-ref-xyz` does not resolve to a commit",
+    },
+    Case {
+        args: &["pr-evidence", "--base", "HEAD", "--head", "no-such-ref-xyz"],
+        exit: 2,
+        reason: "pr-evidence --head `no-such-ref-xyz` does not resolve to a commit",
     },
 ];
 

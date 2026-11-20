@@ -14,6 +14,33 @@ enough to establish that the input was fully analyzable.
 
 ## Behavior
 
+The generated agent loop uses bounded Agent output to discover a gap, then a
+single post-edit Agent-format check for both verification and completion.
+Its final `verify=` line (#13516) projects the complete outcome, analysis
+completeness, full summary counts and worktree/partial/no-scope disclosures,
+including untracked source excluded from the diff in a language enabled for
+the run (`untracked_source_excluded`), from one app-owned verdict
+(`CheckOutput::verification`). An agent's new file stays untracked until
+`git add -N`, so an untracked enabled-language path is exactly the edit a
+working-tree diff would silently miss; the enabled set is the one the
+producer recorded for the run, and an unknown set refuses on any untracked
+routed path. An untracked file in a disabled language would not be analyzed
+even if staged, so it does not refuse. Gitignored source does not refuse: the
+repository excludes it deliberately (dependency trees, virtualenvs, build
+output, nested worktrees), it is almost never the agent's edit, and refusing
+on it would make `verify=complete` unreachable in ordinary repositories; the
+human, GitHub and JSON disclosures keep naming it;
+full JSON is an explicit drilldown. The report must describe the same root,
+base and saved source; changed inputs require a fresh check. The consumer
+requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+When full summary findings exceed full summary exposed findings the refusal
+reason is `unexposed_findings_remain` (#13825). It names what it counts rather
+than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
+is reported under the header's `limits=`, not `gaps=`, so the record never
+claims gaps remain beside a `gaps=0` header.
+Explain navigation retains its printed format for artifact replay with an
+explicit suppression policy, since that combination refuses Agent format.
+
 The diff pipeline consumes `AnalysisLimitation` records from the parser and
 language adapters without reconstructing them from warning text. It publishes
 one `AnalysisOutcome` containing:
@@ -49,6 +76,14 @@ path without text hunks. The existing deletion, submodule, artifact and
 prior-limitation guard conditions are unchanged. Pure rename-only input without
 content or mode changes retains complete `no_changed_lines`.
 
+A `copy from`/`copy to` section is not a rename: its source stays in place,
+so every line of the destination is new code the patch does not carry. When
+the section's header and both lines name the same pair of paths, the diff
+intake reads the destination from the working tree as an added file, the
+changed lines the patch names without copy detection. A destination that is
+not a regular file below the root is disclosed as
+`changed_file_absent_from_worktree`.
+
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
@@ -70,6 +105,25 @@ Paired plain `---`/`+++` markers are ordinary body lines while both declared
 sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
+Text after a hunk whose declared counts are complete is not that hunk's body
+(#14072): empty lines there are padding, and git's mail signature separator
+(`-- `) or mbox message separator (`From <object id> <date>`) ends the hunk, so
+a patch saved with trailing blank lines and `git format-patch` output are
+well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
+is still an excess body line, also behind such padding, and a hunk that still
+owes lines reads an empty line as context and `-- ` as a removal.
+
+A `diff --git` section whose header names one path under two different
+mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
+`diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
+A header repeating one token on both sides, a header whose two paths differ,
+and a section carrying rename or copy metadata keep their literal paths; other
+custom side prefixes are not guessed (#15103). When such a path reads as
+absent but the same path without its first component is a regular source file
+under the analysis root, the absent-file limitation stays and its recovery adds,
+as a conditional hint beside the checkout recovery, that a custom side prefix
+would explain it and names `git diff --src-prefix=a/ --dst-prefix=b/` or
+`--no-prefix`.
 
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse
@@ -106,6 +160,10 @@ incomplete rather than claiming a clean result. Retained test-side gaps keep
 their detail and navigation as advisory evidence beneath the incomplete state;
 they do not acquire a contradictory completion or stop claim. Complete outcomes
 retain their existing triage behavior (#13138).
+
+A run that analyzed nothing because the diff held no analyzable source (for
+example docs-only; the empty-diff `no_scope` case is RIPR-SPEC-0083) never emits `done=` in the agent format and never prints the
+clean GitHub notice; it states the not-established state instead (#13658).
 
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
@@ -179,7 +237,8 @@ projection does not analyze those regions.
   finding; review-comments names the dropped file the same way;
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
-- human and JSON output carry the same limitation kind and recovery route;
+- human and JSON output carry the same limitation kind and recovery route,
+  and the producer's bounded detail when one is recorded (#14398);
 - gate and PR-evidence-summary consumers fail closed or disclose the same
   incomplete typed outcome rather than deriving a clean result from zero
   candidates;
@@ -244,7 +303,8 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
 
 - parser and language-adapter limitations reach one typed pipeline outcome;
 - complete zero-result and incomplete zero-result fixtures remain distinct;
-- human and JSON projections disclose the same typed kind and recovery route;
+- human and JSON projections disclose the same typed kind, bounded detail and
+  recovery route;
 - stable outcome identity excludes absolute checkout paths;
 - SARIF run-level and diff-scoped badge projections disclose the typed outcome
   and fail closed for incomplete zero-result input.

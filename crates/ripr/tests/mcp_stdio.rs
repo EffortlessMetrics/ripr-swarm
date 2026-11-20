@@ -60,6 +60,8 @@ fn run_mcp_with_input_custody(
     let mut child = worktree_ripr()
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
+        // The default listing must not depend on the caller's environment.
+        .env_remove("RIPR_MCP_TOOLS_LIST")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -791,9 +793,9 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     Ok(())
 }
 
-/// Optional tool fields may be omitted, but their advertised string/integer
-/// types do not accept explicit null. Pin the schemas and dispatch separately
-/// against literal expectations, through the actual stdio process (#7314).
+/// Optional tool fields may be omitted, but their advertised string, integer,
+/// and boolean types do not accept explicit null. Pin the schemas and dispatch
+/// separately against literal expectations through actual stdio (#7314).
 #[test]
 fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), String> {
     let root = workspace_root()?;
@@ -807,6 +809,13 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         ),
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
         ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
+        (
+            "ripr_list_gaps",
+            "independent_pages",
+            json!({}),
+            json!(true),
+            "boolean",
+        ),
         (
             "ripr_list_gaps",
             "file",
@@ -969,7 +978,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             if *kind == "integer" {
                 "whole JSON integer"
             } else {
-                "string"
+                *kind
             }
         );
         let message = rejected
@@ -1044,6 +1053,70 @@ fn oversized_request_id_is_rejected_with_null_id_and_the_session_survives() -> R
         if reply.get("id") != Some(&json!(id)) || reply.get("result") != Some(&json!({})) {
             return Err(format!("ping {} was not answered: {reply}", id.len()));
         }
+    }
+    Ok(())
+}
+
+/// #13803: the listing every session pays at start is slim by default: no
+/// tool advertises an `outputSchema`, and the whole `tools/list` reply line
+/// stays under the pinned wire budget (45,938 bytes before the cut).
+/// `RIPR_MCP_TOOLS_LIST=full` restores a schema on every tool.
+#[test]
+fn default_tools_list_is_slim_and_full_is_the_opt_in() -> Result<(), String> {
+    const DEFAULT_TOOLS_LIST_WIRE_BUDGET: usize = 12_500;
+    let root = workspace_root()?;
+    let requests = [
+        line(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "slim-default-test", "version": "1" } }
+        }))?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&requests])?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    let wire = stdout
+        .lines()
+        .find(|line| line.contains("\"id\":2"))
+        .ok_or_else(|| format!("no tools/list reply: {stdout}"))?;
+    let reply: Value = serde_json::from_str(wire).map_err(|error| error.to_string())?;
+    let tools = reply
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("tools/list omitted tools: {reply}"))?;
+    if tools.len() != 10 {
+        return Err(format!("expected ten tools, got {}", tools.len()));
+    }
+    if let Some(tool) = tools.iter().find(|tool| tool.get("outputSchema").is_some()) {
+        return Err(format!(
+            "default listing advertised an outputSchema: {}",
+            tool["name"]
+        ));
+    }
+    if wire.len() > DEFAULT_TOOLS_LIST_WIRE_BUDGET {
+        return Err(format!(
+            "default tools/list line is {} bytes, over {DEFAULT_TOOLS_LIST_WIRE_BUDGET}",
+            wire.len()
+        ));
+    }
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let full = session.call("tools", "tools/list", json!({}), timeout)?;
+    let full_tools = full
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("full tools/list omitted tools: {full}"))?;
+    if full_tools.len() != 10
+        || full_tools
+            .iter()
+            .any(|tool| tool.get("outputSchema").is_none())
+    {
+        return Err(format!(
+            "the full listing must carry every outputSchema: {full}"
+        ));
     }
     Ok(())
 }
@@ -1133,13 +1206,11 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     ] {
         let text = normalized(text);
         for required in [
-            "committed default-branch diff",
-            "By default",
-            "staged and unstaged tracked edits and untracked files are outside",
+            "default-branch diff",
+            "saved staged and unstaged tracked edits when any exist",
+            "source: \"committed\"",
             "source: \"worktree\"",
             "unsaved buffers and untracked files remain outside",
-            "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
-            "shared check authority does not mean identical input",
             "`ripr check --committed`",
         ] {
             if !text.contains(required) {
@@ -1157,7 +1228,8 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     }
     let description = normalized(description);
     for required in [
-        "By default: committed input only",
+        "By default, like `ripr check`",
+        "source: \"committed\"",
         "source: \"worktree\"",
         "INSTRUCTIONS",
     ] {
@@ -2791,6 +2863,9 @@ impl SequentialStdio {
         // An ambient text-content mode must not leak into a session that
         // does not ask for one (#9360).
         command.env_remove("RIPR_MCP_TEXT_CONTENT");
+        // These sessions check results against the advertised `outputSchema`
+        // contracts, which only the opt-in full listing carries (#13803).
+        command.env("RIPR_MCP_TOOLS_LIST", "full");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -3073,6 +3148,205 @@ fn install_gap_filter_fixture() -> Result<PathBuf, String> {
     }
     commit_fixture(&root, "narrow Rust and widen Python boundaries")?;
     Ok(root)
+}
+
+/// A real committed diff with enough same-file candidates to exceed the
+/// shared per-document selection budget and fill more than one omission page.
+#[cfg(feature = "lang-rust")]
+fn install_independent_pages_fixture() -> Result<PathBuf, String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let mut source = String::new();
+    for index in 0..300 {
+        source.push_str(&format!(
+            "pub fn boundary_{index}(x: i32) -> i32 {{ if x >= 10 {{ 1 }} else {{ 0 }} }}\n"
+        ));
+    }
+    std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/pricing.rs"), "").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination baseline")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    std::fs::write(root.join("src/lib.rs"), source.replace(">=", ">"))
+        .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination candidate")?;
+    Ok(root)
+}
+
+/// Real stdio continuation replay: both saved routes retain the snapshot and
+/// each other-axis window stays closed in every text mode. Complete structured
+/// documents and default continuations must agree across those modes.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn independent_gap_pages_walk_both_axes_over_stdio() -> Result<(), String> {
+    let root = install_independent_pages_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut first_document = None;
+    for text_mode in ["full", "summary", "brief"] {
+        let first = walk_independent_gap_pages(&root, text_mode)?;
+        if let Some(expected) = &first_document {
+            if expected != &first {
+                return Err(format!(
+                    "{text_mode} changed the structured independent page"
+                ));
+            }
+        } else {
+            first_document = Some(first);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-rust")]
+fn walk_independent_gap_pages(root: &Path, text_mode: &str) -> Result<Value, String> {
+    use std::collections::BTreeSet;
+
+    let timeout = Duration::from_mins(1);
+    let mut session =
+        SequentialStdio::spawn_with_env(root, &[("RIPR_MCP_TEXT_CONTENT", text_mode)])?;
+    let refresh = session.call_tool(
+        "refresh-pages",
+        "ripr_refresh",
+        json!({}),
+        Duration::from_mins(3),
+    )?;
+    let refresh = structured_tool_success(&refresh, "pagination refresh")?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("pagination fixture did not refresh: {refresh}"));
+    }
+    let read = |doc: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+        for entry in doc[key].as_array().ok_or("missing page array")? {
+            let id = entry["canonical_id"]
+                .as_str()
+                .ok_or("missing canonical id")?;
+            if !seen.insert(id.to_string()) {
+                return Err(format!("replayed {key} identity {id}"));
+            }
+        }
+        Ok(())
+    };
+    let reply = session.call_tool(
+        "first-independent",
+        "ripr_list_gaps",
+        json!({"limit": 1, "independent_pages": true}),
+        timeout,
+    )?;
+    let first = structured_tool_success(&reply, "first independent page")?;
+    let snapshot = first["snapshot_id"]
+        .as_str()
+        .ok_or("missing snapshot")?
+        .to_string();
+    let selected = first["filtered"].as_u64().ok_or("missing filtered")? as usize;
+    let omitted_count = first["omitted"].as_u64().ok_or("missing omitted")? as usize;
+    if selected < 2 || omitted_count < 201 {
+        return Err(format!(
+            "fixture did not populate both multipage axes: {selected} selected, {omitted_count} omitted"
+        ));
+    }
+    let mut items = BTreeSet::new();
+    let mut omissions = BTreeSet::new();
+    read(&first, "items", &mut items)?;
+    read(&first, "omitted_items", &mut omissions)?;
+    let first_item_route = first
+        .pointer("/continuation/next_page")
+        .cloned()
+        .ok_or("missing item route")?;
+    let first_omission_route = first
+        .pointer("/continuation/next_omitted_page")
+        .cloned()
+        .ok_or("missing omission route")?;
+    for (label, initial, page_key, other_key, route_key) in [
+        (
+            "items",
+            first_item_route,
+            "items",
+            "omitted_items",
+            "next_page",
+        ),
+        (
+            "omissions",
+            first_omission_route,
+            "omitted_items",
+            "items",
+            "next_omitted_page",
+        ),
+    ] {
+        let mut route = Some(initial);
+        let mut pages = 0usize;
+        while let Some(next) = route {
+            if next["tool"] != "ripr_list_gaps"
+                || next["arguments"]["snapshot_id"] != snapshot
+                || next["arguments"]["independent_pages"] != true
+                || next["arguments"]["limit"] != 1
+            {
+                return Err(format!("lost continuation bindings: {next}"));
+            }
+            let reply = session.call_tool(
+                "walk-page",
+                "ripr_list_gaps",
+                next["arguments"].clone(),
+                timeout,
+            )?;
+            let doc = structured_tool_success(&reply, "continued page")?;
+            let other_page = if label == "items" {
+                "omitted_page"
+            } else {
+                "page"
+            };
+            if doc[other_key] != json!([]) || doc[other_page]["has_more"] != false {
+                return Err(format!("{label} replayed opposite axis: {doc}"));
+            }
+            if label == "items" {
+                read(&doc, page_key, &mut items)?;
+            } else {
+                read(&doc, page_key, &mut omissions)?;
+            }
+            route = doc.pointer(&format!("/continuation/{route_key}")).cloned();
+            pages += 1;
+            if pages > selected + omitted_count {
+                return Err("page walk failed to terminate".into());
+            }
+        }
+    }
+    if items.len() != selected || omissions.len() != omitted_count {
+        return Err(format!(
+            "walk omitted identities: {} / {selected}, {} / {omitted_count}",
+            items.len(),
+            omissions.len()
+        ));
+    }
+    let legacy = session.call_tool(
+        "legacy-first",
+        "ripr_list_gaps",
+        json!({"limit": 1}),
+        timeout,
+    )?;
+    let legacy = structured_tool_success(&legacy, "legacy page")?;
+    let explicit_false = session.call_tool(
+        "explicit-false",
+        "ripr_list_gaps",
+        json!({"limit": 1, "independent_pages": false}),
+        timeout,
+    )?;
+    if structured_tool_success(&explicit_false, "explicit false page")? != legacy {
+        return Err("explicit false changed the default gap-list document".into());
+    }
+    let legacy_next = legacy
+        .pointer("/continuation/next_page/arguments")
+        .ok_or("missing legacy next")?;
+    if legacy_next.get("independent_pages").is_some() || legacy_next.get("omitted_offset").is_some()
+    {
+        return Err(format!("default continuation changed: {legacy_next}"));
+    }
+    let replay = session.call_tool(
+        "legacy-next",
+        "ripr_list_gaps",
+        legacy_next.clone(),
+        timeout,
+    )?;
+    let replay = structured_tool_success(&replay, "legacy continuation")?;
+    if replay["omitted_items"] != legacy["omitted_items"] {
+        return Err("legacy item continuation did not replay omission window".into());
+    }
+    Ok(first)
 }
 
 fn check_filtered_gap_page(
@@ -3580,11 +3854,112 @@ fn structured_prepare_document(reply: &Value, context: &str) -> Result<Value, St
     Ok(document)
 }
 
-/// Keep the wording tied to actual input selection: the same dirty fixture
-/// yields CLI findings but a committed-only MCP snapshot with scope disclosure.
+#[cfg(feature = "lang-rust")]
+fn advertised_prepare_schema(catalog: &Value) -> Result<Value, String> {
+    catalog
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "ripr_prepare_repair")
+        })
+        .and_then(|tool| tool.get("outputSchema"))
+        .cloned()
+        .ok_or_else(|| format!("tools/list omitted the prepare output schema: {catalog}"))
+}
+
+/// #13351: inspect the advertised closed top-level fields and the nullable
+/// inline-module boundary against real producer documents. This targeted
+/// contract oracle is not a general JSON Schema validator.
+#[cfg(feature = "lang-rust")]
+fn check_prepare_schema_fields(schema: &Value, document: &Value) -> Result<(), String> {
+    let branches = schema["oneOf"]
+        .as_array()
+        .filter(|branches| branches.len() == 2)
+        .ok_or("prepare schema must retain packet and typed-failure branches")?;
+    let failure = document.get("failure").is_some();
+    let branch = &branches[if failure { 1 } else { 0 }];
+    if branch["type"] != "object" || branch["additionalProperties"] != false {
+        return Err("prepare output branches must remain closed objects".into());
+    }
+    let properties = branch["properties"]
+        .as_object()
+        .ok_or("prepare schema omitted properties")?;
+    let required = branch["required"]
+        .as_array()
+        .ok_or("prepare schema omitted required fields")?;
+    let object = document
+        .as_object()
+        .ok_or("prepare document is not an object")?;
+    let closed_shape = |declared: &serde_json::Map<String, Value>| {
+        object.keys().all(|key| declared.contains_key(key))
+            && required
+                .iter()
+                .all(|key| key.as_str().is_some_and(|key| object.contains_key(key)))
+    };
+    if !closed_shape(properties)
+        || branch.pointer("/properties/schema_version/const") != document.get("schema_version")
+    {
+        return Err(format!(
+            "prepare output schema does not admit the emitted fields/version: {document}"
+        ));
+    }
+    if failure {
+        return Ok(());
+    }
+    let expected_inline = json!({
+        "type": ["object", "null"],
+        "properties": {
+            "file": { "type": "string" },
+            "module": { "type": "string" },
+            "boundary": { "type": "string" }
+        },
+        "required": ["file", "module", "boundary"],
+        "additionalProperties": false
+    });
+    if properties.get("inline_test_module") != Some(&expected_inline)
+        || required.iter().any(|key| key == "inline_test_module")
+    {
+        return Err("inline_test_module must be an optional nullable closed object".into());
+    }
+    let boundary = document.get("inline_test_module");
+    if boundary.is_none() && document["repair_packet_ready"] == true {
+        return Err("a ready packet must retain its emitted inline_test_module field".into());
+    }
+    if let Some(module) = boundary.and_then(Value::as_object) {
+        if module.len() != 3
+            || ["file", "module", "boundary"]
+                .iter()
+                .any(|key| module.get(*key).and_then(Value::as_str).is_none())
+        {
+            return Err(format!(
+                "inline module boundary lost its three string fields: {document}"
+            ));
+        }
+    } else if boundary.is_some_and(|value| !value.is_null()) {
+        return Err(format!(
+            "inline module boundary must be null or an object: {document}"
+        ));
+    }
+    if boundary.is_some() {
+        // Removing only the declaration reproduces the observed bad
+        // advertisement while preserving this actual null/object packet.
+        let mut undeclared = properties.clone();
+        undeclared.remove("inline_test_module");
+        if closed_shape(&undeclared) {
+            return Err("the undeclared-field control accepted a real prepared packet".into());
+        }
+    }
+    Ok(())
+}
+
+/// Keep the wording tied to actual input selection: on the same dirty fixture
+/// an explicit committed MCP refresh is committed-only with scope disclosure,
+/// and an omitted source reads the saved edits like the CLI default (#13096).
 #[cfg(feature = "lang-rust")]
 #[test]
-fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
+fn dirty_tree_cli_and_mcp_share_the_default_input() -> Result<(), String> {
     let root = install_b4_repair_ready_fixture()?;
     let _cleanup = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
@@ -3667,7 +4042,12 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     let mut session = SequentialStdio::spawn(&root)?;
     let timeout = Duration::from_mins(1);
     session.call("discover", "server/discover", json!({}), timeout)?;
-    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = session.call_tool(
+        "refresh",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+        timeout,
+    )?;
     let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
     if refresh.pointer("/attempt/state").and_then(Value::as_str) != Some("completed")
         || refresh
@@ -3706,6 +4086,26 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     {
         return Err(format!(
             "an empty committed list must say not_analyzed on the same snapshot: {listed}"
+        ));
+    }
+    // #13096: with no `source`, MCP makes the CLI's default choice on the
+    // same dirty tree: the saved tracked edits, with the CLI's findings.
+    let defaulted = session.call_tool("refresh-default", "ripr_refresh", json!({}), timeout)?;
+    let defaulted = structured_tool_success(&defaulted, "ripr_refresh")?;
+    let live_count = live
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .ok_or("CLI default output lost findings")?;
+    if defaulted.get("requested_source") != Some(&json!("default"))
+        || defaulted.get("captured_source") != Some(&json!("worktree"))
+        || defaulted
+            .pointer("/snapshot/finding_count")
+            .and_then(Value::as_u64)
+            != u64::try_from(live_count).ok()
+    {
+        return Err(format!(
+            "an omitted source must read the dirty tree like the CLI default ({live_count} findings): {defaulted}"
         ));
     }
     drop(session);
@@ -4344,6 +4744,95 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// #14186: a method the pinned SDK can type but this server does not serve
+/// used to answer `-32601` with only the bare method name as its message,
+/// while a method the SDK cannot type said `Method not found: <method>`.
+/// Both groups share the conventional wording, in an `initialize` session and
+/// for the discovery-session `ping`, and the session keeps serving.
+#[test]
+fn sdk_typed_unserved_methods_say_method_not_found() -> Result<(), String> {
+    let root = workspace_root()?;
+    let unserved: [(&str, Value); 6] = [
+        ("prompts/get", json!({"name": "any"})),
+        ("logging/setLevel", json!({"level": "debug"})),
+        (
+            "resources/subscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        (
+            "resources/unsubscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        ("tasks/get", json!({"taskId": "any"})),
+        // The control: a method the SDK cannot type already used the wording.
+        ("nope/never", json!({})),
+    ];
+    let mut script = line(json!({
+        "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "unserved-method-control", "version": "1"}}
+    }))?;
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?);
+    for (method, params) in &unserved {
+        script.extend(line(json!({
+            "jsonrpc": "2.0", "id": method, "method": method, "params": params
+        }))?);
+    }
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}),
+    )?);
+    let responses = response_lines(&run_mcp(&root, &[&script])?)?;
+    if responses.len() != unserved.len() + 2 {
+        return Err(format!(
+            "expected one reply per request, got {}: {responses:?}",
+            responses.len()
+        ));
+    }
+    for (index, (method, _params)) in unserved.iter().enumerate() {
+        let reply = &responses[index + 1];
+        if reply.get("id") != Some(&json!(method))
+            || reply.pointer("/error/code") != Some(&json!(-32601))
+            || reply.pointer("/error/message")
+                != Some(&json!(format!("Method not found: {method}")))
+        {
+            return Err(format!(
+                "unserved `{method}` must answer -32601 `Method not found: {method}`: {reply}"
+            ));
+        }
+    }
+    if responses[unserved.len() + 1] != json!({"jsonrpc": "2.0", "id": "alive", "result": {}}) {
+        return Err(format!(
+            "session did not recover after unserved methods: {responses:?}"
+        ));
+    }
+
+    // A `server/discover` session does not serve `ping`: the same wording.
+    let mut discovery = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": {"_meta": current_meta()}
+    }))?;
+    for (id, method) in [("tools", "tools/list"), ("ping", "ping")] {
+        discovery.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method,
+            "params": {"_meta": current_meta()}
+        }))?);
+    }
+    let responses = response_lines(&run_mcp(&root, &[&discovery])?)?;
+    if responses.len() != 3
+        || responses[0].get("result").is_none()
+        || responses[1].get("result").is_none()
+        || responses[2].pointer("/error/code") != Some(&json!(-32601))
+        || responses[2].pointer("/error/message") != Some(&json!("Method not found: ping"))
+    {
+        return Err(format!(
+            "discovery-session ping must answer -32601 `Method not found: ping`: {responses:?}"
+        ));
     }
     Ok(())
 }
@@ -5707,8 +6196,28 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
     // admission this control compares is the resolver's, which runs first.
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     commit_fixture(&root, "ignore target")?;
-    let mut session = SequentialStdio::spawn(&root)?;
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let catalog = session.call("catalog", "tools/list", json!({}), REPLY_TIMEOUT)?;
+    let schema = advertised_prepare_schema(&catalog)?;
+    let before_refresh = session.call_tool(
+        "before-refresh",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": "gap:before-first-refresh" }),
+        REPLY_TIMEOUT,
+    )?;
+    if before_refresh.pointer("/result/isError") != Some(&json!(true))
+        || before_refresh.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("no_snapshot"))
+    {
+        return Err(format!(
+            "prepare before refresh lost its typed failure: {before_refresh}"
+        ));
+    }
+    let failure = before_refresh
+        .pointer("/result/structuredContent")
+        .ok_or("prepare failure omitted structuredContent")?;
+    check_prepare_schema_fields(&schema, failure)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
@@ -5731,6 +6240,25 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
             REPLY_TIMEOUT,
         )?;
         let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+        check_prepare_schema_fields(&schema, &prepare)?;
+        if prepare.get("inline_test_module") != Some(&Value::Null) {
+            return Err(format!(
+                "external-test packet must emit inline_test_module: null: {prepare}"
+            ));
+        }
+        let replay = session.call_tool(
+            "prepare-replay",
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let replay = structured_prepare_document(&replay, "prepare replay")?;
+        if replay != prepare {
+            return Err(format!(
+                "prepare replay changed the stored packet: {replay}"
+            ));
+        }
+        check_prepare_schema_fields(&schema, &replay)?;
         let finding_id = prepare["attempt"]["finding_id"]
             .as_str()
             .ok_or_else(|| format!("ready prepare lost its finding id: {prepare}"))?;
@@ -5823,6 +6351,14 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
         return Err(format!(
             "default-base hint must name the default base, not a requested one: {good_hint}"
         ));
+    }
+    // #13096: a default-base no_scope snapshot names the last-commit retry.
+    if !good
+        .pointer("/empty_scope_hint/pass_base_last_commit")
+        .and_then(Value::as_str)
+        .is_some_and(|route| route.contains("HEAD~1"))
+    {
+        return Err(format!("default-base hint must name HEAD~1: {good}"));
     }
     let snapshot_id = good["snapshot"]["snapshot_id"].clone();
     let good_snapshot = good["snapshot"].clone();
@@ -5931,8 +6467,11 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
     for (second_module, expect_ready) in [(false, true), (true, false)] {
         let root = install_inline_test_fixture(second_module)?;
         let _guard = FixtureGuard { root: root.clone() };
-        let mut session = SequentialStdio::spawn(&root)?;
+        let mut session =
+            SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
         session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+        let catalog = session.call("catalog", "tools/list", json!({}), REPLY_TIMEOUT)?;
+        let schema = advertised_prepare_schema(&catalog)?;
         let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
         structured_tool_success(&refresh, "ripr_refresh")?;
         let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
@@ -5951,6 +6490,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 REPLY_TIMEOUT,
             )?;
             let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+            check_prepare_schema_fields(&schema, &prepare)?;
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -5975,6 +6515,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
             if ready {
                 ready_count += 1;
                 if prepare["allowed_edit_surface"] != json!(["src/lib.rs"])
+                    || prepare["inline_test_module"]["file"] != "src/lib.rs"
                     || prepare["inline_test_module"]["module"] != "tests"
                     || !prepare["must_not_change"][0]
                         .as_str()
@@ -5983,6 +6524,23 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 {
                     return Err(format!("inline boundary not stated: {prepare}"));
                 }
+                let replay = session.call_tool(
+                    "prepare-replay",
+                    "ripr_prepare_repair",
+                    json!({ "canonical_id": id }),
+                    REPLY_TIMEOUT,
+                )?;
+                let replay = structured_prepare_document(&replay, "inline prepare replay")?;
+                if replay != prepare {
+                    return Err(format!(
+                        "inline prepare replay changed the packet: {replay}"
+                    ));
+                }
+                check_prepare_schema_fields(&schema, &replay)?;
+            } else if prepare.get("inline_test_module").is_some() {
+                return Err(format!(
+                    "ineligible packet must omit its inline boundary: {prepare}"
+                ));
             }
         }
         if (ready_count > 0) != expect_ready {
@@ -6010,9 +6568,12 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     let _guard = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    // It is private so the producer admits it no new-test proposal (#13538: a
+    // public proposal-only seam is now ready on a complete inventory), keeping
+    // the control's finding-level-unready item.
     let mut source =
         std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
-    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    source.push_str("\nfn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "add a second seam")?;
 
@@ -6068,6 +6629,8 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
@@ -6075,6 +6638,11 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
         .iter()
         .find(|item| item["canonical_id"] == ready_id.as_str())
         .ok_or_else(|| format!("truncated refresh lost {ready_id}: {list}"))?;
+    if item["class"] != "exposed" {
+        return Err(format!(
+            "precondition (#14327): the truncation-refused item must be exposed: {item}"
+        ));
+    }
     if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
         return Err(format!(
             "truncated inventory must refuse {ready_id} with {TRUNCATED}: {item}"
@@ -6189,14 +6757,18 @@ fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), Strin
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
+    // No `class` filter (#14327): a truncation-refused `exposed` item is not
+    // an already-gripped one, so the default list must keep it.
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     if !items
         .iter()
-        .any(|item| item["canonical_id"] == ready_id.as_str())
+        .any(|item| item["canonical_id"] == ready_id.as_str() && item["class"] == "exposed")
     {
-        return Err(format!("truncated refresh lost {ready_id}: {list}"));
+        return Err(format!(
+            "truncated refresh lost exposed item {ready_id}: {list}"
+        ));
     }
     for item in items {
         let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
@@ -6601,8 +7173,9 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
             .ok_or_else(|| format!("refresh returned no snapshot id: {document}"))
     };
 
-    // Omitted `source` is the unchanged committed default: clean checkout,
-    // empty committed diff, v1 shape with no source facts.
+    // Omitted `source` on a clean checkout selects committed input (the
+    // `ripr check` default for a clean tree): empty committed diff, v1 shape
+    // with no source facts.
     let committed = refresh(&mut session, "committed-1", json!({}))?;
     let committed_id = snapshot_id(&committed)?;
     if committed.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
@@ -6755,10 +7328,42 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         ));
     }
 
-    // Committed again, with the dirty edits present: still the committed
+    // #13096: with tracked edits present, an omitted `source` takes
+    // `ripr check`'s default and reads the working tree. It is the explicit
+    // worktree request (same identity), disclosed as a default selection.
+    let defaulted = refresh(&mut session, "default-dirty", json!({}))?;
+    if snapshot_id(&defaulted)? != mixed_id
+        || defaulted.get("requested_source") != Some(&json!("default"))
+        || defaulted.get("captured_source") != Some(&json!("worktree"))
+        || defaulted.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || defaulted.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "an omitted source on a dirty tree must read the saved edits as `ripr check` does: {defaulted}"
+        ));
+    }
+    // A later explicit request is reported as explicit, not as the default.
+    let explicit_worktree = refresh(
+        &mut session,
+        "wt-after-default",
+        json!({ "source": "worktree" }),
+    )?;
+    if snapshot_id(&explicit_worktree)? != mixed_id
+        || explicit_worktree.get("requested_source") != Some(&json!("worktree"))
+    {
+        return Err(format!(
+            "an explicit worktree request after a default one must say worktree: {explicit_worktree}"
+        ));
+    }
+
+    // Explicit committed, with the dirty edits present: still the committed
     // result (empty diff, dirty-tree scope disclosure folded into its own
     // committed identity), never either worktree identity, and stable.
-    let again = refresh(&mut session, "committed-3", json!({}))?;
+    let again = refresh(
+        &mut session,
+        "committed-3",
+        json!({ "source": "committed" }),
+    )?;
     let dirty_committed_id = snapshot_id(&again)?;
     if dirty_committed_id == mixed_id
         || dirty_committed_id == unstaged_id
@@ -6794,7 +7399,11 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         ));
     }
     // Failed worktree request over a committed last-good, the converse.
-    let committed_again = refresh(&mut session, "committed-4", json!({}))?;
+    let committed_again = refresh(
+        &mut session,
+        "committed-4",
+        json!({ "source": "committed" }),
+    )?;
     if snapshot_id(&committed_again)? != dirty_committed_id {
         return Err(format!(
             "committed replay must be deterministic: {committed_again}"
@@ -7425,5 +8034,93 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
         default_text.len(),
         summary_text.len()
     );
+    Ok(())
+}
+
+/// #14327: over real stdio, `RIPR_MCP_TEXT_CONTENT=brief` turns the
+/// `ripr_get_gap` text into the gap's test-author lines, read from the same
+/// `structuredContent` the default session serves unchanged.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), String> {
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut observed: Vec<(Value, String)> = Vec::new();
+    for env in [&[][..], &[("RIPR_MCP_TEXT_CONTENT", "brief")][..]] {
+        let mut session = SequentialStdio::spawn_with_env(&root, env)?;
+        let refresh =
+            session.call_tool("refresh", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+        structured_tool_success(&refresh, "refresh")?;
+        let list = session.call_tool("list", "ripr_list_gaps", json!({}), timeout)?;
+        let listed = structured_tool_success(&list, "list")?;
+        let first = listed["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or_else(|| format!("list omitted its first canonical_id: {listed}"))?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        let document = structured_tool_success(&gap, "get gap")?;
+        let text = gap
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("get gap lost its text content: {gap}"))?
+            .to_string();
+        observed.push((document, text));
+    }
+    let [(default_doc, default_text), (brief_doc, brief_text)] = observed.as_slice() else {
+        return Err("expected two sessions".to_string());
+    };
+    // Two sessions over one unchanged fixture: the snapshot id is a content
+    // hash, so equal documents mean the same snapshot, not a coincidence.
+    if brief_doc != default_doc {
+        return Err("structuredContent must be identical in full and brief modes".to_string());
+    }
+    let item = &default_doc["item"];
+    let field = |pointer: &str| -> Result<String, String> {
+        match item.pointer(pointer) {
+            Some(Value::String(text)) => Ok(text.clone()),
+            Some(Value::Number(number)) => Ok(number.to_string()),
+            other => Err(format!("served gap lacks {pointer}: {other:?}")),
+        }
+    };
+    let header = format!(
+        "ripr gap: {} {}:{} owner={}.",
+        field("/class")?,
+        field("/location/file")?,
+        field("/location/line")?,
+        field("/causal_attribution/owner")?,
+    );
+    let lines: Vec<&str> = brief_text.lines().collect();
+    if !lines.first().is_some_and(|line| line.starts_with(&header))
+        || !lines.iter().any(|line| {
+            line.starts_with("changed: ")
+                && field("/changed_behavior/after")
+                    .or_else(|_| field("/changed_behavior/expression"))
+                    .is_ok_and(|changed| line.contains(&changed))
+        })
+        || !lines.iter().any(|line| line.starts_with("missing: "))
+        || !lines
+            .iter()
+            .any(|line| line.starts_with("readiness: repair_ready="))
+        || !brief_text.contains(&field("/canonical_id")?)
+    {
+        return Err(format!(
+            "brief get_gap text is not the served gap's projection (want {header:?}):\n{brief_text}"
+        ));
+    }
+    if serde_json::from_str::<Value>(brief_text).is_ok()
+        || brief_text.len() * 2 > default_text.len()
+    {
+        return Err(format!(
+            "brief get_gap text must be a projection under half the JSON copy: {} vs {}",
+            brief_text.len(),
+            default_text.len()
+        ));
+    }
     Ok(())
 }

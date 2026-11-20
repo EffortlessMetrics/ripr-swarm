@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0431"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0431-complete-stub-guidance-reuse.md"
+status = "accepted"
+owner = "analysis"
+standalone_reason = "Slice #11358 adds complete stub-guidance result reuse whose key-representability and invalidation contract had no governing spec."
