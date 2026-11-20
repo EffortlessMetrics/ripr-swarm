@@ -6,6 +6,81 @@ traceability without reconstructing intent from chat history.
 
 ## Local Setup
 
+### Codex Cloud Install script
+
+For a Rust development task, choose a glibc Linux x64 or arm64 image with
+mise, Bash, Git, curl, tar, gzip, GNU timeout, a C compiler, make and pkg-config.
+Nextest extraction uses `tar --gzip`. Official Node.js 25 and later Linux
+binaries also require the libatomic runtime (`libatomic1` on Debian/Ubuntu).
+See the [Node.js binary requirements](https://github.com/nodejs/node/blob/main/BUILDING.md#official-binary-platforms-and-toolchains).
+Select the Node major required by the [editor workflow](.github/workflows/vscode-e2e.yml)
+in the image (currently 24). Keep writable Cargo, Rustup and mise homes
+available at the same paths during setup and in new tasks.
+
+In **Settings → Codex Cloud → Environments → Edit**, paste this line into
+**Install script**. It runs from the repository root.
+
+```bash
+mise install core:node@latest aqua:astral-sh/uv@latest && mise exec core:node@latest aqua:astral-sh/uv@latest -- sh -c 'node --version && uv --version' && node tools/provision-dev.cjs --rust-only
+```
+
+Mise installs the latest official Node.js final release (its label may be
+Current or LTS) and Astral's latest uv. The `mise exec` child prints both
+executables' versions to the setup log. Keep those two lines for the fresh-task
+check. The provisioner runs under the image's selected Node. It bootstraps
+Rustup if needed, refreshes Rust `stable` for general tooling, and installs
+the checkout's Rust pin, matching components, Nextest and locked Cargo dependencies.
+The pin comes from [rust-toolchain.toml](rust-toolchain.toml) (currently
+1.95.0). The workspace declares its MSRV in [Cargo.toml](Cargo.toml) (1.95).
+Editor checks use the workflow's Node major. Wheel qualification uses its own
+[`UV_VERSION`](.github/workflows/python-wheel-qualification.yml).
+
+During online setup, use the image's approved routes for mise registry data,
+the official Node.js and Rust distributions, and the Cargo registry. Nextest
+reads its [release manifest](https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json)
+from `raw.githubusercontent.com`. Nextest and uv also need GitHub release
+assets and their redirects. The aqua backend for `astral-sh/uv` can require
+the GitHub attestations API and Sigstore TUF trust metadata at
+`tuf-repo-cdn.sigstore.dev`. Keep TLS, proxy and artifact verification in
+effect. The prepared task can keep agent internet off.
+
+After rebuilding, run this smoke in a fresh Bash shell at the checkout root.
+It prints the installed versions and resolves the locked workspace graph using
+the pinned Cargo and local cache, without compiling.
+
+```bash
+(
+  set -e
+  export MISE_OFFLINE=1 RUSTUP_AUTO_INSTALL=0
+  node_version=$(mise latest --installed core:node)
+  uv_version=$(mise latest --installed aqua:astral-sh/uv)
+  general_node=$(mise which node --tool="core:node@${node_version:?Node missing from mise}")
+  general_uv=$(mise which uv --tool="aqua:astral-sh/uv@${uv_version:?uv missing from mise}")
+  printf '%s\n' "$general_node" "$general_uv"
+  "$general_node" --version
+  "$general_uv" --version
+  (source tools/activate-rust.sh stable && rustc -V)
+  source tools/activate-rust.sh --pinned
+  rustc -V
+  cargo -V
+  cargo metadata --locked --offline --format-version 1 >/dev/null
+)
+```
+
+Compare the Node and uv version lines with the same two lines from this
+environment's setup log. A missing or different version indicates an
+incomplete restore. After both match, use the printed executable paths for
+general tooling and keep the editor's Node on PATH. Rust activation checks
+the installed compiler with `rustup which` before running it and checks that
+Cargo comes from the same sysroot.
+If the pin or dependency cache is missing, reconcile it in online setup with
+`node tools/provision-dev.cjs --ensure --rust-only`. That mode reuses installed
+stable and tries locked Cargo fetch offline before fetching a missing dependency.
+For editor development, use the [full image recipe](#provision-a-linux-cloud-image).
+Workspace builds and release gates have separate disk, memory and host requirements.
+[Issue #14216](https://github.com/EffortlessMetrics/ripr-swarm/issues/14216)
+tracks publication and fresh-task qualification of the full environment.
+
 ### Provision a Linux cloud image
 
 Use the Node major selected by `.github/workflows/vscode-e2e.yml` in the base
@@ -63,13 +138,6 @@ version it actually executes. Rust-only completion does not establish editor
 readiness.
 
 ### Cloud install and restored-task recipes
-
-Keep the environment's install command tied to the checkout instead of copying
-its current Rust version into environment settings:
-
-```bash
-node tools/provision-dev.cjs --install-system-deps
-```
 
 For an online task that must reconcile changed dependencies after restoration,
 use this explicit provisioning step before activating Rust in the task's shell:
