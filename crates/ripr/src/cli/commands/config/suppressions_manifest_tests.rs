@@ -175,8 +175,9 @@ fn a_control_byte_in_the_manifest_path_is_escaped_on_success() -> Result<(), Str
     let result = validate_config(&root);
     let _ = fs::remove_dir_all(&root);
     let output = result?;
-    if output.contains('\u{1b}') || !output.contains("suppressions valid (") {
-        return Err(format!("raw control byte or missing line: {output:?}"));
+    // The path keeps its place on the line, with ESC spelled as `\u{1b}`.
+    if output.contains('\u{1b}') || !output.contains("suppressions valid (s\\u{1b}[31m.toml, ") {
+        return Err(format!("raw control byte or unescaped path: {output:?}"));
     }
     Ok(())
 }
