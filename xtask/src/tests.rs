@@ -20594,6 +20594,7 @@ fn dogfood_pr_review_front_panel_scenarios_have_checked_receipts() -> Result<(),
             ("baseline_resolved", "already_improved"),
             ("blocked", "actionable"),
             ("missing_proof", "missing_required_input"),
+            ("absent_optional_guidance", "missing_required_input"),
             ("advisory_only", "no_actionable_seam"),
             ("coverage_flat_grip_improved", "already_improved"),
         ] {
