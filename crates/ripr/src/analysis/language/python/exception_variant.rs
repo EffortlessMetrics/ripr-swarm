@@ -472,8 +472,14 @@ pub(super) fn owner_scope_leaves_unbound(
         }),
         _ => None,
     });
+    // The owner's own text: a `lambda` elsewhere in the module does not hide
+    // this scope's bindings.
     function
-        .and_then(|function| function_bound_names(&function.args, &function.body, source))
+        .and_then(|function| {
+            let text = source
+                .get(usize::from(function.range.start())..usize::from(function.range.end()))?;
+            function_bound_names(&function.args, &function.body, text)
+        })
         .is_some_and(|locals| {
             names
                 .iter()
