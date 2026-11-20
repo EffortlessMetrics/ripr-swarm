@@ -178,7 +178,7 @@ pub(super) fn declares_trait(masked: &str, name: &str) -> bool {
 }
 
 /// Number of whole-word `kw name` declarations (`struct Key`, ...).
-fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
+pub(super) fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
     let bytes = masked.as_bytes();
     let mut count = 0;
     for keyword in keywords {

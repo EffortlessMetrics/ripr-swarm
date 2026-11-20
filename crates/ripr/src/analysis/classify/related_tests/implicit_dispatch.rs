@@ -1,11 +1,12 @@
 //! The unnamed owner calls a test can make through language syntax (#9567):
 //! an operator, a loop or adaptor driving an iterator, the end of a scope that
-//! drops a value, or `str::parse` running `FromStr::from_str` (#5334). One
-//! owner has at most one reading, since each reads a different trait's method.
+//! drops a value, `str::parse` running `FromStr::from_str` (#5334), or
+//! `.into()` running `From::from` (#15277). One owner has at most one
+//! reading, since each reads a different trait's method.
 
 use super::{
-    FunctionSummary, RustIndex, TestSummary, drop_dispatch, iterator_dispatch, operator_dispatch,
-    parse_dispatch,
+    FunctionSummary, RustIndex, TestSummary, drop_dispatch, into_dispatch, iterator_dispatch,
+    operator_dispatch, parse_dispatch,
 };
 
 /// The syntax-run reading of an owner.
@@ -14,6 +15,7 @@ pub(super) enum ImplicitOwner<'a> {
     Iterator(iterator_dispatch::IteratorOwner<'a>),
     Drop(drop_dispatch::DropOwner<'a>),
     Parse(parse_dispatch::ParseOwner<'a>),
+    Into(into_dispatch::IntoOwner<'a>),
 }
 
 /// Whether `owner` is shaped like a method any reading can attribute. A
@@ -24,6 +26,7 @@ pub(super) fn has_implicit_shape(owner: &FunctionSummary) -> bool {
         || iterator_dispatch::has_iterator_shape(owner)
         || drop_dispatch::has_drop_shape(owner)
         || parse_dispatch::has_parse_shape(owner)
+        || into_dispatch::has_into_shape(owner)
 }
 
 /// The reading of `owner`, or `None` when no reading attributes it.
@@ -36,6 +39,7 @@ pub(super) fn implicit_owner<'a>(
         .or_else(|| iterator_dispatch::iterator_owner(owner, index).map(ImplicitOwner::Iterator))
         .or_else(|| drop_dispatch::drop_owner(owner, index).map(ImplicitOwner::Drop))
         .or_else(|| parse_dispatch::parse_owner(owner, index).map(ImplicitOwner::Parse))
+        .or_else(|| into_dispatch::into_owner(owner, index).map(ImplicitOwner::Into))
 }
 
 /// Whether `test` reaches the owner through the syntax its reading follows.
@@ -62,6 +66,9 @@ pub(super) fn test_reaches_owner(
         }
         ImplicitOwner::Parse(parse) => {
             parse_dispatch::test_parses_into_owner(test, owner, parse, test_source, index)
+        }
+        ImplicitOwner::Into(into) => {
+            into_dispatch::test_converts_into_owner(test, owner, into, test_source, index)
         }
     }
 }
