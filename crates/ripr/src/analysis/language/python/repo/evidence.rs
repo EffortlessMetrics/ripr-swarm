@@ -472,8 +472,13 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // workspace, built once here so a per-file read records the same facts:
     // src short names another source file also produces (#13745), and
     // same-named free functions in the modules tests import from (#8759).
-    let src_module_index =
-        SrcModuleIndex::build(input.production_files.iter().chain(&input.ambiguous_files));
+    let src_module_index = SrcModuleIndex::build(
+        input
+            .production_files
+            .iter()
+            .chain(&input.ambiguous_files)
+            .chain(&input.capped_source_paths),
+    );
     let rival_index = rival_definition_index(root, &input.production_files, &all_tests);
 
     for relative in &input.production_files {
@@ -1312,6 +1317,7 @@ mod tests {
             production_files: vec![PathBuf::from("missing.py")],
             test_files: Vec::new(),
             helper_files: Vec::new(),
+            capped_source_paths: Vec::new(),
             ambiguous_files: Vec::new(),
             counts: DiscoveryCounts {
                 discovered: 1,
@@ -1424,6 +1430,7 @@ mod tests {
             production_files: vec![PathBuf::from("app.py")],
             test_files: Vec::new(),
             helper_files: Vec::new(),
+            capped_source_paths: Vec::new(),
             ambiguous_files: vec![PathBuf::from("mystery.py")],
             counts: DiscoveryCounts {
                 discovered: 2,
