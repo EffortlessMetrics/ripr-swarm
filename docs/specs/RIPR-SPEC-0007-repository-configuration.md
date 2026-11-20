@@ -645,6 +645,14 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
 
+With a resolved default base, doctor reports `git_base` and names the ref.
+A shared ancestor with HEAD passes. If none is available, a shallow clone gets
+the `git fetch --unshallow` and Actions `fetch-depth: 0` repairs. For unrelated
+histories in a full clone, choose a `--base` on HEAD's history. These advisories
+keep exit 0 when other checks pass. For an origin without a default-branch
+pointer, doctor suggests `git remote set-head origin --auto`. Doctor leaves
+fetching and ref changes to the user.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text

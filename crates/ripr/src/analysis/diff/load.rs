@@ -1385,21 +1385,46 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     ))
 }
 
-/// The check-time default-base failure, for doctor: `Some(message)` when a
-/// bare `ripr check` here would stop because no default base resolves (a
-/// shallow CI checkout that fetched only its own commit, a repository whose
-/// default branch is neither `main` nor `master` and has no `origin/HEAD`).
-/// The message is the one `ripr check` prints, from the same candidate
-/// search, so doctor can never name a different base than the loader uses.
-///
-/// Callers establish first that `HEAD` resolves: a probe Git never answered
-/// reads here as "no candidate", which is only evidence once Git is known to
-/// answer for this root.
-pub(crate) fn default_base_unresolved_message(
+/// Check only fetched history and preserve the loader's repair for Git's
+/// quiet exit 1. Other failures do not establish unrelated histories.
+pub(crate) fn doctor_base_history(
     root: &Path,
-    git_timeout: Option<Duration>,
-) -> Option<String> {
-    resolve_default_base(root, git_timeout).err()
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<(), CoreError> {
+    let output = crate::git::local_merge_base(root, base, timeout)?;
+    if output.status.success() && !output.stdout.trim_ascii().is_empty() {
+        return Ok(());
+    }
+    if output.status.code() == Some(1)
+        && output.stdout.trim_ascii().is_empty()
+        && output.stderr.trim_ascii().is_empty()
+    {
+        let (diagnosis, _) = no_merge_base_diagnosis(root, base, "HEAD", timeout);
+        return Err(CoreError::message(format!(
+            "Default base `{base}` has no merge base with HEAD. {diagnosis}"
+        )));
+    }
+    let reason =
+        git_reason_line(&output.stderr).unwrap_or_else(|| "Git did not return a merge base".into());
+    Err(CoreError::message(format!(
+        "Could not verify history between `{base}` and HEAD: {reason}"
+    )))
+}
+
+pub(crate) fn origin_head_unset(root: &Path, timeout: Option<Duration>) -> bool {
+    configured_remotes(root, timeout).is_some_and(|names| names.iter().any(|name| name == "origin"))
+        && crate::git::run_git_output_with_deadline(
+            root,
+            &[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/remotes/origin/HEAD",
+            ],
+            timeout,
+        )
+        .is_ok_and(|output| output.status.code() == Some(1))
 }
 
 /// A quiet failed HEAD lookup is not enough to establish an unborn branch:

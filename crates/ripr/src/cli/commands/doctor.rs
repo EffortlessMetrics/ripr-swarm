@@ -720,9 +720,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             lines.push(compact_tilde_line(evidence));
         }
     }
-    if let Some(check) = check_named(report, "git_default_base") {
+    for check in ["git_default_base", "git_base", "git_origin_head"]
+        .into_iter()
+        .filter_map(|name| check_named(report, name))
+    {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(compact_tilde_line(evidence));
+        if check.status == output::doctor::DoctorCheckStatus::Pass {
+            lines.push(format!("✓ {}", display_text(evidence)));
+        } else {
+            lines.push(compact_tilde_line(evidence));
+        }
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(

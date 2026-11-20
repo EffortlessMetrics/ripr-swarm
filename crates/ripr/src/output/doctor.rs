@@ -253,7 +253,8 @@ impl DoctorFirstCommand {
             // can resolve; the diff-scoped first commands would all fail.
             Self::UnbornHead
         } else if report.checks.iter().any(|check| {
-            check.name == "git_default_base" && check.status == DoctorCheckStatus::Advisory
+            matches!(check.name.as_str(), "git_default_base" | "git_base")
+                && check.status == DoctorCheckStatus::Advisory
         }) && !failed_prerequisites
         {
             Self::NoDefaultBase
@@ -2089,14 +2090,29 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     // shallow CI checkout is the common case). Say so here,
                     // in the loader's own words, instead of recommending it.
                     crate::analysis::HeadRefState::Resolved => {
-                        if let Some(message) = crate::analysis::default_base_unresolved_message(
-                            root,
-                            Some(DOCTOR_TOOL_TIMEOUT),
-                        ) {
-                            report.add_advisory_check(
+                        let timeout = Some(DOCTOR_TOOL_TIMEOUT);
+                        match crate::analysis::resolve_effective_base(root, None, timeout) {
+                            Err(message) => report.add_advisory_check(
                                 "git_default_base",
                                 format!("`ripr check` has no default base here: {message}"),
-                            );
+                            ),
+                            Ok(base) => {
+                                match crate::analysis::doctor_base_history(root, &base, timeout) {
+                                    Ok(()) => report.add_check(
+                                        "git_base",
+                                        DoctorStatus::Pass,
+                                        Some(format!(
+                                            "Default base `{base}` has a merge base with HEAD."
+                                        )),
+                                    ),
+                                    Err(error) => {
+                                        report.add_advisory_check("git_base", error.to_string())
+                                    }
+                                }
+                            }
+                        }
+                        if crate::analysis::origin_head_unset(root, timeout) {
+                            report.add_advisory_check("git_origin_head", "origin/HEAD is unset. Run `git remote set-head origin --auto` to record the remote default branch.".to_string());
                         }
                     }
                     crate::analysis::HeadRefState::Unknown => {}
