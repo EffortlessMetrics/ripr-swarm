@@ -48,6 +48,7 @@
 //! so different keys land in different files and a v1 cache hit on a
 //! v0.5 entry is impossible.
 
+use super::cancellation;
 use super::facts::FileFacts;
 #[cfg(feature = "lang-python")]
 use super::language::PythonFileFactStore;
@@ -1937,6 +1938,12 @@ pub(crate) enum CacheLoad<T> {
     CorruptIgnored { reason: String },
 }
 
+type ClassifiedCacheLoad = CacheLoad<(
+    Vec<ClassifiedSeam>,
+    Option<CachedSeamLimitInfo>,
+    Vec<PathBuf>,
+)>;
+
 /// Bounded read of a classified-seam cache file (single entry, shard, or
 /// manifest). The store never publishes a file above the encoded shard
 /// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
@@ -2774,80 +2781,74 @@ impl RepoSeamFactCache {
         Self::rooted_at(dir.clone(), dir.join("sharded"), dir)
     }
 
-    /// Look up classified seams by key. Returns the seams AND the cached
-    /// `SeamLimitInfo` so the caller can surface correct `run_status` on
-    /// a cache hit. `Miss` is returned for both "no file" and "different
-    /// key"; `CorruptIgnored` carries a reason for logs.
+    /// Load the classified payload and limit metadata in cache tests.
     #[cfg(test)]
     pub(crate) fn load_classified_seams(
         &self,
         key: &RepoSeamCacheKey,
-    ) -> CacheLoad<(Vec<ClassifiedSeam>, Option<CachedSeamLimitInfo>)> {
-        match self.load_classified_seams_with_fallback(key) {
+    ) -> Result<CacheLoad<(Vec<ClassifiedSeam>, Option<CachedSeamLimitInfo>)>, String> {
+        Ok(match self.load_classified_seams_with_fallback(key)? {
             CacheLoad::Hit((seams, limit_info, _)) => CacheLoad::Hit((seams, limit_info)),
             CacheLoad::Miss => CacheLoad::Miss,
             CacheLoad::CorruptIgnored { reason } => CacheLoad::CorruptIgnored { reason },
-        }
+        })
     }
 
+    /// Look up a complete classified generation. A cancelled lookup aborts
+    /// the analysis via `Err`, separate from ordinary cache misses and
+    /// corrupt entries, which callers may recompute.
     pub(crate) fn load_classified_seams_with_fallback(
         &self,
         key: &RepoSeamCacheKey,
-    ) -> CacheLoad<(
-        Vec<ClassifiedSeam>,
-        Option<CachedSeamLimitInfo>,
-        Vec<PathBuf>,
-    )> {
+    ) -> Result<ClassifiedCacheLoad, String> {
+        cancellation::checkpoint()?;
         if !key.is_reusable() {
-            return CacheLoad::Miss;
+            return Ok(CacheLoad::Miss);
         }
-        if let Some(reason) = self.untrusted_base_reason() {
-            return CacheLoad::CorruptIgnored {
+        let untrusted = self.untrusted_base_reason();
+        cancellation::checkpoint()?;
+        if let Some(reason) = untrusted {
+            return Ok(CacheLoad::CorruptIgnored {
                 reason: reason.to_owned(),
-            };
+            });
         }
-        match self.load_single_classified_seams(key) {
+        match self.load_single_classified_seams(key)? {
             CacheLoad::Miss => self.load_sharded_classified_seams(key),
-            other => other,
+            other => Ok(other),
         }
     }
 
     fn load_single_classified_seams(
         &self,
         key: &RepoSeamCacheKey,
-    ) -> CacheLoad<(
-        Vec<ClassifiedSeam>,
-        Option<CachedSeamLimitInfo>,
-        Vec<PathBuf>,
-    )> {
+    ) -> Result<ClassifiedCacheLoad, String> {
         let path = self.entry_path(key);
-        let bytes = match read_classified_cache_file(&path) {
-            Ok(b) => b,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
-            Err(err) => {
-                return corrupt_entry(&path, format!("read failed: {err}"));
-            }
+        let bytes = read_classified_cache_file(&path);
+        cancellation::checkpoint()?;
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(CacheLoad::Miss),
+            Err(err) => return Ok(corrupt_entry(&path, format!("read failed: {err}"))),
         };
-        match codec::decode(&bytes) {
-            Ok(envelope) => {
-                if envelope.matches_key(key) {
-                    if let Err(reason) = envelope.validate_integrity() {
-                        return corrupt_entry(&path, reason);
-                    }
-                    CacheLoad::Hit((
-                        envelope.classified_seams,
-                        envelope.seam_limit_info,
-                        envelope.lexical_fallback_files,
-                    ))
-                } else {
-                    // Key collision is unlikely (16-char FNV file
-                    // names + 12 fields hashed in), but possible. Treat
-                    // as miss without failing analysis.
-                    CacheLoad::Miss
-                }
-            }
-            Err(reason) => corrupt_entry(&path, reason),
+        let envelope = codec::decode(&bytes);
+        cancellation::checkpoint()?;
+        let envelope = match envelope {
+            Ok(envelope) => envelope,
+            Err(reason) => return Ok(corrupt_entry(&path, reason)),
+        };
+        if !envelope.matches_key(key) {
+            // Two keys can hash to the same file name.
+            return Ok(CacheLoad::Miss);
         }
+        if let Err(reason) = envelope.validate_integrity() {
+            return Ok(corrupt_entry(&path, reason));
+        }
+        cancellation::checkpoint()?;
+        Ok(CacheLoad::Hit((
+            envelope.classified_seams,
+            envelope.seam_limit_info,
+            envelope.lexical_fallback_files,
+        )))
     }
 
     #[cfg(test)]
@@ -2933,44 +2934,46 @@ impl RepoSeamFactCache {
     fn load_sharded_classified_seams(
         &self,
         key: &RepoSeamCacheKey,
-    ) -> CacheLoad<(
-        Vec<ClassifiedSeam>,
-        Option<CachedSeamLimitInfo>,
-        Vec<PathBuf>,
-    )> {
+    ) -> Result<ClassifiedCacheLoad, String> {
+        cancellation::checkpoint()?;
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match read_classified_cache_file(&manifest_path) {
+        let bytes = read_classified_cache_file(&manifest_path);
+        cancellation::checkpoint()?;
+        let bytes = match bytes {
             Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(CacheLoad::Miss),
             Err(err) => {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!("read sharded manifest failed: {err}"),
-                };
+                });
             }
         };
-        let manifest = match codec::decode_sharded_manifest(&bytes) {
+        let manifest = codec::decode_sharded_manifest(&bytes);
+        cancellation::checkpoint()?;
+        let manifest = match manifest {
             Ok(manifest) => manifest,
-            Err(reason) => return CacheLoad::CorruptIgnored { reason },
+            Err(reason) => return Ok(CacheLoad::CorruptIgnored { reason }),
         };
         if !manifest.matches_key(key) {
-            return CacheLoad::Miss;
+            return Ok(CacheLoad::Miss);
         }
         if let Err(reason) = manifest.validate_integrity() {
-            return corrupt_entry(&manifest_path, reason);
+            return Ok(corrupt_entry(&manifest_path, reason));
         }
+        cancellation::checkpoint()?;
         if manifest.shards.is_empty() && manifest.total_seams != 0 {
-            return CacheLoad::CorruptIgnored {
+            return Ok(CacheLoad::CorruptIgnored {
                 reason: "sharded manifest has no shards for non-empty seam payload".to_string(),
-            };
+            });
         }
         if manifest.shard_count != manifest.shards.len() {
-            return CacheLoad::CorruptIgnored {
+            return Ok(CacheLoad::CorruptIgnored {
                 reason: format!(
                     "sharded manifest expected {} shards but listed {}",
                     manifest.shard_count,
                     manifest.shards.len()
                 ),
-            };
+            });
         }
         // The declared total rides inside the manifest's semantic digest, but
         // that digest is not writer authentication (#4382): a buggy producer
@@ -2986,100 +2989,109 @@ impl RepoSeamFactCache {
         {
             Some(shard_list_seams) => shard_list_seams,
             None => {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!(
                         "sharded manifest per-shard counts overflow the declared total {}",
                         manifest.total_seams
                     ),
-                };
+                });
             }
         };
         if shard_list_seams != manifest.total_seams {
-            return CacheLoad::CorruptIgnored {
+            return Ok(CacheLoad::CorruptIgnored {
                 reason: format!(
                     "sharded manifest declared {} seams but shard list sums to {}",
                     manifest.total_seams, shard_list_seams
                 ),
-            };
+            });
         }
 
+        cancellation::checkpoint()?;
         let mut seams = Vec::with_capacity(manifest.total_seams);
         let mut shared_grips = SharedGrips::default();
+        // Check between shards and around each byte-bounded unit's decode.
+        // A complete shard remains provisional until the generation's final check.
         for (index, shard) in manifest.shards.iter().enumerate() {
+            cancellation::checkpoint()?;
             if shard.index != index {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!(
                         "sharded manifest index mismatch at position {index}: {}",
                         shard.index
                     ),
-                };
+                });
             }
             let shard_path =
                 match resolve_sharded_cache_file(&self.sharded_entry_dir(key), &shard.file) {
                     Ok(path) => path,
-                    Err(reason) => return CacheLoad::CorruptIgnored { reason },
+                    Err(reason) => return Ok(CacheLoad::CorruptIgnored { reason }),
                 };
-            let bytes = match read_classified_cache_file(&shard_path) {
+            let bytes = read_classified_cache_file(&shard_path);
+            cancellation::checkpoint()?;
+            let bytes = match bytes {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                    return CacheLoad::CorruptIgnored {
+                    return Ok(CacheLoad::CorruptIgnored {
                         reason: format!("missing sharded cache file {}", shard_path.display()),
-                    };
+                    });
                 }
                 Err(err) => {
-                    return CacheLoad::CorruptIgnored {
+                    return Ok(CacheLoad::CorruptIgnored {
                         reason: format!("read sharded cache file failed: {err}"),
-                    };
+                    });
                 }
             };
-            let envelope = match codec::decode_shard(&bytes) {
+            let envelope = codec::decode_shard(&bytes);
+            cancellation::checkpoint()?;
+            let envelope = match envelope {
                 Ok(envelope) => envelope,
-                Err(reason) => return corrupt_entry(&shard_path, reason),
+                Err(reason) => return Ok(corrupt_entry(&shard_path, reason)),
             };
             if !envelope.matches_key(key) {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!("sharded cache key mismatch in {}", shard.file),
-                };
+                });
             }
             if let Err(reason) = envelope.validate_integrity() {
-                return corrupt_entry(&shard_path, reason);
+                return Ok(corrupt_entry(&shard_path, reason));
             }
             if envelope.sharded_cache_schema_version != manifest.sharded_cache_schema_version
                 || envelope.shard_index != shard.index
                 || envelope.shard_count != manifest.shard_count
             {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!("sharded cache metadata mismatch in {}", shard.file),
-                };
+                });
             }
             if envelope.classified_seams.len() != shard.seams {
-                return CacheLoad::CorruptIgnored {
+                return Ok(CacheLoad::CorruptIgnored {
                     reason: format!(
                         "sharded cache file {} carried {} seams but manifest expected {}",
                         shard.file,
                         envelope.classified_seams.len(),
                         shard.seams
                     ),
-                };
+                });
             }
             let mut shard_seams = envelope.classified_seams;
             share_grips_across_shards(&mut shard_seams, &mut shared_grips);
             seams.extend(shard_seams);
         }
         if seams.len() != manifest.total_seams {
-            return CacheLoad::CorruptIgnored {
+            return Ok(CacheLoad::CorruptIgnored {
                 reason: format!(
                     "sharded cache loaded {} seams but manifest expected {}",
                     seams.len(),
                     manifest.total_seams
                 ),
-            };
+            });
         }
-        CacheLoad::Hit((
+        cancellation::checkpoint()?;
+        Ok(CacheLoad::Hit((
             seams,
             manifest.seam_limit_info,
             manifest.lexical_fallback_files,
-        ))
+        )))
     }
 
     fn sharded_entry_dir(&self, key: &RepoSeamCacheKey) -> PathBuf {
@@ -6420,7 +6432,7 @@ mod tests {
                     )?;
                     assert_classified_cache_values(&cache, &previous_key, &favorable)?;
                     assert!(matches!(
-                        cache.load_classified_seams_with_fallback(&current_key),
+                        cache.load_classified_seams_with_fallback(&current_key)?,
                         CacheLoad::Miss
                     ));
                     if sharded {
@@ -6432,7 +6444,7 @@ mod tests {
                         std::fs::write(cache.entry_path(&current_key), stale)
                             .map_err(|error| error.to_string())?;
                         assert!(matches!(
-                            cache.load_classified_seams_with_fallback(&current_key),
+                            cache.load_classified_seams_with_fallback(&current_key)?,
                             CacheLoad::Miss
                         ));
                     }
@@ -6502,7 +6514,7 @@ mod tests {
                 )?;
                 seeded.validate_integrity()?;
                 assert!(matches!(
-                    cache.load_classified_seams_with_fallback(&key),
+                    cache.load_classified_seams_with_fallback(&key)?,
                     CacheLoad::Miss
                 ));
                 let corrected = vec![sample_classified(); 2];
@@ -6518,7 +6530,7 @@ mod tests {
         key: &RepoSeamCacheKey,
         expected: &[ClassifiedSeam],
     ) -> Result<(), String> {
-        let CacheLoad::Hit((actual, _, _)) = cache.load_classified_seams_with_fallback(key) else {
+        let CacheLoad::Hit((actual, _, _)) = cache.load_classified_seams_with_fallback(key)? else {
             return Err("expected an actual nonempty classified warm hit".to_string());
         };
         assert!(!actual.is_empty());
@@ -6783,11 +6795,11 @@ mod tests {
             // This is a valid checksummed same-key payload, so a miss must
             // come from admission, not missing or malformed cache bytes.
             assert!(matches!(
-                cache.load_single_classified_seams(&key),
+                cache.load_single_classified_seams(&key)?,
                 CacheLoad::Hit(_)
             ));
             assert!(matches!(
-                cache.load_classified_seams_with_fallback(&key),
+                cache.load_classified_seams_with_fallback(&key)?,
                 CacheLoad::Miss
             ));
             for result in [
@@ -6950,7 +6962,7 @@ mod tests {
             }
             // Full: one table of 2 distinct tests; sharded: each shard holds its own.
             assert_eq!(stored_tests, if limit >= seams.len() { 2 } else { 5 });
-            let CacheLoad::Hit((loaded, _, _)) = cache.load_classified_seams_with_fallback(&key)
+            let CacheLoad::Hit((loaded, _, _)) = cache.load_classified_seams_with_fallback(&key)?
             else {
                 return Err(format!("{label}: stored seams must load"));
             };
@@ -6998,7 +7010,7 @@ mod tests {
                         cache.load_classified_seams_with_fallback(&key)
                     })
                 };
-                assert!(matches!(load(), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2));
+                assert!(matches!(load()?, CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2));
                 related_test_table::take_test_reference_clones();
                 let path = if sharded {
                     let manifest = codec::decode_sharded_manifest(
@@ -7029,7 +7041,7 @@ mod tests {
                     serde_json::to_vec(&body).map_err(|err| err.to_string())?,
                 )
                 .map_err(|err| err.to_string())?;
-                match load() {
+                match load()? {
                     CacheLoad::CorruptIgnored { reason } => {
                         assert!(reason.contains("related-test reference limit"), "{reason}");
                         assert!(reason.contains(&path.display().to_string()), "{reason}");
@@ -7126,19 +7138,120 @@ mod tests {
                         10,
                     )?;
                 }
-                if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 1)
+                if !matches!(cache.load_classified_seams_with_fallback(&key)?, CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 1)
                 {
                     return Err("actual seeded classified entry must warm hit".to_owned());
                 }
                 edit_integrity_payload(&cache.entry_path(&key), field)?;
                 if !matches!(
-                    cache.load_classified_seams_with_fallback(&key),
+                    cache.load_classified_seams_with_fallback(&key)?,
                     CacheLoad::CorruptIgnored { .. }
                 ) {
                     return Err(format!(
                         "{field} edit must reject matching-key entry (compact={compact})"
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_cache_cancellation_discards_verified_prefixes() -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::time::{Duration, Instant};
+
+        for compact in [false, true] {
+            for sharded in [false, true] {
+                let scratch = integrity_scratch("classified-load-cancellation")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                let limit_info = (!compact).then_some(CachedSeamLimitInfo {
+                    analyzed: 3,
+                    total: 4,
+                    source: SeamLimitSource::Configured,
+                });
+                let mut seams = vec![sample_classified(); 3];
+                seams[1].class = SeamGripClass::WeaklyGripped;
+                seams[2].class = SeamGripClass::StronglyGripped;
+                let fallback = vec![PathBuf::from("src/foo.rs")];
+                let store_limit = if sharded { 1 } else { seams.len() };
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned();
+                    cache.store_compact_classified_seams_with_limit_and_fallback(
+                        &key,
+                        &seams,
+                        &fallback,
+                        store_limit,
+                    )?;
+                } else {
+                    cache.store_classified_seams_with_limit_and_fallback(
+                        &key,
+                        &seams,
+                        limit_info.as_ref(),
+                        &fallback,
+                        store_limit,
+                    )?;
+                }
+                assert_eq!(cache.entry_path(&key).is_file(), !sharded);
+                assert_eq!(cache.sharded_manifest_path(&key).is_file(), sharded);
+                // Establish the hit and memoize the Git trust check before
+                // applying the synthetic clock to classified loading.
+                assert_classified_cache_values(&cache, &key, &seams)?;
+
+                // The real digest counter distinguishes stopping at a verified
+                // prefix from decoding every shard and refusing only at return.
+                let total_hashes = if sharded { 4 } else { 1 };
+                for stop_after in 0..=total_hashes {
+                    INTEGRITY_WORK.with(|work| work.set((0, 0, 0)));
+                    let now = Instant::now();
+                    let budget = Duration::from_secs(1);
+                    let token = AnalysisCancellationToken::with_budget(
+                        now,
+                        budget,
+                        Arc::new(move || {
+                            if INTEGRITY_WORK.with(std::cell::Cell::get).0 >= stop_after {
+                                now + budget
+                            } else {
+                                now
+                            }
+                        }),
+                    );
+                    let result =
+                        with_token(&token, || cache.load_classified_seams_with_fallback(&key));
+                    assert_eq!(
+                        result.as_ref().err().map(String::as_str),
+                        Some("analysis cancelled: DeadlineExceeded"),
+                        "compact={compact}, sharded={sharded}, stop_after={stop_after}: {result:?}"
+                    );
+                    assert_eq!(
+                        token.observed_abort(),
+                        Some(AnalysisAbortKind::DeadlineExceeded),
+                        "compact={compact}, sharded={sharded}, stop_after={stop_after}: {result:?}"
+                    );
+                    assert_eq!(INTEGRITY_WORK.with(std::cell::Cell::get).0, stop_after);
+                }
+
+                let active = AnalysisCancellationToken::new();
+                let CacheLoad::Hit((loaded, cached_limit, cached_fallback)) =
+                    with_token(&active, || cache.load_classified_seams_with_fallback(&key))?
+                else {
+                    return Err(
+                        "valid classified cache fixture must warm hit after cancellation"
+                            .to_owned(),
+                    );
+                };
+                let to_json = |value: &[ClassifiedSeam]| {
+                    serde_json::to_value(value).map_err(|error| error.to_string())
+                };
+                assert_eq!(to_json(&loaded)?, to_json(&seams)?);
+                assert_eq!(
+                    cached_limit.map(|limit| (limit.analyzed, limit.total, limit.source)),
+                    limit_info.map(|limit| (limit.analyzed, limit.total, limit.source))
+                );
+                assert_eq!(cached_fallback, fallback);
             }
         }
         Ok(())
@@ -7155,7 +7268,7 @@ mod tests {
         if cache.entry_path(&key).exists() {
             return Err("sharded seed must lack single entry".to_owned());
         }
-        if !matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2)
+        if !matches!(cache.load_classified_seams_with_fallback(&key)?, CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2)
         {
             return Err("missing single must use complete valid shards".to_owned());
         }
@@ -7163,7 +7276,7 @@ mod tests {
         let original_manifest = std::fs::read(&manifest).map_err(|err| err.to_string())?;
         edit_integrity_payload(&manifest, "lexical_fallback_files")?;
         if !matches!(
-            cache.load_classified_seams_with_fallback(&key),
+            cache.load_classified_seams_with_fallback(&key)?,
             CacheLoad::CorruptIgnored { .. }
         ) {
             return Err("edited manifest provenance must reject complete shard set".to_owned());
@@ -7173,14 +7286,14 @@ mod tests {
         let original = std::fs::read(&shard).map_err(|err| err.to_string())?;
         edit_integrity_payload(&shard, "classified_seams")?;
         if !matches!(
-            cache.load_classified_seams_with_fallback(&key),
+            cache.load_classified_seams_with_fallback(&key)?,
             CacheLoad::CorruptIgnored { .. }
         ) {
             return Err("one semantically edited shard must reject entire set".to_owned());
         }
         std::fs::write(&shard, original).map_err(|err| err.to_string())?;
         cache.store_classified_seams_with_limit(&key, &seams, None, 10)?;
-        if !matches!(cache.load_sharded_classified_seams(&key), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2)
+        if !matches!(cache.load_sharded_classified_seams(&key)?, CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2)
         {
             return Err(
                 "alternative shards must still be valid before corrupt-single control".to_owned(),
@@ -7188,7 +7301,7 @@ mod tests {
         }
         edit_integrity_payload(&cache.entry_path(&key), "classified_seams")?;
         if !matches!(
-            cache.load_classified_seams_with_fallback(&key),
+            cache.load_classified_seams_with_fallback(&key)?,
             CacheLoad::CorruptIgnored { .. }
         ) {
             return Err("corrupt single must not hide behind valid sharded fallback".to_owned());
@@ -7206,7 +7319,7 @@ mod tests {
         for stimulus in ["declared_total", "per_shard_count"] {
             cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;
             if !matches!(
-                cache.load_sharded_classified_seams(&key),
+                cache.load_sharded_classified_seams(&key)?,
                 CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2
             ) {
                 return Err("actual seeded shard set must warm hit before minting".to_owned());
@@ -7234,7 +7347,7 @@ mod tests {
             std::fs::write(&manifest_path, codec::encode_sharded_manifest(&manifest)?)
                 .map_err(|err| err.to_string())?;
             if !matches!(
-                cache.load_sharded_classified_seams(&key),
+                cache.load_sharded_classified_seams(&key)?,
                 CacheLoad::CorruptIgnored { .. }
             ) {
                 return Err(format!(
@@ -7368,7 +7481,7 @@ mod tests {
                     };
                     write_invalid_integrity(&manifest_or_single, digest)?;
                     if !matches!(
-                        cache.load_classified_seams_with_fallback(&key),
+                        cache.load_classified_seams_with_fallback(&key)?,
                         CacheLoad::CorruptIgnored { .. }
                     ) {
                         return Err(format!(
@@ -7414,7 +7527,7 @@ mod tests {
                         )
                         .map_err(|err| err.to_string())?;
                         if !matches!(
-                            cache.load_classified_seams_with_fallback(&key),
+                            cache.load_classified_seams_with_fallback(&key)?,
                             CacheLoad::Miss
                         ) {
                             return Err(format!(
@@ -7426,7 +7539,7 @@ mod tests {
                         cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;
                         write_invalid_integrity(&cache.sharded_shard_path(&key, 1)?, digest)?;
                         if !matches!(
-                            cache.load_classified_seams_with_fallback(&key),
+                            cache.load_classified_seams_with_fallback(&key)?,
                             CacheLoad::CorruptIgnored { .. }
                         ) {
                             return Err("invalid later shard must reject whole set".to_owned());
@@ -7477,7 +7590,7 @@ mod tests {
         INTEGRITY_WORK.with(|work| work.set((0, 0, 0)));
         let start = std::time::Instant::now();
         for _ in 0..rounds {
-            match cache.load_classified_seams_with_fallback(&key) {
+            match cache.load_classified_seams_with_fallback(&key)? {
                 CacheLoad::Hit((loaded, None, fallback))
                     if loaded.len() == seams.len() && fallback.is_empty() =>
                 {
@@ -7529,7 +7642,7 @@ mod tests {
             cache.store_classified_seams_with_limit_and_fallback(
                 &key, &seams, None, &fallback, count,
             )?;
-            match cache.load_classified_seams_with_fallback(&key) {
+            match cache.load_classified_seams_with_fallback(&key)? {
                 CacheLoad::Hit((loaded, None, actual_fallback))
                     if loaded.len() == count && actual_fallback == fallback =>
                 {
@@ -7624,12 +7737,12 @@ mod tests {
         // Control: the same bytes in an untracked cache of the same work tree
         // are served, so the refusal below is caused by tracking alone.
         let untracked = RepoSeamFactCache::at_dir(cache_dir.clone());
-        if !matches!(untracked.load_classified_seams(&key), CacheLoad::Hit(_)) {
+        if !matches!(untracked.load_classified_seams(&key)?, CacheLoad::Hit(_)) {
             return Err("untracked control entry must be a hit".to_owned());
         }
         track_cache_dir(&root, &cache_dir)?;
         let tracked = RepoSeamFactCache::at_dir(cache_dir.clone());
-        let outcome = tracked.load_classified_seams_with_fallback(&key);
+        let outcome = tracked.load_classified_seams_with_fallback(&key)?;
         ignore_remove_dir_all(&root);
         match outcome {
             CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => Ok(()),
@@ -7908,7 +8021,7 @@ mod tests {
                 CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
             )
             .map_err(|err| format!("store should succeed: {err}"))?;
-        let outcome = RepoSeamFactCache::at_dir(dir.clone()).load_classified_seams(&key);
+        let outcome = RepoSeamFactCache::at_dir(dir.clone()).load_classified_seams(&key)?;
         ignore_remove_dir_all(&dir);
         match outcome {
             CacheLoad::Hit(_) => Ok(()),
@@ -7922,7 +8035,7 @@ mod tests {
         ignore_remove_dir_all(&dir);
         let cache = RepoSeamFactCache::at_dir(dir);
         let key = empty_state().cache_key();
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Miss => Ok(()),
             other => Err(format!("expected Miss on missing cache dir, got {other:?}")),
         }
@@ -7944,7 +8057,7 @@ mod tests {
                 CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
             )
             .map_err(|err| format!("store should succeed: {err}"))?;
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, limit_info)) => {
                 if loaded.len() != seams.len() {
                     Err(format!(
@@ -7995,7 +8108,7 @@ mod tests {
             )
             .map_err(|err| format!("store fallback provenance: {err}"))?;
 
-        let result = match cache.load_classified_seams_with_fallback(&key) {
+        let result = match cache.load_classified_seams_with_fallback(&key)? {
             CacheLoad::Hit((_, None, loaded_files)) => {
                 if loaded_files != fallback_files {
                     Err(format!(
@@ -8049,7 +8162,7 @@ mod tests {
             "sharded cache store should write the second shard"
         );
 
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
             other => return Err(format!("expected sharded cache hit, got {other:?}")),
         }
@@ -8136,7 +8249,7 @@ mod tests {
             .store_classified_seams_with_limit(&key, &seams, None, 2)
             .map_err(|err| format!("raised classified cache limit should allow store: {err}"))?;
 
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
             other => {
                 return Err(format!(
@@ -8209,7 +8322,7 @@ mod tests {
             !cache.entry_path(&key).exists(),
             "sharded compact cache store should not write a monolithic entry"
         );
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
             other => return Err(format!("expected compact sharded cache hit: {other:?}")),
         }
@@ -8233,7 +8346,7 @@ mod tests {
         std::fs::remove_file(cache.sharded_shard_path(&key, 1)?)
             .map_err(|err| format!("remove shard fixture: {err}"))?;
 
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::CorruptIgnored { reason } => {
                 assert!(
                     reason.contains("missing sharded cache file"),
@@ -8263,7 +8376,7 @@ mod tests {
             .store_compact_classified_seams_with_limit(&key, &seams, 2)
             .map_err(|err| format!("raised compact cache limit should allow store: {err}"))?;
 
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
             other => {
                 return Err(format!(
@@ -8314,7 +8427,7 @@ mod tests {
         if original_key.files_content_hash == new_key.files_content_hash {
             return Err("different file content must produce different files_content_hash".into());
         }
-        let result = match cache.load_classified_seams(&new_key) {
+        let result = match cache.load_classified_seams(&new_key)? {
             CacheLoad::Miss => Ok(()),
             other => Err(format!(
                 "expected Miss after file content change, got {other:?}"
@@ -8904,7 +9017,7 @@ mod tests {
         let path = cache.entry_path(&key);
         let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
         std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::CorruptIgnored { reason } => {
                 if reason.contains("exceeds") {
                     Ok(())
@@ -8933,7 +9046,7 @@ mod tests {
         let path = cache.entry_path(&key);
         std::fs::write(&path, b"{not valid json")
             .map_err(|err| format!("write corrupt entry: {err}"))?;
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::CorruptIgnored { reason } => {
                 if !reason.contains("decode failed") {
                     Err(format!(
@@ -8982,7 +9095,7 @@ mod tests {
         let bytes = codec::encode(&envelope)?;
         std::fs::write(cache.entry_path(&key_b), bytes)
             .map_err(|err| format!("write under wrong filename: {err}"))?;
-        let result = match cache.load_classified_seams(&key_b) {
+        let result = match cache.load_classified_seams(&key_b)? {
             CacheLoad::Miss => Ok(()),
             other => Err(format!(
                 "expected Miss when envelope key mismatches request, got {other:?}"
@@ -9416,7 +9529,7 @@ mod tests {
             )
             .map_err(|err| format!("store with limit_info should succeed: {err}"))?;
 
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((loaded, loaded_limit)) => {
                 if loaded.len() != seams.len() {
                     Err(format!(
@@ -9489,7 +9602,7 @@ mod tests {
         let rewritten = serde_json::to_vec(&json_val).map_err(|err| format!("re-encode: {err}"))?;
         std::fs::write(&entry_path, rewritten).map_err(|err| format!("rewrite: {err}"))?;
 
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((_, limit_info)) => {
                 if limit_info.is_some() {
                     Err(format!(
@@ -9522,7 +9635,7 @@ mod tests {
             )
             .map_err(|err| format!("store complete: {err}"))?;
 
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((_, None)) => Ok(()),
             CacheLoad::Hit((_, Some(info))) => Err(format!(
                 "complete run should return None limit_info, got analyzed={} total={}",
@@ -10371,7 +10484,7 @@ mod generation_transition_tests {
         let mut current_key = previous_key.clone();
         current_key.schema_version = CACHE_SCHEMA_VERSION.to_string();
         assert_ne!(previous_key.schema_version, current_key.schema_version);
-        match cache.load_classified_seams_with_fallback(&current_key) {
+        match cache.load_classified_seams_with_fallback(&current_key)? {
             CacheLoad::Miss => {}
             other => {
                 return Err(format!(
@@ -10379,7 +10492,7 @@ mod generation_transition_tests {
                 ));
             }
         }
-        match cache.load_classified_seams_with_fallback(&previous_key) {
+        match cache.load_classified_seams_with_fallback(&previous_key)? {
             CacheLoad::Hit(_) => {}
             other => {
                 return Err(format!(
@@ -10680,7 +10793,7 @@ mod generation_transition_tests {
                 None,
                 CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
             )?;
-            match cache.load_classified_seams_with_fallback(&other_build_key) {
+            match cache.load_classified_seams_with_fallback(&other_build_key)? {
                 CacheLoad::Hit(_) => {}
                 other => {
                     return Err(format!(
@@ -10688,7 +10801,7 @@ mod generation_transition_tests {
                     ));
                 }
             }
-            match cache.load_classified_seams_with_fallback(&current_key) {
+            match cache.load_classified_seams_with_fallback(&current_key)? {
                 CacheLoad::Miss => {}
                 other => {
                     return Err(format!(

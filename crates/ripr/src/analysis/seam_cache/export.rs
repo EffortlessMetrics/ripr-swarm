@@ -135,7 +135,7 @@ fn copy_classified(
         relocated(&cache.sharded_dir, source, &report.cache_dir)?,
         report.cache_dir.clone(),
     );
-    match copied.load_classified_seams_with_fallback(key) {
+    match copied.load_classified_seams_with_fallback(key)? {
         CacheLoad::Hit(_) => {
             report.classified_entries += 1;
             Ok(true)
@@ -623,10 +623,10 @@ mod tests {
                 fixture.output.clone(),
             );
             assert!(
-                matches!(copied.load_classified_seams_with_fallback(&fixture.key), CacheLoad::Hit((seams, _, _)) if seams.len() == 2)
+                matches!(copied.load_classified_seams_with_fallback(&fixture.key)?, CacheLoad::Hit((seams, _, _)) if seams.len() == 2)
             );
             assert!(matches!(
-                copied.load_classified_seams_with_fallback(&historical),
+                copied.load_classified_seams_with_fallback(&historical)?,
                 CacheLoad::Miss
             ));
         }

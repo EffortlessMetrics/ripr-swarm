@@ -150,7 +150,7 @@ fn same_generation_classified_builds_coexist_without_replaying_each_other() -> R
                 // a file is absent or its payload digest is invalid.
                 copy_entry(&cache, &previous_key, &key, sharded)?;
                 assert!(matches!(
-                    cache.load_classified_seams_with_fallback(&key),
+                    cache.load_classified_seams_with_fallback(&key)?,
                     CacheLoad::Miss
                 ));
                 previous_rows.push((previous_key, previous));
@@ -182,7 +182,7 @@ fn same_generation_classified_builds_coexist_without_replaying_each_other() -> R
                 )
                 .map_err(|error| error.to_string())?;
                 assert!(
-                    matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::CorruptIgnored { reason } if reason.contains("sharded cache key mismatch"))
+                    matches!(cache.load_classified_seams_with_fallback(&key)?, CacheLoad::CorruptIgnored { reason } if reason.contains("sharded cache key mismatch"))
                 );
                 store(&cache, &key, &corrected, compact, sharded)?;
                 assert_warm(&cache, &key, &corrected)?;
@@ -215,7 +215,7 @@ fn assert_warm(
     key: &RepoSeamCacheKey,
     expected: &[ClassifiedSeam],
 ) -> Result<(), String> {
-    let CacheLoad::Hit((actual, _, _)) = cache.load_classified_seams_with_fallback(key) else {
+    let CacheLoad::Hit((actual, _, _)) = cache.load_classified_seams_with_fallback(key)? else {
         return Err("expected nonempty warm hit".to_owned());
     };
     assert!(!actual.is_empty());

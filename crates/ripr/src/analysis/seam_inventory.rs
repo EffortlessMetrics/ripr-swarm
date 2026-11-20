@@ -535,10 +535,7 @@ fn inventory_classified_seams_report_collect(
             collect_started.elapsed(),
         );
         let cache_started = Instant::now();
-        // Cooperative cancellation (#1972): a superseded or
-        // deadline-expired refresh stops before the cache load path.
-        cancellation::checkpoint()?;
-        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
+        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)?) {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -608,10 +605,7 @@ fn inventory_classified_seams_report_collect(
         &format!("start_files_{}", state.files.len()),
         Duration::ZERO,
     );
-    // Cooperative cancellation (#1972): a superseded or deadline-expired
-    // refresh stops before the post-collect cache load.
-    cancellation::checkpoint()?;
-    match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
+    match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)?) {
         CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
             trace_latency_phase("cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -1172,7 +1166,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     // key from the corpus fingerprint store when the signature is unchanged.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         let cache_started = Instant::now();
-        match cache.load_classified_seams_with_fallback(&key) {
+        match cache.load_classified_seams_with_fallback(&key)? {
             CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
@@ -1211,7 +1205,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         &mut FileFactCacheStats::zero_work(),
     );
     let cache_started = Instant::now();
-    match cache.load_classified_seams_with_fallback(&key) {
+    match cache.load_classified_seams_with_fallback(&key)? {
         CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
             trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
@@ -8984,15 +8978,19 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     }
 
     /// Whether that entry point's own cache holds an entry under `key`.
-    fn stored_inventory_entry(path: &str, root: &Path, key: &RepoSeamCacheKey) -> bool {
-        match path {
+    fn stored_inventory_entry(
+        path: &str,
+        root: &Path,
+        key: &RepoSeamCacheKey,
+    ) -> Result<bool, String> {
+        Ok(match path {
             "full" => matches!(
-                RepoSeamFactCache::at(root).load_classified_seams_with_fallback(key),
+                RepoSeamFactCache::at(root).load_classified_seams_with_fallback(key)?,
                 CacheLoad::Hit(_)
             ),
             "compact" => matches!(
                 RepoSeamFactCache::at_compact_classified(root)
-                    .load_classified_seams_with_fallback(key),
+                    .load_classified_seams_with_fallback(key)?,
                 CacheLoad::Hit(_)
             ),
             "counts" => matches!(
@@ -9000,7 +8998,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 CacheLoad::Hit(_)
             ),
             _ => false,
-        }
+        })
     }
 
     #[test]
@@ -9045,7 +9043,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 }
             }
             for key in [&original_key, &edited_key] {
-                if stored_inventory_entry(path, &root, key) {
+                if stored_inventory_entry(path, &root, key)? {
                     return Err(format!("{path}: a refused build must store no entry"));
                 }
             }
@@ -9053,7 +9051,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // Control: the same workspace, unmoved, completes and stores.
             run_inventory_path(path, &root, &config)?;
             if matches!(path, "full" | "compact" | "counts")
-                && !stored_inventory_entry(path, &root, &edited_key)
+                && !stored_inventory_entry(path, &root, &edited_key)?
             {
                 return Err(format!("{path}: an unmoved build must store its entry"));
             }
@@ -9717,7 +9715,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
         // Write the entry the way pre-fix code did: through the real store.
         cache.store_classified_seams_with_limit_and_fallback(&key, &failed, None, &[], 20_000)?;
-        let loaded = cache.load_classified_seams_with_fallback(&key);
+        let loaded = cache.load_classified_seams_with_fallback(&key)?;
         if !matches!(loaded, CacheLoad::Hit(_)) {
             return Err("fixture must persist the stand-in entry".into());
         }
@@ -9733,7 +9731,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             return Err("the rerun must recompute real evidence, not replay the stand-in".into());
         }
         // Control: the recomputed (valid) entry now replaces it and hits.
-        let control = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key));
+        let control = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)?);
         let _ = std::fs::remove_dir_all(&root);
         match control {
             CacheLoad::Hit((seams, ..)) if seams.len() == rerun.len() => Ok(()),
@@ -10057,7 +10055,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             let compact_cache = RepoSeamFactCache::at_compact_classified(&root);
             for cache in [&full_cache, &compact_cache] {
                 assert!(matches!(
-                    cache.load_classified_seams_with_fallback(&key),
+                    cache.load_classified_seams_with_fallback(&key)?,
                     CacheLoad::Hit(_)
                 ));
                 cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
@@ -13055,7 +13053,7 @@ marker = "libtest_mimic::Trial"
             .map_err(|err| format!("store capped cold run: {err}"))?;
 
         // Warm load (same key) must return the limit_info, NOT None.
-        let result = match cache.load_classified_seams(&key) {
+        let result = match cache.load_classified_seams(&key)? {
             CacheLoad::Hit((_, warm_limit)) => match warm_limit {
                 None => Err(
                     "warm cache hit after capped cold run must return Some(limit_info), \
