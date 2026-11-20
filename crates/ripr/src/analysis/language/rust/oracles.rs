@@ -261,8 +261,8 @@ impl<'a> PropertyMacroMentionIndex<'a> {
         self.known_package(relative)
     }
 
-    /// A different known Cargo manifest cannot supply this package's local
-    /// binary invocation witness. Preserve the unresolved hint when either
+    /// A test from a different known manifest cannot supply a local
+    /// inspection pointer. Preserve the unresolved hint when either
     /// identity is missing or comes from the manifestless directory fallback.
     pub(super) fn subprocess_package_filter(
         &self,

@@ -22,8 +22,9 @@ when an integration test contains either a `Command::new` invocation using
 `cargo_bin(...)` invocation with an assertion/output/status observation.
 
 When retained manifest identities place the integration test and changed owner
-in different packages, the test cannot supply this limitation or its source
-pointer. Unknown package identity retains the existing unresolved behavior.
+under different Cargo manifests, ripr omits that test’s inspection pointer.
+The invocation still supports the unresolved limitation. Unknown package
+identity retains the existing unresolved behavior.
 
 The recognizer is source-only and deterministic. It does not spawn a process,
 parse arbitrary shell commands, infer a binary target map, or credit the test as
@@ -31,8 +32,9 @@ reaching any owner.
 
 ## Required Evidence
 
-The emitted limitation must identify the changed owner and the deterministic
-integration-test location. Its evidence must state that the executable-to-owner
+The emitted limitation must identify the changed owner. When an eligible
+integration-test location is available, include the deterministic inspection
+pointer. Its evidence must state that the executable-to-owner
 mapping is unresolved and that no subprocess reach, receipt, coverage, or repair
 claim is made.
 
