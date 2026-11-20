@@ -2445,6 +2445,68 @@ fn with_locked_rust_dir(
     result
 }
 
+/// Review guidance needs the full corpus for owner attribution.
+#[cfg(unix)]
+#[test]
+fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let scratch = Scratch::new("review-unreadable")?;
+    let root = plain(&scratch, "review")?;
+    let args = [
+        "review-comments",
+        "--base",
+        "main",
+        "--head",
+        "HEAD",
+        "--out",
+    ];
+    let run = |out| {
+        let mut argv = args.to_vec();
+        argv.push(out);
+        ripr(&root, &argv, &[])
+    };
+    let control = run("target/control/comments.json")?;
+    assert_sane(&control, "readable review-comments")?;
+    assert_eq!(control.code, Some(0), "{}", control.stderr);
+    assert!(root.join("target/control/comments.json").is_file());
+
+    let dir = root.join("src/unchanged");
+    fs::DirBuilder::new()
+        .mode(0)
+        .create(&dir)
+        .map_err(|e| e.to_string())?;
+    match fs::read_dir(&dir) {
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(e) => return Err(format!("unexpected fixture error: {e}")),
+    }
+    let refused = run("target/limited/comments.json")?;
+    assert_sane(&refused, "review-comments with unreadable directory")?;
+    assert_eq!(refused.code, Some(2), "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("evidence is incomplete"),
+        "{}",
+        refused.stderr
+    );
+    let json = fs::read(root.join("target/limited/run-receipt.json")).map_err(|e| e.to_string())?;
+    let receipt: serde_json::Value = serde_json::from_slice(&json).map_err(|e| e.to_string())?;
+    assert_eq!(receipt["status"], "failed");
+    let limitations = receipt["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        limitations
+            .iter()
+            .any(|entry| entry["category"] == "language_scope_unsupported"
+                && entry["repair_route"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("src/unchanged"))),
+        "{receipt}"
+    );
+    assert!(!root.join("target/limited/comments.json").exists());
+    Ok(())
+}
+
 /// `--format repo-exposure-json` skips the unreadable directory, keeps
 /// analyzing and reads `limited_seam_evidence`, never `complete`, naming the
 /// path through the existing `limitations[]` entry (#13624).

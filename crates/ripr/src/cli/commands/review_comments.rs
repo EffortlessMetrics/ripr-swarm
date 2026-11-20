@@ -209,7 +209,17 @@ fn record_review_comments_error(
     phase: &str,
     error: String,
 ) -> String {
-    receipt.failed(phase, &error);
+    record_review_comments_failure(receipt, receipt_path, phase, "analysis_failed", error)
+}
+
+fn record_review_comments_failure(
+    receipt: &mut ReviewCommentsReceiptRun,
+    receipt_path: &Path,
+    phase: &str,
+    category: &'static str,
+    error: String,
+) -> String {
+    receipt.failed(phase, category, &error);
     match receipt.write_atomic(receipt_path) {
         Ok(()) => error,
         Err(receipt_error) => {
@@ -799,7 +809,13 @@ fn review_comments_with_admission(
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "language_facts")
         } else {
-            record_review_comments_error(&mut receipt, &receipt_path, "language_facts", error)
+            record_review_comments_failure(
+                &mut receipt,
+                &receipt_path,
+                "language_facts",
+                error.category,
+                error.detail,
+            )
         }
     })?;
     let payload_bytes = corpus_payload
