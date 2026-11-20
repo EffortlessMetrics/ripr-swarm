@@ -1730,6 +1730,277 @@ entries below are the complete record.
   ungripped, missing discriminators) and the `ripr repair` next step after the
   `Wrote` lines, so a first run shows the result instead of only file paths.
   The written reports are unchanged. (#13272)
+- TypeScript checks: cache owner extraction across runs in one process (#10044, #10049).
+- TypeScript checks: one cached phase-2 parse per changed file (#10051, #10064).
+- TypeScript checks: cache per-file export facts for the re-export index (#10063, #10067).
+- TypeScript checks: parse each file once per save instead of up to four times (#10078).
+- LSP: cache the worktree-diff git origin across saves (#10083, #10085).
+- LSP: cache default-base worktree origins behind a re-derived selection (#10100).
+- TypeScript checks: hash and scan each changed source once per check (#10198).
+- TypeScript checks: compare owner paths without normalizing every workspace file (#10283).
+- TypeScript checks: per-line owner normalization and clone-free owner memo (#10300).
+- `ripr agent review-summary` when analysis and receipt are unavailable now says "Review incomplete: analysis outcome and repair receipt are unavailable." instead of movement/outcome jargon (#10696).
+- TypeScript checks: enumerate the relation-index candidates once per owner for both named-limitation scans instead of twice (#10925).
+- LSP: name the missing check in a weak finding's Problems text (#11211).
+- JSON refusals: `ripr check` refusal documents carry `status: "refused"` and `error {code, message, next}` (a completed run, including a bounded `limited_partial_scope` run, carries neither). Under an explicit JSON request, an unknown command, unknown argument, unrecognized value from the CLI's shared value builder, `explain --format json`, and a `context` selector miss or ambiguity write a minimal `cli_refusal` document. Other argv errors (a flag missing its value, a malformed value, conflicting flags) still keep empty stdout (#11584, #6834).
+- Rust checks: a test module that defines a `macro_rules!` wrapper and calls it many times no longer re-walks the module for every call; a one-line edit check on `rust-lang/regex` drops from about 2.1 s to 1.3 s with identical findings (#11613).
+- `ripr first-pr` no longer ends in "no actionable gap / stop" when current review cards place a weak finding with no machine repair start on a changed line; it hands over one `ripr check --root ... --base ... --format human-full` command that shows the missing check for each. `first-pr --check` now fails (blocked) for such a PR instead of passing as no-action (#11720).
+- `ripr cache`: prune stale file-fact schema directories after a successful store (#11873).
+- Python `ripr explain` / `check --human-full`: the recommended Next step now precedes the repair card's reference detail, and the Weakness list no longer restates a missing discriminator its own sentence already carries (#11926).
+- JSON refusals: under an explicit JSON request (`--json` or a JSON `--format`), a value flag with nothing after it (`ripr check --json --base`) and a malformed number (`--timeout zz`, `--top 0`) now write the same minimal `cli_refusal` document as an unknown flag, with code `missing_value` (token: the flag) or `invalid_value` (token: the typed value) and a `next` help command for that command path. Before, stdout was empty and the cause was only on stderr. Exit code `2` and the stderr sentence are unchanged, and without a JSON request stdout stays empty. A missing required flag (`requires --X`) and values refused by a command's own parser still keep empty stdout (#11979).
+- `ripr agent brief --max-seams 11` now reads `--max-seams takes at most 10; pass a whole number from 1 to 10, got "11"`, naming the value you typed like the other numeric refusals (#8835).
+- A finding retargeted from a changed `let` onto its predicate uses now names
+  the changed `let` declaration in its `binding_predicate_relation` evidence
+  (`changed \`let x\` declared at line N`), so the reader can connect the
+  unchanged predicate line to the changed binding and initializer; seeding is
+  unchanged (#12118).
+- An integration test that imports a library function through one test-crate
+  module that `pub use`s a library module (`use self::<module>::<path>::<entry>;`)
+  is credited as reaching it when the resolver resolves the hop; aliased,
+  shadowed and cyclic routes stay uncredited (#9971, #12387).
+- Rust checks: bounded Bolero runner-to-property evidence profile (#10758, #12640).
+- When `ripr repair` asks you to pick an item, each candidate shows its
+  location beside the id (`id (file:line)`), and the retry line uses an
+  `<item-id>` placeholder instead of `<seam-id>` (#9006, #12692).
+- Rust checks: a `no_static_path` finding on a function nothing in the workspace names now says `(unreferenced in workspace)` on its reach line, and the verdict corpus scores it as a gap instead of an abstention (abstention 0.383 to 0.367, #12766).
+- Python checks: emit no probe for no-op docstring/comment-only changes (#1279, #1281).
+- Python checks: withhold empty-delta operand fallback for value-family changes (#1278, #1286).
+- Python checks: gate empty-delta operand fallback on a precise control-flow check (#1288, #1293).
+- Python checks: emit no probe for annotation-only def changes (#1289 partial) (#1294).
+- `review-comments`, the generated advisory workflow, `ripr gate check` and `reports ci-packet` now run on large workspaces with default settings. Callers that pass their own `--timeout-ms` or ceiling keep those values. The index ceiling rose from 1,200 to 5,000 files and the default `--timeout-ms` from 120 s to 600 s, matching `ripr check`. On ripr-swarm (2,646 indexed files), diffs of 3 to 238 files complete in 43 to 381 s at under 1.9 GB peak, where the old defaults refused or timed out (#12940).
+- Rust checks: memoize the closure-argument-position and invoked-callback syntax reads of the helper-credit pass within one run, so overlapping index builds skip re-parsing the same test and helper bodies (#12947).
+- Repository evidence builds each test's related-test context facts in
+  parallel chunks, then fills the shared lookup tables in test order, so a
+  cold check of a large workspace spends less time preparing evidence with
+  identical output (#12947).
+- Rust checks: the workspace `const`/`static` table that owner-pin reads parses its files over the rayon pool when it is built off the pool, as in the single-seam review stage of a cold `ripr check`, instead of parsing the whole corpus on one thread. Output is unchanged (#12947).
+- Rust checks: the helper-credit index pass now parses the test and helper bodies it reads on the rayon pool ahead of its serial fold, holds a run memo of its own when the caller has none (the review-stage workspace index), and memoizes the same-file assertion-macro scan within a run, so overlapping index builds no longer parse those bodies one at a time on the analysis thread. Credit decisions and output are unchanged (#12947).
+- Rust checks: the withheld indirect-owner pass skips parsing a test body that never mentions the owner's name, so a large diff no longer re-parses every test for each withheld probe; findings are unchanged (#12947).
+- Human and editor text says "check" where it said "discriminator". The
+  boundary reason now reads `Related tests contain input values, but the
+  equality-boundary check is missing`, the fallback reads `static evidence
+  names no concrete missing check`, and missing-value entries read `Missing
+  check value: <value>` instead of `Missing discriminator value: <value>`.
+  The same strings appear in `ripr check --format json` and in LSP hover, so
+  a script or test that matches the old wording needs the new one. Field
+  names such as `missing_discriminators` are unchanged (#12963, #12992).
+- Python checks: require observing the changed key for a dict-literal change (#1290 Class A) (#1297).
+- Python checks: dict-element gate must not treat f-strings as dict literals (#1290 follow-up) (#1298).
+- Rust checks run the macro-generated-test, proptest, local-empty-macro and
+  withheld-routing per-file parses in parallel (order preserved), reuse the
+  cached index within a run for an identical file set, and report the diff
+  admission and main-index stages through `RIPR_REPO_EXPOSURE_LATENCY_TRACE`
+  (#12947, #12985).
+- Python checks: require observing the changed index for a list-literal change (#1290 Class A list) (#1299).
+- Rust checks extend the same-run admission core when dependents are admitted
+  without rebuilding the whole main index, and compute production-role helper
+  file answers once per file (#12947, #12999).
+- Python checks: don't credit a length-invariant f-string change seen only via len() (#1290 Class A 1b) (#1302).
+- `ripr init --mcp` (and `--agents cursor --mcp`) now writes `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}` in the generated ripr MCP entry, cutting about 29 KB (roughly 60%) from the `tools/list` every agent session pays at start; results are unchanged and deleting the line restores the full listing (#13050).
+- Python checks: a raise/error-path change requires an exception oracle (#1290 Class C) (#1306).
+- `--format agent` output prints more gap lines on a larger report: 5,
+  plus one more per 8 gaps, up to 10, where it always stopped at 5. `+M more
+  gaps not shown` still states the exact remainder, and the `open=` list of
+  unconfirmed findings stays at 5 lines (#13089).
+- Python checks: harden the f-string len-aggregate gate — pure-len only + fail open (#1290 1b) (#1309).
+- MCP: a base-less empty-scope `ripr_refresh` hint now names `{"base": "HEAD~1"}` as the last-commit retry (`pass_base_last_commit`) instead of leaving the agent with only an `origin/main` example (#13096).
+- A classified repo-wide run now also stores the compact cache family, so a
+  following `repo-exposure-summary-json` run on the same workspace loads warm
+  instead of re-deriving every seam. A capped run stores nothing in the
+  compact family, which stays a complete inventory. Stdout documents are
+  unchanged; a `ripr cache export` of one current key now carries three
+  recognized entries (classified, compact and file facts) where it carried
+  two (#13110).
+- Python checks: avoid exposed credit when a changed default is explicitly bypassed (#1316).
+- `ripr review-comments` no longer evaluates second-stage caller-file seams
+  that cannot be selected once a first-stage seam has matched, which is where
+  a small diff on a large workspace spent its budget before timing out.
+  Selection, warnings and omission counts are the same. One reported number
+  changes: `classified_seams_considered` in the `analysis_scope` section, and
+  the canonical-analysis progress count, now count evaluated seams, so they
+  are smaller when seams are skipped (#13174).
+- Python checks: harden trap-45 gate per review — comments, structured discriminator, exact assertions (#1318).
+- An attempt that follows a new-test proposal now finishes only with a caller-reported `--test-result` that counted a test and failed none. Attempts that follow an existing test target keep the result optional, and `ripr continue` and the printed `--phase after` commands still do not pass the flag; an inline proposal also needs a passing test whose name was absent from the file when the attempt began (#13203).
+- MCP: resource payloads (`ripr://workspace/status` and every resource template) now serialize their document text compact, the same encoding tool results already use, instead of pretty-printing it; the structured document is unchanged and tool/resource equivalence (#7145) stays pinned over the parsed document. This is an output-contract change for clients that read the raw resource text bytes; parsed-JSON consumers are unaffected (#13209).
+- Python checks: emit no probe for module-scope annotation-only variable changes (#1289, #1322).
+- Plain `ripr status` human output — the quickstart's polling surface — now prints a one-line host shell-boundary note before the emitted command instead of the full Windows shell-quoting essay (1,610 of 2,202 chars, 73%) on every poll; the global `-v`/`--verbose` flag restores the full disclosure, and `--json` is unchanged (#13242).
+- A private crate-root glob such as `use colored::*` no longer withholds
+  assertion credit from descendant tests when the import cannot reach them;
+  ambiguous imports and unresolved composition still retain the refusal (#13269).
+- Docs: the QUICKSTART CLI First Hour now reads run `ripr check`, what you see (a checked excerpt), what to do next, then a marked reference subsection holding the stderr progress rules, glossary, schema-value mapping, and JSON/agent handling; `ripr_public_guide_contract` pins the result-before-mechanism order (#13323).
+- A seam-evidence pass whose shared-table warm failed can now describe the
+  failure as one bounded, pass-wide `producer_failure` limitation (affected
+  seam and file counts plus a capped path sample, no causing file named),
+  replacing the test-only per-file form. No output reads it yet; stage
+  summaries and `opaque` classification are unchanged. (#13340)
+- The LSP actionable profile now adds a passive Hint row at each changed line of a Python or TypeScript file whose preview findings it withholds (for example `preview python: no_static_path for ..., not an actionable gap`), bounded by the existing marker cap and carrying no finding id, repair or actionability data, so the editor says which change lacks a test instead of only a count. (#13442)
+- `ripr check --format agent` now ends with a `verify=complete|...` or
+  `verify=refused|...|reason=` record projected from the producer outcome and
+  full summary counts (refusing when untracked source in a language enabled
+  for the run was excluded from the diff; gitignored source stays disclosed
+  but does not refuse), and the generated agent loop (`ripr init --agents`)
+  verifies from that same compact report instead of `--format json-compact`
+  (#13516).
+- Diff analysis: an added dependent file that only mentions `include!` in a comment or string, or whose `include!` cannot become an edge, no longer forces the dependent-scope index to be rebuilt from scratch (#13577).
+- Seam evidence: the test-body `let` scan behind expected-operand reads runs once per body and name per run (#13577).
+- The bare-name shadow check behind seam evidence no longer rescans each naming test's body once per (seam, test, oracle) ask: the item-syntax prefilter and its readability parse run once per distinct body and owner name per run, and the per-thread clean-parse memo hashes bodies with a word-at-a-time hasher instead of SipHash. On a diff that touches a large file this removes most of the repeated body scans. Output is unchanged (#13577).
+- A diff that touches a large file no longer re-masks and rescans that whole file for every candidate same-file helper of every probe: the module-nesting table behind the same-file helper and const-reader scope checks is built once per distinct source text per run, and the other-caller scan names the owner before it compares related-test paths. Output is unchanged (#13577).
+- A diff that touches several free functions in one file no longer rescans every workspace source once per overlapping reach index: the identifier and free-function naming tallies behind unseen-reach, and the call-making-closure check of the helper-credit pass, are computed once per distinct source text per run and reused by each later index build. Output is unchanged (#13577).
+- TypeScript checks: reach a module-level non-function `const` (regex, string, symbol, lookup object) through the same-module function that reads it, so a changed `const` read only by a tested function reads `static_unknown` instead of a false `no_static_path` (#13592).
+- `ripr check --format agent` no longer lists static-limited findings as `missing=-` records when a run has no test-side gap: those lines named nothing to fix. The report is now the header, `stop=`, `limits=` and the `next=ripr explain` drill-in, and only a limited finding with a concrete discriminator keeps a record. This narrows the per-finding records added in #13238 (#13594).
+- Python doctor: probe `python -m pytest` (the command the verify route prints) from a private empty directory instead of a standalone `pytest` binary, warn when pytest is not importable, and hint at activating a project `.venv`/`venv` that has pytest when PATH `python` lacks it (#13617, #13799).
+- `ripr.collectRepairPacket` with no packet on disk now points at
+  `ripr check --root .` and the repair start it prints (`ripr repair <id>`
+  for Rust) for the current change, instead of the whole-repo `ripr pilot`
+  and gap-ledger recipes (#13636).
+- An oversized diff no longer stops `ripr check` with `diff_scope_oversized`. When the changed lines exceed a Rust, Python or TypeScript limit, ripr now analyzes a bounded subset of the files that fit as a `limited_partial_scope` run and names the uninspected rest. A single file larger than its language's limit is left out and listed in `over_limit_files`. The run refuses only when no changed file fits. Exit status changes with this: outside a blocking gate, such a diff used to exit 2 and now exits 0 with the partial result, so a CI step that relied on the refusal should read `analysis_scope.gate_eligibility` (`ineligible` on every partial run) or use a blocking `RIPR_GATE_MODE`, which still fails closed on a partial result (#13641).
+- CLI help: drop internal issue numbers from help text; a test keeps the generated CLI reference in step with the binary (#13653).
+- `ripr check`: hidden rows that can start a test now print their test id plus one shared `ripr agent stub ... --seam-id TEST_ID` command instead of a full command per row (#13673).
+- `ripr agent brief --json`: hidden seams that share an omission reason share one warning sentence (`seams A at f:l, B at f:l are ...`); a single hidden seam keeps its wording (#13673).
+- `ripr agent brief --json` (schema `0.2`) states the before/after snapshot
+  commands once under `next` instead of repeating them in every top seam's
+  `verification` block, and drops the per-seam `verify_command` (identical to
+  `next.verify_after_edit`). `verification.suggested_test_command` is
+  unchanged. Readers of `top_seams[].verification.{before,after}_snapshot_command`
+  and `verify_command` should read `next.*` (#13673).
+- `ripr check --format json-terse` also codes repeated `related_tests[].oracle`
+  and `related_tests[].why` strings through `evidence_legend`. An oracle line
+  shares the code of the identical `assertion_texts` value. On the five-gap
+  budget fixture the terse document drops from 43,565 to 40,612 bytes, and its
+  ceiling is lowered from 45,000 to 42,500 (#13673).
+- `--format json-terse` now codes repeated `ripr.<stage>.summary` strings
+  through `evidence_legend`, sharing the code of the identical `evidence`
+  entry they usually repeat. On a four-finding `dtolnay/semver` diff this
+  cuts the terse document from 18,288 to 16,972 bytes. Stage `state` and
+  `confidence` stay verbatim and `--format json` is unchanged (#13673,
+  #14308).
+- `ripr check --format json-terse` emits each repeated related-test row core
+  (name, file, line, oracle, oracle kind and strength) once in a
+  document-level `related_test_table`. Rows reference it by `table_row` and
+  keep their per-finding relation fields. On the five-gap budget fixture the
+  terse document drops from 40,612 to 36,684 bytes, and its ceiling is lowered
+  from 42,500 to 38,500 (#13673).
+- `ripr check --format json-terse` omits each finding's top-level `observed_values` and `missing_discriminators` when they repeat its `activation` block, and lists them in `dropped_aliases`; full `json` is unchanged (#13673).
+- `ripr check --format json-terse` also omits each finding's `canonical_gap_id` (same as `canonical_gap.id`) and basis-free `evidence_stages` rows (restatable from `ripr`), listing them in `dropped_aliases`; the 5-gap fixture shrinks about 6% more and full `json` is unchanged (#13673).
+- Internal: Kani proofs now cover how the diff parser maps hunk body lines to old/new line coordinates and the remaining-count accounting that decides whether a hunk body disagrees with its header (#13681).
+- `ripr pilot` is faster on large workspaces: an enum's declaring file is
+  decided once per index rather than on every seam and test admission, and
+  the transitive-caller walk uses the prebuilt reverse call map. Measured on
+  a release build with 15 files edited, pilot on bevy went from a partial
+  result at its 275 s budget to a complete one in about 56 s, and on a polars
+  shallow clone from partial at 275 s to complete in about 40 s. On polars
+  the cold artifacts are byte-identical to the previous build given an
+  unlimited budget (#13686).
+- A bare `ripr repair` whose selection is not narrowed to your change now says so when it offers a menu or starts a repair, not only when it refuses: when it could not read the change, or when the change touches no Rust production code (only tests or other files). The note says to pass `--base <ref>` and gives a `ripr repair --root <root> --base <ref>` example. Under `--json`, the menu's `cli_refusal` message carries the note, and the start document (and a resumed start's status document) carries an additive `repair_start_scope` block (#13701).
+- Rust checks: the run-wide cache of whole-file parse snapshots now keeps at most 24 MiB of source resident (least recently used first out), cutting peak memory on large workspaces by about 11% with unchanged output and speed (#13703).
+- Rust checks: the assertion escape scan decides which `use` items are canonical `json!` imports once per file instead of once per macro call and `use` item; findings are unchanged (#13703).
+- Rust checks: reading a test file asks whether `tokio`, `serial_test` and the other trusted attribute crates are the real crates once per module instead of once per test attribute; findings are unchanged (#13703).
+- Rust checks: the run-wide cache of whole-file parse snapshots now keeps 8 MiB of source resident instead of 24 MiB (a single larger file is still kept on its own while in use), cutting peak memory on this repository's own check by about 9% (1.41 GB to 1.28 GB) with unchanged output and speed (#13703).
+- Rust checks: the per-file identifier tallies kept for reach reasoning are packed into one buffer per file instead of a string per name, cutting `check` peak memory by about 6% with unchanged output (#13703).
+- Rust checks: each parsed probe site now stores its line numbers and byte offsets as 32-bit values, cutting peak memory on this repository's own check by about 3% (1.20 GB to 1.16 GB) with unchanged output and speed (#13703).
+- Rust checks: the assertion-context gate proves a test file's `std`/`core` assertion roots only for the rooted spellings that file calls, and proves any other spelling once on demand, so reading a file no longer runs 24 whole-file root proofs; findings are unchanged (#13703).
+- Rust checks: raw bytes of loaded files are released once the index holds the same text, instead of staying resident through classification only so diagnostic origins can be read back (#13703).
+- Rust checks: call facts decoded from the fact cache share one allocation per source line again, as freshly extracted facts do, which cuts warm-run peak memory (#13703).
+- Rust checks: binding-return-flow classification shares indexed file text instead of copying every related test file per probe, cutting peak memory on large diffs by more than half with byte-identical output (#13703).
+- Rust checks: probe sites inside plain `#[test]` function bodies are no longer stored, because no finding reads them. On this repository's own check, peak memory drops by about 2.5% (1.12 GB to 1.09 GB) and the per-file facts cache by about 11%, with unchanged output. The cache schema moves to 1.62, so the first run after upgrading re-reads each file once (#13703).
+- Human `ripr check` output: identical consecutive rows in the `Hidden:` list collapse into one row ending `(xN)`, so a change with several equivalent base-side findings shows one row instead of a repeated block (#8389, #13710).
+- Python `pytest.approx` bands are read in more shapes (RIPR-SPEC-0238 rule 21): a positional band (`approx(30, 0.1)`), an expected value or band held in a constant of the test's own module, a function memoized only by `functools.lru_cache` or `functools.cache`, a straight-line body of assignments then `return` when the changed line is the file's whole diff, and a one-statement method of a plain class called on a fresh `Class()`. An edit the band rejects is `exposed` and one it absorbs is `weakly_exposed`, where these findings were `static_unknown`. A `**` spread, any other decorator, any other body or receiver, an `approx` that is not pytest's own, a replaced cache decorator and a class whose dunder is written outside its body keep the abstention (#13723).
+- Python: a test that provably never runs (an unconditional `@pytest.mark.skip` or `@unittest.skip`, a module-level `pytest.skip(..., allow_module_level=True)`, an empty parametrize table, a parametrize mark pytest refuses, or a replaced definition with no alias or registering decorator) is now reported as a gap that names the dead test, instead of an "activation unestablished" abstention. Conditional skips, `xfail`, `importorskip`, `__test__`, module `pytestmark`, classes with a base outside the file, and project collection rules still abstain (#13723).
+- Rust checks: name integration public API reach limit (#1375).
+- `ripr check` and editor saves no longer re-parse a whole file each time a
+  refusal asks which `#[cfg]` gates guard the same function; the answer is
+  reused within one analysis run (#13754).
+- `ripr check` and editor saves no longer re-parse every workspace file to
+  build the table of `const` and `static` items. The parser that already reads
+  each file records where those items are, and the table reads them from
+  there, with identical findings (#13754).
+- The file-fact producer now records whether a file pulls documentation in
+  from outside its text (`#![doc = include_str!(..)]`), using the parse it
+  already holds. The unseen-reach scan reads that stored answer instead of
+  re-parsing every candidate file on each run. Warm checks of two diffs ran
+  about 0.9 s and 2 s faster, with byte-identical JSON (#13754).
+- The indirect-owner limit no longer masks every test body for each withheld
+  finding: a test whose source never spells the owner's name cannot name it
+  as a value or wrap its call, so it is skipped before masking. On one warm
+  check this took about 15.9 s down to 13.5 s, with byte-identical JSON
+  (#13754).
+- `ripr lsp` keeps unchanged files' parse facts in memory between saves
+  instead of re-reading and decoding every on-disk cache entry, cutting about
+  3 s from a warm save on a ~1,700-file workspace (#13754).
+- The `assert!(matches!(..))` admission check scans the workspace for
+  `matches` binding sites once per index instead of once per analysis
+  context. It skips files whose stored macro candidates rule the name out,
+  and no longer holds the per-file verdict lock while scanning. A warm
+  `ripr check --base HEAD~1` over ripr-swarm that needs the check drops from
+  about 15.5 s to about 14.3 s, with byte-identical JSON (#13754).
+- A diff check answers each changed function's transitive and past-the-bound
+  reach witness once instead of once per probe. On a warm
+  `ripr check --base HEAD~1` over ripr-swarm (656 probes), the witness step
+  drops from about 8-9 s to about 1 s, with byte-identical JSON output
+  (#13754).
+- Rust checks: name direct macro test limit (#1377).
+- Rust checks: name custom assertion macro limits (#1378).
+- `ripr repair` (and `ripr continue`, which shares the text) no longer says it
+  "works from Rust gaps only" for a Python or TypeScript change. In short lines,
+  with the root relative to the working directory, it now says the `ripr repair`
+  seam flow is Rust only, that preview gaps start with the
+  `ripr agent repair --gap-id ...` command `ripr check` prints when one is
+  ready, and otherwise how to add the test by hand. When `ripr agent repair
+  --phase before` refuses a Python gap as `not_repairable` because the changed
+  predicate holds several comparisons, the refusal now names that reason and
+  the by-hand test shape, one row per boundary (for example `rate == 0`,
+  `rate == 1`). Readiness is unchanged: the shared validator still decides,
+  and no start is offered for a gap it refuses (#13790).
+- `ripr agent brief`, `ripr agent card --seam-id` and `ripr agent packet --seam-id` now say in one line when the selected scope or id is TypeScript/Python preview code, and name the route that works: `ripr check --format agent`, then the `ripr agent repair --gap-id` start when `check` prints one. An empty brief no longer says "under the current config" when no config change would help, and a preview finding id is told apart from an unknown seam id; exit codes and the `seam_id_unknown` status are unchanged (#13791).
+- `ripr check --format agent`: when the only listed gap is a preview-language (Python/TypeScript) or reach-limited one, the header adds `unconfirmed_gaps=N` beside `gaps=0`, so it no longer reads as "no gaps" next to a listed gap and its `open=` line. `gaps=` still counts confirmed gaps only (#13803).
+- `ripr agent repair` (and `ripr repair`) start step: without `--json`, stderr no longer repeats the next command, the attempt manifest path and the edit directive that the stdout summary already prints, so the start step is 15 lines instead of 20 and the next command appears once (#13803).
+- MCP: `tools/list` is slim by default, cut from about 46 KB to about 12 KB per session start. The per-tool `outputSchema` documents are omitted unless the host sets `RIPR_MCP_TOOLS_LIST=full`, and the ten tool descriptions keep only purpose, when to call, the safety boundary and failure codes. Results are unchanged (#13803).
+- The command table in `docs/CLI_REFERENCE.md` and `ripr help --json` now gives problem-first one-line summaries for `check`, `explain`, `context`, `doctor`, `pilot`, `init`, `first-pr`, `repair`, `continue` and `status` (#13823).
+- `ripr pilot` spends less time on large Rust workspaces. Derive-name macro
+  detection now scans each file once instead of once per derive attribute, and
+  free-function name lookups read a per-index bucket instead of scanning every
+  workspace function. On a cold release pilot of a 15-file edit in bevy the
+  run went from 51-62 s to 32-35 s (two paired runs; polars 40 s to 38 s),
+  with `repo-exposure.json`, `repo-exposure.md` and `agent-seam-packets.json`
+  byte-identical (#13818, #13828).
+- TypeScript preview: a cold `ripr check` on a large TypeScript monorepo is about twice as fast (vscode 45 s to 21 s, angular 49 s to 22 s on 4 cores). Per-file facts for upcoming files are derived on parallel threads, and the enum-member guard masks and write-scans each module once instead of once per import. Output is unchanged (#13832).
+- Repair after phase: a file whose only change is its line endings, on a path Git normalizes (`core.autocrlf` or a `text` attribute), is no longer silently missing from the result. The after phase names it as "not counted as edits" and records it in the attempt manifest (#13833).
+- Diff checks: same-run reuse of the admission core now extends into the main index past `include!` directives that leave every retained file's include view unchanged, instead of rebuilding it, and the include-directive and embed-file scans are memoized within a run (#12947, #13850).
+- `ripr continue --help`, `ripr context --help` and `ripr first-pr --help` now open with the question each command answers and explain their output in plain words, and `ripr status --help` opens with its command-table summary; `context --help` now also lists `--at`, `--base`, `--diff`, `--max-related-tests`, `--json` and its exit status (#13870).
+- Rust checks: the stub-route lookup that `ripr check` and `ripr agent stub --at` run for a selected predicate finding now classifies only that finding's seam instead of every seam in its file. A one-line change in a large file no longer pays for re-classifying the whole file, and the output is unchanged (#13884).
+- TypeScript preview: a cold `ripr check` on a large TypeScript monorepo is about a third faster again (vscode 21 s to 16 s, angular 22 s to 15 s on 4 cores). A parse requested while a file's facts are being derived, such as a literal mask, now runs on the current parse worker instead of starting a new 256 MiB thread. `check --json` output on both repos is byte-identical to before (#13908).
+- `ripr repair <id>` no longer prints the changed behavior, suggested assertion, continue command, attempt id and packet path a second time in the handoff card after the start summary; stdout shrinks by about a quarter and a byte budget guards it (#14002).
+- Seam evidence: whether an assertion pins another function is decided once per owner, test and assertion for the whole run instead of once per seam (#14011).
+- `ripr explain <file:line>` and `ripr context --at <file:line>` now say why
+  a location has no finding: they name the finding lines when the file has a
+  finding at another line, name the analyzed root when the text is not a
+  file path from it, and otherwise give the run's changed-file, changed-line and candidate
+  counts, or say the file may not have been analyzed when the run was
+  incomplete. One sentence used to answer all of these (#14077).
+- `ripr check` says so in plain words when it finds no test gap. On a complete
+  run whose every finding reads `exposed`, `Start here` now reads
+  `State: no test gap found` and `Safe next action: none needed; tests appear
+  to notice every changed behavior ripr checked. This is a static reading of
+  the code, not a test run`, instead of `no non-exposed diff finding was
+  selected`. When the top finding is `exposed` but others are not, the line
+  says none is needed for this change and counts the others. Human text only;
+  JSON, the agent format and classification are unchanged (#14080).
+- `ripr check` points at its own instruction when it selects a test gap. The
+  `Start here` line now reads `Safe next action: follow the Next step below;
+  this is static advisory evidence only` instead of `inspect or repair the
+  selected non-exposed gap`. When the finding prints no `Next step`, it reads
+  `look at the reason and related test below before changing a test`. Human
+  text only; JSON, the agent format and classification are unchanged (#14173).
+- Rust checks: the finding on an inline const assertion inside a function
+  (`const { assert!(N <= 249) };`) now names the `compile_time_invariant`
+  stop reason, like item-level `const_assert!` lines. A violating edit fails
+  to compile, so no test observes it (#14181).
+- Rust checks: an inline const assertion that rustfmt splits over several
+  lines (`const {` / `assert!(N <= 249);` / `};`) now reads like the
+  one-line form. Its lines select no runtime family and keep one
+  `static_unknown` finding naming the `compile_time_invariant` stop reason;
+  an edited line no longer leaves a second finding for the old text (#14181).
+- A revision range passed to `--base` or `--head` (`--base main..HEAD`) is now answered as a range: the refusal says the flag takes one revision and names the value to pass (`--base main`), instead of asking for a spelling check or a fetch of a branch named `main..HEAD` (#14238).
 
 ### Added
 
