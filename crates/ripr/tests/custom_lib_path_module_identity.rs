@@ -319,20 +319,26 @@ fn a_nested_root_keeps_a_module_named_like_another_target() -> Result<(), String
 }
 
 #[test]
-fn a_binary_module_beside_a_custom_root_keeps_the_binary_path() -> Result<(), String> {
-    // `src/main.rs` mounts `core`; the library root `src/core/engine.rs`
-    // declares nothing. The binary's unit test spells the binary path, and
-    // a same-named rival module makes the call go through call identity
-    // (#14495 review).
-    let files = |call: &str| {
+fn a_binary_beside_a_custom_root_leaves_its_modules_unplaced() -> Result<(), String> {
+    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
+    // module to the binary, while the root `src/core/engine.rs` may compose
+    // the same file as the library module `pricing`. Neither reading is
+    // established, so no spelled path names the owner (#14495 review). A
+    // same-named rival module makes each call go through call identity.
+    let files = |test_file: &'static str, test: String| -> Vec<(&'static str, String)> {
         vec![
             ("Cargo.toml", MANIFEST.to_string()),
-            ("src/core/engine.rs", String::new()),
+            (
+                "src/core/engine.rs",
+                "pub mod pricing;\npub mod legacy;\n".to_string(),
+            ),
             (
                 "src/main.rs",
-                format!(
-                    "mod core;\n\nfn main() {{}}\n\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn discounts() {{\n        assert_eq!({call}(100), 100);\n        assert_eq!({call}(101), 91);\n    }}\n}}\n"
-                ),
+                if test_file == "src/main.rs" {
+                    format!("mod core;\n\nfn main() {{}}\n{test}")
+                } else {
+                    "fn main() {}\n".to_string()
+                },
             ),
             (
                 "src/core.rs",
@@ -341,21 +347,49 @@ fn a_binary_module_beside_a_custom_root_keeps_the_binary_path() -> Result<(), St
             ("src/core/pricing.rs", OWNER.to_string()),
             ("src/core/legacy.rs", OWNER.to_string()),
         ]
+        .into_iter()
+        .chain((test_file != "src/main.rs").then(|| (test_file, test)))
+        .collect::<Vec<_>>()
     };
-    let valid = finding_in(
-        &files("crate::core::pricing::discount"),
-        ("src/core/pricing.rs", 2),
-    )?;
-    assert_exposed("binary path", &valid);
-    let shortened = finding_in(
-        &files("crate::pricing::discount"),
-        ("src/core/pricing.rs", 2),
-    )?;
-    assert_ne!(
-        shortened.class,
-        ExposureClass::Exposed,
-        "{:?}",
-        shortened.evidence
-    );
+    let unit = |call: &str| {
+        format!(
+            "\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn discounts() {{\n        assert_eq!({call}(100), 100);\n        assert_eq!({call}(101), 91);\n    }}\n}}\n"
+        )
+    };
+    let integration = |call: &str| {
+        format!(
+            "#[test]\nfn discounts() {{\n    assert_eq!({call}(100), 100);\n    assert_eq!({call}(101), 91);\n}}\n"
+        )
+    };
+    for (label, test_file, test) in [
+        (
+            "binary unit test, binary path",
+            "src/main.rs",
+            unit("crate::core::pricing::discount"),
+        ),
+        (
+            "binary unit test, library path",
+            "src/main.rs",
+            unit("crate::pricing::discount"),
+        ),
+        (
+            "integration, directory shape",
+            "tests/d.rs",
+            integration("my_pkg::core::pricing::discount"),
+        ),
+        (
+            "integration, library path",
+            "tests/d.rs",
+            integration("my_pkg::pricing::discount"),
+        ),
+    ] {
+        let found = finding_in(&files(test_file, test), ("src/core/pricing.rs", 2))?;
+        assert_ne!(
+            found.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            found.evidence
+        );
+    }
     Ok(())
 }

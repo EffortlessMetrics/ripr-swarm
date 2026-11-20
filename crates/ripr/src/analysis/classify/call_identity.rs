@@ -1646,17 +1646,51 @@ pub(super) fn definition_module_path_in(
     index: &RustIndex,
     function: &FunctionSummary,
 ) -> Option<Vec<String>> {
-    if let Some(segments) = custom_lib_root_segments(index, &function.file) {
-        return module_path_from(segments, function, false);
+    match custom_lib_root_reading(index, &function.file) {
+        CustomRootReading::Placed(segments) => module_path_from(segments, function, false),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => definition_module_path(function),
     }
-    definition_module_path(function)
 }
 
 /// [`file_module_segments`] read the way [`definition_module_path_in`]
 /// reads definitions, so a test module's own path and the owner's path
 /// below a `[lib] path` root are compared in one reading (#14495 review).
 fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
-    custom_lib_root_segments(index, file).or_else(|| file_module_segments(file))
+    match custom_lib_root_reading(index, file) {
+        CustomRootReading::Placed(segments) => Some(segments),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => file_module_segments(file),
+    }
+}
+
+/// How a file reads against its package's `[lib] path` root (#14495).
+enum CustomRootReading {
+    /// The package has no custom root, or the file is not below it: the
+    /// path-shape reading applies.
+    NotBelowRoot,
+    /// The file's module segments below the root.
+    Placed(Vec<String>),
+    /// The file sits below the root, but which crate composes it is not
+    /// established, so it names no module path at all (fail-closed).
+    Unplaced,
+}
+
+fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading {
+    let Some(segments) = custom_lib_root_segments(index, file) else {
+        return CustomRootReading::NotBelowRoot;
+    };
+    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
+    // module to the binary, whose paths start at `src/main.rs`, while the
+    // custom root may compose the same file as a library module. Neither
+    // reading is established, so neither names the owner (#14495 review).
+    if call_identity_shape(index, package_key(file).as_deref())
+        .layout
+        .main_only
+    {
+        return CustomRootReading::Unplaced;
+    }
+    CustomRootReading::Placed(segments)
 }
 
 /// Module segments of `file` below its package's `[lib] path` root, or
@@ -1664,16 +1698,6 @@ fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>
 /// root's directory.
 fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
     let custom = index.member_crates.custom_lib_path_root_of(file)?;
-    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
-    // module to the binary, whose paths start at `src/main.rs`. Which root
-    // composes such a file is not established here, so keep the earlier
-    // reading (#14495 review).
-    if call_identity_shape(index, package_key(file).as_deref())
-        .layout
-        .main_only
-    {
-        return None;
-    }
     let normalized = super::related_tests::normalize_path(file);
     let root = super::related_tests::normalize_path(&custom.crate_root);
     if normalized == root {
