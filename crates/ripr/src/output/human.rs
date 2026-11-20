@@ -4387,7 +4387,7 @@ mod tests {
     /// `HIDDEN_FINDINGS_LISTED` row cap it discloses the remainder instead of
     /// printing every identity, keeping the default surface bounded.
     #[test]
-    fn hidden_block_list_discloses_remainder_beyond_its_window() {
+    fn hidden_block_list_discloses_remainder_beyond_its_window() -> Result<(), &'static str> {
         let findings = (0..26)
             .map(|index| {
                 let mut finding = sample_finding();
@@ -4413,14 +4413,21 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s): 5 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and 5 more omitted finding(s): 5 weak. For all JSON IDs, set RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
+        let start = rendered
+            .find("    - … and ")
+            .ok_or("missing hidden remainder")?;
+        let footer = &rendered[start..];
+        assert_eq!(footer.matches("--format json").count(), 1, "{footer}");
+        assert!(footer.len() <= 190, "hidden recovery footer grew: {footer}");
         assert!(
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+        Ok(())
     }
 
     /// On a diff with more omitted findings than the `Hidden:` window, the
@@ -4473,7 +4480,7 @@ mod tests {
         let exposed_label = ExposureClass::Exposed.plain_label_with_stage();
         assert!(
             rendered.contains(&format!(
-                "    - … and 7 more omitted finding(s): 7 {exposed_label}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and 7 more omitted finding(s): 7 {exposed_label}. For all JSON IDs, set RIPR_CHECK_FINDINGS_BYTES=0.\n"
             )),
             "{rendered}"
         );

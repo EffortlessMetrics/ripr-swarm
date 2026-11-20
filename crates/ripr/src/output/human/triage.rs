@@ -955,7 +955,7 @@ pub(crate) fn render_human_triage(
             // so the remainder names its own class mix: the reader can see
             // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                "    - … and {remaining} more omitted finding(s): {}. For all JSON IDs, set RIPR_CHECK_FINDINGS_BYTES=0.\n",
                 unlisted_class_mix(&triage.omitted)
             ));
         }
