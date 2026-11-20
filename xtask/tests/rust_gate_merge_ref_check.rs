@@ -515,12 +515,26 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
     let gate = step_run_block("id: goldens_fixtures")?;
     let target = work.join("target");
     let binary = target.join("debug/golden-probe");
+    // Hosted multicall binaries dispatch by their invocation name. Exercise the
+    // configured-wrapper path with the same contract on any Unix test runner.
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = root.join("configured-rustc-wrapper");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\n[ \"${0##*/}\" = configured-rustc-wrapper ] || exit 7\nexec \"$@\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     let probe = |tree| -> Result<(), String> {
         let result = run_bash(
             &work,
             &gate,
             &[
                 ("FRESH_TREE", tree),
+                (
+                    "RUSTC_WORKSPACE_WRAPPER",
+                    wrapper.to_str().ok_or("non-UTF-8 wrapper")?,
+                ),
                 ("GITHUB_WORKSPACE", workspace),
                 (
                     "CARGO_TARGET_DIR",

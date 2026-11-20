@@ -516,11 +516,6 @@ jobs:
           mkdir -p "$fresh_tree/target" "$GITHUB_WORKSPACE/target/ripr"
           # Goldens and calibration publish the actual outputs at the usual report paths.
           ln -s "$GITHUB_WORKSPACE/target/ripr" "$fresh_tree/target/ripr"
-          # Cargo includes rustc-workspace-wrapper in workspace artifact filenames.
-          # A unique pass-through keeps registry artifacts reusable and fresh code distinct.
-          wrapper="${RUSTC_WORKSPACE_WRAPPER:-${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-env}}"
-          wrapper_path="$(command -v "$wrapper")"
-          ln -s "$(realpath "$wrapper_path")" "$fresh_tree/target/rustc-workspace"
 
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
@@ -536,7 +531,14 @@ jobs:
           if [ -n "$FRESH_TREE" ]; then
             export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-$GITHUB_WORKSPACE/target}}"
             export CARGO_TARGET_DIR="$FRESH_TREE/target"
-            export RUSTC_WORKSPACE_WRAPPER="$FRESH_TREE/target/rustc-workspace"
+            # Cargo hashes the wrapper path. A unique directory isolates workspace
+            # artifacts while preserving the invocation name used by multicall tools.
+            wrapper="${RUSTC_WORKSPACE_WRAPPER:-${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-env}}"
+            wrapper_path="$(command -v "$wrapper")"
+            wrapper_dir="$FRESH_TREE/target/workspace-wrapper"
+            mkdir -p "$wrapper_dir"
+            ln -s "$(realpath "$wrapper_path")" "$wrapper_dir/${wrapper_path##*/}"
+            export RUSTC_WORKSPACE_WRAPPER="$wrapper_dir/${wrapper_path##*/}"
             cd "$FRESH_TREE"
           fi
           cargo xtask goldens check-with-fixtures
