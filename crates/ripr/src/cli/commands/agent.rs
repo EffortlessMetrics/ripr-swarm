@@ -2641,8 +2641,9 @@ fn run_agent_repair_phase(
         facade_start,
     } = options;
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
-    // and `wrote <path>` lines. Refusal prose, the attempt id and the next
-    // command are results and always print.
+    // and `wrote <path>` lines. Refusal prose, the attempt id, the next
+    // command and the output-location warning (#15282: a redirect into the
+    // worktree fails the attempt) always print.
     // `--json` here does not imply quiet: the phase narration is the
     // protocol-bearing stderr (attempt command, refusal prose) that agents
     // read, so only `--quiet` / `RIPR_QUIET` drop the progress and `wrote`
