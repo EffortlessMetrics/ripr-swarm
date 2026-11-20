@@ -18,3 +18,11 @@ pub unsafe fn score(value: i32) -> i32 {
 pub fn inline(value: i32) -> i32 {
     unsafe { value + 2 }
 }
+
+pub fn choose(enabled: bool) -> i32 {
+    let mut value = 0;
+    unsafe {
+        if enabled { value = 2; }
+    };
+    value
+}

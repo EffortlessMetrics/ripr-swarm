@@ -1,0 +1,7 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -25,2 +25 @@
+-        if enabled { value = 1; }
+-        value += 1;
++        if enabled { value = 2; }

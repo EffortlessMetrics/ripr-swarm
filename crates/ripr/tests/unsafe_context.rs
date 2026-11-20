@@ -11,6 +11,22 @@ fn unsafe_context_keeps_the_edited_behavior_primary() -> Result<(), String> {
     let inline = (19, "return_value", "unsafe { value + 2 }");
     let cases: &[(&str, &[_])] = &[
         ("predicate.diff", &[predicate]),
+        (
+            "adjacent.diff",
+            &[
+                (25, "predicate", "enabled"),
+                (25, "static_unknown", "unsafe block"),
+            ],
+        ),
+        ("added.diff", &[(25, "predicate", "enabled")]),
+        (
+            "unpaired.diff",
+            &[
+                (25, "predicate", "enabled"),
+                (25, "static_unknown", "unsafe block"),
+                (25, "static_unknown", "value += 1;"),
+            ],
+        ),
         ("returned.diff", &[returned]),
         ("inline.diff", &[inline]),
         (
