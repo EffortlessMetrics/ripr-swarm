@@ -311,7 +311,6 @@ fn omission_facts(finding: &Finding) -> Vec<&str> {
         .missing_discriminators
         .iter()
         .map(|fact| fact.value.as_str())
-        .filter(|value| value.contains("without"))
         .collect()
 }
 
@@ -389,6 +388,9 @@ fn changed_default_reader_is_closed() {
         ),
         Some(("sep".to_string(), "\"_\"".to_string()))
     );
+    // The statement head must match on both sides (`return` vs `const`).
+    assert!(read("return options.a ?? 1;", "const x = options.a ?? 2;").is_none());
+    assert!(read("const x = options.a ?? 1;", "return options.a ?? 2;").is_none());
     // A renamed local, another keyword or a typed declaration is not read.
     assert!(read(SLUG_OLD, "  const lower = options.lowercase ?? true;").is_none());
     assert!(read(SLUG_OLD, "  var lowercase = options.lowercase ?? true;").is_none());

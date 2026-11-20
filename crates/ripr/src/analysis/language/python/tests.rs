@@ -1500,6 +1500,66 @@ fn multiline_return_dict_entry_names_an_exact_key_read() -> Result<(), String> {
     Ok(())
 }
 
+// #15357: the entry shape is closed against comprehensions, later overrides,
+// comments, shared lines, escaped keys and set literals.
+#[test]
+fn multiline_return_dict_entry_refuses_what_it_cannot_prove() -> Result<(), String> {
+    let check = |body: &str, changed: usize| -> Result<Option<String>, String> {
+        let source = format!("def f(items):\n    return {{\n{body}    }}\n");
+        let owners = extract_owners(Path::new("src/h.py"), &source);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "f")
+            .ok_or_else(|| "owner must be extracted".to_string())?;
+        let line = changed + 2;
+        let total = source.lines().count();
+        Ok(
+            super::discriminators::python_multiline_return_dict_entry_discriminator(
+                line,
+                source.lines().nth(line - 1).unwrap_or_default(),
+                Some((2, total)),
+                Some(&source),
+                owner,
+                None,
+            )
+            .map(|fact| fact.value),
+        )
+    };
+    // Control: the same shape with a plain literal body names the read.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    // A comprehension body: later `for`/`async for`/`if`, or one on the line.
+    assert_eq!(
+        check("        \"k\": v\n        for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": v\n        async for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": v\n        for v in items\n        if v\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(check("        \"k\": v for v in items\n", 1)?, None);
+    // A later spread or duplicate key overrides the entry.
+    assert_eq!(check("        \"k\": 1,\n        **extra,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        \"k\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        'k': 2,\n", 1)?, None);
+    // A trailing comment, two entries on one line, an escaped-quote key.
+    assert_eq!(check("        \"k\": 1,  # note\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1, \"j\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\\\"q\": 1,\n", 1)?, None);
+    // A set literal with quoted elements has no key to read.
+    assert_eq!(check("        \"a\",\n        \"b\",\n", 1)?, None);
+    Ok(())
+}
+
 // #13630: the field-value missing check localizes a `return {...}` change
 // against the paired old line; without one the unlocalized pick stands.
 #[test]

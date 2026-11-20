@@ -9813,7 +9813,7 @@ pub(crate) fn ts_unexercised_default_discriminator(
             owner.name
         ),
         reason: format!(
-            "every related call passes `{prop}`, so the changed default at line {line} is never used"
+            "every call read under a strong assertion passes `{prop}`, so the changed default at line {line} is not exercised there"
         ),
         flow_sink: flow_sink.cloned(),
         shape: crate::domain::DiscriminatorShape::Other,
