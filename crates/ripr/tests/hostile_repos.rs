@@ -1231,6 +1231,19 @@ fn doctor_base_distinguishes_checkout_history() -> Result<(), String> {
             )?;
         } else {
             verify("git_base", "pass", &["origin/main", "merge base with HEAD"])?;
+            git(
+                &root,
+                &[
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/origin/deleted",
+                ],
+            )?;
+            verify(
+                "git_origin_head",
+                "advisory",
+                &["missing or stale", "change the base"],
+            )?;
             git(&root, &["remote", "set-head", "origin", "-d"])?;
             verify(
                 "git_origin_head",

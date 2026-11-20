@@ -2112,7 +2112,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                             }
                         }
                         if crate::analysis::origin_head_unset(root, timeout) {
-                            report.add_advisory_check("git_origin_head", "origin/HEAD is unset. Run `git remote set-head origin --auto` to record the remote default branch.".to_string());
+                            report.add_advisory_check("git_origin_head", "origin/HEAD is missing or stale. Run `git remote set-head origin --auto` to record the remote default branch. This can change the base used by `ripr check`.".to_string());
                         }
                     }
                     crate::analysis::HeadRefState::Unknown => {}
