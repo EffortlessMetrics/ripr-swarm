@@ -143,6 +143,83 @@ pub(in crate::analysis::classify) fn boxed_receiver_calls_impl(
         )
 }
 
+/// #15752: the types a trait-object receiver may hold at the method call
+/// whose name starts at byte `at` of `masked_body` (the test body, comments
+/// and strings masked), for the override refusal of a trait default.
+///
+/// `None` when the call's receiver is not a plain local or test parameter
+/// that some binding spells as a `dyn trait_name` object (by any path, in
+/// an annotation, a cast or a generic argument): the caller's other
+/// readings decide that call. Otherwise one entry per binding: the boxed
+/// value's own type name for an exact immutable `let r: Box<dyn trait_name>
+/// = Box::new(Value(..));`, and `None` for a binding whose boxed type this
+/// cannot read (another spelling, a non-`dyn` shadow, a `mut` receiver, a
+/// parameter). The method runs on that value's vtable, so a `None` leaves
+/// open which impl answers.
+pub(in crate::analysis::classify) fn trait_object_receiver_types<'t>(
+    test: &'t TestSummary,
+    masked_body: &str,
+    at: usize,
+    trait_name: &str,
+) -> Option<Vec<Option<&'t str>>> {
+    let dot = at.checked_sub(1)?;
+    if masked_body.as_bytes().get(dot) != Some(&b'.') {
+        return None;
+    }
+    let start = masked_body[..dot]
+        .char_indices()
+        .rev()
+        .find(|&(_, character)| !(character.is_alphanumeric() || character == '_'))
+        .map_or(0, |(offset, character)| offset + character.len_utf8());
+    let receiver = &masked_body[start..dot];
+    if !is_plain_identifier(receiver) || masked_body[..start].trim_end().ends_with(['.', ':']) {
+        return None;
+    }
+    let bindings = receiver_let_bindings(test, receiver)?;
+    if bindings.is_empty() {
+        return super::parameter_annotation(test, receiver)
+            .is_some_and(|annotation| spells_trait_object(&annotation, trait_name))
+            .then(|| vec![None]);
+    }
+    if !bindings
+        .iter()
+        .any(|binding| spells_trait_object(binding, trait_name))
+    {
+        return None;
+    }
+    let mutable = binding_is_mut(masked_body, receiver);
+    Some(
+        bindings
+            .iter()
+            .map(|binding| {
+                let value = dyn_box_value(binding, trait_name).filter(|_| !mutable)?;
+                let head_len = value
+                    .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+                    .unwrap_or(value.len());
+                let head = &value[..head_len];
+                (is_plain_identifier(head) && constructs(value, head)).then_some(head)
+            })
+            .collect(),
+    )
+}
+
+/// Whether `text` (masked) spells `dyn` followed by a path whose last
+/// segment is `trait_name`.
+fn spells_trait_object(text: &str, trait_name: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    whole_word_offsets(&masked, "dyn")
+        .into_iter()
+        .any(|offset| {
+            let after = masked[offset + "dyn".len()..].trim_start();
+            let path_len = after
+                .find(|character: char| {
+                    !(character.is_alphanumeric() || matches!(character, '_' | ':'))
+                })
+                .unwrap_or(after.len());
+            after[..path_len].rsplit("::").next() == Some(trait_name)
+        })
+}
+
 /// The workspace-wide gates for `trait_name` and `method`, memoized per run
 /// in `syntax`: the indexed sources are the whole program
 /// ([`closed_dispatch::sources_closed`], once per run), the method is
