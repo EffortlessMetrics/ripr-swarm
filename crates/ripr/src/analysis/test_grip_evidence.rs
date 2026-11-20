@@ -125,6 +125,9 @@ impl TestGripEvidence {
             crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
                 | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
         ) {
+            if let Some(kind) = self.discriminate.static_limit_kind {
+                return kind == limit;
+            }
             return self
                 .discriminate
                 .summary
@@ -139,7 +142,12 @@ impl TestGripEvidence {
             &self.discriminate,
         ]
         .iter()
-        .any(|stage| stage.summary.contains(limit.as_str()))
+        .any(|stage| {
+            stage.static_limit_kind.map_or_else(
+                || stage.summary.contains(limit.as_str()),
+                |kind| kind == limit,
+            )
+        })
     }
 
     /// #11402: whether the changed push is followed only to a local the
@@ -3371,7 +3379,8 @@ fn activate_evidence(
         // call that hides the activation, or an integration test.
         StageState::Unknown
     };
-    let stage = StageEvidence::new(
+    let mut static_limit_kind = None;
+    let mut stage = StageEvidence::new(
         state,
         if !boundary_constant_unresolved
             && !boundary_local_unresolved
@@ -3402,6 +3411,7 @@ fn activate_evidence(
                 constant.1
             )
         } else if boundary_local_unresolved && !related.is_empty() {
+            static_limit_kind = Some(BOUNDARY_INPUT_LIMIT);
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if let Some(guards) = boundary_guard_unheld
             .as_ref()
@@ -3448,6 +3458,7 @@ fn activate_evidence(
                     .unwrap_or(seam.expression())
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
+            static_limit_kind = Some(BOUNDARY_INPUT_LIMIT);
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if withheld_activation_tests > 0 {
             // Every credited activation path is empty while at least one
@@ -3478,6 +3489,7 @@ fn activate_evidence(
             )
         },
     );
+    stage.static_limit_kind = static_limit_kind;
     missing.extend(owner_result_binding::missing_field_value_facts(
         seam,
         related,
