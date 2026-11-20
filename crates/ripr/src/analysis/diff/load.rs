@@ -1655,8 +1655,17 @@ pub(crate) fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duratio
     };
     succeeds(&["remote", "get-url", "origin"]) == Some(true)
         && (succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
-            || git_ref_output(root, "refs/remotes/origin/HEAD", git_timeout)
-                .is_some_and(|output| rev_parse_answered_no(&output)))
+            || crate::git::run_git_output_with_deadline(
+                root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/remotes/origin/HEAD",
+                ],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1)))
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.

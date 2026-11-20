@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/tests/hostile_repos.rs::doctor_base_distinguishes_checkout_history",
+]
+code = [
+  "crates/ripr/src/output/doctor.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
+  "crates/ripr/src/git.rs",
+]
