@@ -158,6 +158,7 @@
   "report_digest_exemptions": [],
   "report_digest_required": [
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
@@ -15638,6 +15639,34 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_whole_value_associated_constructor_field_construction",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_whole_value_associated_constructor_field",
+      "vector": "associated_constructor_whole_value_literal_pins_field",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_whole_value_associated_constructor_unpinned_field_construction",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_whole_value_associated_constructor_unpinned_field",
+      "vector": "associated_constructor_literal_neither_version_computes_stays_weak",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
         }
       ]
     },

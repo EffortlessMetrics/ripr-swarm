@@ -978,7 +978,15 @@ general combinator, callback or mutation adequacy.
    trusted macro used by that test refuses the pin. This scan
    includes other indexed files because textual macro scope reaches child
    modules. Workspace-owned globs remain supported only when that scan finds
-   no competing binding. The scan conservatively ignores visibility/cfg
+   no competing binding. A plain, unrenamed two-segment import of a trusted
+   macro at the root that exports it (`use std::vec;`, `use alloc::vec;`,
+   `use core::assert_eq;`; `vec`/`format` from `std` or `alloc`, the
+   assertion family, `matches`, `panic` and `unreachable` from `std` or
+   `core`) binds the standard macro rather than a competing one, when the
+   root is not shadowed in the file and the manifests prove no dependency,
+   package or patch takes the root name (#15263). Renames, longer paths,
+   `crate::`/`self::` paths and a root a crate does not export the macro
+   from (`use core::vec;`) still refuse. The scan conservatively ignores visibility/cfg
    refinements, so unrelated same-name definitions can cause under-credit.
    Other trusted names unused by the test do not defeat its pin (for example,
    an unrelated `std::fs::write` import does not defeat a plain assertion). It is not
