@@ -780,3 +780,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0028 / #15618: describe unresolved imported names, including those
+used in annotations.
+
+Operation:
+Manually update the import-limit prose in the JSON and human expectations.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

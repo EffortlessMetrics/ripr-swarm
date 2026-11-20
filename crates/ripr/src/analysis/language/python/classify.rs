@@ -15,7 +15,7 @@ use super::discriminators::python_missing_discriminators;
 use super::dunder_truthiness;
 use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
-use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_credits};
+use super::imported_call_operator::imported_call_credits;
 use super::message_pin;
 use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_evidence};
 use super::no_behavior::{
@@ -41,9 +41,10 @@ use super::sink_alignment::{
     enclosing_literal_pair,
 };
 use super::static_limits::{
-    LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword, cross_module_reach_limit,
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, integer_literal_swap,
-    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    IMPORTED_NAME_LIMIT_EVIDENCE, LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit,
+    contains_lambda_keyword, cross_module_reach_limit, heuristic_only_relation_limit,
+    implicit_dunder_dispatch_limit, integer_literal_swap, module_object_rebind_limit,
+    static_limit_for_focused_change, unpinned_equality_dunder_limit,
     unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
@@ -986,7 +987,7 @@ fn classify_change_for_owner_inner<'a>(
     .filter(|limit| {
         module_value.is_empty()
             || (limit.evidence != LAMBDA_LIMIT_EVIDENCE
-                && !(imported_call && limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
+                && !(imported_call && limit.evidence == IMPORTED_NAME_LIMIT_EVIDENCE)
                 && !owner.decorators.iter().any(|decorator| {
                     limit.evidence == format!("static_limit decorator_indirection: `{decorator}`")
                 }))
@@ -1364,7 +1365,7 @@ fn classify_change_for_owner_inner<'a>(
     // keeps the abstention.
     let imported_literal_gap = static_limit
         .as_ref()
-        .is_some_and(|limit| limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
+        .is_some_and(|limit| limit.evidence == IMPORTED_NAME_LIMIT_EVIDENCE)
         && old_line_text.is_some_and(|old| integer_literal_swap(old, line_text))
         && !contains_lambda_keyword(line_text)
         && log_evidence.is_none()
