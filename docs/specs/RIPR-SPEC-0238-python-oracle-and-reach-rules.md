@@ -841,7 +841,9 @@ The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
 (RIPR-SPEC-0028, #4567; for a coroutine owner the local may bind
-`await f(..)`, which hands back the value its body returned, #14803); `changed_sink_token` from the changed-line token
+`await f(..)` or `await(f(..))`, which hands back the value its body returned.
+Balanced parentheses also preserve a synchronous result, as in
+`result = (f(..))`; tuple construction and boolean fallbacks do not, #14803 and #14846); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
 effect-channel credit need module identity. An empty owner or changed-sink token
@@ -1973,7 +1975,8 @@ rejected alternative. Any can be reversed later without touching the rest.
     largest shape whose value static evidence reads without running code.
 15. **A mock passed for a called parameter.** Adopted (2026-10-13,
     #7586): rule 17 reads a changed `p(...)` like `p.m(...)`, and reaches
-    the mock through the owner's result when the owner returns `p`. The
+    the mock through the owner's result when the owner returns `p`. For a
+    coroutine owner the test must await that result (#14846). The
     corpus case `py-spec0233-ex09-mock-arg` fails at runtime on the
     handed 2 while ripr read it `weakly_exposed`. A rewrite that keeps the
     old argument inside it, other than literal arithmetic, does not credit
