@@ -563,3 +563,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_sibling_variant (43)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless guarded_result_match_sibling_variant --reason "..."`
+
+Updated:
+- `expected/human.txt`

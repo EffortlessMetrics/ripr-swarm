@@ -300,7 +300,7 @@ pub(crate) fn select_human_triage<'a>(
 /// source left out of the diff, a withheld finding, or one finding of any
 /// other class keeps the narrower "no gap selected" wording, so the all-clear
 /// sentence is never printed over something it does not cover.
-fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
+pub(super) fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
     output.verification().is_complete()
         && !output.findings.is_empty()
         && output.withheld_finding_ids().is_empty()
@@ -4200,6 +4200,71 @@ mod tests {
         let (state, action) = start_here_lines(&output);
         assert_eq!(state, ALL_CLEAR_STATE);
         assert_eq!(action, ALL_CLEAR_ACTION);
+        Ok(())
+    }
+
+    /// #15313: the plain Summary never says `found` over a `State:` that says
+    /// `no test gap found`, and names the candidate-line count when two checks
+    /// share one edited line so "2 changed behaviors" matches the one-line edit.
+    #[test]
+    fn summary_agrees_with_state_and_names_shared_candidate_lines() -> Result<(), String> {
+        let summary_of = |output: &CheckOutput| {
+            crate::output::human::render_header_summary(output, &RiprConfig::default(), true)
+                .lines()
+                .find(|line| line.starts_with("Summary: "))
+                .unwrap_or_default()
+                .to_string()
+        };
+        // All clear: two probes on one candidate line, every finding exposed.
+        let mut clear = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:b", "src/lib.rs", ExposureClass::Exposed),
+        ]);
+        let mut outcome = complete_outcome(2)?;
+        outcome.counts.candidate_line_count = 1;
+        clear.analysis_outcome = Some(outcome);
+        clear.summary = Summary {
+            probes: 2,
+            findings: 2,
+            exposed: 2,
+            ..Summary::default()
+        };
+        let (state, _) = start_here_lines(&clear);
+        assert_eq!(state, ALL_CLEAR_STATE);
+        let line = summary_of(&clear);
+        assert!(
+            line.starts_with("Summary: 2 changed behaviors checked on 1 candidate line: "),
+            "shared line must be named; got: {line}"
+        );
+        assert!(
+            line.contains("No test gap: 2 listed, 0 suppressed by your settings")
+                && !line.contains("found"),
+            "all-clear Summary must not say found; got: {line}"
+        );
+        // Gap: the same shape with one finding not noticed keeps `found` and
+        // State does not claim the all-clear.
+        let mut gap = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::WeaklyExposed),
+            finding_at("finding:b", "src/lib.rs", ExposureClass::Exposed),
+        ]);
+        let mut outcome = complete_outcome(2)?;
+        outcome.counts.candidate_line_count = 2;
+        gap.analysis_outcome = Some(outcome);
+        gap.summary = Summary {
+            probes: 2,
+            findings: 2,
+            exposed: 1,
+            weakly_exposed: 1,
+            ..Summary::default()
+        };
+        let (state, _) = start_here_lines(&gap);
+        assert_ne!(state, ALL_CLEAR_STATE);
+        let line = summary_of(&gap);
+        assert!(
+            line.starts_with("Summary: 2 changed behaviors checked: ")
+                && line.contains("2 found, 0 suppressed by your settings"),
+            "gap Summary keeps `found` and omits the line note; got: {line}"
+        );
         Ok(())
     }
 

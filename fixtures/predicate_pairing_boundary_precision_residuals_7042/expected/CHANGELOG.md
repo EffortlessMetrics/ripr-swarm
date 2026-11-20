@@ -89,3 +89,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_boundary_precision_residuals_7042 (8)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless predicate_pairing_boundary_precision_residuals_7042 --reason "..."`
+
+Updated:
+- `expected/human.txt`

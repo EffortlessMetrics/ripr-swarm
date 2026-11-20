@@ -461,3 +461,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_predicate_boundary_const_result_local (36)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless ts_predicate_boundary_const_result_local --reason "..."`
+
+Updated:
+- `expected/human.txt`

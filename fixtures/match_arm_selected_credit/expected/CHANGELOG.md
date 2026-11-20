@@ -266,3 +266,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_selected_credit (23)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless match_arm_selected_credit --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -814,3 +814,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (60)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`

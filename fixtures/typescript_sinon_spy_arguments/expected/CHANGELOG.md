@@ -72,3 +72,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_sinon_spy_arguments (7)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless typescript_sinon_spy_arguments --reason "..."`
+
+Updated:
+- `expected/human.txt`

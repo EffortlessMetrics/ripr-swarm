@@ -160,3 +160,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_const_expectation_literal_control (13)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless rust_const_expectation_literal_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

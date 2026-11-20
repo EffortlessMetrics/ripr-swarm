@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/currentness_matrix_python_deleted_statement/input
 config: <cwd>/fixtures/currentness_matrix_python_deleted_statement/input/ripr.toml
 
-Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked on 1 candidate line: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. No test gap: 3 listed, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Changed file(s) by language: python = 1
 

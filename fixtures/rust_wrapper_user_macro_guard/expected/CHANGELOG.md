@@ -211,3 +211,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_user_macro_guard (17)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless rust_wrapper_user_macro_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`

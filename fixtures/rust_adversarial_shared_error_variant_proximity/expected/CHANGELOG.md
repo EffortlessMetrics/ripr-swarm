@@ -381,3 +381,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_adversarial_shared_error_variant_proximity (29)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
+
+Updated:
+- `expected/human.txt`

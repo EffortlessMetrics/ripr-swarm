@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/ts_boundary_local_constant_credit/input
 config: <cwd>/fixtures/ts_boundary_local_constant_credit/input/ripr.toml
 
-Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings
+Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. No test gap: 3 listed, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 3
 

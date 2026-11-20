@@ -131,3 +131,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — declared_target_glob_public_call (12)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless declared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/human.txt`

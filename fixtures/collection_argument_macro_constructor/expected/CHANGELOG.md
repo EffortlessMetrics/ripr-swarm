@@ -395,3 +395,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_argument_macro_constructor (31)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless collection_argument_macro_constructor --reason "..."`
+
+Updated:
+- `expected/human.txt`

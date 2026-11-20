@@ -69,3 +69,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_message_pin_local_control (7)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless python_message_pin_local_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

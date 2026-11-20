@@ -175,3 +175,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (15)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/human.txt`

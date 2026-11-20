@@ -242,3 +242,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — radix_literal_boundary_off (19)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless radix_literal_boundary_off --reason "..."`
+
+Updated:
+- `expected/human.txt`

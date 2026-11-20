@@ -281,3 +281,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_bound_receiver_assertion (23)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
+
+Command:
+`cargo xtask goldens bless python_bound_receiver_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

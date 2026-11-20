@@ -636,7 +636,11 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
 /// `plain` selects the bounded (default) human wording (#8165): plain words
 /// only, no schema tokens. `human-full` passes `false` and keeps the schema
 /// summary byte-for-byte.
-fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool) -> String {
+pub(super) fn render_header_summary(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    plain: bool,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
@@ -730,12 +734,23 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                     s.proof_harness_only
                 ));
             }
+            // #15313: two checks (a predicate and a return value) can sit on one
+            // edited line. Name the line count the `Counts:` line also prints, so a
+            // reader can match "2 changed behaviors" to their one-line edit.
+            let on_lines = shared_line_note(output);
+            // #15313: `found` means "listed for review", and a reader takes it as a
+            // gap count. When every finding reads as noticed, the Start here State
+            // says "no test gap found"; the Summary says so in the same words.
+            let listed = if triage::every_finding_reads_noticed(output) {
+                format!("No test gap: {unsuppressed} listed")
+            } else {
+                format!("{unsuppressed} found")
+            };
             out.push_str(&format!(
-                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
+                "Summary: {} changed {} checked{on_lines}: {}. {listed}, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
-                unsuppressed,
                 suppressed,
             ));
         }
@@ -767,6 +782,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     }
     render_language_file_breakdown(&mut out, output);
     out
+}
+
+/// #15313: names the candidate-line count when several checks share a line
+/// (" on 1 candidate line"). Empty when each check has its own line or the run
+/// carries no analysis outcome. The count is the producer's own
+/// `candidate_line_count`, the number the `Counts:` line prints.
+fn shared_line_note(output: &CheckOutput) -> String {
+    let Some(outcome) = &output.analysis_outcome else {
+        return String::new();
+    };
+    let lines = outcome.counts.candidate_line_count;
+    if lines == 0 || lines >= outcome.counts.probe_count {
+        return String::new();
+    }
+    format!(
+        " on {lines} candidate {}",
+        if lines == 1 { "line" } else { "lines" }
+    )
 }
 
 /// #8389: base-side findings (`base_deleted`, `moved_or_renamed`) are counted
