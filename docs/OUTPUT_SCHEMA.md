@@ -1277,8 +1277,9 @@ verify=complete|outcome=O|findings=N|exposed=N
 - `open=` replaces `stop=` when no gap is listed but a candidate-current
   `weakly_exposed` or `reachable_unrevealed` finding is held only by the
   reach-only `rust_transitive_reach_unresolved` limitation and still carries a
-  contributing related test with a `weak` or `smoke` oracle (#11825) that is not
-  related by file or module proximity alone (#12058). It is not a
+  contributing related test with a `weak` or `smoke` oracle (#11825) whose
+  recorded relation binds it to the changed function (#12058). File or name
+  affinity alone and missing relation evidence keep `stop=`. It is not a
   confirmed gap, so `gaps=` does not count it (`unconfirmed_gaps=` does); the
   finding is listed in the gap line shape (with `missing=-`), the weak test in
   its `tK` row, `limits=` still counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
