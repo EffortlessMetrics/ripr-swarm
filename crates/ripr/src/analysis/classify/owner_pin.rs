@@ -43,6 +43,7 @@
 
 mod call_term_fold;
 pub(super) mod closure_adaptor;
+pub(super) mod dyn_box;
 mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
@@ -7739,9 +7740,15 @@ impl OwnerReturnPin {
                             if bound_by_macro(&masked_body, receiver) {
                                 return false;
                             }
+                            // #15277: a `Box<dyn Trait>` binding calls the
+                            // owner's trait method on the boxed value.
+                            let dyn_trait = trait_scope.as_ref().and_then(|scope| {
+                                dyn_box::dyn_box_trait(&scope.trait_name, &self.name, index, syntax)
+                            });
                             test_receiver_type(
                                 test,
                                 receiver,
+                                dyn_trait,
                                 test_source,
                                 index,
                                 imports_foreign,
@@ -14366,13 +14373,21 @@ pub(super) fn builtin_type_unshadowed(
 /// The type the test binds `receiver` to: every `let` that binds the name
 /// is a simple `let [mut] receiver [: T] = ..;` whose type ripr can read,
 /// and all of them agree. Other uses of the binding (borrows, arguments,
-/// reassignments) cannot change a Rust binding's type; another binding of
+/// reassignments) cannot change a Rust binding's static type. The
+/// `Box<dyn Trait>` reading (`dyn_trait`, #15277) types the receiver by its
+/// boxed value, which a reassignment can replace, so it refuses a `mut`
+/// spelling of the receiver; another binding of
 /// the same name in a pattern ripr does not read (a closure parameter, a
 /// `for` or match-arm pattern, a destructuring `let`, a nested `fn`)
 /// leaves the type unestablished.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the binding reader's inputs plus the #15277 dyn trait; each call site has all of them"
+)]
 fn test_receiver_type(
     test: &TestSummary,
     receiver: &str,
+    dyn_trait: Option<&str>,
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
@@ -14405,8 +14420,13 @@ fn test_receiver_type(
     }
     let mut bound: Option<ReceiverType> = None;
     for binding in bindings {
+        // #15277: `let s: Box<dyn Trait> = Box::new(value);` types `s` as
+        // `value` for the caller's `Trait` method (see `dyn_box`).
+        let boxed = dyn_trait
+            .filter(|_| !dyn_box::binding_is_mut(&mask_comments_and_strings(&test.body), receiver))
+            .and_then(|name| dyn_box::dyn_box_value(binding, name));
         let receiver_type = binding_type(
-            binding,
+            &boxed.map_or_else(|| binding.to_string(), |value| format!("= {value}")),
             test,
             test_source,
             index,
@@ -17530,8 +17550,9 @@ impl UnitStructFacts {
 /// - the workspace declares it exactly once, as a non-generic unit struct
 ///   (`struct name;`), in the test's own file;
 /// - every other spelling of the name in the workspace is an `impl` header
-///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
-///   or a `let` initializer (`= name;`). An import, a type position, a raw
+///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`),
+///   a `let` initializer (`= name;`) or a boxed value (`Box::new(name)`,
+///   #15277). An import, a type position, a raw
 ///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
 ///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
 /// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
@@ -17608,6 +17629,12 @@ pub(super) fn unit_struct_value(
                             && !before.ends_with("<=")
                             && !before.ends_with(">=")
                             && after.starts_with(';'))
+                        // #15277: the value boxed by `Box::new(name)`, as in
+                        // `let c: Box<dyn Trait> = Box::new(name);`.
+                        || (before
+                            .strip_suffix('(')
+                            .is_some_and(|call| call.trim_end().ends_with("Box::new"))
+                            && after.starts_with(')'))
                 }
                 _ => false,
             };
@@ -17975,6 +18002,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
         test_receiver_type(
             test,
             receiver,
+            None,
             test_source,
             index,
             &imports_foreign,

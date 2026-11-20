@@ -1,0 +1,11 @@
+# Registers the Box<dyn Trait> receiver reading (#15277) under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/dyn_box.rs::tests::reads_the_boxed_value_of_an_exact_dyn_box_binding",
+  "crates/ripr/src/analysis/classify/owner_pin/dyn_box.rs::tests::refuses_any_other_binding_spelling",
+  "crates/ripr/src/analysis/classify/owner_pin/dyn_box.rs::tests::a_boxed_value_constructs_only_its_own_head",
+  "crates/ripr/src/analysis/classify/owner_pin/dyn_box.rs::tests::a_mut_spelling_of_the_receiver_is_mutable",
+  "crates/ripr/src/analysis/classify/owner_pin/dyn_box.rs::tests::only_a_box_annotation_may_spell_the_trait_object",
+]
