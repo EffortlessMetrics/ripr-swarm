@@ -1106,6 +1106,25 @@ impl CallInputs<'_> {
         }
     }
 
+    /// The runtime shape of parameter `name` for this call, read from a
+    /// literal argument; `None` for anything computed or rebound.
+    fn shape(&self, name: &str) -> Option<Shape> {
+        // A shadowed `Array` would make `Array.isArray` something else.
+        if self.params.iter().any(|param| param == "Array")
+            || owner_may_shadow_array(self.owner_source)
+        {
+            return None;
+        }
+        if let Some(literal) = self.lookup(name) {
+            return Some(Shape::Prim(literal));
+        }
+        let index = self.params.iter().position(|param| param == name)?;
+        if !ts_parameter_is_stable(self.owner_source, name) {
+            return None;
+        }
+        argument_shape(self.arguments.get(index)?)
+    }
+
     /// The value a destructured options property takes for this call.
     fn lookup_option(&self, name: &str) -> Option<Lit> {
         let (options, prop) = self
@@ -1158,6 +1177,12 @@ impl CallInputs<'_> {
         }
         for operator in ["===", "!==", "==", "!=", "<=", ">=", "<", ">"] {
             if let Some((left, right)) = split_once_top_level(condition, operator) {
+                // `typeof` is read under strict comparison only.
+                if matches!(operator, "==" | "!=")
+                    && (is_typeof_expression(left) || is_typeof_expression(right))
+                {
+                    return None;
+                }
                 let left = self.operand(left, 0)?;
                 let right = self.operand(right, 0)?;
                 return compare(&left, operator, &right);
@@ -1176,6 +1201,32 @@ impl CallInputs<'_> {
         }
         if let Some(literal) = parse_literal(text) {
             return Some(literal);
+        }
+        if let Some(name) = text
+            .strip_prefix("Array.isArray(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .map(str::trim)
+            .filter(|name| is_plain_identifier(name))
+        {
+            return match self.shape(name)? {
+                Shape::Array => Some(Lit::Bool(true)),
+                _ => Some(Lit::Bool(false)),
+            };
+        }
+        if is_typeof_expression(text) {
+            let name = text["typeof".len()..].trim();
+            if !is_plain_identifier(name) {
+                return None;
+            }
+            let kind = match self.shape(name)? {
+                Shape::Prim(Lit::Num(_)) => "number",
+                Shape::Prim(Lit::Str(_)) => "string",
+                Shape::Prim(Lit::Bool(_)) => "boolean",
+                Shape::Prim(Lit::Undef) => "undefined",
+                Shape::Prim(Lit::Null) | Shape::Array | Shape::Object => "object",
+                Shape::Function => "function",
+            };
+            return Some(Lit::Str(kind.to_string()));
         }
         if !text.is_empty()
             && text.chars().all(is_identifier_char)
@@ -1433,6 +1484,107 @@ fn and_of(values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
         }
     }
     all_true.then_some(true)
+}
+
+/// What a literal argument is at runtime, beyond the primitives.
+#[derive(Clone, Debug, PartialEq)]
+enum Shape {
+    Prim(Lit),
+    Array,
+    Object,
+    Function,
+}
+
+/// Whether the owner mentions `Array` other than as a read `Array.member`
+/// or a type `Array<..>`: a local binding (`const Array`, `{ Array }`) may
+/// shadow the global, and a member write or delete (`Array.isArray = ..`,
+/// `delete Array.isArray`) may replace the predicate. A module-level
+/// import or patch is not visible here.
+fn owner_may_shadow_array(owner_source: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    super::mock_payload_guard::identifier_offsets(&masked, "Array")
+        .into_iter()
+        .any(|at| {
+            let rest = masked[at + "Array".len()..].trim_start();
+            if rest.starts_with('<') {
+                return false;
+            }
+            let Some(member) = rest.strip_prefix('.') else {
+                return true;
+            };
+            let after = member
+                .trim_start()
+                .trim_start_matches(is_identifier_char)
+                .trim_start();
+            let writes =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            let compound = ["+=", "-=", "||=", "&&=", "??="]
+                .iter()
+                .any(|op| after.starts_with(op));
+            writes || compound || masked[..at].trim_end().ends_with("delete")
+        })
+}
+
+fn is_plain_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(is_identifier_char)
+        && !text.starts_with(|c: char| c.is_ascii_digit())
+}
+
+fn is_typeof_expression(text: &str) -> bool {
+    text.trim()
+        .strip_prefix("typeof")
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+}
+
+/// Whether `text[0]` opens a bracket that closes exactly at the last char.
+fn wraps_whole(masked: &str, open: char, close: char) -> bool {
+    let mut depth = 0usize;
+    let last = masked.len().saturating_sub(1);
+    for (at, c) in masked.char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth = match depth.checked_sub(1) {
+                Some(depth) => depth,
+                None => return false,
+            };
+            if depth == 0 {
+                return at == last;
+            }
+        } else if at == 0 {
+            return false;
+        }
+    }
+    false
+}
+
+/// An array, object or arrow-function literal argument; `None` otherwise.
+fn argument_shape(argument: &str) -> Option<Shape> {
+    let text = argument.trim();
+    if !text.is_ascii() {
+        return None;
+    }
+    let masked = ts_mask_literals_and_comments(text);
+    if masked.len() != text.len() {
+        return None;
+    }
+    if text.starts_with('[') && wraps_whole(&masked, '[', ']') {
+        return Some(Shape::Array);
+    }
+    if text.starts_with('{') && wraps_whole(&masked, '{', '}') {
+        return Some(Shape::Object);
+    }
+    // An arrow's parameter list is a lone identifier or one whole group.
+    let (head, _) = masked.split_once("=>")?;
+    let head = head.trim();
+    let head = head
+        .strip_prefix("async")
+        .filter(|rest| rest.starts_with(char::is_whitespace) || rest.starts_with('('))
+        .map_or(head, str::trim_start);
+    let params_only =
+        is_plain_identifier(head) || (head.starts_with('(') && wraps_whole(head, '(', ')'));
+    params_only.then_some(Shape::Function)
 }
 
 fn compare(left: &Lit, operator: &str, right: &Lit) -> Option<bool> {
@@ -1750,6 +1902,121 @@ mod tests {
             }];
             assert!(call_excludes_arm(&call, &arms), "{guard} with {argument}");
         }
+    }
+
+    /// Like `excludes` for a plain `(x)` parameter list.
+    fn excludes_plain(source: &str, line: usize, text: &str, arguments: &[&str]) -> bool {
+        let params = vec!["x".to_string()];
+        let Some(defaults) = parameter_defaults(source, &params) else {
+            return false;
+        };
+        let Some(arms) = enclosing_conditions(source, 1, line, text) else {
+            return false;
+        };
+        let arguments: Vec<String> = arguments.iter().map(|a| a.to_string()).collect();
+        let call = CallInputs {
+            owner_source: source,
+            params: &params,
+            defaults: &defaults,
+            options: &[],
+            arguments: &arguments,
+        };
+        call_excludes_arm(&call, &arms)
+    }
+
+    #[test]
+    fn typeof_and_array_is_array_read_literal_argument_shapes() {
+        let array = "function f(x) {\n  if (Array.isArray(x)) {\n    a();\n  }\n  if (typeof x === 'number') {\n    b();\n  }\n  if (typeof x !== 'object') {\n    c();\n  }\n  if ('number' === typeof x) {\n    d();\n  }\n  if (typeof x == 'number') {\n    e();\n  }\n  if (!Array.isArray(x)) {\n    g();\n  }\n}\n";
+        // (line, text, argument, excluded)
+        for (line, text, argument, expected) in [
+            (3, "a();", "5", true),
+            (3, "a();", "'s'", true),
+            (3, "a();", "{ a: 1 }", true),
+            (3, "a();", "null", true),
+            (3, "a();", "undefined", true),
+            (3, "a();", "() => 1", true),
+            (3, "a();", "[1]", false),
+            (3, "a();", "[]", false),
+            (3, "a();", "make()", false),
+            (3, "a();", "[1][0]", false),
+            (3, "a();", "[1].concat(y)", false),
+            (3, "a();", "y", false),
+            (6, "b();", "{}", true),
+            (6, "b();", "[1]", true),
+            (6, "b();", "'5'", true),
+            (6, "b();", "5", false),
+            (6, "b();", "make()", false),
+            (9, "c();", "{}", true),
+            (9, "c();", "null", true),
+            (9, "c();", "5", false),
+            (9, "c();", "x => x", false),
+            (9, "c();", "async (a) => a", false),
+            (9, "c();", "(a, b) => a + b", false),
+            (9, "c();", "x ? a : (b) => c", false),
+            (12, "d();", "{}", true),
+            (12, "d();", "5", false),
+            // Loose `==` against `typeof` stays unreadable.
+            (15, "e();", "{}", false),
+            (18, "g();", "[1]", true),
+            (18, "g();", "5", false),
+            // A non-literal argument must not read as an array: a wrong
+            // `Shape::Array` would exclude `g()` here.
+            (18, "g();", "[1][0]", false),
+            (18, "g();", "[1].concat(y)", false),
+            (18, "g();", "[1] as any", false),
+            (18, "g();", "{}.a", false),
+            (18, "g();", "make()", false),
+            (18, "g();", "y", false),
+            // A non-literal must not read as an object or a function: a
+            // wrong shape would exclude `b()` (`typeof x === 'number'`).
+            (6, "b();", "{}.a", false),
+            (6, "b();", "{}[0]", false),
+            (6, "b();", "(x) + 1", false),
+            (6, "b();", "x ? a : (b) => c", false),
+            (6, "b();", "foo(x => x)", false),
+        ] {
+            assert_eq!(
+                excludes_plain(array, line, text, &[argument]),
+                expected,
+                "{text} on line {line} with {argument}"
+            );
+        }
+        // A local that may shadow `Array` makes `Array.isArray` unreadable.
+        for shadow in [
+            "const Array = makeArray();",
+            "const { Array } = o;",
+            "Array.isArray = Boolean;",
+            "Array.isArray ??= Boolean;",
+            "delete Array.isArray;",
+        ] {
+            let shadowed = format!(
+                "function f(x) {{\n  {shadow}\n  if (Array.isArray(x)) {{\n    a();\n  }}\n}}\n"
+            );
+            assert!(!excludes_plain(&shadowed, 4, "a();", &["5"]), "{shadow}");
+        }
+        // The same body without the shadow excludes, so the row above
+        // discriminates the shadow check.
+        for read in [
+            "const y = makeArray();",
+            "const y = Array.isArray == f;",
+            "const y = Array.from(z);",
+        ] {
+            let unshadowed = format!(
+                "function f(x) {{\n  {read}\n  if (Array.isArray(x)) {{\n    a();\n  }}\n}}\n"
+            );
+            assert!(excludes_plain(&unshadowed, 4, "a();", &["5"]), "{read}");
+        }
+        let typed = "function f(x: Array<number> | number) {\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
+        assert!(excludes_plain(typed, 3, "a();", &["5"]));
+        // A body that rebinds the parameter is not read.
+        let rebound = "function f(x) {\n  x = [1];\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
+        assert!(!excludes_plain(rebound, 4, "a();", &["5"]));
+        // A missing argument is `undefined`; a defaulted one is unknown.
+        let plain = "function f(x) {\n  if (typeof x === 'number') {\n    a();\n  }\n}\n";
+        assert!(excludes_plain(plain, 3, "a();", &[]));
+        let defaulted = "function f(x = 1) {\n  if (typeof x === 'string') {\n    a();\n  }\n}\n";
+        assert!(!excludes_plain(defaulted, 3, "a();", &[]));
+        assert!(!excludes_plain(defaulted, 3, "a();", &["undefined"]));
     }
 
     #[test]

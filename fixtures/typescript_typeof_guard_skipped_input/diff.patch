@@ -1,0 +1,11 @@
+diff --git a/src/size.ts b/src/size.ts
+--- a/src/size.ts
++++ b/src/size.ts
+@@ -1,6 +1,6 @@
+ export function size(x: unknown): number {
+   if (typeof x === 'object') {
+-    return 1;
++    return 99;
+   }
+   return 2;
+ }
