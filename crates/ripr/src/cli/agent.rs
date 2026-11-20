@@ -931,7 +931,9 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         .into_working_set();
 
     if line_ranges && !json {
-        return Err("agent brief --line-ranges requires --json".to_string());
+        return Err(
+            "agent brief --line-ranges requires --json; add --json to the command".to_string(),
+        );
     }
 
     if !json {
