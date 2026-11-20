@@ -25,7 +25,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
-use ra_ap_syntax::ast::HasArgList;
+use ra_ap_syntax::ast::{HasArgList, HasName};
 use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
@@ -1297,6 +1297,41 @@ fn owner_call_activates_boundary(
         && activation_marks_boundary_call(activation, call, &test.file)
 }
 
+/// Eager helper call statements in the test itself. Keep the syntax node
+/// with its complete arguments so both the values and the observation
+/// position belong to this call, even when the invocation spans lines.
+pub(in crate::analysis) fn test_helper_call_arguments(
+    test: &TestSummary,
+    helper: &str,
+    index: &RustIndex,
+) -> Vec<(ast::CallExpr, Vec<String>)> {
+    let body = index
+        .source_syntax
+        .parse_fragment(&test.body)
+        .and_then(|parse| parse.tree().syntax().children().find_map(ast::Fn::cast))
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list());
+    let Some(body) = body else { return Vec::new() };
+    body.statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(body.tail_expr())
+        .filter_map(|expression| match expression {
+            ast::Expr::CallExpr(call) if call.expr()?.syntax().text() == helper => {
+                let arguments = call
+                    .arg_list()?
+                    .args()
+                    .map(|arg| arg.syntax().text().to_string())
+                    .collect();
+                Some((call, arguments))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// A test-local asserting helper can receive the owner result as a value
 /// (including a clone), or through an invoked zero-argument callback. Verify
 /// the input of this argument's own call, independently of other statements.
@@ -1305,7 +1340,7 @@ pub(in crate::analysis) fn helper_argument_is_boundary_call(
     owner: &FunctionSummary,
     test: &TestSummary,
     argument: &str,
-    helper_call: &CallFact,
+    helper_call: &ast::CallExpr,
     activation: &ActivationEvidence,
     index: &RustIndex,
 ) -> bool {
@@ -1321,23 +1356,28 @@ pub(in crate::analysis) fn helper_argument_is_boundary_call(
             || (owner.item.container == FunctionContainer::Free
                 && path_qualified_whole_call(text, &owner.name).is_some())
     };
+    let start = helper_call.syntax().text_range().start();
+    let Some(prefix) = test.body.get(..usize::from(start)) else {
+        return false;
+    };
+    let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
     if argument_is_plain_identifier(expression) {
-        // The shared binding reader registers line-start declarations.
-        // A second binding hidden after a statement can shadow that result.
-        if crate::analysis::syntax::fn_name_binding_count(&test.body, expression) != Some(1) {
+        // Only declarations preceding the observation can shadow the
+        // line-start binding that boundary_bound_locals recognizes.
+        let Some(function) = helper_call.syntax().ancestors().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let preceding_bindings = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|name| name.syntax().text_range().end() <= start && name.text() == expression)
+            .count();
+        if preceding_bindings != 1 {
             return false;
         }
-        let line = helper_call.line;
-        let Some(source) = line
-            .checked_sub(test.start_line)
-            .and_then(|at| test.body.lines().nth(at))
-        else {
-            return false;
-        };
-        let calls = owner_call_argument_lists(source, &helper_call.name);
-        let [(column, _)] = calls.as_slice() else {
-            return false;
-        };
+        let column = prefix.rsplit('\n').next().map_or(0, str::len);
         return boundary_bound_locals(
             probe,
             owner,
@@ -1356,12 +1396,12 @@ pub(in crate::analysis) fn helper_argument_is_boundary_call(
                             argument_list_activates_boundary(probe, owner, test, args, scope)
                         }))
             },
-            (line, Some(*column)),
+            (line, Some(column)),
         )
         .iter()
         .any(|name| name == expression);
     }
-    if !whole_owner_call(expression) || !resolves(expression, helper_call.line) {
+    if !whole_owner_call(expression) || !resolves(expression, line) {
         return false;
     }
     let calls = owner_call_sites(expression, owner);

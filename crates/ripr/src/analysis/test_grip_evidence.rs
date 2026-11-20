@@ -5489,18 +5489,23 @@ fn boundary_oracle_paired(
                     && admitted(test, oracle)
                     && rust_index::find_owner_function(index, &test.file, oracle.line).is_some_and(
                         |helper| {
-                            test.body_calls().any(|call| {
-                                call.name == helper.name
-                                    && call_arguments(&call.text, &helper.name).is_some_and(
-                                        |args| {
-                                            compared_helper_arguments(helper, oracle, &args).any(|arg| {
-                                                super::classify::helper_argument_is_boundary_call(
-                                                    &probe, owner, test, arg, call, &activation.activation, index,
-                                                )
-                                            })
+                            super::classify::test_helper_call_arguments(test, &helper.name, index)
+                                .into_iter()
+                                .any(|(call, arguments)| {
+                                    compared_helper_arguments(helper, oracle, &arguments).any(
+                                        |arg| {
+                                            super::classify::helper_argument_is_boundary_call(
+                                                &probe,
+                                                owner,
+                                                test,
+                                                arg,
+                                                &call,
+                                                &activation.activation,
+                                                index,
+                                            )
                                         },
                                     )
-                            })
+                                })
                         },
                     )
             }))
