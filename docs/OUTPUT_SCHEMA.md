@@ -4044,13 +4044,16 @@ Example:
 ```
 
 Scope: the flag applies to the findings-based check formats (`human`,
-`human-full`, `json`, `github`, `missed-txt`). Human output lists suppressed findings as compact
+`human-full`, `json`, `json-compact`, `github`, `missed-txt`). Human output lists suppressed findings as compact
 one-liners instead of detailed blocks; GitHub-format output skips
 annotations for suppressed findings and, when the policy hides every finding,
 emits a denominator `::notice` rather than an empty stream. SARIF keeps its existing
 `.ripr/suppressions.toml` `finding_id` suppression channel, and badge/repo
 formats keep their own suppression projections — `ripr check` rejects the
-flag for those formats instead of silently ignoring it. Date-expiry
+flag for those formats, and for `agent` and `json-terse`, instead of silently
+ignoring it. The rejection is a usage error decided before analysis (#15377):
+it exits 2 and writes no refusal record to stdout, so no format reports it as
+`analysis_failed`. Date-expiry
 enforcement beyond `expires` (review-after deadlines, required-active
 ledgers) belongs to the gate exception policy (#1442), not check
 suppression.

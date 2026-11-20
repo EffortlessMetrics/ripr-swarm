@@ -3794,6 +3794,34 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
         stderr.contains("--suppression-policy applies to the findings-based check formats"),
         "stderr: {stderr}"
     );
+
+    // #15377: the refusal is a usage error, so the machine formats write no
+    // `run_status=analysis_failed` record an agent would read as an analyzer
+    // failure; stdout stays empty and stderr names the requested format.
+    for format in ["sarif", "agent", "json-terse", "sarif-compact"] {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--format",
+            format,
+            "--suppression-policy",
+            &policy_arg,
+        ]);
+        assert_eq!(output.status.code(), Some(2), "{format}");
+        assert!(
+            output.stdout.is_empty(),
+            "{format}: stdout {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("--format {format} does not apply it")),
+            "{format}: stderr {stderr}"
+        );
+    }
     Ok(())
 }
 
