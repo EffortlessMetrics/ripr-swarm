@@ -141,6 +141,21 @@ pub(crate) fn run_git_output_with_deadline(
     collect_output_with_deadline(command, timeout, &describe)
 }
 
+/// Probe only locally available history, including in promisor clones. Older
+/// Git versions that ignore GIT_NO_LAZY_FETCH still cannot open a transport.
+pub(crate) fn local_merge_base(
+    root: &Path,
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<Output, CoreError> {
+    let (mut command, timeout) =
+        git_command_within(root, &["merge-base", "--", base, "HEAD"], timeout);
+    command
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    collect_output_with_deadline(command, timeout, "git merge-base")
+}
+
 /// Longest working directory, in UTF-16 units and without the trailing
 /// separator, that `CreateProcessW` accepts (`MAX_PATH` minus the terminator
 /// and the separator `SetCurrentDirectoryW` appends). A `longPathAware`
