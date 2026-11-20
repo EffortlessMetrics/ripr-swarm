@@ -204,7 +204,7 @@ rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
-ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
+ripr init [--root PATH] [--ci github|gitlab] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 ```
 
 After writing, `init` prints `doctor` and `check` commands with the selected
