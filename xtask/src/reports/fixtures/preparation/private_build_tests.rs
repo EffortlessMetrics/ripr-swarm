@@ -265,7 +265,7 @@ fn run_case_in(root: &Path, inherited: bool) -> Result<(), String> {
                 "CARGO_BUILD_RUSTC_WRAPPER",
                 "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
             ],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             "private Cargo output owner regression",
         )?;
         write(&root.join(format!("{subject}-stdout.bin")), &output.stdout)?;
