@@ -836,11 +836,7 @@ pub(crate) fn probes_for_file_with_relations(
                 // `after` now name the same edit.
                 // A line of only closers, separators or a comment (`}`,
                 // `})`, `);`) names no edit, so it keeps the label.
-                let carries_code = !text.starts_with("//")
-                    && text.chars().any(|character| {
-                        !character.is_whitespace() && !"{}()[];,".contains(character)
-                    });
-                let after = if shape.unsafe_interior && carries_code {
+                let after = if shape.unsafe_interior && names_an_edit(text) {
                     text.to_string()
                 } else {
                     canonical_text.clone()
@@ -1185,6 +1181,16 @@ fn replaced_literal_is_paired(
 /// a single `,` or `;`. Anything with an operator, call, path or second
 /// token is not bare, so the removed-side probe stays (fail closed).
 #[cfg(test)]
+/// #14333: whether a trimmed changed line inside an unsafe boundary names an
+/// edit of its own. A `//` comment or a line of only closers and separators
+/// (`}`, `})`, `);`) does not, so its probe keeps the boundary label.
+pub(super) fn names_an_edit(text: &str) -> bool {
+    !text.starts_with("//")
+        && text
+            .chars()
+            .any(|character| !character.is_whitespace() && !"{}()[];,".contains(character))
+}
+
 fn is_bare_literal_line(text: &str) -> bool {
     bare_literal_body(text).is_some()
 }

@@ -3,6 +3,7 @@
 //! the probe expression (identity, gap id and the unsafe obligation).
 
 use super::SeededProbe;
+use super::diff::names_an_edit;
 use super::replacement_identity_tests::git_probes;
 use crate::domain::ProbeFamily;
 
@@ -90,30 +91,26 @@ fn the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged() -> Res
     Ok(())
 }
 
-/// Negative: an added closing line of a wrapped `unsafe { .. }` block holds
-/// no code of its own, so it keeps the boundary label rather than reading
-/// `Changed behavior: }`.
+/// Negative: a changed line inside an unsafe boundary that holds no code of
+/// its own (a wrapped block's closing `}`, `})`, `);`, or a comment) keeps
+/// the boundary label rather than reading `Changed behavior: }`. A formatting
+/// rewrap that adds such a line is filtered before probe generation, so the
+/// guard is pinned on the predicate the probe builder calls.
 #[test]
 fn a_closing_brace_line_keeps_the_boundary_label() -> Result<(), String> {
-    let before = "pub fn first(p: *const u8) -> u8 {\n    let v = 1;\n    unsafe { *p }\n}\n";
-    let after =
-        "pub fn first(p: *const u8) -> u8 {\n    let v = 1;\n    unsafe {\n        *p\n    }\n}\n";
-    let probes = git_probes(before, after)?;
-    for seeded in &probes {
-        let probe = &seeded.probe;
-        if probe.family == ProbeFamily::StaticUnknown && probe.expression.starts_with("unsafe ") {
-            let after = probe.after.as_deref().unwrap_or_default().trim();
-            assert!(
-                after.chars().any(|c| !"{}()[];,".contains(c)),
-                "a boundary probe shows punctuation as its changed text: {probe:?}"
-            );
-        }
+    for closer in ["}", "})", ");", "};", "],", "// note", "//"] {
+        assert!(
+            !names_an_edit(closer),
+            "`{closer}` must keep the boundary label"
+        );
     }
-    let closing = probes.iter().find(|seeded| {
-        seeded.probe.location.line == 5 && seeded.probe.expression.starts_with("unsafe ")
-    });
-    if let Some(closing) = closing {
-        assert_eq!(closing.probe.after.as_deref(), Some("unsafe block"));
+    for code in [
+        "let repr = unsafe { ptr::read(p) };",
+        "*p",
+        "}) + 1",
+        "x // note",
+    ] {
+        assert!(names_an_edit(code), "`{code}` names an edit");
     }
     Ok(())
 }
