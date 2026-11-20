@@ -9917,6 +9917,51 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
+/// #15345: an associated constructor (`Config::fresh(3)`) pins its
+/// returned literal's field through the `T::name(..)` call identity
+/// (RIPR-SPEC-0172): the test names the owner's own type through a direct
+/// `use` (a brace list is refused there). A bare `fresh(3)`, another type's
+/// `Other::fresh(3)`, a glob import and `assert_ne!` do not pin.
+#[test]
+fn an_associated_constructor_pins_its_whole_value_field() {
+    let lib = format!(
+        "{CONFIG_LIB}\nimpl Config {{\n    pub fn fresh(n: u32) -> Self {{\n        Config {{\n            retries: n + 1,\n            name: \"x\".into(),\n            count: Count(n),\n        }}\n    }}\n}}\n"
+    );
+    let literal = r#"Config { retries: 7, name: "x".into(), count: Count(3) }"#;
+    let admits = |imports: &str, body: &str| {
+        let tests = format!("{imports}\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(&lib, "fresh", &tests);
+        assert!(pin.is_some(), "the associated field pin must establish");
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let direct = "use demo::Config;\nuse demo::Count;";
+    for body in [
+        format!("assert_eq!(Config::fresh(3), {literal});"),
+        format!("let c = Config::fresh(3);\nassert_eq!(c, {literal});"),
+    ] {
+        assert!(admits(direct, &body), "{body}");
+    }
+    for (imports, body) in [
+        (direct, format!("assert_ne!(Config::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(Other::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(fresh(3), {literal});")),
+        (
+            "use demo::*;",
+            format!("assert_eq!(Config::fresh(3), {literal});"),
+        ),
+    ] {
+        assert!(!admits(imports, &body), "{imports} {body}");
+    }
+    // Another type's same-named associated function competes for the call
+    // name, so no field pin is established.
+    let decoy = format!(
+        "{lib}\npub struct Other;\nimpl Other {{\n    pub fn fresh(_n: u32) -> u32 {{\n        0\n    }}\n}}\n"
+    );
+    let tests =
+        format!("{direct}\n#[test]\nfn pins() {{\nassert_eq!(Config::fresh(3), {literal});\n}}\n");
+    assert!(whole_value_pin(&decoy, "fresh", &tests).1.is_none());
+}
+
 /// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
 /// tail, an early `return Err(..)` exits as `?` does, and the test may
 /// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
@@ -15020,4 +15065,95 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
+
+/// #15263: a test module that imports a standard macro at its own path
+/// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`) binds the
+/// standard macro, so the `assert_eq!` over `vec![..]` stays credited. Each
+/// control keeps a real or possible rebinding refused.
+#[test]
+fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-plain",
+        &[
+            ("Cargo.toml", &manifest("")),
+            ("src/lib.rs", ""),
+            ("tests/buf_tests.rs", ""),
+        ],
+    )?;
+    let alloc_dependency = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-alloc-dep",
+        &[(
+            "Cargo.toml",
+            &manifest("alloc = { package = \"fake-alloc\", version = \"1\" }\n"),
+        )],
+    )?;
+    let lib = "pub fn weights(x: u32) -> Vec<u32> {\n    vec![x * 3]\n}\n";
+    let refusal_under = |root: &Path, import: &str| -> Result<Option<AssertionRefusal>, String> {
+        let tests = format!(
+            "#[cfg(test)]\nmod test {{\n    use demo::weights;\n    {import}\n\n    #[test]\n    fn weighs() {{\n        assert_eq!(weights(4), vec![12]);\n    }}\n}}\n"
+        );
+        let mut index = index(&[(LIB, lib), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .ok_or_else(|| format!("no indexed test under `{import}`"))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weights(4)"))
+            .ok_or_else(|| format!("no indexed assertion under `{import}`"))?;
+        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+    };
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: with no import the assertion is credited, and a
+    // foreign import of `vec` does refuse it.
+    assert_eq!(refusal_under(&plain, "")?, None);
+    assert!(rebound(refusal_under(&plain, "use other::vec;")?));
+    for import in [
+        "use std::vec;",
+        "use ::std::vec;",
+        "use alloc::vec;",
+        "use std::assert_eq;",
+        "use core::assert_eq;",
+        "use std::{vec, fmt};",
+    ] {
+        assert_eq!(refusal_under(&plain, import)?, None, "{import}");
+    }
+    for import in [
+        // Not where the standard library exports the macro.
+        "use core::vec;",
+        "use std::vec::vec;",
+        "use alloc::assert_eq;",
+        // A rename, and a root a local alias or module takes.
+        "use other::assert_eq as vec;",
+        "use std::assert_eq as vec;",
+        "use other as std;\n    use std::vec;",
+        "mod std {}\n    use std::vec;",
+        "mod alloc {}\n    use alloc::vec;",
+        "extern crate other as alloc;\n    use alloc::vec;",
+        "use crate::alloc::vec;",
+    ] {
+        assert!(rebound(refusal_under(&plain, import)?), "{import}");
+    }
+    // A manifest dependency named `alloc` may be the crate `use alloc::vec`
+    // names, so the import stays a rebinding there; `std` is unaffected.
+    assert!(rebound(refusal_under(
+        &alloc_dependency,
+        "use alloc::vec;"
+    )?));
+    assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
+    Ok(())
 }

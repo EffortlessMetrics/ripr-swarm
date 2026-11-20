@@ -530,10 +530,92 @@ pub(super) fn render_finding(
     {
         out.push_str(&format!("limit={}\n", field(&name)));
     }
+    // The owner and the pre-change text are what `ripr context` would add
+    // beyond the record above; printing them here lets the agent skip that
+    // 1 KB JSON packet when nothing else in it is new (see `context_adds_detail`).
+    if let Some(line) = owner_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if let Some(line) = before_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let keep_context = context_adds_detail(finding, terminal);
+    if !keep_context && let Some(line) = seen_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
     out.push_str(terminal);
     out.push('\n');
-    out.push_str(&format!("next={context_command}\n"));
+    if keep_context {
+        out.push_str(&format!("next={context_command}\n"));
+    }
     out
+}
+
+/// Most observed test inputs a `seen=` line lists before `(+N more)`.
+const MAX_SEEN_VALUES: usize = 6;
+
+/// `seen=V1 (CONTEXT); V2 (CONTEXT) (+N more)`: the values the related tests
+/// already use, each with its producer context (`function_argument` inputs
+/// apart from `assertion_argument` expectations),
+/// printed only when `next=` is omitted, because the context packet's
+/// `observed_values` is then the one fact this projection would otherwise
+/// drop. Absent when the producer observed no values.
+fn seen_line(finding: &Finding) -> Option<String> {
+    let values = &finding.activation.observed_values;
+    if values.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = values
+        .iter()
+        .take(MAX_SEEN_VALUES)
+        .map(|fact| format!("{} ({})", clip(fact.value.trim()), fact.context.as_str()))
+        .collect();
+    let mut line = format!("seen={}", field(&shown.join("; ")));
+    if values.len() > MAX_SEEN_VALUES {
+        line.push_str(&format!(" (+{} more)", values.len() - MAX_SEEN_VALUES));
+    }
+    Some(line)
+}
+
+/// `owner=NAME`: the function the changed line belongs to, from the producer's
+/// probe owner (`path::name`, `path::Type::name`). Absent without an owner.
+fn owner_line(finding: &Finding) -> Option<String> {
+    let owner = finding.probe.owner.as_ref()?;
+    let name = owner
+        .0
+        .split_once("::")
+        .map_or(owner.0.as_str(), |(_, n)| n);
+    (!name.is_empty()).then(|| format!("owner={}", field(name)))
+}
+
+/// `before=TEXT`: the changed expression as it read on the base side, when the
+/// producer recorded one that differs from the head expression in the record.
+fn before_line(finding: &Finding) -> Option<String> {
+    let before = finding.probe.before.as_deref()?.trim();
+    (!before.is_empty() && before != finding.probe.expression.trim())
+        .then(|| format!("before={}", field(&clip(before))))
+}
+
+/// Whether `ripr context` still holds something this projection did not print.
+/// For a test-side gap with no concrete missing discriminator and at most one
+/// related test, the packet's remaining body is the same record, `before`,
+/// owner, observed inputs (printed as `seen=`), stage prose that restates
+/// `stages=` and producer-internal limitations, so `next=` is omitted and the
+/// agent writes the test instead of fetching it. The terminal is matched by its
+/// prefix; a reworded terminal keeps `next=` (fails closed). Any other finding keeps the
+/// pointer: the discriminator's reason, observed inputs, flow sink and extra
+/// related tests live only in the packet.
+fn context_adds_detail(finding: &Finding, terminal: &str) -> bool {
+    !(terminal.starts_with("open=a test-side")
+        && finding.activation.missing_discriminators.is_empty()
+        && finding
+            .related_tests_matched_total
+            .unwrap_or_default()
+            .max(finding.related_tests.len())
+            <= 1)
 }
 
 /// Terminal `stop=` rendering for a finding that is not a current edit target:
