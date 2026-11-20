@@ -49,7 +49,6 @@ mod check_work_budget;
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
 mod closed_stderr;
-
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]

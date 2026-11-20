@@ -293,7 +293,8 @@ fn verify_revision(repo: &Path, flag: &str, rev: &str) -> Result<(), String> {
     )
     .map_err(|err| {
         format!(
-            "pr-evidence could not run git to resolve {flag} `{rev}`: {err}; check that git is installed and on PATH, then rerun"
+            "pr-evidence could not run git to resolve {flag} `{rev}`: {}; check that git is installed and on PATH, then rerun",
+            crate::git::without_saved_diff_route(&err.to_string())
         )
     })?;
     if output.status.success() {

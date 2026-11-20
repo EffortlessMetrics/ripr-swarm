@@ -159,6 +159,15 @@ fn missing_vcs_does_not_suggest_diff_to_commands_without_it() -> TestResult {
     for args in [
         &["pr-evidence", "--root", "."][..],
         &[
+            "pr-evidence",
+            "--base",
+            "HEAD",
+            "--head",
+            "HEAD",
+            "--root",
+            ".",
+        ][..],
+        &[
             "review-comments",
             "--base",
             "HEAD",
