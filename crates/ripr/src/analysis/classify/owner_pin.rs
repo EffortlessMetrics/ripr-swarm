@@ -18882,6 +18882,43 @@ fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Optio
     Some(())
 }
 
+/// A success-only pattern over a direct owner call. Limit the arguments to
+/// simple inputs: an expression in the scrutinee could inspect another call.
+pub(in crate::analysis) fn matches_owner_ok(oracle: &str, owner: &str) -> bool {
+    let Some(condition) = outer_assertion_condition(oracle) else {
+        return false;
+    };
+    let Some(operands) = condition
+        .trim()
+        .strip_prefix("matches!")
+        .and_then(|rest| group_inner(rest.trim(), '(', ')'))
+        .and_then(split_top_level_arguments)
+    else {
+        return false;
+    };
+    let [subject, pattern] = operands.as_slice() else {
+        return false;
+    };
+    if pattern.trim() != "Ok(_)" || direct_call_name(subject) != Some(owner) {
+        return false;
+    }
+    let args = subject
+        .trim()
+        .strip_prefix(owner)
+        .and_then(|rest| group_inner(rest.trim(), '(', ')'))
+        .map(str::trim);
+    args.is_some_and(|args| {
+        args.is_empty()
+            || split_top_level_arguments(args).is_some_and(|args| {
+                args.iter().all(|arg| {
+                    is_plain_identifier(arg)
+                        || is_string_literal(arg)
+                        || (!arg.is_empty() && arg.bytes().all(|byte| byte.is_ascii_digit()))
+                })
+            })
+    })
+}
+
 /// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads
 /// from `text`: a plain `assert!(matches!(..))`, or the assertion twin of a
 /// terminal Err-return guard over a negated `matches!`. Guards are read through
