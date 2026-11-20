@@ -32,7 +32,14 @@
 //! literal between the opening `raise Exc(` and the closing `)`.
 
 use super::assertion_selection::PythonAssertionFocus;
-use super::related_tests::PythonRelatedCandidate;
+use super::exception_variant::{
+    builtin_exception_parent, builtin_new_outside_local_old, expected_classes, known_not_subclass,
+    old_class_outside, owner_scope_leaves_unbound, raised_type_name,
+};
+use super::related_tests::{
+    PythonRelatedCandidate, exception_body_observes_token, import_source_module_matches_owner,
+    module_name_identifies_owner_for,
+};
 use super::source_facts::parse_module_result;
 use super::{PythonAssertion, PythonOwner};
 use crate::domain::{OracleKind, OracleStrength};
@@ -46,6 +53,8 @@ pub(super) struct MessagePinGap {
     pub(super) discriminator: String,
     /// Which patterns accept both messages.
     pub(super) reason: String,
+    /// What a distinguishing assertion must do.
+    pub(super) action: &'static str,
 }
 
 /// Evidence that every strong error-variant assertion pins the changed
@@ -108,9 +117,162 @@ pub(super) fn python_message_pin_gap(
         .collect::<Vec<_>>()
         .join(", ");
     Some(MessagePinGap {
+        action: "Add a `match=` pattern that the old message does not satisfy.",
         discriminator: format!("message {new_message:?}"),
         reason: format!(
             "every strong related error assertion pins `{new_exception}` with a literal message pattern ({names}) that matches the old message {old_message:?} and the new message {new_message:?} alike, so it pins only the exception class"
+        ),
+    })
+}
+
+/// A raised-type replacement (`raise Old(..)` -> `raise New(..)`) whose strong
+/// related error assertions all fail to name `New` exactly (#15356). A
+/// `pytest.raises(Base, match=...)` / `assertRaisesRegex(Base, ...)` passes
+/// for the old and the new class alike when `New` derives from `Base` (or is
+/// `Base`), so it pins only the base class. Residual: an imported `New` is not
+/// read, so an alias of the old builtin in its own module (`New = ValueError`)
+/// would still be credited. Only an assertion expecting exactly
+/// `New` (and the old class lying outside `New`'s subtree, so the assertion
+/// fails before the edit), with the name resolving to the owner's own class (the same import, a
+/// plain import from the owner's module, or an untouched builtin), is read as
+/// discriminating; any other shape, a tuple, the old type, a base class or
+/// `Exception` keeps the finding weak. `None` when the raised type does not
+/// change, no strong error assertion exists, or one of them names `New` exactly.
+pub(super) fn python_raised_type_pin_gap(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    owner_source: Option<&str>,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<MessagePinGap> {
+    let old_type = raised_type_name(old_line_text?)?;
+    let new_type = raised_type_name(line_text)?;
+    if old_type == new_type {
+        return None;
+    }
+    let owner_import = owner.imports.iter().find(|import| import.alias == new_type);
+    let builtin = builtin_exception_parent(&new_type).is_some();
+    // Both raised names must read as module-level classes in the owner's
+    // scope, or neither escape below can tell the two raises apart.
+    let scope_clear =
+        owner_scope_leaves_unbound(owner_source, owner, &[old_type.as_str(), new_type.as_str()]);
+    let mut seen = false;
+    for candidate in related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        let test = candidate.test;
+        for assertion in test
+            .assertions
+            .iter()
+            .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
+        {
+            seen = true;
+            // An escape credits only an assertion whose own `with` body (or
+            // callable call) runs the owner: another exception context in
+            // the same test pins some other raise (#15356 review).
+            let runs_owner = scope_clear
+                && exception_body_observes_token(
+                    &assertion.gate_text,
+                    &assertion.text,
+                    assertion.exception_body_end,
+                    &owner.name,
+                );
+            let exact = runs_owner
+                && expected_classes(&assertion.text)
+                    .is_some_and(|classes| classes == [new_type.clone()]);
+            let rebinding = &test.constant_rebinding;
+            let test_import = test.imports.iter().find(|import| import.alias == new_type);
+            let resolves = !rebinding.module_opaque
+                && !rebinding.rebinds(&new_type)
+                && match (owner_import, test_import) {
+                    (Some(own), Some(theirs)) => {
+                        // The same import in both modules (relative imports are
+                        // stored resolved against their own file, so packages
+                        // that differ never compare equal); a test-local package
+                        // of the import's root demotes it.
+                        own.imported == theirs.imported
+                            && !own.source_module.is_empty()
+                            && own.source_module == theirs.source_module
+                            && module_name_identifies_owner_for(
+                                owner,
+                                &theirs.source_module,
+                                &test.file,
+                            )
+                    }
+                    (Some(_), None) => false,
+                    (None, Some(theirs)) => {
+                        !builtin
+                            && theirs.imported == new_type
+                            && import_source_module_matches_owner(theirs, owner, &test.file)
+                    }
+                    (None, None) => {
+                        builtin
+                            && !rebinding.module_bound.contains(&new_type)
+                            && test.imports.iter().all(|import| import.imported != "*")
+                    }
+                };
+            if exact
+                && resolves
+                && old_class_outside(
+                    owner_source,
+                    &old_type,
+                    &new_type,
+                    owner_import.is_some(),
+                    &owner.imports,
+                )
+            {
+                return None;
+            }
+            // An exact old-class expectation the new class is statically known
+            // not to satisfy fails against the new raise, which the edit does
+            // notice (RIPR-SPEC-0238 example 14). The old name must resolve in
+            // the test module to the owner's class: an untouched builtin (not
+            // bound or imported there, no star import), or a class the owner
+            // module defines and the test imports plainly from it (a narrowing
+            // `raise Sub(..)` -> `raise Base(..)` under `pytest.raises(Sub)`).
+            let old_resolves = if builtin_exception_parent(&old_type).is_some() {
+                !rebinding.module_bound.contains(&old_type)
+                    && test
+                        .imports
+                        .iter()
+                        .all(|import| import.alias != old_type && import.imported != "*")
+            } else {
+                !rebinding.module_opaque
+                    && !rebinding.rebinds(&old_type)
+                    && owner.imports.iter().all(|import| import.alias != old_type)
+                    && test
+                        .imports
+                        .iter()
+                        .filter(|import| import.alias == old_type)
+                        .count()
+                        == 1
+                    && test.imports.iter().any(|import| {
+                        import.alias == old_type
+                            && import.imported == old_type
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                    })
+            };
+            let stale = runs_owner
+                && expected_classes(&assertion.text)
+                    .is_some_and(|classes| classes.iter().all(|class| *class == old_type))
+                && old_resolves
+                && owner_source.is_some_and(|source| {
+                    known_not_subclass(source, &new_type, &old_type) == Some(true)
+                        || (builtin_exception_parent(&old_type).is_none()
+                            && builtin_new_outside_local_old(source, &new_type, &old_type))
+                });
+            if stale {
+                return None;
+            }
+        }
+    }
+    seen.then(|| MessagePinGap {
+        action: "Add an assertion that expects the new class exactly.",
+        discriminator: format!("pytest.raises({new_type})"),
+        reason: format!(
+            "the raised class changed from `{old_type}` to `{new_type}`, and no strong related error assertion expects `{new_type}` exactly, so each passes for the old class as well (a base class, the old class or `Exception` accepts the new raise)"
         ),
     })
 }

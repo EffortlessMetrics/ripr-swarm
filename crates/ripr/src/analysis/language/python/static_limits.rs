@@ -413,7 +413,13 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports)
+        && !super::exception_variant::imported_raised_class_swap(
+            trimmed,
+            old_line_text.map(str::trim),
+            &owner.imports,
+        )
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"

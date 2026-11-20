@@ -410,6 +410,8 @@ mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
 mod hypothesis;
+#[cfg(test)]
+mod imported_raise_class_tests;
 mod module_constants;
 mod nested_result;
 mod no_behavior;

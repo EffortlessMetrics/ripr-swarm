@@ -1293,6 +1293,21 @@ fn classify_change_for_owner_inner<'a>(
                 &related_candidates,
                 &focus,
             )
+            .or_else(|| {
+                // #15356: a raised-class swap that no assertion names exactly.
+                // The credited exception-variant read (below) already granted
+                // its own exact assertion, so it is not repeated here.
+                exception_variants.is_empty().then(|| {
+                    message_pin::python_raised_type_pin_gap(
+                        line_text,
+                        old_line_text,
+                        owner,
+                        owner_source,
+                        &related_candidates,
+                        &focus,
+                    )
+                })?
+            })
         })
         .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
@@ -1694,8 +1709,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.action,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
