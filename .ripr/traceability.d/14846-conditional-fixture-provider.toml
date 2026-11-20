@@ -5,3 +5,14 @@ tests = [
   "crates/ripr/src/app/tests/python_test_style_matrix.rs::parenthesized_owner_calls_bind_only_the_whole_result",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_mock_passed_for_a_called_parameter_pins_its_arguments",
 ]
+fixtures = [
+  "fixtures/python_async_fixture_alias_rebound",
+  "fixtures/python_async_fixture_alias_intact",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_async_fixture_alias_rebound",
+  "fixtures/python_async_fixture_alias_intact",
+]
