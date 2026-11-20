@@ -2316,6 +2316,14 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--all",
                 "rejected with --help; extended help is `ripr help --all`",
             ),
+            // `completions --shell` is refused with the positional spelling
+            // (#15259); it is not an accepted flag, so it owns no Options
+            // entry.
+            (
+                "completions",
+                "--shell",
+                "rejected; the shell is positional (`ripr completions bash`)",
+            ),
         ];
 
         for (body, commands) in &groups {

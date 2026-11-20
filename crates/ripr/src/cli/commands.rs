@@ -1532,6 +1532,8 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
     let mut pull_request = None;
+    let mut token_seen: Option<bool> = None;
+    let mut write_seen: Option<bool> = None;
     let mut event_name = None;
     let mut head_repo = None;
     let mut base_repo = None;
@@ -1586,9 +1588,10 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
             "--pull-request" => {
                 i += 1;
                 let value = non_empty_string_arg(args, i, "--pull-request", "pr-comments plan")?;
-                pull_request = Some(value.parse::<u64>().map_err(|err| {
-                    format!("pr-comments plan --pull-request must be a positive integer: {err}")
-                })?);
+                pull_request = Some(crate::cli::commands_numeric::parse_positive_u64(
+                    &value,
+                    "--pull-request",
+                )?);
             }
             "--event-name" => {
                 i += 1;
@@ -1617,17 +1620,36 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
                     "pr-comments plan",
                 )?);
             }
-            "--token-available" => token_available = true,
-            "--no-token" => token_available = false,
-            "--write-permission" => write_permission = true,
-            "--no-write-permission" => write_permission = false,
+            "--token-available" | "--no-token" => {
+                let available = args[i] == "--token-available";
+                if token_seen.is_some_and(|prior| prior != available) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --token-available or --no-token, not both; pass only one",
+                    ));
+                }
+                token_seen = Some(available);
+                token_available = available;
+            }
+            "--write-permission" | "--no-write-permission" => {
+                let granted = args[i] == "--write-permission";
+                if write_seen.is_some_and(|prior| prior != granted) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --write-permission or --no-write-permission, not both; pass only one",
+                    ));
+                }
+                write_seen = Some(granted);
+                write_permission = granted;
+            }
             "--max-inline-comments" => {
                 i += 1;
                 let value =
                     non_empty_string_arg(args, i, "--max-inline-comments", "pr-comments plan")?;
-                max_inline_comments = value.parse::<usize>().map_err(|err| {
-                    format!("pr-comments plan --max-inline-comments must be a number: {err}")
-                })?;
+                max_inline_comments = crate::cli::commands_numeric::parse_non_negative_usize(
+                    &value,
+                    "--max-inline-comments",
+                )?;
             }
             "--out" => {
                 i += 1;

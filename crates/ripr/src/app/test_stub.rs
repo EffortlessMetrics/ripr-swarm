@@ -65,9 +65,19 @@ impl TestStubSelector {
     }
 
     pub(crate) fn parse_at(value: &str) -> Result<Self, String> {
-        let (file, line) = value
-            .rsplit_once(':')
-            .ok_or_else(|| format!("--at expects FILE:LINE, got {value:?}"))?;
+        let (file, line) = value.rsplit_once(':').ok_or_else(|| {
+            format!("--at expects FILE:LINE (for example src/lib.rs:12), got {value:?}")
+        })?;
+        // `src/lib.rs:1:2` would split on the last `:` into a bogus path
+        // `src/lib.rs:1`; the line is the only `:`-suffixed number.
+        if let Some((_, tail)) = file.rsplit_once(':')
+            && !tail.is_empty()
+            && tail.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(format!(
+                "--at expects FILE:LINE (for example src/lib.rs:12) with a single line number, got {value:?}"
+            ));
+        }
         let line = line.parse::<usize>().map_err(|_parse_err| {
             format!("--at expects FILE:LINE with a line number, got {value:?}")
         })?;
