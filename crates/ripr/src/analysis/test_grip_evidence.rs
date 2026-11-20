@@ -12,6 +12,7 @@
 //! then stable file/name/line tie-breakers.
 
 mod boolean_boundary_pin;
+mod both_diff_versions;
 mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
@@ -28,6 +29,7 @@ pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
+pub(in crate::analysis) use both_diff_versions::test_fails_on_both_diff_versions;
 use local_operand_alias::boundary_local_operand_parameter_index;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
@@ -5597,64 +5599,6 @@ pub(in crate::analysis) fn test_has_contradicted_assertion(
             ExactValueVerdict::Contradicted { .. }
         )
     })
-}
-
-/// The diff-mode whole-test contradiction (#10980). A related test carries
-/// the diff surface's credit only when it passes SOMEWHERE: it is withheld
-/// when it fails on BOTH versions — some assertion row contradicts the
-/// candidate body's fold and some row contradicts the baseline body — so
-/// the test passes on neither version and cannot notice the change. A row
-/// written for the baseline that the candidate breaks is the discriminator
-/// itself (the exact-boundary witness of the agentic b4 journey), and a
-/// row the candidate satisfies is the change's own credit; neither
-/// withholds. The baseline body is the owner's current body with the
-/// probe's `after` expression replaced by `before` exactly once (the
-/// #8659/#10916 reconstruction); a probe without a baseline expression or
-/// a body that does not reconstruct keeps the test's credit — the fold
-/// can only withhold. The repo-seam rule above stays current-fold-only:
-/// there the current body is the shipped code and a contradicted row is
-/// a wrong-way discriminator, while on the diff surface the current body
-/// is the candidate under review.
-pub(in crate::analysis) fn test_fails_on_both_diff_versions(
-    test: &TestSummary,
-    owner: &FunctionSummary,
-    before: Option<&str>,
-    after: Option<&str>,
-    index: &RustIndex,
-) -> bool {
-    let (Some(before), Some(after)) = (before, after) else {
-        return false;
-    };
-    if before == after || owner.body.matches(after).count() != 1 {
-        return false;
-    }
-    let mut baseline_owner = owner.clone();
-    baseline_owner.body =
-        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
-    let mut fails_on_candidate = false;
-    let mut fails_on_base = false;
-    for oracle in &test.assertions {
-        if !fails_on_candidate
-            && matches!(
-                assertion_verdict_for_test(Some(owner), &oracle.text, test, index),
-                ExactValueVerdict::Contradicted { .. }
-            )
-        {
-            fails_on_candidate = true;
-        }
-        if !fails_on_base
-            && matches!(
-                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test, index),
-                ExactValueVerdict::Contradicted { .. }
-            )
-        {
-            fails_on_base = true;
-        }
-        if fails_on_candidate && fails_on_base {
-            return true;
-        }
-    }
-    false
 }
 
 /// Whether the whole-test contradiction has an established reading. The
