@@ -6768,13 +6768,17 @@ mod tests {
             // keeps the TypeScript label.
             let ts_rendered = render(&single_finding_output(ts.clone()));
             assert!(
-                !ts_rendered.replace("TypeScript/JavaScript", "").contains("JavaScript"),
+                !ts_rendered
+                    .replace("TypeScript/JavaScript", "")
+                    .contains("JavaScript"),
                 "{ts_rendered}"
             );
             let ts_block = render_finding(&ts);
             assert!(ts_block.contains("TypeScript"), "{ts_block}");
             assert!(
-                !ts_block.replace("TypeScript/JavaScript", "").contains("JavaScript"),
+                !ts_block
+                    .replace("TypeScript/JavaScript", "")
+                    .contains("JavaScript"),
                 "{ts_block}"
             );
             if !complete_packet {
