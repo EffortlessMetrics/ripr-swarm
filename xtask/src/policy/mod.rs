@@ -18,6 +18,7 @@ pub(crate) mod file_policy_retained_evidence;
 mod fold_changelog;
 mod install_receipt;
 mod library_selector;
+mod lint_ledger;
 mod local_context;
 mod network;
 mod no_panic;
@@ -64,6 +65,7 @@ pub(crate) use file_policy::{
 };
 pub(crate) use fold_changelog::fold_changelog;
 pub(crate) use install_receipt::install_receipt;
+pub(crate) use lint_ledger::parse_clippy_lints_ledger;
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
