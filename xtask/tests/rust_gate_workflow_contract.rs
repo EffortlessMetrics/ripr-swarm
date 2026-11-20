@@ -1040,6 +1040,28 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
 }
 
 #[test]
+fn packed_partition_selector_reaches_the_native_runner() -> Result<(), String> {
+    let producer = SHARDS
+        .split_once("id: packed-partitions")
+        .ok_or("missing packed step")?
+        .1
+        .split_once("      - name: Upload partition 1 results")
+        .ok_or("missing end of packed step")?
+        .0;
+    let lines: Vec<_> = producer.lines().map(str::trim).collect();
+    let run = lines
+        .iter()
+        .position(|line| *line == SHARDED_TEST_COMMAND)
+        .ok_or("missing native run")?;
+    let previous = run.checked_sub(1).ok_or("missing selector export")?;
+    assert_eq!(
+        lines[previous],
+        "export RIPR_PACKED_TEST_PARTITION=\"$partition\""
+    );
+    Ok(())
+}
+
+#[test]
 fn sharded_hosted_tests_keep_the_one_command_selection() {
     let findings = shard_contract_violations(SHARDS, ROUTED);
     assert!(findings.is_empty(), "{findings:?}");

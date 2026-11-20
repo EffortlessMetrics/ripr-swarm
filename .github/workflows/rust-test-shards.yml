@@ -256,6 +256,7 @@ jobs:
                 cargo nextest list --workspace --profile ci --color never --config "$partition_config" --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
               fi
               set +e
+              export RIPR_PACKED_TEST_PARTITION="$partition"
               cargo nextest run --workspace --profile ci --partition hash:${partition}/2 --config "$partition_config"
               test_exit=$?
               set -e
