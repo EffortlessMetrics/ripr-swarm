@@ -149,13 +149,6 @@ pub(crate) enum RepairRouteRefusal {
     AnalysisIncomplete {
         limitation: String,
     },
-    /// The analyzed root is a subdirectory of its Git work tree. The repair
-    /// attempt authority starts only at the exact Git top-level, so any start
-    /// printed for this root would exit 2 with "not the exact Git top-level".
-    /// `top` is that top-level as Git spells it.
-    RootBelowGitTopLevel {
-        top: String,
-    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
     /// A TypeScript/JavaScript preview finding whose repair packet is not
@@ -253,10 +246,6 @@ impl RepairRouteRefusal {
             ),
             Self::AnalysisIncomplete { limitation } => format!(
                 "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
-            ),
-            Self::RootBelowGitTopLevel { top } => format!(
-                "no repair start offered: this root is a subdirectory of the Git repository at {top}, and a repair starts only at the repository's top-level; add or strengthen the test by hand as the Next step above says, then rerun `ripr check`, or run `ripr check --root {}` and start from the route it prints",
-                shell_arg(top)
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \

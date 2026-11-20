@@ -1,12 +1,9 @@
-# Registers the #15363 subdirectory-root repair route under RIPR-SPEC-0011: a
-# repair attempt starts only at the exact Git top-level, so `ripr check --root
-# <subdir>` names that instead of a start (human, agent, JSON), and the before
-# phase refuses such a root before writing anything under it.
+# Registers the #15363 subdirectory-root refusal under RIPR-SPEC-0011: a repair
+# attempt starts only at the exact Git top-level, and the before phase refuses
+# a root below it before writing anything under that root.
 [[extend]]
 id = "RIPR-SPEC-0011"
 tests = [
-  "crates/ripr/tests/check_repair_agree.rs::subdirectory_root_check_offers_no_repair_start_or_commit_step",
-  "crates/ripr/tests/subdirectory_root_repair_route.rs::check_under_a_subdirectory_root_prints_no_repair_start_in_any_format",
   "crates/ripr/tests/subdirectory_root_repair_route.rs::check_at_the_git_top_level_still_offers_the_repair_start",
   "crates/ripr/tests/subdirectory_root_repair_route.rs::agent_repair_refuses_a_subdirectory_root_before_writing_anything",
 ]

@@ -2171,9 +2171,9 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
 
 /// The Git top-level a repair attempt would need when `root` is a proper
 /// subdirectory of its work tree, `None` for the exact top-level or when Git
-/// cannot say (those cases keep the attempt's own refusals). Check-time route
-/// gating and the before-phase entry share this so a printed repair start never
-/// reaches the cage's refusal (subdirectory `--root`). It asks Git exactly as
+/// cannot say (those cases keep the attempt's own refusals). The before-phase
+/// entry uses it to refuse a subdirectory `--root` before writing anything;
+/// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
 /// [`canonical_repository_root`] does (same command, environment and deadline),
 /// so check never withholds a start the cage would accept, for example under
 /// an exported `GIT_DIR`.

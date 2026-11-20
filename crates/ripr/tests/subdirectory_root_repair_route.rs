@@ -1,7 +1,7 @@
-//! A repository whose Python package lives below the Git top-level: `ripr check
-//! --root <subdir>` must not print a repair start that `ripr agent repair` then
-//! refuses ("attempt root ... is not the exact Git top-level"), and that refusal
-//! must happen before any file is written under the subdirectory.
+//! A repository whose Python package lives below the Git top-level: `ripr agent
+//! repair --root <subdir>` refuses ("attempt root ... is not the exact Git
+//! top-level") before any file is written under the subdirectory (#15363).
+//! Withholding the start that `ripr check --root <subdir>` still prints is #15488.
 
 #![cfg(feature = "lang-python")]
 
@@ -80,47 +80,8 @@ fn stdout_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-#[test]
-fn check_under_a_subdirectory_root_prints_no_repair_start_in_any_format() -> Result<(), String> {
-    let (_guard, _top, backend) = monorepo("check")?;
-    let mut human_has_finding = false;
-    for format in ["human", "agent", "json"] {
-        let root = backend.to_string_lossy().into_owned();
-        let output = ripr(
-            &backend,
-            &[
-                "check", "--quiet", "--root", &root, "--base", "HEAD~1", "--format", format,
-            ],
-        )?;
-        let text = stdout_of(&output);
-        if !output.status.success() {
-            return Err(format!(
-                "check --format {format} failed:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        if text.contains("agent repair --gap-id") || text.contains("ripr repair ") {
-            return Err(format!(
-                "--format {format} printed a repair start that refuses under a subdirectory root:\n{text}"
-            ));
-        }
-        if format == "human" {
-            human_has_finding = text.contains("Changed behavior");
-            if !text.contains("a repair starts only at the repository's top-level") {
-                return Err(format!(
-                    "human check must name why no repair start is offered:\n{text}"
-                ));
-            }
-        }
-    }
-    if !human_has_finding {
-        return Err("fixture lost its finding; the negative proof is vacuous".to_string());
-    }
-    Ok(())
-}
-
-/// Positive control: the same package checked from the Git top-level still
-/// offers the start, so the gate is the subdirectory and not the fixture.
+/// Positive control: the same package checked from the Git top-level offers
+/// the start, so the refusal below is about the subdirectory, not the fixture.
 #[test]
 fn check_at_the_git_top_level_still_offers_the_repair_start() -> Result<(), String> {
     let (_guard, top, _backend) = monorepo("top")?;
