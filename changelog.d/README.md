@@ -58,6 +58,7 @@ fold inside an ordinary feature PR.
 
 ```bash
 cargo xtask fold-changelog                       # dry run: print the plan, write nothing
+cargo xtask check-changelog-fragments            # must pass before any --write
 cargo xtask fold-changelog --write --limit 150   # fold and delete one batch
 ```
 
@@ -65,7 +66,13 @@ The default is a dry run. `--limit N` takes the first N fragments in name
 order so each PR stays within 150 files (the candidate-admission size limit);
 rerun for the next batch. The command refuses, naming the file, any fragment
 with an unknown section, a missing section line or another format violation,
-and any entry whose text is already in `Unreleased`, and then writes nothing.
+and any fragment whose whole entry text already appears in `Unreleased`, and
+then writes nothing. That fold-time guard compares each fragment's entry text
+as one block, not bullet by bullet, so a fragment that repeats one existing
+bullet next to a new one still folds and duplicates the old bullet.
+`check-changelog-fragments` compares each bullet; run it and require it to pass
+before either `--write` command (including `--release-cut`, whose own check
+runs only after it has rewritten `CHANGELOG.md` and deleted the fragments).
 Once folded fragments are deleted, a rerun has nothing left to fold.
 
 The fold may also run ahead of the cut as a snapshot, so the cut itself folds
@@ -80,13 +87,16 @@ until the next snapshot or the cut. After the final
 fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
 fails on any fragment still here.
 
-On cut day use one command. `--release-cut` folds every fragment (it cannot be
-combined with `--limit` or `--keep-fragments`), deletes them, and then requires
-`check-changelog-fragments --release-cut` to pass, so a leftover or malformed
-fragment fails the same step:
+On cut day run the preflight, then one write command. `--release-cut` folds
+every fragment (it cannot be combined with `--limit` or `--keep-fragments`),
+deletes them, and then requires `check-changelog-fragments --release-cut` to
+pass, so a leftover or malformed fragment fails the same step. That final
+check runs after the write, so a duplicated bullet is caught only once the
+inputs are already rewritten; the preflight check catches it first:
 
 ```bash
 cargo xtask fold-changelog --release-cut           # dry run: plan only
+cargo xtask check-changelog-fragments              # preflight: must pass first
 cargo xtask fold-changelog --write --release-cut   # fold, delete, verify
 ```
 
