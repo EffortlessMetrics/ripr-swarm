@@ -2141,6 +2141,11 @@ fn static_unknown_range_id_routes_to_inspection() -> Result<(), String> {
     )?;
     assert_exit(&check, 0, "check the committed range change");
     let report = stdout_text(&check);
+    let header = report.lines().next().ok_or("missing check header")?;
+    assert!(
+        header.split_whitespace().any(|field| field == "gaps=1"),
+        "{header}"
+    );
     let row = report
         .lines()
         .find(|line| line.starts_with("no_static_path|src/lib.rs:3|"))
@@ -2214,7 +2219,7 @@ fn startable_predicate_routes_to_the_printed_repair() -> Result<(), String> {
     assert_exit(&repair, 0, "run the repair command check printed");
     let ids = attempt_ids(root);
     assert_eq!(ids.len(), 1);
-    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], words[2].as_str());
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
     Ok(())
 }
 
