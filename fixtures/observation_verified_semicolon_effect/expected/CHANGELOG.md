@@ -165,3 +165,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — observation_verified_semicolon_effect (13)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless observation_verified_semicolon_effect --reason "..."`
+
+Updated:
+- `expected/human.txt`
