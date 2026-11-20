@@ -20905,6 +20905,30 @@
       ]
     },
     {
+      "id": "rust_into_from_let_shadows_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_into_from_let_shadows_constructor",
+      "vector": "an_into_on_a_let_closure_named_like_a_braced_struct_runs_that_values_from_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_into_from_const_shadows_unit",
       "language": "rust",
       "tier": "pure",

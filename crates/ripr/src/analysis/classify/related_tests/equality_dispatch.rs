@@ -366,9 +366,15 @@ fn file_declares_value_named(
     }
 }
 
+/// Keywords that bind `name` in the value namespace right before it: a `fn`,
+/// `const` or `static` item, or a `let` binding. A `let` binding named like a
+/// braced struct (which lives only in the type namespace) is legal Rust and
+/// makes `Name(..)` call that local value, not a constructor (#15277).
+const VALUE_BINDER_KEYWORDS: [&str; 4] = ["fn", "const", "static", "let"];
+
 /// A raw-text superset of [`declares_value_named`]: some whole-word `name`
 /// (or `r#name`) whose preceding code, past whitespace and an optional
-/// `mut`, ends with `fn`, `const` or `static`, or with a comment (`*/`, or a
+/// `mut`, ends with `fn`, `const`, `static` or `let`, or with a comment (`*/`, or a
 /// line holding `//`) that masking would turn into whitespace between the
 /// keyword and the name.
 fn may_declare_value_named(raw: &str, name: &str) -> bool {
@@ -388,7 +394,7 @@ fn may_declare_value_named(raw: &str, name: &str) -> bool {
         let line = before.rsplit('\n').next().unwrap_or(before);
         before.ends_with("*/")
             || line.contains("//")
-            || ["fn", "const", "static"].iter().any(|keyword| {
+            || VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
                 before.strip_suffix(keyword).is_some_and(|head| {
                     !head
                         .bytes()
@@ -399,7 +405,7 @@ fn may_declare_value_named(raw: &str, name: &str) -> bool {
     })
 }
 
-/// Whether the masked source declares a `fn`, `const` or `static` (also
+/// Whether the masked source declares a `fn`, `const`, `static` or `let` binding (also
 /// `static mut`, `const fn`) named `name` or `r#name`, at any depth.
 pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
     if name.is_empty() {
@@ -415,7 +421,7 @@ pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
             Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
             _ => before,
         };
-        ["fn", "const", "static"].iter().any(|keyword| {
+        VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
             before.strip_suffix(keyword).is_some_and(|head| {
                 !head
                     .bytes()
@@ -1083,6 +1089,12 @@ mod tests {
             "Key"
         ));
         assert!(declares_value_named("fn r#Key() {}", "Key"));
+        // A `let` binding of the name shadows a braced struct's call
+        // spelling: `Key(1)` then calls the local closure.
+        assert!(declares_value_named("let Key = |x: i32| Other(x);", "Key"));
+        assert!(declares_value_named("let mut Key = make;", "Key"));
+        assert!(may_declare_value_named("let Key = make;", "Key"));
+        assert!(!declares_value_named("letKey = 1;", "Key"));
         // A type item, a call, a longer name or another keyword is no value
         // item of that name.
         assert!(!declares_value_named("pub struct Key(pub i32);", "Key"));
