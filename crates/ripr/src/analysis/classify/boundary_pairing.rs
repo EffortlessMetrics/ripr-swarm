@@ -880,6 +880,29 @@ fn assertion_observes_boundary_owner_call(
         )
 }
 
+/// Argument lists of the free-owner calls that an assertion on `line`
+/// directly observes, read the way the probe path pairs a boundary input
+/// with its assertion on a multi-occurrence line (#13373). The seam path
+/// uses it to credit a second same-line call only when an assertion observes
+/// that call's result (#14487): a call under an operator, inside another
+/// call's arguments, or outside any assertion lends no input.
+pub(in crate::analysis) fn observed_owner_call_rows_on_line(
+    test: &TestSummary,
+    line: usize,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<Vec<String>> {
+    test.assertions
+        .iter()
+        .filter(|assertion| assertion.line == line)
+        .flat_map(|assertion| {
+            let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+                .unwrap_or_else(|| assertion.text.clone());
+            observed_free_owner_call_sites(&assertion_subject(&operands), owner, index)
+        })
+        .collect()
+}
+
 /// Directly observed free-owner returns in a multi-occurrence assertion.
 /// Parentheses, tuples and non-repeated arrays retain their values. A call's
 /// arguments, operators, projections and arbitrary wrappers

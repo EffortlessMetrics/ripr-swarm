@@ -259,11 +259,7 @@ fn owner_name_call_text<'text>(
 /// evaluation of the outer argument. Identity remains the caller's authority.
 /// Associated owners keep their existing single-site reading: a repeated name
 /// alone does not establish that two receivers have the same type.
-pub(in crate::analysis) fn owner_call_argument_rows(
-    text: &str,
-    name: &str,
-    free_owner: bool,
-) -> Vec<Vec<String>> {
+fn owner_call_argument_rows(text: &str, name: &str, free_owner: bool) -> Vec<Vec<String>> {
     if !free_owner {
         return call_arguments(text, name).into_iter().collect();
     }

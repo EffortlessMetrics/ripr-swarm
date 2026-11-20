@@ -49,11 +49,12 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, is_ignored, owner_call_argument_rows, owner_call_text,
-    predicate_line_arms_all_agree, predicate_line_bool_guards, qualified_owner_calls_resolve,
-    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
-    relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
-    test_counts_pushed_collection_argument, whole_signature_parameters,
+    direct_collection_mutation_receiver, is_ignored, observed_owner_call_rows_on_line,
+    owner_call_text, predicate_line_arms_all_agree, predicate_line_bool_guards,
+    qualified_owner_calls_resolve, reach_evidence as classify_reach_evidence,
+    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
+    whole_signature_parameters,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -3652,14 +3653,17 @@ fn observed_value_facts_for_test(
 }
 
 /// The owner-call argument rows one captured call line contributes to the
-/// seam's observed activation values. A line that calls a free owner more
-/// than once (`assert!(ok(12)); assert!(!ok(11));`) yields one row per call,
-/// the same reading the diff-scoped probe path takes (#13373), so the seam
-/// model does not see only the first input on the line and name the second
-/// one as a missing discriminator (#14487). The expansion keeps the probe
-/// path's fail-closed identity guard: when the line's calls do not all
-/// resolve to the owner, the historic first-call reading stands and no
-/// additional input is credited.
+/// seam's observed activation values. The line's first owner call keeps its
+/// historic reading. When the line calls a free owner more than once
+/// (`assert_eq!(ok(12), true); assert_eq!(ok(11), false);`), each further
+/// call whose result an assertion on that line directly observes adds its
+/// row, the pairing the diff-scoped probe path requires before it credits a
+/// same-line boundary input (#13373). Without this the seam saw only the
+/// first input and named the second as a missing discriminator while
+/// `ripr check` read the change exposed (#14487). Fail-closed: a call under
+/// an operator, nested in another call's arguments or outside any assertion
+/// adds nothing, and a line whose calls do not all resolve to the owner keeps
+/// the first-call reading.
 fn owner_call_rows_for_seam(
     call: &CallFact,
     test: &TestSummary,
@@ -3669,17 +3673,31 @@ fn owner_call_rows_for_seam(
     let owner_name = owner_fn.name.as_str();
     let first =
         owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))?;
-    if owner_fn.impl_context != FunctionImplContext::Free {
-        return Some(vec![first]);
-    }
-    let rows = owner_call_argument_rows(&call.text, owner_name, true);
-    if rows.len() > 1
-        && qualified_owner_calls_resolve(context.index, owner_fn, test, &call.text, call.line)
+    let mut rows = vec![first];
+    if owner_fn.impl_context != FunctionImplContext::Free
+        || call.text.matches(owner_name).count() < 2
     {
-        Some(rows)
-    } else {
-        Some(vec![first])
+        return Some(rows);
     }
+    let same_row = |left: &[String], right: &[String]| {
+        left.len() == right.len() && left.iter().zip(right).all(|(l, r)| l.trim() == r.trim())
+    };
+    let observed: Vec<Vec<String>> =
+        observed_owner_call_rows_on_line(test, call.line, owner_fn, context.index)
+            .into_iter()
+            .filter(|row| !rows.iter().any(|kept| same_row(kept, row)))
+            .collect();
+    if observed.is_empty()
+        || !qualified_owner_calls_resolve(context.index, owner_fn, test, &call.text, call.line)
+    {
+        return Some(rows);
+    }
+    for row in observed {
+        if !rows.iter().any(|kept| same_row(kept, &row)) {
+            rows.push(row);
+        }
+    }
+    Some(rows)
 }
 
 fn field_assignment_value_unresolved_for_test(

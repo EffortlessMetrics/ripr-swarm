@@ -1623,8 +1623,10 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
 /// equality boundary, so `ripr check` reads the probe `exposed`; the seam
 /// used to read only the line's first call, name `11 (equality boundary)`
 /// missing, and send a weak-grip gap to the gate. The negatives keep the
-/// expansion bounded: a line without the boundary input still names it, and
-/// a same-line call that resolves to a rival module's `ok` lends no input.
+/// expansion bounded: a line without the boundary input still names it, a
+/// boundary call no assertion observes directly (`!ok(11)`, `let _ =
+/// ok(11)`) lends no input, and neither does a same-line call that resolves
+/// to a rival module's `ok`.
 #[test]
 fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_reads_it()
 -> Result<(), String> {
@@ -1640,6 +1642,14 @@ fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_re
         ),
         (
             "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(13), true); }\n",
+            true,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(!ok(11), true); }\n",
+            true,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); let _ = ok(11); }\n",
             true,
         ),
         (
