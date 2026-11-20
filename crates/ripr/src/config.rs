@@ -517,6 +517,21 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
+/// The machine-safe spelling of the recovery step a working-tree `ripr.toml`
+/// load failure names on stderr (#15260), recognized by the owner's own hint
+/// constants rather than by message shape. A candidate-tree failure carries a
+/// different recovery (editing the worktree file does not change that subject)
+/// and returns `None`, as does any detail that is not a load failure.
+pub(crate) fn working_tree_config_recovery(detail: &str) -> Option<&'static str> {
+    if detail.contains(CONFIG_LOAD_PARSE_HINT) {
+        Some("fix the error in ripr.toml and rerun")
+    } else if detail.contains(CONFIG_LOAD_READ_HINT) {
+        Some("make ripr.toml readable and rerun")
+    } else {
+        None
+    }
+}
+
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
         "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",

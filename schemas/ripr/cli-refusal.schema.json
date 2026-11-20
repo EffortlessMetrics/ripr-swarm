@@ -25,6 +25,7 @@
             "conflicting_flags",
             "invalid_value",
             "selector_miss",
+            "input_unusable",
             "item_names_no_seam",
             "item_names_several_seams",
             "seam_not_repair_eligible",

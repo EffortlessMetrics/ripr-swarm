@@ -4,6 +4,7 @@ use crate::output::json::render_pretty_with_newline;
 use crate::output::refusal::RefusalBlock;
 use serde_json::{Value, json};
 
+const CONFIG_INVALID_IDENTITY: &str = "config_invalid";
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
 const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
 const REPO_SCOPE_OVERSIZED_PREFIX: &str = "repo_scope_oversized:";
@@ -158,7 +159,7 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
 fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
-    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    let notice = machine_notice(error, context.root);
     let identity = notice.identity;
     let repair_route = notice.repair_route;
     let remedy = serde_json::to_value(&notice.remedy).unwrap_or(Value::Null);
@@ -265,10 +266,43 @@ pub(crate) fn render_check_failure_json(
     }
     // The shared refusal block (#11584): the typed identity and message the
     // envelope already carries, plus the one stated next step (or null).
-    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    let notice = machine_notice(error, &input.root);
     RefusalBlock::from_remedy(notice.identity, &notice.message, &notice.remedy)
         .insert_into(&mut value);
     render_pretty_with_newline(&value, "limited check")
+}
+
+/// The refusal notice every machine refusal envelope carries. A `ripr.toml`
+/// that failed to load keeps its parser diagnostic redacted (config contents
+/// never enter machine output), but the human stderr also names the way out
+/// ("Fix the error above in ripr.toml and rerun"); without it a JSON consumer
+/// had `next: null` and a message that ended at the TOML line/column (#15260).
+/// The step is appended here once, with the one command that re-checks the
+/// file, so the envelope's remedy and `error.next` match the human next step.
+fn machine_notice(error: &CoreError, root: &std::path::Path) -> crate::core_error::RefusalNotice {
+    let mut notice = error.refusal_notice(&crate::config::config_error_summary);
+    if notice.identity == CONFIG_INVALID_IDENTITY
+        && let Some(recovery) = crate::config::working_tree_config_recovery(&error.to_string())
+    {
+        notice.message = format!(
+            "{}; {recovery}, then check it with `{}`",
+            notice.message,
+            config_validate_command(root)
+        );
+        notice.remedy = crate::domain::RefusalRemedy::from_prose(&notice.message);
+    }
+    notice
+}
+
+/// `ripr config validate --root <root>` for the bound root, shell-quoted like
+/// every other composed next command. A root the remedy parser cannot lift as
+/// one runnable command leaves `next` null instead of naming another tree.
+fn config_validate_command(root: &std::path::Path) -> String {
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    format!(
+        "ripr config validate --root {}",
+        crate::agent::loop_commands::shell_arg(&bound)
+    )
 }
 
 #[cfg(test)]

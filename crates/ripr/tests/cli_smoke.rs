@@ -126,6 +126,8 @@ mod parse_failure_path_outcome;
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
 // Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
+#[path = "cli_smoke/json_refusal_next_steps.rs"]
+mod json_refusal_next_steps;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
@@ -4814,14 +4816,23 @@ fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(),
     ]);
     let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
     // `next` is never lifted from the miss prose, which embeds the selector:
-    // a selector shaped like a runnable command stays `null`.
-    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    // it is the listing command the owner composed from the typed run
+    // (#15260), and a selector shaped like a runnable command never reaches it.
+    let next = value["error"]["next"]["command"]
+        .as_str()
+        .ok_or("the selector miss must carry the owner's listing command")?
+        .to_string();
+    assert!(next.starts_with("ripr check --root "), "{next}");
+    assert!(next.ends_with(" --json"), "{next}");
+    assert_eq!(value["error"]["next"]["purpose"], "follow_stated_step");
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&format!("`{next}`")), "{message}");
     let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
     let hostile_out = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
     ]);
     let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
-    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
+    assert_eq!(hostile_value["error"]["next"]["command"], next.as_str());
     let plain = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
     ]);

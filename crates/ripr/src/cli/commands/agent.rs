@@ -1620,7 +1620,19 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
 /// selector fails closed instead of reading anything.
 fn run_agent_attempt_status(options: &AgentStatusOptions, attempt: &str) -> Result<(), String> {
     let attempt_id = crate::app::repair_attempt::RepairAttemptId::parse(attempt.to_string())
-        .map_err(|error| format!("agent status --attempt: {error}"))?;
+        .map_err(|error| {
+            // #15260: under `--json` the malformed ID is a typed refusal whose
+            // `next` is the command that lists attempt IDs, composed from the
+            // bound root, never from the typed value.
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            crate::cli::usage_refusal::invalid_value_with_next(
+                attempt,
+                &format!("agent status --attempt: {error}"),
+                &format!("ripr agent status --root {root}"),
+            )
+        })?;
     let report = app::agent_status::build_agent_attempt_status(
         &options.root,
         &options.root,

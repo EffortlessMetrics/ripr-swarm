@@ -232,6 +232,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // the mode analysis actually ran with, not the pre-merge default
     // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
+    // #15260: the listing command a selector miss names, composed from the
+    // typed run (root, base, scope; the artifact route's own spelling), never
+    // from the selector, so `error.next` can carry it.
+    let miss_list_command = if from_artifact.is_some() {
+        "ripr check --json".to_string()
+    } else {
+        app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree).list_command()
+    };
     let refuse = |error: crate::core_error::CoreError, selector: &str| -> String {
         // A selector miss is usage-class, not an operational refusal: it
         // bypasses the operational envelope (#7331 review) and keeps exit 2
@@ -240,7 +248,12 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         // document naming the selector (#11584); the note is typed here.
         if error.is_selector_miss() {
             let message = error.to_string();
-            crate::cli::usage_refusal::note_selector_miss(selector, &message);
+            // Only a miss whose own prose names the listing carries it as
+            // `next` (a seam-id miss points at `repair` instead).
+            let list_next = message
+                .contains(&format!("`{miss_list_command}`"))
+                .then_some(miss_list_command.as_str());
+            crate::cli::usage_refusal::note_selector_miss(selector, &message, list_next);
             return message;
         }
         crate::cli::commands_context::refuse_json_envelope(
