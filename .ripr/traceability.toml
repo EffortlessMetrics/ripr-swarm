@@ -11402,7 +11402,7 @@ tests = [
   "crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind",
   "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::facade_reexport_with_a_test_naming_the_facade_names_the_limit_and_keeps_the_class",
-  "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::dependent_test_host_hint_yields_to_the_facade_witness",
+  "crates/ripr/tests/cross_crate_reach.rs::dependent_test_host_hint_yields_to_the_facade_witness",
   "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_cover_the_owner_fire",
   "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::reexports_that_do_not_provably_cover_the_owner_are_unchanged",
   "crates/ripr/src/analysis/language/rust/facade_reach_tests.rs::package_name_comes_from_the_manifest_not_the_directory",
