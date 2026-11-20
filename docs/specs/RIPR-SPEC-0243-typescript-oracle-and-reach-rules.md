@@ -367,6 +367,23 @@ Evaluated inline ordinary
 function constructors and tags retain body registration notices; their parameter
 shadows and uncalled function values remain separate from runner registrations.
 
+Deno registrations (#15622). `Deno.test(name, fn)`, `Deno.test(name, options,
+fn)`, `Deno.test({ name, fn })` (with `fn` a method, arrow or function value),
+`Deno.test(options, fn)`, `Deno.test(function named() {})` and `Deno.test.only`
+each register one test. An options object whose `ignore` is anything but a
+literal `false`, or that has a spread or computed key, registers nothing, and
+so does `Deno.test.ignore`. A declaration, import or registration-scope name
+`Deno` shadows the runtime namespace, so its `.test` calls register nothing.
+Assertion collection and the unused-closure reach mask read the same resolved
+callback. Deno's standard assertions bind only from `@std/assert`,
+`jsr:@std/assert[@range][/subpath]` or `https://deno.land/std[@version]/...`
+(`/assert/` or `/testing/asserts.ts`): `assertEquals` reads as
+`deepStrictEqual`, `assertStrictEquals` as `strictEqual`, `assert` as the
+truthy `ok` call (it has no node-style members), and `assertThrows` /
+`assertRejects` as the broad `throws` / `rejects`. Other exports, namespace
+imports, look-alike specifiers and same-named local helpers stay unbound.
+`t.step` bodies are not walked for assertions.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -2499,6 +2516,14 @@ keys); do not take the next number.
   (rule 23).
 
 ## Test Mapping
+
+- #15622 (Deno registrations and `@std/assert`):
+  `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
+  each registration shape, the ignored/spread/unreadable refusals, the
+  shadowed-namespace refusal, the unused-closure reach mask for every callback
+  position, the std assertion grades and the look-alike, namespace, local and
+  member-call refusals; `crates/ripr/tests/typescript_no_config_detection.rs`
+  pins a zero-config `deno.json` run linking the `Deno.test`.
 
 - #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
