@@ -3065,7 +3065,7 @@ Promotion options:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
@@ -3208,7 +3208,7 @@ Usage:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.

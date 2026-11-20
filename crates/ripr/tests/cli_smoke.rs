@@ -38704,6 +38704,37 @@ fn agent_start_refuses_an_out_directory_outside_the_root() -> Result<(), std::io
     Ok(())
 }
 
+/// #15258 review: an absolute `--out` inside a root typed as `.` is still
+/// accepted. On Windows the canonical root is a verbatim `\\?\` path, so a
+/// lexical comparison would refuse this plain absolute path.
+#[test]
+fn agent_start_accepts_an_absolute_out_directory_inside_a_dot_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-absolute-inside");
+    std::fs::create_dir_all(&root)?;
+    let inside = root.join("target").join("ripr").join("workflow");
+    let inside_text = inside.display().to_string();
+    for out in [inside_text.as_str(), "./target/ripr/workflow"] {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "agent",
+                "start",
+                "--root",
+                ".",
+                "--seam-id",
+                "any",
+                "--out",
+                out,
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(!stderr.contains("outside --root"), "{out}: {stderr}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// #15258: a symlink inside the root that points outside it must not let
 /// `--out link/x` write outside `--root`.
 #[cfg(unix)]

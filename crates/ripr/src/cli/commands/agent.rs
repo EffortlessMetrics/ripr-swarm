@@ -5807,33 +5807,32 @@ fn ensure_agent_start_out_contained(root: &Path, out_dir: &Path) -> Result<(), S
         || out_dir
             .components()
             .any(|component| matches!(component, Component::Prefix(_)));
-    let canonical_root = root.canonicalize().ok();
-    let lexically_outside = rooted
-        && (!out_dir.is_absolute()
-            || match &canonical_root {
-                Some(canonical) => {
-                    crate::app::repair_attempt::path_escapes_root(canonical, out_dir)
-                        && crate::app::repair_attempt::path_escapes_root(root, out_dir)
-                }
-                None => crate::app::repair_attempt::path_escapes_root(root, out_dir),
-            });
-    // The lexical test cannot see a symlink inside the root that points
-    // outside it: resolve the deepest existing ancestor and require it to
-    // stay under the canonical root.
-    let through_symlink = !has_parent
-        && !lexically_outside
-        && canonical_root.as_ref().is_some_and(|canonical| {
-            let mut probe = resolve_agent_start_out_dir(root, out_dir);
-            loop {
-                if let Ok(real) = probe.canonicalize() {
-                    break !real.starts_with(canonical);
-                }
-                if !probe.pop() {
-                    break false;
+    // Resolve the deepest existing ancestor and require it to stay under the
+    // canonical root. This sees a symlink inside the root that points outside
+    // it, and compares an absolute `--out` in canonical form so a Windows
+    // verbatim (`\\?\`) root still matches a plain `C:\` path inside it.
+    // With `..` refused, the missing tail below that ancestor cannot climb out.
+    let rooted_relative = rooted && !out_dir.is_absolute();
+    let outside = !has_parent
+        && !rooted_relative
+        && match root.canonicalize() {
+            Ok(canonical) => {
+                let mut probe = resolve_agent_start_out_dir(root, out_dir);
+                loop {
+                    if let Ok(real) = probe.canonicalize() {
+                        break !real.starts_with(&canonical);
+                    }
+                    if !probe.pop() {
+                        break true;
+                    }
                 }
             }
-        });
-    if has_parent || lexically_outside || through_symlink {
+            Err(_) => {
+                out_dir.is_absolute()
+                    && crate::app::repair_attempt::path_escapes_root(root, out_dir)
+            }
+        };
+    if has_parent || rooted_relative || outside {
         return Err(format!(
             "agent start --out {} is outside --root {}; pass --out naming a directory inside --root, for example `--out target/ripr/workflow`",
             out_dir.display(),
