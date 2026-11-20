@@ -107,6 +107,32 @@ bind_new_dispatch_run() {
   done
   return 1
 }
+CRATE_WAIT_SECONDS=600
+wait_for_crate_version() {
+  crate="$1"
+  version="$2"
+  expected_sha="$3"
+  receipt_out="$4"
+  deadline=$(( $(date +%s) + CRATE_WAIT_SECONDS ))
+  while true; do
+    if curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" \
+        "https://crates.io/api/v1/crates/${crate}/${version}" > "$receipt_out" 2>/dev/null; then
+      # The response nests the record under `version`; `.version` is an object,
+      # so comparing it to a version string is always false. Compare the fields.
+      if jq -e --arg crate "$crate" --arg version "$version" --arg sha "$expected_sha" \
+          '(.version | type) == "object" and .version.num == $version and .version.crate == $crate and .version.checksum == $sha' \
+          "$receipt_out" >/dev/null 2>&1; then
+        return 0
+      fi
+      # Present but different bytes is not a propagation delay: published
+      # versions are immutable, so stop instead of polling for a change.
+      echo "crates.io reports ${crate} ${version} with bytes that do not match the receipt" >&2
+      return 1
+    fi
+    test "$(date +%s)" -lt "$deadline" || { echo "${crate} ${version} did not appear on crates.io within ${CRATE_WAIT_SECONDS} seconds" >&2; return 1; }
+    sleep 15
+  done
+}
 ```
 
 Historical candidate-only `C -> T`, hard-cut, replacement-freeze, and
@@ -695,6 +721,13 @@ on the release head immediately before publishing and bind the kept stage to
 it; `ripr-contract` publishes first because `ripr` requires it exactly
 (ADR 0027).
 
+The receipt the rehearsal wrote is the only authority for the bytes: it records
+`contract_sha256` and `ripr_sha256` for the exact pair that passed the packaged
+check. Bind it once, require `verification` to be `packaged-check-passed`, and
+compare every public readback against it. A readback that returns a different
+checksum is not a propagation delay — published versions are immutable — so
+stop and follow partial-publication recovery.
+
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=source; rehearse and bind the publish stage to the release head
@@ -708,17 +741,49 @@ test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SO
 
 ```bash
 set -euo pipefail
+# [READ-ONLY] repo=source; bind the receipt the rehearsal wrote
+PUBLISH_RECEIPT="$SOURCE_ROOT/target/package/publish-receipt.json"
+test "$(jq -r .verification "$PUBLISH_RECEIPT")" = packaged-check-passed
+test "$(jq -r .version "$PUBLISH_RECEIPT")" = "$VERSION"
+CONTRACT_SHA256="$(jq -r .contract_sha256 "$PUBLISH_RECEIPT")"
+RIPR_SHA256="$(jq -r .ripr_sha256 "$PUBLISH_RECEIPT")"
+```
+
+```bash
+set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
 PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
 test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr-contract)
+```
+
+```bash
+set -euo pipefail
+# [READ-ONLY] repo=source/public; retain the contract readback before the product precheck
+PUBLISH_RECEIPT="$SOURCE_ROOT/target/package/publish-receipt.json"
+CONTRACT_SHA256="$(jq -r .contract_sha256 "$PUBLISH_RECEIPT")"
+wait_for_crate_version ripr-contract "$VERSION" "$CONTRACT_SHA256" "$PACKET_ROOT/crates-io-ripr-contract.json"
+```
+
+```bash
+set -euo pipefail
+# [LOCAL-MUTATING] repo=source; prove the product bytes are the rehearsed ones
+(cd "$SOURCE_ROOT" && cargo xtask publish-precheck)
+```
+
+```bash
+set -euo pipefail
+# [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
+PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
 ```
 
 ```bash
 set -euo pipefail
-# [READ-ONLY] repo=source/public; receipt crate publication before next channel
-curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" "https://crates.io/api/v1/crates/ripr/${VERSION}" | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
+# [READ-ONLY] repo=source/public; retain the product readback before the next channel
+PUBLISH_RECEIPT="$SOURCE_ROOT/target/package/publish-receipt.json"
+RIPR_SHA256="$(jq -r .ripr_sha256 "$PUBLISH_RECEIPT")"
+wait_for_crate_version ripr "$VERSION" "$RIPR_SHA256" "$PACKET_ROOT/crates-io-ripr.json"
 ```
 
 ```bash

@@ -486,22 +486,27 @@ digest of that exact stripped path/content set, so a stripped file restored
 byte-for-byte to `HEAD` — which Git stops reporting as modified — is refused
 rather than accepted with its inline tests back.
 
-1. Publish `ripr-contract` first:
+1. Publish `ripr-contract` first. Scope the stage `cd` to the publish command so
+   the later `cargo xtask` steps still run in the source root:
 
 ```bash
 cargo login
-cd target/publish-stage
-cargo publish --allow-dirty -p ripr-contract
+(cd target/publish-stage && cargo publish --allow-dirty -p ripr-contract)
 ```
 
 2. Read back the exact public `ripr-contract` version, checksum, and metadata
 from crates.io under a bounded polling/timeout policy and verify the published
 checksum matches the repository root's `target/package/publish-receipt.json`
 and that the receipt's `verification` is `packaged-check-passed` before
-attempting `ripr`:
+attempting `ripr`. The response nests the record under `version`, so compare
+its fields — `.version` is an object and never equals a version string:
 
 ```bash
-curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"
+test "$(jq -r .verification target/package/publish-receipt.json)" = packaged-check-passed
+curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>" \
+  | jq -e --arg version "<version>" --arg crate ripr-contract \
+      --arg sha "$(jq -r .contract_sha256 target/package/publish-receipt.json)" \
+      '(.version | type) == "object" and .version.num == $version and .version.crate == $crate and .version.checksum == $sha'
 ```
 
 A transient index delay is not a product failure, but an unavailable or
@@ -512,16 +517,26 @@ around the edge.
    `ripr` against that exact `=<version>` dependency. `cargo publish` repacks
    the stage, so the pre-upload check packages `ripr` again in registry mode
    from the retained stage and refuses unless the fresh archive's SHA-256
-   equals the receipt's `ripr_sha256`:
+   equals the receipt's `ripr_sha256`. Run the precheck in the source root, not
+   in the stage:
 
 ```bash
 cargo xtask publish-precheck
-cargo publish --allow-dirty -p ripr
+(cd target/publish-stage && cargo publish --allow-dirty -p ripr)
 ```
 
 4. Read back the public `ripr` checksum and compare it to the receipt's
    `ripr_sha256`; a mismatch means the uploaded bytes are not the qualified
-   ones, so stop and follow partial-publication recovery. Then verify `ripr`
+   ones, so stop and follow partial-publication recovery:
+
+```bash
+curl -fsSL "https://crates.io/api/v1/crates/ripr/<version>" \
+  | jq -e --arg version "<version>" --arg crate ripr \
+      --arg sha "$(jq -r .ripr_sha256 target/package/publish-receipt.json)" \
+      '(.version | type) == "object" and .version.num == $version and .version.crate == $crate and .version.checksum == $sha'
+```
+
+   Then verify `ripr`
    from public bytes in a clean environment without path or vendor
    substitution (`cargo install ripr --version <version> --locked --root
    target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown

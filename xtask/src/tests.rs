@@ -54837,6 +54837,126 @@ fn release_pin_ruleset_contract(repo_root: &Path, jq_root: &Path) -> Result<(), 
     }
 }
 
+#[test]
+fn release_transaction_crates_io_readback_requires_field_wise_match() -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let jq_root = temp_dir("release-transaction-crates-io-jq");
+    let result = release_transaction_crates_io_readback_contract(repo_root, &jq_root);
+    ignore_remove_dir_all(&jq_root);
+    result
+}
+
+/// The crates.io version endpoint nests the record under `version`, so
+/// `.version` is an object and never equals a version string. A readback that
+/// compares the object to a string exits non-zero on correct data, which is
+/// indistinguishable from a real mismatch. The runbook must compare the fields,
+/// read `ripr-contract` back before the product precheck, and read `ripr` back
+/// before the next channel.
+fn release_transaction_crates_io_readback_contract(
+    repo_root: &Path,
+    jq_root: &Path,
+) -> Result<(), String> {
+    const VERSION: &str = "0.11.0";
+    const CRATE: &str = "ripr";
+    const SHA: &str = "369633cfe0f0bde1dfc037fb6c5a329d46586a31f981bed14d87487a3439ae37";
+    const PREDICATE: &str = r#"(.version | type) == "object" and .version.num == $version and .version.crate == $crate and .version.checksum == $sha"#;
+
+    let runbook = fs::read_to_string(repo_root.join("docs/RELEASE_TRANSACTION.md"))
+        .map_err(|error| format!("failed to read release transaction runbook: {error}"))?;
+    if runbook.contains("'.version == $version'") {
+        return Err(
+            "runbook still compares the crates.io `version` object to a version string".to_string(),
+        );
+    }
+    if !runbook.contains(PREDICATE) {
+        return Err(
+            "runbook does not carry the field-wise crates.io readback predicate".to_string(),
+        );
+    }
+
+    let contract_readback = runbook
+        .find("wait_for_crate_version ripr-contract")
+        .ok_or_else(|| "runbook has no ripr-contract readback".to_string())?;
+    let product_precheck = runbook
+        .find("cargo xtask publish-precheck")
+        .ok_or_else(|| "runbook has no product precheck".to_string())?;
+    let product_publish = runbook
+        .find("cargo publish --allow-dirty -p ripr)")
+        .ok_or_else(|| "runbook has no product publish".to_string())?;
+    if !(contract_readback < product_precheck && product_precheck < product_publish) {
+        return Err(
+            "runbook must read back ripr-contract, then precheck, then publish ripr".to_string(),
+        );
+    }
+
+    let good = serde_json::json!({
+        "version": {"num": VERSION, "crate": CRATE, "checksum": SHA}
+    });
+    let mut invalid = Vec::new();
+    for (name, pointer, replacement) in [
+        (
+            "wrong-crate",
+            "/version/crate",
+            serde_json::json!("ripr-contract"),
+        ),
+        ("wrong-version", "/version/num", serde_json::json!("0.10.0")),
+        (
+            "wrong-checksum",
+            "/version/checksum",
+            serde_json::json!("deadbeef"),
+        ),
+        ("missing-version", "/version", Value::Null),
+        ("string-version", "/version", serde_json::json!(VERSION)),
+    ] {
+        let mut changed = good.clone();
+        *changed
+            .pointer_mut(pointer)
+            .ok_or_else(|| format!("fixture lacks {pointer}"))? = replacement;
+        invalid.push((name, changed));
+    }
+
+    let run_jq_predicate = |record: &Value, name: &str| -> Result<bool, String> {
+        let path = jq_root.join(format!("{name}.json"));
+        let input = serde_json::to_vec(record)
+            .map_err(|error| format!("failed to serialize jq predicate fixture: {error}"))?;
+        fs::write(&path, input)
+            .map_err(|error| format!("failed to write jq predicate fixture: {error}"))?;
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "jq predicate fixture path was not UTF-8".to_string())?;
+        let args = vec![
+            "-e".to_string(),
+            "--arg".to_string(),
+            "crate".to_string(),
+            CRATE.to_string(),
+            "--arg".to_string(),
+            "version".to_string(),
+            VERSION.to_string(),
+            "--arg".to_string(),
+            "sha".to_string(),
+            SHA.to_string(),
+            PREDICATE.to_string(),
+            path_text.to_string(),
+        ];
+        let _cwd_guard = super::acquire_test_cwd_read_guard();
+        command_success_owned("jq", &args)
+    };
+
+    if !run_jq_predicate(&good, "good")? {
+        return Err("documented crates.io predicate rejected the correct record".to_string());
+    }
+    for (name, record) in &invalid {
+        if run_jq_predicate(record, name)? {
+            return Err(format!(
+                "documented crates.io predicate accepted the {name} record"
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // check-pr first-failure gate sequencing and report authority (#3036)
 // ---------------------------------------------------------------------------
