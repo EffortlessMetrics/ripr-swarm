@@ -841,10 +841,11 @@ fn ts_value_observed_reads_sibling_field(
 /// changed field that the change does not move: `f().retries.other` while the
 /// edit turns `retries: 3` into `retries: { n: 5 }`.
 ///
-/// Only the exact shape `<owner call>.<changed key>.<child>` counts, and only
-/// when the changed field's new value is an object literal whose moved
-/// children are known. The moved child (`f().retries.n`), the whole field
-/// (`f().retries`), deeper paths and compound bases keep the existing credit.
+/// The read must end in `<changed key>.<child>` on a plain owner-rooted base,
+/// and the changed field's new value must be an object literal whose moved
+/// children are known (see `TypeScriptChangedField::changed_children`). The
+/// moved child (`f().retries.n`) and the whole field (`f().retries`) keep the
+/// existing credit.
 fn ts_value_observed_reads_unchanged_child(
     observed: &str,
     changed: &[TypeScriptChangedField],

@@ -1750,14 +1750,18 @@ fields are not this shape and keep their old reading.
 **Rule 25. A read of an unchanged child of a changed field is not witnessed
 (#14858).** When a changed field's new value is an object literal of simple
 `key: value` members, the children the change moves are those whose value
-differs from the old literal's same key (every new child when the old value was
-not an object literal, plus any key the change drops). A strong assertion whose
-path is exactly `<owner call>.<changed field>.<child>` and names a child the
+differs from the old literal's same key, plus any key the change drops. When
+the old value is a number or boolean literal, every new child is moved, and so
+is every member the old primitive answered through its prototype (`toFixed`,
+`valueOf`); any other old value (a string, an array, `null`, an expression)
+keeps the existing credit, since its members (`.length`) or behavior (a throw)
+are not modeled. A strong assertion whose path ends in
+`<changed field>.<child>` on a plain owner-rooted base and names a child the
 change does not move (`f().retries.other` while `retries: 3` becomes
 `retries: { n: 5 }`) observes a value the change never alters: the finding
 drops to `weakly_exposed`, not `exposed`. A read of a moved child
-(`f().retries.n`), the whole field, a deeper path, a compound base and a
-changed value that is not an object literal keep the existing credit. The alias
+(`f().retries.n`), the whole field and a changed value
+that is not an object literal keep the existing credit. The alias
 form of the sibling rule (`const cfg = f(); expect(cfg.verbose)`, #14856) reads
 `weakly_exposed` and its changed-field control (`cfg.retries`) stays `exposed`.
 

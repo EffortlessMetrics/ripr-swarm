@@ -1645,20 +1645,68 @@ pub(crate) struct TypeScriptChangedField {
     pub(crate) old_value: String,
 }
 
+/// #14858: members a number or boolean primitive answers through
+/// `Number.prototype`, `Boolean.prototype` and `Object.prototype`.
+const PRIMITIVE_PROTOTYPE_MEMBERS: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toExponential",
+    "toFixed",
+    "toLocaleString",
+    "toPrecision",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+];
+
+/// #14858: a decimal number literal (`3`, `-1.5`, `1_000`) or `true`/`false`.
+fn is_number_or_boolean_literal(text: &str) -> bool {
+    if matches!(text, "true" | "false") {
+        return true;
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty()
+        && digits.starts_with(|character: char| character.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.' || character == '_')
+}
+
 impl TypeScriptChangedField {
     /// #14858: the child keys of this field's value that the change moves, when
     /// the new value is an object literal of simple `key: value` members.
     /// `None` when the new value is not such a literal, so the caller cannot
     /// say which children moved and keeps the existing credit.
     ///
-    /// A child moved when its value differs from the old literal's same key, or
-    /// the old value was not an object literal (every new child is then new).
+    /// A child moved when its value differs from the old literal's same key.
     /// A key the old literal had and the new one dropped is moved too.
+    ///
+    /// When the old value is a number or boolean literal, every new child is
+    /// new, and so is every member the old primitive answered through its
+    /// prototype (`toFixed`, `valueOf`, ...): such a read changed from that
+    /// member to the new child. Any other old value (a string, an array,
+    /// `null`, an expression) has members or behavior this check does not
+    /// model (`.length`, a throw), so it reads `None` and keeps the credit.
     pub(crate) fn changed_children(&self) -> Option<Vec<String>> {
         let members = |value: &str| returned_object_fields(&format!("return {value}"));
         let new = members(self.value.as_str())?;
         let Some(old) = members(self.old_value.as_str()) else {
-            return Some(new.into_iter().map(|(key, _)| key).collect());
+            if !is_number_or_boolean_literal(self.old_value.trim()) {
+                return None;
+            }
+            let mut moved: Vec<String> = new.into_iter().map(|(key, _)| key).collect();
+            moved.extend(
+                PRIMITIVE_PROTOTYPE_MEMBERS
+                    .iter()
+                    .map(|name| (*name).to_string()),
+            );
+            return Some(moved);
         };
         let mut moved: Vec<String> = new
             .iter()
