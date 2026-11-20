@@ -520,8 +520,8 @@ around the edge.
    equals the receipt's `ripr_sha256`:
 
 ```bash
-cargo xtask publish-precheck
-(cd target/publish-stage && cargo publish --allow-dirty -p ripr)
+cargo xtask publish-precheck &&
+  (cd target/publish-stage && cargo publish --allow-dirty -p ripr)
 ```
 
 4. Read back the public `ripr` checksum and compare it to the receipt's
