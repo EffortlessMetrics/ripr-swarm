@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_dyn_box_bare_object_other_file (2)
+
+Reason:
+RIPR-SPEC-0001: the fixture patch drops its trailing blank context line, which changes the recorded diff identity (#15277)
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_bare_object_other_file --reason "..."`
+
+Updated:
+- `expected/check.json`
