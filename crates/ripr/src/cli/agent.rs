@@ -696,11 +696,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         );
     }
     if phase == AgentRepairPhase::Verify && verify_rollback && !verify_authorized {
-        // Unreachable through the pair rules above (an authority without the
-        // flag is already refused); kept as an explicit guard so a rollback
-        // demand can never ride on an absent verification authorization.
+        // Reached by `--verify-rollback` alone: the pair rules above only
+        // refuse a half-supplied pair, not an absent one. A rollback demand
+        // can never ride on an absent verification authorization.
         return Err(
-            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass both, and if you did, report this as a ripr bug with the command you ran"
+            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass `--verify-authorized --verify-authority <identity>` together with `--verify-rollback`"
                 .to_string(),
         );
     }

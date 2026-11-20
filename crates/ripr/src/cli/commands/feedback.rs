@@ -329,10 +329,20 @@ Options:
   --actor KIND          Who recorded this: human, agent, or unknown. Default unknown.
   --review STATUS       unreviewed (default), reviewed_accepted, or reviewed_rejected.
   --review-actor KIND   Required when --review is not unreviewed.
-  --reason CODE         Closed taxonomy (useful_actionable, useful_limitation,
-                        wrong_target, wrong_discriminator, false_actionable,
-                        unclear_explanation, too_slow, intentional_defensive_code,
-                        other, ...). `other` requires --note and --judgment.
+  --reason CODE         Closed taxonomy of 25 codes:
+                        useful_actionable, useful_limitation,
+                        correct_target, correct_discriminator,
+                        clear_explanation, wrong_target,
+                        wrong_discriminator, false_actionable,
+                        duplicate_item, already_covered,
+                        incorrect_causal_attribution, stale_result,
+                        missing_context, ambiguous_target,
+                        unclear_explanation, verify_command_failed,
+                        receipt_command_failed, route_too_broad,
+                        too_slow, too_noisy, unsupported_workflow,
+                        intentional_defensive_code,
+                        intentional_low_grip, manual_review_preferred,
+                        other. `other` requires --note and --judgment.
   --judgment CLASS      Required for --reason other. Must match the reason class
                         otherwise.
   --note TEXT           Optional bounded note (1024 bytes). Fail-closed on known

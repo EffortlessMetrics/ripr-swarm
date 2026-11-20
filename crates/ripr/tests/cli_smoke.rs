@@ -49,6 +49,7 @@ mod check_work_budget;
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
 mod closed_stderr;
+
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
@@ -67,6 +68,8 @@ mod diff_selection;
 mod discarded_matches;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/error_next_steps.rs"]
+mod error_next_steps;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]

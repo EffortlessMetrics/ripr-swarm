@@ -114,8 +114,13 @@ impl FeedbackReason {
                 return Ok(reason);
             }
         }
+        let accepted = Self::all()
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         Err(format!(
-            "unknown feedback reason {value:?}; run `ripr feedback --help` for the closed taxonomy"
+            "unknown feedback reason {value:?}; pass --reason with one of: {accepted}"
         ))
     }
 

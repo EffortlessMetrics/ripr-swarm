@@ -124,6 +124,12 @@ over explicit TypeScript-family preview audit corpus rows. It reports the
 bounded false-actionable rate for rows that must remain non-actionable and does
 not rerun analysis, execute TypeScript tests, edit source, generate tests, call
 providers, run mutation testing, change gates, or contribute badge authority.
+The corpus is a JSON object with `"schema_version": "0.1"`, `"kind": "typescript_preview_false_actionable_audit_corpus"`
+and a `"cases"` array. Each case needs the string fields id, language,
+risk_class, evidence_kind, disposition, gap_state, actionability_category,
+authority_boundary, source_fixture and source_finding_id, the boolean fields
+repair_packet_ready and must_remain_non_actionable, and may carry
+static_limit_kind.
 "#;
 pub(super) const COVERAGE_GRIP_HELP: &str = r#"Report whether line coverage and behavior evidence moved together.
 
