@@ -8633,8 +8633,10 @@ mod tests {
         );
         assert!(!predicate("f(S { a: 1 })", "f(S::new(2))").contains(note));
         // `while` and `else if` heads over a whole old line get the note.
+        // (Test text keeps braces balanced: the miss-closure scan in
+        // related_test_role_tests skips this module by counting braces.)
         assert!(predicate("while n >= 1 { n -= 1 }", "n > 2").contains(note));
-        assert!(predicate("} else if n >= 1 { a }", "n > 2").contains(note));
+        assert!(predicate("else if n >= 1 { a }", "n > 2").contains(note));
 
         let mut arm = sample_finding();
         arm.probe.family = crate::domain::ProbeFamily::MatchArm;
