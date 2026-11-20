@@ -234,7 +234,18 @@ fn before_unused_owner_binding<'a>(test: &TestFact, owner: &str, code: &'a str) 
     if test.generated.is_some()
         || oracle.kind != OracleKind::RelationalCheck
         || oracle.strength != OracleStrength::Weak
-        || !super::helper_transfer::condition_is_weak(&outer_assertion_condition(&oracle.text)?)
+    {
+        return None;
+    }
+    // The related row is test-wide. Its owner call must occur in the weak
+    // condition itself, not only in an assertion's optional panic message.
+    let condition = outer_assertion_condition(&oracle.text)?;
+    if !condition
+        .trim_start()
+        .strip_prefix(owner)?
+        .trim_start()
+        .starts_with('(')
+        || !super::helper_transfer::condition_is_weak(&condition)
     {
         return None;
     }
