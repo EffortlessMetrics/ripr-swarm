@@ -20,7 +20,7 @@ use crate::analysis::seams::{
 };
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub,
-    rust_test_stub_for_classified_seam,
+    rust_test_stub_for_classified_seam, rust_test_stub_for_selected_classified_seam,
 };
 use crate::app::CheckOutput;
 use crate::app::agent_brief::AgentBriefPolicy;
@@ -92,8 +92,8 @@ pub(crate) struct TestStubResolution {
     pub(crate) outcome: Result<RustTestStub, TestStubRefusal>,
     /// Inventory grip class when classification named this seam.
     /// `--at --kind` selects from a file parse without classifying; the
-    /// use case looks the class up afterward so the stub can disclose it
-    /// (#7290). `None` when that lookup did not find the seam.
+    /// use case looks up the selected entry afterward for placement, guard
+    /// behavior and disclosure (#13383). `None` when it did not find the seam.
     pub(crate) grip_class: Option<SeamGripClass>,
     /// Set when `--at FILE:LINE` named a line that holds no gap and the
     /// nearest gap in the same function was stubbed instead (#6298), so the
@@ -105,8 +105,8 @@ pub(crate) struct TestStubResolution {
     /// `ripr agent repair` start for the same seam plus the repair packet's
     /// admitted edit surface, projected from the classified entry that
     /// produced the stub. `None` when the route cannot be established
-    /// honestly — a file-parse (`--at --kind`) resolution carries no
-    /// classified entry, or the fail-closed repair-route flip does not hold —
+    /// honestly — no classified entry was found for the selected shape,
+    /// or the fail-closed repair-route flip does not hold —
     /// so no route is invented.
     pub(crate) next_repair: Option<StubNextRepair>,
     /// The line of the seam this resolution stubs. It differs from a
@@ -209,16 +209,48 @@ pub(crate) fn resolve_test_stub(
             let mut seam_index = None;
             let mut resolution =
                 resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
-            if let Some((class, guidance)) =
-                inventory_entry_facts(root, config, file, &resolution.seam_id)
-            {
-                resolution.grip_class.get_or_insert(class);
-                resolution.weak_oracle_guidance =
-                    resolution.weak_oracle_guidance.take().or(guidance);
-            }
+            resolution = reuse_classified_at_entry(root, config, file, kind.as_deref(), resolution);
             Ok(resolution)
         }
     }
+}
+
+/// Apply the exact classified entry after shape selection succeeds. Both the
+/// explicit command and check's printed route share placement and refusals;
+/// classification never changes which seam was selected.
+fn reuse_classified_at_entry(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    kind: Option<&str>,
+    mut resolution: TestStubResolution,
+) -> TestStubResolution {
+    let Some(entry) = inventory_entry_facts(root, config, file, &resolution.seam_id) else {
+        return resolution;
+    };
+    // Selection and its ambiguity/refusal checks stay with the shape resolver.
+    // Reuse the exact classified owner afterward so placement and the
+    // pre-write divergence guard agree with --seam-id and unkinded --at
+    // (#13383). A refused shape must not become a ready stub.
+    if kind.is_some() && resolution.outcome.is_ok() && entry.class.is_headline_eligible() {
+        let at_note = resolution.at_note.take();
+        resolution = resolution_for(root, config, &entry, resolution.source);
+        resolution.at_note = at_note;
+    } else {
+        if kind.is_some() && resolution.outcome.is_ok() {
+            // An earlier write can strengthen the seam. Keep the classified
+            // target so replay still finds that stub, without inventing a
+            // repair route for an optional scaffold on a non-gap.
+            resolution.outcome =
+                rust_test_stub_for_selected_classified_seam(root, &entry, &resolution.source);
+        }
+        resolution.grip_class.get_or_insert(entry.class);
+        resolution.weak_oracle_guidance = resolution
+            .weak_oracle_guidance
+            .take()
+            .or_else(|| super::task_first::weak_oracle_guidance(&entry));
+    }
+    resolution
 }
 
 /// A validated probe-family spelling paired with its selection kind.
@@ -233,12 +265,10 @@ struct AtKind<'a> {
 ///
 /// With `kind` (the finding's probe family, `--kind`) and a `file` under
 /// `root`, the candidates are that file's seams from a parse of the file
-/// alone: no workspace index, test evidence, or classification, so the
-/// finding `check` reported is not re-judged by a second classifier (which
-/// is how the route and the command disagreed). `check` already decided the
-/// location is a gap of that kind; the stub needs only the seam's shape and
-/// the owner source, and is placed inline (an integration-file placement
-/// needs classified evidence, so it stays on `--seam-id`). Only seams of the
+/// alone, without using a workspace index, test evidence, or classification
+/// to select the seam. After selection the exact classified entry owns
+/// placement and its refusals, including integration files and unresolved
+/// cross-language targets, so the route and command cannot disagree. Only seams of the
 /// matching seam kind are tried, in line-then-nearest order, so a line
 /// holding a boundary and an error variant stubs the one `check` reported
 /// and never a seam of another kind.
@@ -677,7 +707,7 @@ pub(crate) fn stub_route_for_finding(
             decision,
         });
     }
-    let mut resolution =
+    let resolution =
         match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
             Ok(resolution) => resolution,
             Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
@@ -696,19 +726,10 @@ pub(crate) fn stub_route_for_finding(
             }
             Err(_) => return None,
         };
-    // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
-    // test already reaches it); never advertise a stub command it will refuse.
-    // #8547: the guidance producer only accepts PredicateBoundary. The
-    // --kind resolver above selects that same mapped seam kind, so other
-    // families cannot gain this pointer from a full-workspace inventory.
-    // Keep the explicit stub command's lookup: it also discloses grip class.
-    if resolution.weak_oracle_guidance.is_none()
-        && analysis::seam_kind_for_probe_family(kind) == Some(SeamKind::PredicateBoundary)
-    {
-        resolution.weak_oracle_guidance =
-            inventory_entry_facts(root, config, &file, &resolution.seam_id)
-                .and_then(|(_, guidance)| guidance);
-    }
+    let mut resolution = reuse_classified_at_entry(root, config, &file, Some(kind), resolution);
+    // #10683: the classified reuse above retains weak-oracle guidance and
+    // refreshes it from a complete file inventory, including a second,
+    // stronger observer. Never advertise a stub command it will refuse.
     if let Some(guidance) = resolution.weak_oracle_guidance.take() {
         return Some(StubRoute {
             finding_id: finding.id.clone(),
@@ -1505,16 +1526,17 @@ std::thread_local! {
     static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Inventory class for a seam selected from a file parse (`--at --kind`).
+/// Classified entry for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
-/// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
-/// inventory leaves `None`.
+/// reused for placement and repair-route guards after successful selection,
+/// as well as disclosure and the weak-oracle pointer (#10683). A failed or
+/// empty inventory leaves `None` and cannot establish a repair route.
 fn inventory_entry_facts(
     root: &Path,
     config: &RiprConfig,
     file: &str,
     seam_id: &str,
-) -> Option<(SeamGripClass, Option<String>)> {
+) -> Option<ClassifiedSeam> {
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
@@ -1530,7 +1552,7 @@ fn inventory_entry_facts(
         .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .map(|entry| (entry.class, super::task_first::weak_oracle_guidance(entry)))
+        .cloned()
 }
 
 /// Exact or path-suffix match in either direction, after normalizing
@@ -3293,9 +3315,14 @@ mod tests {
             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
         let outcome_ok = resolution.outcome.is_ok();
         let grip = resolution.grip_class;
+        let next_repair = resolution.next_repair;
         let _ = std::fs::remove_dir_all(&root);
         assert!(outcome_ok, "stub as scaffold stays ready");
         assert_eq!(grip, Some(SeamGripClass::StronglyGripped));
+        assert!(
+            next_repair.is_none(),
+            "an optional scaffold admits no repair"
+        );
         Ok(())
     }
 
@@ -3414,9 +3441,8 @@ impl Size {
             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
         let outcome_ok = resolution.outcome.is_ok();
         let grip = resolution.grip_class;
-        // #8727: a file-parse (`--at --kind`) selection carries no classified
-        // entry, so the repair packet's surface cannot be established and no
-        // route is invented.
+        // This fixture has neither a tests/ layout nor a governed inline
+        // module, so classification cannot admit a repair target (#8727).
         let next_repair = resolution.next_repair.is_none();
         let _ = std::fs::remove_dir_all(&root);
         assert!(outcome_ok, "an open gap still yields a stub: {grip:?}");

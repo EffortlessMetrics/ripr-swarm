@@ -293,10 +293,11 @@ To go from one Rust `ripr check` finding to a test in one step, run
 it (or `--seam-id ID`). `--kind` is the finding's probe family; only seams of
 that kind are tried, so it picks the seam the finding reported when its line
 holds several, and two separate seams of that kind on one line are refused
-with their seam IDs. With `--at` and `--kind` the stub
-is read from that one file's seams without using classification to pick the
-seam, and placed inline. After selection the command looks up the inventory
-grip so JSON and human output can disclose it: a strongly_gripped seam stays
+with their seam IDs. With `--at` and `--kind`, selection reads that one file's seams without using
+classification to pick the seam. The exact classified entry then owns
+placement and refusals, including integration-file targets and unresolved
+cross-language targets. The command also uses its inventory grip so JSON and
+human output can disclose it: a strongly_gripped seam stays
 `state: ready` (exit 0) and the disclosure names the real reason — the seam is
 exposed because its tests already discriminate it, so a stub would add
 nothing; only a class a user severity actually disables is described as
@@ -337,8 +338,9 @@ feeds: human output prints `Next repair: ripr agent repair --root <root>
 admitted `allowed_edit_surface`, and — when the stub's placement differs from
 that surface — a `placement_divergence` naming both files. The `next_repair`
 block was introduced in schema `0.3` (#8727) and is retained in schema `0.4`.
-No route is invented when the packet cannot be established, notably
-for `--at --kind` file-parse selections. A
+`--at --kind` retains shape selection and ambiguity checks, then reuses the
+exact classified gap entry when available for placement and the divergence
+write guard. No route is invented when the packet cannot be established. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 
