@@ -2881,7 +2881,9 @@ branch holding a statement, or code after the chain is outside the subset.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it. The one
+  together with the module whose tests then compile against it. An audited
+  pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
