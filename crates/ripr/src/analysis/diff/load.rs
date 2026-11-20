@@ -2827,6 +2827,30 @@ enum GitOperation {
     CherryPick,
 }
 
+/// Doctor's advisory for an interrupted Git operation, or `None` when none is
+/// in progress (or Git did not answer). It shares the marker probe with the
+/// check-time warning so the two surfaces cannot disagree, and states the next
+/// step once: finish or abort the operation, then rerun.
+pub(crate) fn git_operation_advisory(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let operation = git_operation_in_progress(root, git_timeout)?;
+    let (name, finish, abort) = match operation {
+        GitOperation::RebaseMerge | GitOperation::RebaseApply => {
+            ("rebase", "git rebase --continue", "git rebase --abort")
+        }
+        GitOperation::Merge => ("merge", "git merge --continue", "git merge --abort"),
+        GitOperation::CherryPick => (
+            "cherry-pick",
+            "git cherry-pick --continue",
+            "git cherry-pick --abort",
+        ),
+    };
+    Some(format!(
+        "this repository is mid-{name}: while conflict markers remain, `ripr check` does not read \
+         their regions as changes and exits 2 (analysis incomplete); \
+         finish it (`{finish}`) or abort it (`{abort}`), then rerun `ripr check`"
+    ))
+}
+
 fn git_operation_warning(operation: GitOperation) -> String {
     let (operation, context) = match operation {
         GitOperation::RebaseMerge | GitOperation::RebaseApply => (
