@@ -45,14 +45,16 @@ Transport:
 - Userinfo in the proxy URL (`http://user:password@host:port`, or a
   password-only `http://:token@host:port`) is percent-decoded and sent only as
   a `Proxy-Authorization: Basic` header on the `CONNECT` request. The origin
-  never receives it, and no message or log line renders it.
-- A non-200 `CONNECT` answer, a tunnel socket error or a TLS setup failure
-  fails the download as a network-class failure naming the proxy without its
-  credentials. It never falls back to a direct connection.
+  never receives it, and proxy failure messages show the proxy without it.
+- A refused (non-200) or unreachable `CONNECT` fails the download with a
+  message naming the proxy without its credentials. A TLS failure through an
+  open tunnel surfaces as a network-class download failure. None of these falls
+  back to a direct connection.
 
 Fail-closed rules:
 
-- A `socks://`, `socks5://`, `https://` or otherwise unsupported proxy scheme,
+- For a host that would use the proxy (not exempted by `NO_PROXY`), a
+  `socks://`, `socks5://`, `https://` or otherwise unsupported proxy scheme,
   an unparseable proxy URL, or userinfo that is not valid percent-encoding
   fails the download before any connection, with a message naming the
   workaround: set `ripr.server.path` to a local binary or install `ripr` on
