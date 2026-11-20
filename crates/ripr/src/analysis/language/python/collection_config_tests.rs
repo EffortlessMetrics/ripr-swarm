@@ -515,6 +515,8 @@ fn norecursedirs_plain_interior_slash_path_is_evaluated() -> Result<(), String> 
     for file in [
         "tests/mypy_test_cases/test_calc.py",
         "tests/mypy_test_cases/deep/test_calc.py",
+        // pytest's `*/tests/mypy_test_cases` also matches below a prefix.
+        "pkg/tests/mypy_test_cases/test_calc.py",
     ] {
         let got = controls_of("inside", &[("pytest.ini", ini), (file, TEST_BODY)], file)?;
         if got != ["pytest.collection(norecursedirs)"] {
