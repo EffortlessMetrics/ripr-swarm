@@ -484,6 +484,14 @@ fn a_walrus_or_while_body_rebinding_withholds_credit_even_when_a_row_passes_the_
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{owner}");
         assert_eq!(discriminators(&finding), vec!["val == \"y\"".to_string()]);
     }
+    // Control: a plain self-assignment binds only after `in` has read the
+    // call input, so a row passing the removed member keeps the credit.
+    let assigned = "def to_bool(val):\n    val = val in (True, \"yes\", \"on\")\n    return val\n";
+    let assigned_old = "    val = val in (True, \"yes\", \"y\", \"on\")";
+    assert_eq!(
+        class_at(assigned, 2, assigned_old, &truthy_cases(CASES.1))?,
+        ExposureClass::Exposed
+    );
     // Control: the same `while` without a body rebinding keeps the credit.
     let plain = "def to_bool(val):\n    while val in (True, \"yes\", \"on\"):\n        return True\n    return False\n";
     assert_eq!(

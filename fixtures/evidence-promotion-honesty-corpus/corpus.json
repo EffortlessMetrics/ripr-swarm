@@ -722,6 +722,20 @@
       ]
     },
     {
+      "id": "python_membership_removed_member",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_membership_removed_member",
+      "vector": "literal_collection_member_removed_without_a_row_on_it_does_not_promote",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_finding_owner", "owner": "python:truthy/convert.py::to_bool"}
+      ]
+    },
+    {
       "id": "typescript_jest_only_literal_timeout_push_argument_length",
       "language": "typescript",
       "tier": "pure",
