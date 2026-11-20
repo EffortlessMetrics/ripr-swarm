@@ -8,6 +8,7 @@ mod identifier_rename;
 mod ids;
 mod lexical;
 mod macro_definition;
+mod moved_item;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;

@@ -30,6 +30,10 @@ ripr first-pr \
   --out-dir target/ripr/demo/boundary-gap
 ```
 
+The root must be a Cargo workspace on a branch whose diff against
+`origin/main` is not empty; otherwise the packet is a blocked or no-action
+recovery page instead of the top-gap page below.
+
 Open:
 
 ```text
@@ -132,7 +136,7 @@ explicit preview `typescript_repair_packet` from saved `ripr check` JSON:
 
 ```text
 Changed behavior:
-  amount == threshold
+  amount >= threshold
 
 Why it matters:
   A related TypeScript test reaches the change, but no boundary discriminator

@@ -257,6 +257,17 @@ pub(crate) fn probes_for_file_with_relations(
             }
         }
     }
+    // #15110: a complete item moved within its owner, with no other change,
+    // is the same program.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let moved = super::moved_item::moved_item_lines(changed, &facts.source, old_source);
+        for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+            *flag |= moved.added.contains(&line.new_side_line);
+        }
+        for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+            *flag |= moved.removed.contains(&line.line);
+        }
+    }
     // A line that is byte-identical on both sides of one replacement run
     // (unchanged or moved inside a rewritten block) is not an edit (#8389).
     for (new_side_line, old_line) in changed.identical_replacement_lines() {
@@ -982,6 +993,7 @@ pub(crate) fn probes_for_file_with_relations(
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
+    let represented_value_lines = represented_value_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         if crate::analysis::cancellation::checkpoint().is_err() {
             break;
@@ -1119,6 +1131,19 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #7807: the same holds for any removed line that reads only the
+            // catch-all because it is classified without its context (a tail
+            // `x * 5` or `input`), when its block replacement's probe models
+            // the value at that position (`return_value`, `error_path`) and
+            // carries the WHOLE removed text as `before`. That probe already
+            // judges the replaced code; the base-side twin only repeats it.
+            // Any other replacement family (an operator swap read as
+            // `call_deletion`) is a weaker model, so the twin stays.
+            if family == ProbeFamily::StaticUnknown
+                && represented_value_lines.contains(&removed.line)
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -1183,6 +1208,35 @@ pub(super) fn names_an_edit(text: &str) -> bool {
         && text
             .chars()
             .any(|character| !character.is_whitespace() && !"{}()[];,".contains(character))
+}
+
+/// Old-side lines of removed lines whose positional replacement (one map of
+/// [`ChangedFile::replacement_counterparts`], built once per file) carries a
+/// `return_value` or `error_path` probe whose `before` is the whole removed
+/// text (#7807). A removed line holding more than one statement
+/// (`*state = 1; x * 5`, a `;` before its end) is never included: the value
+/// probe models only the returned expression, not the other statement.
+fn represented_value_replacements(
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> std::collections::BTreeSet<usize> {
+    let counterparts = changed.replacement_counterparts();
+    probes
+        .iter()
+        .filter(|seeded| {
+            matches!(
+                seeded.probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
+            )
+        })
+        .filter_map(|seeded| {
+            let removed = counterparts.get(&seeded.probe.location.line)?;
+            let text = removed.text.trim();
+            let single_statement = !text.strip_suffix(';').unwrap_or(text).contains(';');
+            (single_statement && seeded.probe.before.as_deref() == Some(text))
+                .then_some(removed.line)
+        })
+        .collect()
 }
 
 /// True when a trimmed changed line is one literal and nothing else: a
@@ -7598,6 +7652,67 @@ mod tests {
         assert!(
             base_side.iter().all(|probe| probe.location.line == 9),
             "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
+        );
+    }
+
+    /// #7807: a changed tail expression (`x * 5` -> `x * 10`) reads only the
+    /// catch-all on the removed side, where it is classified without its
+    /// context. The added return-value probe carries the whole removed text
+    /// as `before`, so no base-side twin is added. The same text deleted
+    /// outright in a later hunk keeps its removed-side probe.
+    #[test]
+    fn a_replaced_tail_expression_adds_no_base_side_static_unknown_twin() {
+        let head = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n";
+        let probes = single_shape_probes(
+            "    x * 10",
+            "    x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("x * 5")),
+            "fixture: the added probe must pair the removed expression: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "x * 5"),
+            "a replaced tail expression must not get its own removed-side probe: {probes:?}"
+        );
+
+        let mixed = shapes_probes_with_deletions(
+            "    x * 10",
+            "    x * 5",
+            &[(9, "    x * 5")],
+            &[(ProbeShapeKind::ReturnValue, "x * 10")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "x * 5")
+            .collect();
+        assert!(
+            !base_side.is_empty() && base_side.iter().all(|probe| probe.location.line == 9),
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
+
+        // Control: an old line that also held a write models more than the
+        // returned value, so its removed-side probe stays.
+        let write = single_shape_probes(
+            "    x * 10",
+            "    *state = 1; x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            "pub fn scaled(state: &mut i32, x: i32) -> i32 {\n    x * 10\n}\n",
+        );
+        assert!(
+            write
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::StaticUnknown
+                    && probe.expression == "*state = 1; x * 5"),
+            "a removed line with a second statement keeps its probe: {write:?}"
         );
     }
 
