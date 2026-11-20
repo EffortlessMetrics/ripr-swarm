@@ -573,6 +573,10 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
         "cargo build --locked --offline --message-format=json",
         &[
             (
+                "RUSTC_WORKSPACE_WRAPPER",
+                wrapper.to_str().ok_or("non-UTF-8 wrapper")?,
+            ),
+            (
                 "CARGO_TARGET_DIR",
                 target.to_str().ok_or("non-UTF-8 target")?,
             ),
