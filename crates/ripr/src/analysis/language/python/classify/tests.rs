@@ -5940,3 +5940,28 @@ fn class_attribute_short_text_pins_only_through_whole_equality() -> Result<(), S
     }
     Ok(())
 }
+
+// #15294 review: a new text made only of placeholders can render as the old
+// text, so an equality on the old text does not tell them apart.
+#[test]
+fn class_attribute_placeholder_only_new_text_rejects_nothing() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"{word}\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message.format(word=\"OK\"))\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        6,
+        "    message = \"{word}\"",
+        Some("    message = \"OK\""),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

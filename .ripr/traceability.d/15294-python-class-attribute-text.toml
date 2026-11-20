@@ -7,4 +7,5 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_short_text_pins_only_through_whole_equality",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_placeholder_only_new_text_rejects_nothing",
 ]

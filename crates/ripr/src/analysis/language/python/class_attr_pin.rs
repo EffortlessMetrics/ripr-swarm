@@ -62,8 +62,9 @@ pub(super) fn python_class_attr_pin_gap(
         .any(|pin| {
             let literal: Vec<char> = pin.text.chars().collect();
             // The old text must fit with the half-fixed rule; the new text only
-            // needs one fixed character, so a placeholder-heavy new text that
-            // could still produce the literal never reads as rejecting it.
+            // needs one fixed character (none when it is all placeholders), so
+            // a placeholder-heavy new text that could still produce the
+            // literal does not read as rejecting it.
             // A short literal is ambiguous as a fragment, but whole-text
             // equality with it is exact.
             (literal.len() >= 4 || (pin.whole && !literal.is_empty()))
@@ -140,6 +141,10 @@ fn tokens(text: &str) -> Vec<Token> {
 /// fixed text. With `strict`, at least half the literal must be fixed text;
 /// otherwise at least one character (a placeholder alone would fit any text).
 fn text_matches(tokens: &[Token], literal: &[char], pin: &PinLiteral, strict: bool) -> bool {
+    // A text made only of placeholders can render as any literal.
+    if !strict && tokens.iter().all(|token| matches!(token, Token::Wildcard)) {
+        return true;
+    }
     let regex = pin.regex;
     let begins = if pin.whole { 0..=0 } else { 0..=tokens.len() };
     begins.into_iter().any(|begin| {
