@@ -870,7 +870,8 @@ fn feature_table_with_doubt(package: &serde_json::Value) -> (BTreeMap<String, Ve
         .filter(|key| map.contains_key(*key))
         .collect();
     for enables in map.values_mut() {
-        let implicit: Vec<String> = enables.iter()
+        let implicit: Vec<String> = enables
+            .iter()
             .filter_map(|item| item.split_once('/'))
             .filter(|(key, _)| optional_keys.contains(key))
             .map(|(key, _)| key.to_string())
@@ -1176,11 +1177,7 @@ fn expand_features_into(
             continue;
         }
         if let Some(enables) = table.get(&name) {
-            stack.extend(
-                enables
-                    .iter()
-                    .filter_map(|item| local_feature_enable(item)),
-            );
+            stack.extend(enables.iter().filter_map(|item| local_feature_enable(item)));
         }
     }
 }
@@ -1189,22 +1186,7 @@ fn expand_features_into(
 /// `dep:` and `dep/feature` enables are not local feature names.
 fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
     let mut enabled = BTreeSet::new();
-    if !features.contains_key("default") {
-        return enabled;
-    }
-    let mut stack = vec!["default".to_string()];
-    while let Some(name) = stack.pop() {
-        if !enabled.insert(name.clone()) {
-            continue;
-        }
-        if let Some(enables) = features.get(&name) {
-            for item in enables {
-                if let Some(local) = local_feature_enable(item) {
-                    stack.push(local);
-                }
-            }
-        }
-    }
+    expand_features_into(features, vec!["default".into()], &mut enabled);
     enabled
 }
 
