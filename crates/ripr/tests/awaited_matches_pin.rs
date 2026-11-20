@@ -156,6 +156,15 @@ fn an_awaited_pin_on_a_literal_neither_version_returns_is_not_credited() -> Resu
             "use billing::fee;\n\n#[tokio::test]\nasync fn fee_ok() {{\n    {assertion}\n}}\n"
         );
         let finding = return_finding(true, &tests)?;
+        let names_case = finding["related_tests"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|test| test["name"] == "fee_ok" && test["oracle"].as_str() == Some(assertion));
+        assert!(
+            names_case,
+            "premise: {assertion} is the related oracle: {finding}"
+        );
         assert_ne!(
             finding["classification"], "exposed",
             "{assertion}: {finding}"
