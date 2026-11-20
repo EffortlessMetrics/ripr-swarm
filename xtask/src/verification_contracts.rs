@@ -639,7 +639,7 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_markers: &["classified_entries", "logical_file_bytes"],
     },
     // `ripr cache status --json`. The fixture is hand-written with a portable
-    // path: the real document carries the host's absolute cache directory.
+    // path. The real document carries a host-specific cache path.
     // The producer-byte authority is `cache_clear_safety.rs`.
     VerificationContract {
         schema_path: "schemas/ripr/cache-status.schema.json",
