@@ -117,3 +117,21 @@ number = 13393
 state = "closed"
 flaky = true
 title = "Flaky: seam_inventory cache-key tests fail in the Rust-only feature lane when a pilot or repair test moves the process-wide seam limit"
+
+[[issue]]
+number = 13839
+state = "closed"
+flaky = true
+title = "Flaky: lsp::backend::disk_bytes_equal_text_tests::same_length_buffer_checks_read_unchanged_disk_once reads disk twice"
+
+[[issue]]
+number = 15100
+state = "closed"
+flaky = true
+title = "Flaky scale control: real_clock_rejects_quadratic_work_at_the_guard_sizes accepted quadratic work"
+
+[[issue]]
+number = 15148
+state = "closed"
+flaky = true
+title = "fix(git): a cancelled analysis reports cancellation, not a refused-filter usage error (#15122 follow-up)"

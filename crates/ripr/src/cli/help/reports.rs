@@ -2,7 +2,7 @@ pub(super) const REPORTS_HELP: &str = r#"Write reviewer-first report projections
 
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
   ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -26,6 +26,7 @@ Index options:
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
@@ -81,8 +82,10 @@ GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
 and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
-PR guidance or SARIF render makes the command exit nonzero after the rest of
-the packet is written. It reads no token and posts no PR comments.
+PR guidance or SARIF render makes the command exit 2 after the rest of the
+packet is written. A gate that blocked, with no other required failure, exits
+3 instead, as `ripr gate evaluate` does. It reads no token and posts no PR
+comments.
 
 The CI summary prints the generated workflow's step summary as Markdown on
 stdout, from the artifacts earlier steps wrote. It reads only; it never runs

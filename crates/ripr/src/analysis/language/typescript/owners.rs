@@ -64,14 +64,17 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    let (entries, outbound) = module_entries_and_outbound(
+    let (entries, outbound, value_names) = module_entries_and_outbound(
         &program.body,
         source,
         &extract_imports_for_test_file(&program.body),
     );
     for owner in &mut owners {
+        // A `ModuleFunction` owner is a non-callable `const` initializer; it
+        // carries entries only when it is a followable read-only value node
+        // (#13592 B2), never through the bare-call edges of a factory const.
         if owner.class_name.is_none()
-            && owner.owner_kind != OwnerKind::ModuleFunction
+            && (owner.owner_kind != OwnerKind::ModuleFunction || value_names.contains(&owner.name))
             && let Some(owner_entries) = entries.get(&owner.name)
         {
             owner.module_entries = owner_entries.clone();
@@ -576,7 +579,9 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
                 }
             }
             Statement::ExportNamedDeclaration(export)
-                if export.declaration.is_none() && export.source.is_none() =>
+                if export.declaration.is_none()
+                    && export.source.is_none()
+                    && export.export_kind != ImportOrExportKind::Type =>
             {
                 for specifier in &export.specifiers {
                     if specifier.export_kind == ImportOrExportKind::Type {
@@ -603,6 +608,82 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
             owner.exported_as_default = true;
         }
     }
+    // A class declared first and exported as `default` by a separate
+    // statement (`class Cart {}` ... `export default Cart;`) is the module's
+    // default export like `export default class Cart {}`, so its methods
+    // carry the same `class_default_export` marker.
+    let default_classes = default_exported_class_declarations(body, &default_locals);
+    if default_classes.is_empty() {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner
+            .class_name
+            .as_deref()
+            .is_some_and(|class_name| default_classes.contains(class_name))
+        {
+            owner.class_default_export = true;
+        }
+    }
+}
+
+/// The names in `default_locals` that are one top-level `class Name {}`
+/// declaration reachable only as the module's default export.
+///
+/// Fail-closed identity gates: exactly one file-level declaration binds the
+/// name and it is a class declaration; the file never writes the name (a
+/// class binding is mutable, and `export { Name as default }` is live); and
+/// no named export carries the class too (`export { Name }`, `export { Name
+/// as Other }`), because the marker makes a named import of the class stop
+/// relating. A class with both exports keeps its named-import reading.
+fn default_exported_class_declarations<'a>(
+    body: &'a [Statement<'a>],
+    default_locals: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<&'a str> {
+    let mut classes: std::collections::HashSet<&'a str> = body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::ClassDeclaration(class) if !class.declare => {
+                class.id.as_ref().map(|id| id.name.as_str())
+            }
+            _ => None,
+        })
+        .filter(|name| default_locals.contains(*name))
+        .collect();
+    if classes.is_empty() {
+        return classes;
+    }
+    let mut declared = Vec::new();
+    super::tests_extract::collect_registration_scope_names(body, &mut declared, false);
+    classes.retain(|name| {
+        declared
+            .iter()
+            .filter(|other| other.as_str() == *name)
+            .count()
+            == 1
+    });
+    for stmt in body {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.source.is_some() || export.export_kind == ImportOrExportKind::Type {
+            continue;
+        }
+        for specifier in &export.specifiers {
+            if specifier.export_kind != ImportOrExportKind::Type
+                && module_export_name_text(&specifier.exported).as_deref() != Some("default")
+                && let Some(local) = module_export_name_text(&specifier.local)
+            {
+                classes.remove(local.as_str());
+            }
+        }
+    }
+    if classes.is_empty() {
+        return classes;
+    }
+    let written = identifier_writes(body);
+    classes.retain(|name| !written.contains(*name));
+    classes
 }
 
 /// Mark a top-level function declaration as the module's CommonJS default
@@ -697,6 +778,17 @@ fn mark_commonjs_default_binding(
         }
         return;
     };
+    if let Some(class_name) = target
+        && super::commonjs_default_class::mark_whole_export_class(
+            program,
+            class_name,
+            &code,
+            &division_code,
+            owners,
+        )
+    {
+        return;
+    }
     let Some(name) = declared else {
         return;
     };
@@ -1763,6 +1855,9 @@ fn extract_imports_from_statements_inner(
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // Names a non-`require()` file-level declaration re-declares (computed on
+    // the first mutable `require()` binding).
+    let mut redeclared_names: Option<std::collections::HashSet<String>> = None;
     // `const lib = require('./y')` namespace bindings, so a member picked off
     // `lib` later reads as that module's member (#10447).
     let mut namespaces: std::collections::HashMap<String, String> =
@@ -1881,11 +1976,24 @@ fn extract_imports_from_statements_inner(
                 // hold the module's export, so it is not an import (#10401). A
                 // `const` cannot be reassigned.
                 let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                // A `var` binding that a file-level declaration other than a
+                // `require()` re-declares (`var { Cart } = require('./cart');
+                // var Cart = class {}`, or a hoisted `function Cart() {}`)
+                // holds whichever value was written last, which this scan does
+                // not order, so it is not an import (#14088). Two `require()`
+                // bindings of one name stay recorded, both of them: the
+                // admission scan reads the package one, and a relation that
+                // needs one module tells them apart by the record.
                 let mut written = |name: &str| {
                     mutable
-                        && written_names
-                            .get_or_insert_with(|| identifier_writes(statements))
+                        && (redeclared_names
+                            .get_or_insert_with(|| {
+                                names_redeclared_beside_require(statements, &top_level_names)
+                            })
                             .contains(name)
+                            || written_names
+                                .get_or_insert_with(|| identifier_writes(statements))
+                                .contains(name))
                 };
                 // One member of a literal require: `const f = require('./y').f`
                 // picks the named export `f` out of the module (#9188). It is
@@ -1982,6 +2090,76 @@ fn extract_imports_from_statements_inner(
         }
     }
     out
+}
+
+/// The names declared at file level more often than program-level
+/// `require("<literal>")` declarators bind them: some other declaration (a
+/// second `var`, a function, a function a sloppy block hoists, a `require()`
+/// pattern the extractor does not read) binds the name too. `top_level_names`
+/// lists every file-level declaration, once each.
+fn names_redeclared_beside_require(
+    statements: &[Statement<'_>],
+    top_level_names: &[String],
+) -> std::collections::HashSet<String> {
+    let mut declared: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in top_level_names {
+        *declared.entry(name.as_str()).or_insert(0) += 1;
+    }
+    if declared.values().all(|count| *count < 2) {
+        return std::collections::HashSet::new();
+    }
+    let mut required: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let no_namespaces = std::collections::HashMap::new();
+    for stmt in statements {
+        let Statement::VariableDeclaration(declaration) = stmt else {
+            continue;
+        };
+        for declarator in &declaration.declarations {
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            // Count exactly the locals the extractor records for this
+            // declarator. A local it does not record (a nested pattern, a
+            // rest element, an array pattern) is another declaration of the
+            // name, so it must not balance one out (#14154 review).
+            let mut count = |name: &str| *required.entry(name.to_string()).or_insert(0) += 1;
+            if require_member_source(init, &no_namespaces).is_some() {
+                if let Some(name) = binding_identifier_name(&declarator.id) {
+                    count(name);
+                }
+                continue;
+            }
+            if require_string_literal_source(init).is_none() {
+                continue;
+            }
+            if let Some(name) = binding_identifier_name(&declarator.id) {
+                count(name);
+                continue;
+            }
+            let BindingPattern::ObjectPattern(object) = &declarator.id else {
+                continue;
+            };
+            for property in &object.properties {
+                if object_binding_key_name(property).is_none() {
+                    continue;
+                }
+                match &property.value {
+                    BindingPattern::BindingIdentifier(id) => count(id.name.as_str()),
+                    BindingPattern::AssignmentPattern(with_default) => {
+                        if let Some(name) = binding_identifier_name(&with_default.left) {
+                            count(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    declared
+        .into_iter()
+        .filter(|(name, count)| *count > 1 && *count > required.get(*name).copied().unwrap_or(0))
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// Extract the string literal source from a `require('...')` call expression.
@@ -3167,7 +3345,7 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 /// assignment targets, `++`/`--`, `for (x of ...)` heads, and an identifier
 /// under a TypeScript wrapper (`(x as T) = v`). Member writes (`x.p = v`) do
 /// not rebind `x` and are not counted.
-fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+pub(super) fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     #[derive(Default)]
     struct Writes {
         names: std::collections::HashSet<String>,

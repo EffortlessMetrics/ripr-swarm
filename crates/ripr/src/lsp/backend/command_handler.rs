@@ -147,7 +147,7 @@ pub(super) fn source_subject_sentinel(
         "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json then {regenerate}"
     );
     match crate::lsp::gap_artifacts::validate_gap_artifact(artifact, &context) {
-        Ok(validated) if validated.kind == kind => None,
+        Ok(validated) if validated.kind() == kind => None,
         Ok(_) => Some(repair_packet_sentinel(&format!(
             "unsupported_kind: expected {artifact_name}"
         ))),
@@ -211,13 +211,13 @@ pub(super) fn collect_receipt_status_fields(
         // Limitation surface — never show receipt command.
         not_available
     } else {
-        let has_verify = !artifact.verify_commands.is_empty();
-        let has_receipt = !artifact.receipt_commands.is_empty();
+        let has_verify = !artifact.verify_commands().is_empty();
+        let has_receipt = !artifact.receipt_commands().is_empty();
         if has_verify && has_receipt {
             // Use the existing first_safe_receipt_command path from actions.rs
             // by reading it directly from the artifact.
             let cmd = artifact
-                .receipt_commands
+                .receipt_commands()
                 .first()
                 .map(String::as_str)
                 .unwrap_or("");
@@ -271,7 +271,7 @@ pub(super) fn receipt_status_from_ledger(
 
     // Match the ledger record to the top artifact using canonical_gap_id.
     let canonical_gap_id = artifact
-        .identities
+        .identities()
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
@@ -337,7 +337,7 @@ pub(super) fn read_latest_attempt_outcome(
     };
 
     let canonical_gap_id = top_gap
-        .and_then(|a| a.identities.first())
+        .and_then(|a| a.identities().first())
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
 
@@ -768,11 +768,14 @@ pub(super) fn no_repair_packet_reason(gap_id: Option<&str>) -> String {
         }
         None => "no repair packet".to_string(),
     };
+    // #13636 item 3: point at the per-change loop (`ripr check`, then the
+    // repair start it prints), not the whole-repo pilot or gap-ledger
+    // recipes. `ripr repair <id>` resolves Rust seams only; Python and
+    // TypeScript gaps start through the gap-bound command `check` prints.
     format!(
         "{subject}: neither {DEFAULT_ACTIONABLE_GAPS_OUT} nor {DEFAULT_GAP_DECISION_LEDGER_OUT} \
-holds one; run `ripr pilot --root .` for gaps with their repair commands, or write the gap \
-ledger with `ripr reports gap-ledger --check-output PATH` from saved `ripr check --format json` \
-output"
+holds one; run `ripr check --root .` to list the gaps on your change, then run the repair \
+start it prints for one (`ripr repair <id> --root .` for Rust)"
     )
 }
 

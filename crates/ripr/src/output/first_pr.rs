@@ -939,7 +939,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
             && !doctor_languages.contains(&LanguageId::Python)
             && !doctor_languages.contains(&LanguageId::Rust)
-            && crate::analysis::workspace_rust_files(root).is_empty()
+            && !crate::analysis::workspace_has_rust_source(root)
         {
             let (kind, marker) = if doctor_javascript {
                 ("JavaScript", "jsconfig.json")
@@ -960,7 +960,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // and doctor loops. Name the languages ripr cannot analyze instead.
         // Rust or preview source below the root (a nested crate) means the
         // root really is wrong, so that case keeps `wrong_root`.
-        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+        let analyzable_below = crate::analysis::workspace_has_rust_source(root)
             || !crate::analysis::workspace_preview_language_files(root).is_empty();
         let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
         if !analyzable_below && !unanalyzed.is_empty() {
@@ -9157,7 +9157,13 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains(&format!(
+                "--out-dir {out} is an existing file, but --out-dir names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out-dir is not a not-writable tree: {error}"

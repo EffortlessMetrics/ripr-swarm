@@ -137,6 +137,24 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/cache-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_status_json_conforms_to_the_published_schema_in_every_portable_state and cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory in crates/ripr/tests/cache_clear_safety.rs validate the real CLI bytes of the not_found, ok, unavailable and aliased states, and published_cache_status_schema_rejects_documents_it_forbids is the negative experiment; the document carries the host's absolute cache directory, so the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-status.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/capabilities.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: capabilities_json_conforms_to_the_published_schema in crates/ripr/tests/capabilities_command.rs validates the real CLI bytes of the whole table and of every --language projection, published_vocabularies_equal_the_emitted_ones holds the schema's closed vocabularies equal to the emitted ones, and published_capabilities_schema_rejects_documents_it_forbids is the negative experiment; `ripr capabilities --json` writes to stdout and adapter_compiled depends on build features, so the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/capabilities.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
@@ -152,6 +170,58 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "narrower authority: check_json_argv_usage_errors_emit_cli_refusal and context_selector_miss_emits_cli_refusal_only_for_json_request in crates/ripr/tests/cli_smoke.rs parse the real CLI bytes of usage errors and selector misses, and the output::refusal unit tests pin the renderer; the committed fixture is hand-written",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/cli-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_conforms_to_the_published_schema_in_each_completion_state in crates/ripr/tests/diff_json_schema.rs validates the real CLI bytes of a complete diff with a finding, a complete empty diff and an incomplete diff with a preview-language advisory, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_schema_rejects_documents_it_forbids is the negative experiment; `ripr diff --json` writes to stdout from a live git range, so the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_refusals_conform_to_the_published_schema in crates/ripr/tests/diff_json_schema.rs validates the real exit-2 CLI bytes for an unresolvable base and an unreadable config, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_refusal_schema_rejects_documents_it_forbids is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/rerun-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-brief-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_brief_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root with an echoed base and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-brief-refusal.valid.json"],
+        // `ripr check` refusals share the agent brief's `0.2` version and the
+        // envelope's required fields, so they match this schema's top-level
+        // shape. They carry `mode` and a `diff` scope, which this schema
+        // rejects, and check.schema.json owns them.
+        excluded: &[(
+            "tests/fixtures/verification/ripr/check-limited.valid.json",
+            "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unknown seam (exit 3), an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-packet-refusal.valid.json"],
         excluded: &[],
     },
     Binding {
@@ -973,7 +1043,10 @@ fn collect_command_specs<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
+                        // A null role is a role not offered: the evidence
+                        // record writes `null` for a non-actionable item
+                        // (#14385). Any other non-object still fails.
+                        if (role == "verify") == verify && !spec.is_null() {
                             subjects.push((format!("{child_location}/{role}"), spec));
                         }
                     }
@@ -1022,7 +1095,7 @@ fn collect_command_specs_exact<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
+                        if (role == "verify") == verify && !matches!(spec, ExactValue::Null) {
                             subjects.push((format!("{child_location}/{role}"), spec));
                         }
                     }
@@ -1620,12 +1693,37 @@ mod tests {
     }
 
     #[test]
+    fn null_command_spec_roles_are_roles_not_offered() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 0
+                || report
+                    .violations
+                    .iter()
+                    .any(|violation| violation.contains("packet.json/command_specs"))
+            {
+                return Err(format!(
+                    "null {role} role was validated as a spec: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn non_object_command_spec_roles_fail_in_both_binding_rows() -> Result<(), String> {
         for (role, verify) in [("verify", true), ("build", false)] {
             let root = example_root();
             write(
                 &root.join("fixtures/a/expected/packet.json"),
-                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+                &format!(r#"{{"command_specs":{{"{role}":"x"}}}}"#),
             );
             let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
             let row = &report.packet["rows"][0];

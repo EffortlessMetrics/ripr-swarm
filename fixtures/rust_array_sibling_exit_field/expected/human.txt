@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:6
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -37,8 +37,8 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
   ripr context --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
-  no repair start offered: ripr found 3 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
-No test stub here: the seam a stub would target is not a reported gap in the seam view; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`
+  no repair start offered: this finding's changed line holds 2 spots (`total: { std::process::exit(0) }`, `total: a + b`) and ripr will not pick one for you; follow the Next step above
+No test stub here: the spot a stub would target is not a reported gap; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

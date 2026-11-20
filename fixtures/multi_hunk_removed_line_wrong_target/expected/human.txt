@@ -8,8 +8,8 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 6 changed line(s), 4 candidate line(s), 5 changed behavior(s) checked, 5 finding(s)
 
 Start here:
-  State: ripr cannot tell from reading the code whether tests would notice this
-  Safe next action: look at the reason below and the existing tests before adding a test
+  State: a test gap to inspect or repair
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:2
   Static exposure: no path (severity: warning, confidence 0.35)
   Why no path: no related test was found that reaches this change
@@ -50,7 +50,6 @@ Hidden:
     no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: ripr found no static test path for any of the 5 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 5 changed expression(s), and 0 statically linked related

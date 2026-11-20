@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0443"
+scope = "out"
+reason = "Rust analyzer seam-grip credit; this corpus scores a different language's verdicts and carries no Rust seam fields"

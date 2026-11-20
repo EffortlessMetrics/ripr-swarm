@@ -11,18 +11,6 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:6fb64460",
-      "canonical_gap_id": "gap:rust:src/lib.rs:impl Wrapper::get:predicate_boundary:predicate:self.inner.get==10",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:impl Wrapper::get:predicate_boundary:predicate:self.inner.get==10",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "impl Wrapper::get",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "self.inner.get==10"
-
-      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.43,
@@ -52,7 +40,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"10","line":10}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: 10", "No test is seen calling get; tests share only its file or a name token: other_test (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["Changed behavior appears to influence returned value: 10", "No test is seen calling get; tests share only its file or a name token: other_test (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change", "activation_boundary_input_unresolved: the changed boundary `self.inner.get() > 10` compares a local or computed operand that ripr cannot map to a test call's arguments; the repair is withheld as a named limitation, not a coverage claim"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
         "27": "assert_eq!(other(9), 5);"
@@ -108,6 +96,7 @@
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "language": "rust",
+      "static_limit_kind": "activation_boundary_input_unresolved",
       "source_currentness": "candidate_current"
     }
   ]

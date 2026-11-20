@@ -499,6 +499,13 @@ fn porcelain_parser_pairs_rename_sources_and_rejects_malformed_records() -> Resu
     assert_eq!(parsed.dirty, vec!["src/lib.rs"]);
     assert_eq!(parsed.ignored_files, vec!["tests/local.rs"]);
     assert_eq!(parsed.ignored_directories, vec!["build"]);
+    // #14315: ripr's self-ignoring output tree, at the top or under a nested
+    // root, is not source; a similarly named authored path still counts.
+    let parsed = parse_porcelain_z(
+        b"!! target/ripr/cache/\0!! target/ripr/.gitignore\0!! app/target/ripr/cache/\0!! app/target/ripr/x.rs\0!! target/ripr-notes/\0!! src/target/riprx.rs\0",
+    )?;
+    assert_eq!(parsed.ignored_directories, vec!["target/ripr-notes"]);
+    assert_eq!(parsed.ignored_files, vec!["src/target/riprx.rs"]);
     // #5258: `??` records are untracked. They stay in the dirty set (the
     // overlay reads them absent at HEAD) and are named for the output layer,
     // so the note can distinguish them from the `--worktree`-visible edits.
@@ -1021,5 +1028,43 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
             Path::new("test/__snapshots__")
         ));
     });
+    Ok(())
+}
+
+/// #14104: a bare repository resolves a base but has no work tree, so the
+/// status read fails with Git's "must be run in a work tree". That carries
+/// the bare-repository message and its next action (check out a work tree),
+/// not the raw probe failure. The work tree it was cloned from is the control.
+#[test]
+fn bare_repository_reports_its_work_tree_next_action() -> Result<(), String> {
+    let repo = fixture_root("bare-source")?;
+    write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
+    commit_all(&repo.0, "base")?;
+    assert!(probe(&repo.0, DEADLINE)?.is_none(), "control: a work tree");
+
+    let bare = RepoGuard(repo.0.with_extension("bare.git"));
+    let bare_arg = bare.0.to_string_lossy().to_string();
+    git(&repo.0, &["clone", "-q", "--bare", ".", &bare_arg])?;
+    // Fixture check: bare, and the committed base resolves there.
+    assert_eq!(
+        git(&bare.0, &["rev-parse", "--is-bare-repository"])?,
+        "true"
+    );
+    git(&bare.0, &["rev-parse", "--verify", "main^{commit}"])?;
+
+    let Err(error) = probe(&bare.0, DEADLINE) else {
+        return Err("a bare repository has no work tree to probe".to_string());
+    };
+    assert!(
+        matches!(
+            error.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::RepositoryRootUnusable)
+        ),
+        "{error:?}"
+    );
+    let message = error.to_string();
+    assert_eq!(message, crate::analysis::bare_repository_message(&bare.0));
+    assert!(message.contains("git worktree add"), "{message}");
+    assert!(!message.contains("committed-source probe"), "{message}");
     Ok(())
 }

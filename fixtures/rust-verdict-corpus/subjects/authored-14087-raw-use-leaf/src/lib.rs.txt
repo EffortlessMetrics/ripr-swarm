@@ -1,0 +1,23 @@
+pub mod a {
+    pub fn render(n: u32) -> bool {
+        n > 5
+    }
+}
+
+pub mod b {
+    pub fn render(n: u32) -> bool {
+        n > 5
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::a::*;
+    use crate::b::r#render;
+
+    #[test]
+    fn renders_through_b() {
+        assert_eq!(render(5), false);
+        assert_eq!(render(6), true);
+    }
+}

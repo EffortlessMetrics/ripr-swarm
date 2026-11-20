@@ -57,13 +57,33 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// RIPR-SPEC-0096: what evaluating a changed `let` returned unmodified
     /// showed; `None` when any part was unreadable.
     pub binding_return_flow: Option<super::BindingReturnFlow>,
+    /// #14852: the owner's whole-body constant tail replaced a different
+    /// whole-body constant tail on the base side; `None` when any part of
+    /// that reading failed.
+    pub constant_tail_change: Option<super::ConstantTailChange>,
+    /// #15104: a test may run some other function in place of the owner (a
+    /// `cfg` gate on it, its enclosing items, file or module chain, or a
+    /// same-path `cfg` twin), read by the shared base-owner gate decision
+    /// ([`crate::analysis::diff::owner_may_be_swapped`]). The legacy
+    /// whole-body constant-tail edge then claims no direct return.
+    pub owner_may_be_swapped: bool,
     /// #12040: the changed line is, or declares a constant named by, a
     /// same-file compile-time assertion. Selects the `compile_time_invariant`
     /// stop reason and withholds a ruled-out reach (`no_static_path`) as
     /// `static_unknown`; never promotes.
     pub compile_time_guarded: bool,
+    /// #14815: the owner's whole one-line tail gained or lost one prefix
+    /// `-`/`!` on a returned parameter, with the base-side owner the diff
+    /// establishes. Gives the change a return-value sink and decides its
+    /// infection; `None` keeps the ordinary reading.
+    pub unary_tail: Option<super::UnaryTailChange>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
+    /// #14387: the diff's old text of the probe's line when that line is the
+    /// owner's only changed line (one replaced line, nothing else added or
+    /// removed inside the owner). `None` when the diff is not at hand or
+    /// changes the owner elsewhere.
+    pub owner_sole_change: Option<String>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -95,9 +115,13 @@ impl<'a> ProbeContext<'a> {
             const_readers: Vec::new(),
             const_flow: None,
             binding_return_flow: None,
+            constant_tail_change: None,
+            owner_may_be_swapped: false,
             compile_time_guarded: false,
+            unary_tail: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
+            owner_sole_change: None,
         }
     }
 
