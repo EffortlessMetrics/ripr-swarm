@@ -1743,7 +1743,13 @@ sibling rule (#14814) covers exactly one changed value. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A key-list change, a
+keeps its credit. A plain projection is a call or member-access chain, read
+as a grammar rather than as a list of forbidden operators (#14928): a
+postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
+negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
+projections of the owner's result, so an untouched field read through any of
+them drops to `weakly_exposed` too (a generic call is not yet resolved as an
+owner call, so it already reads `weakly_exposed`). A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
 fields are not this shape and keep their old reading.
 

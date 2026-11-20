@@ -892,34 +892,180 @@ fn ts_value_observed_reads_untouched_field(
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
 }
 
-/// #14857: whether `base` is a plain member-access chain (`f()`, `a.f()`,
-/// `this.g()`, `f()?.n`) rather than a compound expression. A top-level
-/// operator means the assertion subject is not the owner's field projection:
-/// `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
-fn ts_chain_is_plain_projection(base: &str) -> bool {
-    let chars: Vec<char> = base.chars().collect();
-    let mut depth = 0i32;
-    for (i, ch) in chars.iter().copied().enumerate() {
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ if depth == 0 => {
-                let next = chars.get(i + 1).copied();
-                // `?.` and a trailing `?` (the split point of `f()?.field`)
-                // are member access, not a ternary.
-                let optional_chain = ch == '?' && matches!(next, None | Some('.'));
-                let compound = matches!(
-                    ch,
-                    ',' | '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '|' | '&' | '!' | ':'
-                ) || (ch == '?' && !optional_chain);
-                if compound {
-                    return false;
+/// #14857/#14928: whether `base` is a plain projection of a call or
+/// member-access chain rather than a compound expression. This is a grammar,
+/// not an operator blacklist, so every base that is genuinely the owner's
+/// result reaches the untouched-field guard:
+///
+/// ```text
+/// base    := prefix* primary postfix* "?"?
+/// prefix  := "!" | "await" | "new"
+/// primary := identifier | "(" balanced ")"
+/// postfix := "." identifier | "?." (identifier | call | index)
+///          | "!" | call | index | "<" type-arguments ">" call
+/// ```
+///
+/// `f()`, `a.f()`, `this.g()`, `f()?` (the split point of `f()?.field`),
+/// `f<string>()`, `f()!` and `!f()` qualify. A top-level operator, a bare
+/// comparison (`a < b`) and a type-argument list that does not open a call
+/// do not: `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+pub(super) fn ts_chain_is_plain_projection(base: &str) -> bool {
+    fn is_ident_start(ch: char) -> bool {
+        ch.is_alphabetic() || ch == '_' || ch == '$'
+    }
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    fn skip_ws(chars: &[char], mut at: usize) -> usize {
+        while chars.get(at).is_some_and(|ch| ch.is_whitespace()) {
+            at += 1;
+        }
+        at
+    }
+    fn identifier_end(chars: &[char], at: usize) -> Option<usize> {
+        if !chars.get(at).copied().is_some_and(is_ident_start) {
+            return None;
+        }
+        let mut end = at + 1;
+        while chars.get(end).copied().is_some_and(is_ident_char) {
+            end += 1;
+        }
+        Some(end)
+    }
+    // The index just past the bracket that closes the one at `at`.
+    fn group_end(chars: &[char], at: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        for (offset, ch) in chars.get(at..)?.iter().enumerate() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(at + offset + 1);
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    // The index just past the `>` that closes the type-argument list opened
+    // at `at`. `=>` inside a function type does not close it, and a logical
+    // operator means the `<` was a comparison, not a type-argument list.
+    fn type_arguments_end(chars: &[char], at: usize) -> Option<usize> {
+        let mut angle = 0i32;
+        let mut depth = 0i32;
+        let mut i = at;
+        while let Some(&ch) = chars.get(i) {
+            let next = chars.get(i + 1).copied();
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                '<' => angle += 1,
+                '=' if next == Some('>') => i += 1,
+                '>' => {
+                    angle -= 1;
+                    if angle == 0 {
+                        return (depth == 0).then_some(i + 1);
+                    }
+                }
+                '|' if next == Some('|') => return None,
+                '&' if next == Some('&') => return None,
+                '=' | '+' | '-' | '*' | '/' | '%' | '!' if depth == 0 => return None,
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    let chars: Vec<char> = base.trim().chars().collect();
+    let mut at = 0;
+    // prefix*
+    loop {
+        at = skip_ws(&chars, at);
+        if chars.get(at) == Some(&'!') && chars.get(at + 1) != Some(&'=') {
+            at += 1;
+            continue;
+        }
+        if let Some(end) = identifier_end(&chars, at) {
+            let word: String = chars[at..end].iter().collect();
+            if matches!(word.as_str(), "await" | "new")
+                && chars.get(end).is_some_and(|ch| ch.is_whitespace())
+            {
+                at = end;
+                continue;
+            }
+        }
+        break;
+    }
+    // primary
+    at = match chars.get(at) {
+        Some('(') => match group_end(&chars, at) {
+            Some(end) => end,
+            None => return false,
+        },
+        _ => match identifier_end(&chars, at) {
+            Some(end) => end,
+            None => return false,
+        },
+    };
+    // postfix*
+    loop {
+        at = skip_ws(&chars, at);
+        let Some(&ch) = chars.get(at) else {
+            return true;
+        };
+        let next = chars.get(at + 1).copied();
+        at = match ch {
+            '.' => match identifier_end(&chars, skip_ws(&chars, at + 1)) {
+                Some(end) => end,
+                None => return false,
+            },
+            '?' if next == Some('.') => {
+                let after = skip_ws(&chars, at + 2);
+                match chars.get(after) {
+                    Some('(' | '[') => after,
+                    _ => match identifier_end(&chars, after) {
+                        Some(end) => end,
+                        None => return false,
+                    },
                 }
             }
-            _ => {}
-        }
+            // The split point of `f()?.field`: a trailing `?` is member access.
+            '?' if skip_ws(&chars, at + 1) == chars.len() => return true,
+            '!' if next != Some('=') => at + 1,
+            '(' | '[' => match group_end(&chars, at) {
+                Some(end) => end,
+                None => return false,
+            },
+            '<' => {
+                let Some(end) = type_arguments_end(&chars, at) else {
+                    return false;
+                };
+                // Type arguments only belong to the chain when they open a
+                // call: `f<string>()` or `f<string>?.()`.
+                let after = skip_ws(&chars, end);
+                let opens_call = chars.get(after) == Some(&'(')
+                    || (chars.get(after) == Some(&'?')
+                        && chars.get(after + 1) == Some(&'.')
+                        && chars.get(skip_ws(&chars, after + 2)) == Some(&'('));
+                if !opens_call {
+                    return false;
+                }
+                end
+            }
+            _ => return false,
+        };
     }
-    true
 }
 
 /// #14814 round 3: whether `masked` reads `key` as a member segment of a chain
