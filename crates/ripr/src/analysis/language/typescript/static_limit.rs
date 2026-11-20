@@ -252,13 +252,15 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
             if !name_matches {
                 continue;
             }
-            let Some(base) = relative_import_base(&test.file, &import.source) else {
-                continue;
-            };
-            let module = normalized_path(&base);
-            let entry = alias_map
-                .and_then(|map| map.own_build_entry(&test.file, &module))
-                .filter(|_| !file_module_exists(workspace_root, &module));
+            // An escaping join cannot name an in-workspace package. It
+            // still needs the unresolved-import disclosure.
+            let base = relative_import_base(&test.file, &import.source);
+            let entry = base.as_deref().and_then(|path| {
+                let module = normalized_path(path);
+                alias_map
+                    .and_then(|map| map.own_build_entry(&test.file, &module))
+                    .filter(|_| !file_module_exists(workspace_root, &module))
+            });
             let why_not_actionable = if let Some(entry) = entry {
                 if entry.source.is_some() {
                     continue;
@@ -268,7 +270,9 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
                     test.name, import.source, entry.main
                 )
             } else {
-                if relative_import_resolves_to_workspace_file(workspace_root, &base) {
+                if base.as_deref().is_some_and(|path| {
+                    relative_import_resolves_to_workspace_file(workspace_root, path)
+                }) {
                     continue;
                 }
                 format!(
