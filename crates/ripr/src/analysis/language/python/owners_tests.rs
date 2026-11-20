@@ -556,8 +556,7 @@ fn owner_from_function(
                 .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
         });
     // A decorator whose name cannot be read still wraps the call.
-    let binding_only = !is_async
-        && decorator_names.len() == decorators.len()
+    let binding_only = decorator_names.len() == decorators.len()
         && decorator_names
             .iter()
             .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
