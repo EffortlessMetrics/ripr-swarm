@@ -112,6 +112,7 @@ pub(crate) struct CreditFacts<'a> {
     /// case: no single changed field exists, but a read of a field the edit
     /// never touched still cannot witness the change.
     pub(crate) changed_fields: &'a [TypeScriptChangedField],
+    pub(crate) unchanged_shorthand: Option<&'a str>,
 }
 
 /// Shared inputs for row-local and aggregate changed-sink observation (#5528).
@@ -234,6 +235,7 @@ pub(crate) fn ts_candidate_changed_sink_observation(
         push_facts,
         changed_field,
         changed_fields,
+        unchanged_shorthand,
     } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -419,6 +421,16 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     workspace_root,
                 )
             };
+            // #14857: only a direct read of the unchanged shorthand on a bare
+            // owner call can establish this mismatch. A whole or compound
+            // subject may also observe the edited explicit field.
+            if let Some(sibling) = unchanged_shorthand
+                && !owner_is_method
+                && ts_direct_owner_call_reads_shorthand(observed, sibling, &owner_names)
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             // #14814: a read of a SIBLING field of the returned literal
             // observes a different field, so it cannot witness this change.
             // `expect(f().verbose)` while the edit moves `retries` must not
@@ -760,6 +772,21 @@ fn ts_effect_observed_is_affirmatively_foreign(
         return true;
     }
     ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+pub(super) fn ts_direct_owner_call_reads_shorthand(
+    observed: &str,
+    sibling: &str,
+    owner_names: &[&str],
+) -> bool {
+    let Some((base, read)) = observed.trim().rsplit_once('.') else {
+        return false;
+    };
+    read.trim() == sibling
+        && base
+            .trim_end()
+            .strip_suffix("()")
+            .is_some_and(|callee| owner_names.contains(&callee.trim()))
 }
 
 /// #14814: whether `observed` reads a SIBLING field of the owner's returned
@@ -7827,6 +7854,7 @@ pub(crate) fn classify_resolved_owner(
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
     let changed_fields = ts_changed_object_fields(old_line_text, line_text);
+    let unchanged_shorthand = ts_unchanged_shorthand_sibling(old_line_text, line_text);
     let changed_field = changed_fields
         .as_ref()
         .and_then(|fields| (fields.len() == 1).then(|| fields[0].clone()));
@@ -8093,6 +8121,7 @@ pub(crate) fn classify_resolved_owner(
                     push_facts: &push_facts,
                     changed_field: changed_field.as_ref(),
                     changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+                    unchanged_shorthand,
                 },
             ));
 
@@ -8362,6 +8391,7 @@ pub(crate) fn classify_resolved_owner(
             push_facts: &push_facts,
             changed_field: changed_field.as_ref(),
             changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+            unchanged_shorthand,
         },
         mock_paths: &context.mock_paths,
         alias_map,
@@ -8617,6 +8647,7 @@ pub(crate) fn classify_resolved_owner(
                 push_facts: &push_facts,
                 changed_field: changed_field.as_ref(),
                 changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+                unchanged_shorthand,
             },
             boundary_fact: missing_discriminators.first(),
         },
@@ -10824,6 +10855,7 @@ struct Rule8LadderFacts<'a> {
     push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     changed_field: Option<&'a TypeScriptChangedField>,
     changed_fields: &'a [TypeScriptChangedField],
+    unchanged_shorthand: Option<&'a str>,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -10853,6 +10885,7 @@ fn ts_rule8_mocked_changed_callee(
         push_facts,
         changed_field,
         changed_fields,
+        unchanged_shorthand,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -10910,6 +10943,7 @@ fn ts_rule8_mocked_changed_callee(
                     push_facts,
                     changed_field,
                     changed_fields,
+                    unchanged_shorthand,
                 },
             )
         {
