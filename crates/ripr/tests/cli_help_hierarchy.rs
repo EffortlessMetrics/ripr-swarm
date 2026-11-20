@@ -242,9 +242,19 @@ fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), Str
     })
 }
 
+/// Keep Git metadata in the owned parent. The no-write check on the working
+/// directory continues to permit only the original invalid configuration.
+fn in_help_checkout(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    in_git_root("repair", |repo| {
+        help_workspace::in_help_workspace_under(repo, test)
+    })
+}
+
 #[test]
 fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
-    help_workspace::in_help_checkout(|root| {
+    in_help_checkout(|root| {
         let attempt = "repair-attempt-0123456789abcdef01234567";
         for phase in ["after", "verify"] {
             let mut args = vec![

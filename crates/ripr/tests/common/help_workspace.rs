@@ -31,16 +31,7 @@ pub(super) fn in_help_workspace(
     in_help_workspace_under(&std::env::temp_dir(), test)
 }
 
-/// Later repair phases inspect repository state before resolving an attempt.
-/// Keep Git metadata in the owned parent so the no-write check on the working
-/// directory continues to permit only the original invalid configuration.
-pub(super) fn in_help_checkout(
-    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
-) -> Result<(), String> {
-    super::in_git_root("repair", |repo| in_help_workspace_under(repo, test))
-}
-
-fn in_help_workspace_under(
+pub(super) fn in_help_workspace_under(
     parent: &std::path::Path,
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
