@@ -151,3 +151,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (13)
+
+Reason:
+RIPR-SPEC-0201 example 8: reach summary says the owner may be reached, not that it is reached (#15339 review)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
