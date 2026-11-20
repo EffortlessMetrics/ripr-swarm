@@ -683,9 +683,20 @@ mod index_tests {
     }
 
     #[test]
-    fn leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh() -> Result<(), String> {
+    fn an_unindexed_declared_root_keeps_stray_tests() -> Result<(), String> {
         let manifest = "[[bench]]\nname='entry'\npath='benchmarks/entry.rs'\nharness=false\n";
-        let (root, files) = fixture("reuse", &[("Cargo.toml", manifest), (HAY, HAY_SOURCE)])?;
+        let index = run(
+            "unindexed-root",
+            &[("Cargo.toml", manifest), (HAY, HAY_SOURCE)],
+        )?;
+        assert!(!outside(&index, HAY));
+        assert!(test_files(&index).contains(&HAY.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh() -> Result<(), String> {
+        let (root, files) = fixture("reuse", &[(HAY, HAY_SOURCE)])?;
         let load = |paths: &[PathBuf]| -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
             paths
                 .iter()
@@ -703,10 +714,12 @@ mod index_tests {
             outside(&cached.index, HAY),
             "premise: withheld before the addition"
         );
-        let entry = "#[path = \"haystacks/code/rust-library.rs\"]\nmod hay;\nfn main() {}\n";
-        fs::write(root.join("benchmarks/entry.rs"), entry).map_err(|error| error.to_string())?;
+        // A default-layout target first becomes a possible parent when it
+        // exists. A manifest-declared root would keep uncertainty beforehand.
+        let entry = "#[path = \"../benchmarks/haystacks/code/rust-library.rs\"]\nmod hay;\n";
+        fs::write(root.join("tests/entry.rs"), entry).map_err(|error| error.to_string())?;
         let mut all = files.clone();
-        all.push(PathBuf::from("benchmarks/entry.rs"));
+        all.push(PathBuf::from("tests/entry.rs"));
         let target = load(&all)?;
         let reused = crate::analysis::facts::reuse_cached_index_with_loaded_files(
             cached,

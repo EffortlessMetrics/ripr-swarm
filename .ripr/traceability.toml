@@ -22178,6 +22178,7 @@ tests = [
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::linked_unparsed_file_is_workspace_doubt_but_unlinked_one_is_not",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::package_without_an_indexed_crate_root_gives_no_evidence",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh",
+  "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::an_unindexed_declared_root_keeps_stray_tests",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::stray_shape_excludes_target_directories_and_root_files",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::referenced_names_match_inside_any_literal_or_path",
   "crates/ripr/src/analysis/facts/stray_files.rs::tests::escaped_path_operands_are_doubt",
