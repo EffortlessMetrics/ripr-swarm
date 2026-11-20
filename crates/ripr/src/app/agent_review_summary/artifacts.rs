@@ -25,7 +25,10 @@ pub(super) struct ArtifactRead {
     pub(super) surface: AgentReviewSurface,
 }
 
-pub(super) fn read_analysis_outcome(root: &Path) -> (Option<AnalysisOutcome>, AgentReviewSurface) {
+pub(super) fn read_analysis_outcome(
+    root: &Path,
+    root_display: &str,
+) -> (Option<AnalysisOutcome>, AgentReviewSurface) {
     let artifact = read_json_surface(
         root,
         "analysis_outcome",
@@ -37,7 +40,9 @@ pub(super) fn read_analysis_outcome(root: &Path) -> (Option<AnalysisOutcome>, Ag
         return (None, artifact.surface);
     };
     let outcome = match crate::app::analysis_outcome_artifact::validate_analysis_outcome_artifact(
-        root, &value,
+        root,
+        root_display,
+        &value,
     ) {
         Ok(outcome) => outcome,
         Err(error) => {

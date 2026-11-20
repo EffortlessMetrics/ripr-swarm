@@ -1425,10 +1425,12 @@ fn run_agent_receipt_for_attempt(
         &verify_path,
         input_paths,
     )?;
+    let root_display = output::outcome::display_path(&options.root);
     let analysis_outcome_path =
         app::analysis_outcome_artifact::analysis_outcome_artifact_path_for_verify(&verify_path)?;
     let analysis_outcome = match app::analysis_outcome_artifact::read_analysis_outcome_artifact_at(
         &options.root,
+        &root_display,
         &analysis_outcome_path,
     ) {
         Ok(outcome) => {
