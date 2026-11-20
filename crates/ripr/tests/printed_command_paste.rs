@@ -1548,6 +1548,27 @@ fn extract_text_pairs_empty_rest_powershell_label_with_the_next_line() {
 }
 
 #[test]
+fn extract_text_reads_a_widened_fence_after_an_inline_powershell_label() {
+    // Review cards render the form with `code_span`, which widens the fence
+    // past a backtick inside the root name (#15378). The single-backtick strip
+    // would keep one fence backtick on each side of the form.
+    let found = extracted(
+        "  - command: ``ripr check --root 'a `b` c' --diff HEAD``\n\
+           - command (PowerShell): ``ripr check --root 'a `b` c' --diff HEAD; $x``\n",
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].powershell.as_deref(),
+        Some("ripr check --root 'a `b` c' --diff HEAD; $x")
+    );
+    // Plain-text surfaces keep their unescaped single-backtick wrapping.
+    assert_eq!(
+        inline_powershell_form("`Get-Content `x` foo`"),
+        "Get-Content `x` foo"
+    );
+}
+
+#[test]
 fn extract_text_empty_rest_guard_does_not_consume_the_next_bash_command() {
     // Inline form: rest is nonempty, so `form_on_next_line` must stay false.
     // Mutating that guard to always-true would steal the following Bash span.
