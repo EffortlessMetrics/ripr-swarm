@@ -12216,6 +12216,120 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
     })
 }
 
+/// #15312: a pulled `ripr` section with rejected values was disclosed only
+/// in `ripr/analysisStatus`, which a generic editor does not render, so the
+/// settings looked accepted. The rejection must reach the log and the screen,
+/// naming every rejected setting with its accepted values.
+#[test]
+#[serial]
+fn framed_lsp_rejected_pulled_settings_warn_naming_each_key_and_accepted_values()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-pull-rejected")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {"workspace": {"configuration": true}}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            let pull_request =
+                read_lsp_request(&mut client_read, "workspace/configuration").await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": pull_request["id"].clone(),
+                    "result": [{
+                        "diagnosticProfile": "loud",
+                        "seamDiagnostics": "yes",
+                        "baseRef": 5,
+                        "unrelatedKey": "ignored"
+                    }]
+                }),
+            )
+            .await?;
+            let mut logged = None;
+            let mut shown = None;
+            while logged.is_none() || shown.is_none() {
+                let message = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    read_lsp_message(&mut client_read),
+                )
+                .await
+                .map_err(|elapsed| {
+                    format!(
+                        "no rejection warning arrived ({elapsed}): logged={logged:?} shown={shown:?}"
+                    )
+                })??;
+                let text = message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                if !text.contains("ignored the editor's ripr settings") {
+                    continue;
+                }
+                match message["method"].as_str() {
+                    Some("window/logMessage") => logged = Some(text),
+                    Some("window/showMessage") => shown = Some(text),
+                    _ => {}
+                }
+            }
+            for text in [logged, shown].into_iter().flatten() {
+                for needle in [
+                    "`diagnosticProfile`",
+                    "\"actionable\" or \"full\"",
+                    "`seamDiagnostics`",
+                    "true or false",
+                    "`baseRef`",
+                    "a Git ref string",
+                    "The previous settings stay in effect",
+                ] {
+                    if !text.contains(needle) {
+                        return Err(format!("warning must name {needle}: {text}"));
+                    }
+                }
+                if text.contains("unrelatedKey") {
+                    return Err(format!("an unsupported key is not a rejection: {text}"));
+                }
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        server_task.abort();
+        outcome
+    })
+}
+
 #[test]
 #[serial]
 fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {

@@ -14,7 +14,7 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, validated_pulled_options};
+use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -3681,7 +3681,7 @@ impl Backend {
             return;
         }
         match result {
-            Ok(values) => match validated_pulled_options(&values) {
+            Ok(values) => match pulled_options_or_rejections(&values) {
                 Ok(pulled) => {
                     self.apply_pulled_configuration(pulled).await;
                     // The retained layer is scoped to the root it was pulled
@@ -3689,12 +3689,30 @@ impl Backend {
                     // whether a re-pull is needed.
                     self.config_pull.set_scope_root(root);
                 }
-                Err(message) => {
+                Err(rejections) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
                         kind: AnalysisFailureKind::ConfigPullInvalid,
-                        message: bounded_failure_message(&message),
+                        message: bounded_failure_message(&pulled_rejection_summary(&rejections)),
                     }));
                     self.publish_analysis_status().await;
+                    // #15312: the typed state lives only in
+                    // `ripr/analysisStatus`, which generic editors do not
+                    // render, so a rejected setting looked accepted. Say
+                    // which settings were rejected, what is accepted, and
+                    // that the last-known-good settings stay in effect. Each
+                    // rejection is bounded on its own (at most one per
+                    // governed key), so a long value cannot hide the keys
+                    // after it.
+                    let listed = rejections
+                        .iter()
+                        .map(|rejection| bounded_failure_message(&rejection.detail))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    let warning = format!(
+                        "ripr ignored the editor's ripr settings: {listed}. The previous settings stay in effect."
+                    );
+                    self.disclose_configuration_reload_failure(warning.clone(), warning)
+                        .await;
                 }
             },
             Err(error) => {
