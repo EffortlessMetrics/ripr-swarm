@@ -471,6 +471,46 @@ jobs:
           CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
+      # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
+      # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
+      # qualification instead of passing and ejecting in `merge_group` (#14999),
+      # then restore the admitted checkout so downstream steps keep `HEAD`.
+      - name: Prepare fresh base merge for goldens
+        id: goldens_fresh_merge
+        if: github.event_name == 'pull_request' && inputs.subject-sha == ''
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          orig_head="$(git rev-parse HEAD)"
+          echo "orig_head=$orig_head" >> "$GITHUB_OUTPUT"
+          pr_head="$(git rev-parse --verify -q HEAD^2 || true)"
+          if [ -z "$pr_head" ]; then
+            echo "::warning title=Fresh base merge skipped::HEAD^2 is unavailable; running goldens on checkout."
+            exit 0
+          fi
+          if ! git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            echo "::warning title=Base fetch failed::could not re-read $BASE_REF; running goldens on checkout."
+            exit 0
+          fi
+          fresh_base="$(git rev-parse "origin/$BASE_REF")"
+          if [ "$(git rev-parse HEAD^1)" = "$fresh_base" ]; then
+            exit 0
+          fi
+          rc=0
+          git merge-tree --write-tree --no-messages "$pr_head" "$fresh_base" > /dev/null || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short "$pr_head"). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
+            exit 0
+          fi
+          git -c user.name=ci -c user.email=ci@invalid checkout --detach "$fresh_base"
+          git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
+          echo "switched=true" >> "$GITHUB_OUTPUT"
+
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
       # inventory, verdict corpora) fails the required run within minutes instead of
@@ -480,6 +520,13 @@ jobs:
       - name: Golden and fixture contracts
         id: goldens_fixtures
         run: cargo xtask goldens check-with-fixtures
+
+      - name: Restore admitted checkout after goldens
+        id: goldens_restore_checkout
+        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'
+        env:
+          ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
+        run: git checkout --detach "$ORIG_HEAD"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.

@@ -922,6 +922,45 @@ jobs:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: |
           cargo xtask precommit
+      # #14998: the markdown above this step is pinned by xtask tests; these
+      # files are pinned by tests in `crates/ripr` and `tools/repo-policy`:
+      # docs/CLI_REFERENCE.md (cli_reference_doc, exact equality with the
+      # binary's help), docs/TROUBLESHOOTING.md (troubleshooting_guide),
+      # docs/how-to/first-rust-test.md (user_journeys), README.md plus
+      # docs/*.md, docs/interop/*.md and docs/status/*.md
+      # (documented_commands), docs/CI.md's `Run RIPR` step
+      # (generated_review_workflow) and docs/ci/coverage.md (future_clippy). They
+      # need a `ripr` build, so they run only when one of those paths changed;
+      # other docs-only PRs build nothing extra. Same runner, token and trust
+      # boundary as the precommit step above.
+      - name: Markdown contract tests (ripr and repo-policy asserted docs)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          changed="$(mktemp)"
+          trap 'rm -f "$changed"' EXIT
+          # NUL records preserve paths Git C-quotes even with quotePath=false.
+          git -c core.quotePath=false diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed"
+          selected=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/interop/*.md|docs/status/*.md|docs/how-to/first-rust-test.md|docs/ci/coverage.md) selected=true; break ;;
+              docs/*/*) ;;
+              README.md|docs/*.md) selected=true; break ;;
+            esac
+          done < "$changed"
+          if [ "$selected" = true ]; then
+            cargo test -p ripr \
+              --test cli_reference_doc \
+              --test troubleshooting_guide \
+              --test user_journeys \
+              --test documented_commands \
+              --test generated_review_workflow
+            cargo test -p repo-policy --test future_clippy
+          else
+            echo "No README.md, docs/*.md, docs/interop, docs/status, first-rust-test.md or coverage.md change; ripr and repo-policy markdown contract tests not needed."
+          fi
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
       # checks need a `ripr` build, so they run only when such a file changed;

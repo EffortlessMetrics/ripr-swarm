@@ -828,7 +828,7 @@ twins' or `#[path]` targets' functions therefore refuses. Any other
 difference inside the item (comments included) refuses, and so does a gate:
 a `cfg` or `cfg_attr` on the function, an enclosing item, the file, a
 matching `mod` declaration, an item enclosing it or its declaring file, or
-the presence of any `#[path]` declaration. A constant is built only from `bool`, integer,
+a `#[path]` declaration that may reach the owner (below). A constant is built only from `bool`, integer,
 byte, `char` and string literals, `!` on a `bool`, `-` on an integer, the
 `bool` operators `&&`, `||`, `&`, `|`, `^`, `==` and `!=` (integer `==` only
 in `i8` range), parentheses, arrays and an unrebound bare `vec![..]` (not the
@@ -1563,6 +1563,29 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+A `cfg` gate may compile the changed owner out for a twin the related tests
+run instead (#15104). Before any direct-return witness completes for a
+changed whole-body constant tail, the classifier asks
+`diff::owner_may_be_swapped`, the new-side half of the shared base-owner gate
+decision: a `cfg`/`cfg_attr` on the function, an enclosing item or the file,
+a same-path same-name twin, or a gated or changed module declaration on the
+owner's chain. When it answers yes, or when the source or the module
+declarations cannot be read, no witness completes and propagation reads
+`unknown` (`cfg_gated_owner`), so the finding reads no stronger than
+`propagation_unknown`. Ungated owners, an owner beside an unrelated
+`cfg(test)` module and a same-named function on another path keep the
+credit. A `#[path]` module declaration gates the owners it may reach:
+the file its literal names, resolved against the declaring file's
+directory (case-insensitively, with a backslash read as a separator), any file under
+that file's directory, where its own `mod` declarations resolve, except a
+default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
+can move or compile out), and any file whose path spells the declaration's
+name. A target that is not a literal on a top-level out-of-line
+declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+an inline module, a non-literal value) gates every owner. Limit:
+the declarations inside a target file are not followed, so every file under
+its directory is gated.
+
 ### Format owner tails (#6578)
 
 `format_tail_witness` in `classify/propagation_witness.rs` completes a
@@ -2161,7 +2184,12 @@ and only per pinned call:
    or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
    both literals, with no leading `!` (`!x == 0` is `(!x) == 0`). An atom
    is a parameter, a plain integer or `bool` literal, an unescaped char
-   literal, or a parameter `%` or `/` a nonzero integer literal. Such an
+   literal, a parameter `%` or `/` a nonzero integer literal, or (#15030)
+   an escape-free string literal (`"--verbose"`; no `\` or inner `"`, not raw
+   or byte). A comparison with a string literal reads only when its
+   parameter is declared `&str`, `&'a str`, `String` or `&String`, whose
+   `==` compares text. A newtype may implement `PartialEq<&str>` its own
+   way, so it refuses the whole chain. Such an
    operand cannot call, index, overflow, divide by a variable or write, so
    skipping it changes only the value. Anything else (a call, field,
    index, cast, parenthesis, macro, constant, float, `+`/`-`/`*`) refuses.
@@ -3653,7 +3681,10 @@ assertions. This repair shares the existing callback without that larger migrati
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,
-  `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
+  `evaluates_operands_on_literal_values`,
+  `reads_plain_string_equality_chains_and_refuses_the_rest` (#15030);
+  fixtures `rust_predicate_appended_str_arm_truth_assert` and
+  `rust_predicate_appended_str_arm_false_side_only`; `owner_pin/tests.rs`
   `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
   `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
   `a_short_circuit_tail_refuses_a_body_with_earlier_statements`,
