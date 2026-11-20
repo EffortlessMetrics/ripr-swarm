@@ -12395,7 +12395,7 @@
         },
         {
           "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::returned",
+          "owner": "src/lib.rs::wrapped",
           "expression": "cents >= LIMIT",
           "grip_class": "activation_unknown",
           "reach": "yes"

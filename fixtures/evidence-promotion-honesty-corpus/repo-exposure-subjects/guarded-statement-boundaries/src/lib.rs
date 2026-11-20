@@ -5,15 +5,15 @@ pub fn assigned(cents: u32, express: bool) -> bool {
     free
 }
 
-pub fn returned(cents: u32, express: bool) -> bool {
-    return
+pub fn wrapped(cents: u32, express: bool) -> bool {
+    let free =
         cents >= LIMIT
         && !express;
+    free
 }
 
 pub fn held(cents: u32, express: bool) -> bool {
-    let free = cents >= LIMIT && !express; // price threshold
-    free
+    return cents >= LIMIT && !express; // price threshold
 }
 
 #[cfg(test)]
@@ -27,13 +27,13 @@ mod tests {
     }
 
     #[test]
-    fn misses_returned_guard() {
-        assert_eq!(returned(5000, true), false);
-        assert_eq!(returned(4999, true), false);
+    fn misses_wrapped_guard() {
+        assert_eq!(wrapped(5000, true), false);
+        assert_eq!(wrapped(4999, true), false);
     }
 
     #[test]
-    fn holds_assigned_guard() {
+    fn holds_returned_guard() {
         assert_eq!(held(5000, false), true);
         assert_eq!(held(4999, false), false);
     }

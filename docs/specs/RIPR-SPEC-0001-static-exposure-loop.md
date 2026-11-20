@@ -924,7 +924,8 @@ A comparison edit whose old line cannot be read with the wrapped guards is
 declined. Honesty-corpus case
 `rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins the
 conditional form. `rust_repo_exposure_guarded_statement_boundaries` pins
-missed guards in let and return statements alongside an asserted held guard.
+missed guards in single-line and wrapped let statements alongside an asserted
+return with its guard held.
 
 ## Test Mapping
 
