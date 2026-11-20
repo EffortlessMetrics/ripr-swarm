@@ -255,13 +255,34 @@ test elsewhere, when all of these hold:
   module between the call and its module (an inner glob would shadow the
   module's), and no other item-position macro call there that might expand
   to such an import.
-- The arguments hold no `macro_rules`, `macro`, `mod`, `extern` or `include`
-  token, since a nested `#[macro_export]` definition, a module or pasted file
-  text can leave a function body.
-- Every nested macro call in the arguments is a trusted assertion-context
-  name, one of the `prop_*` macros above, or one whose own arguments mention
-  no trusted name. Any other nested call could define a name from its
-  arguments where the call's scope cannot bound it.
+- No parsed import anywhere in the file binds a `prop_*` macro name above or
+  one of the inert attribute names below, either directly or by a rename
+  (`use helper as prop_assert;` makes `prop_assert!` a call of `helper`), and
+  no rename binds `proptest`.
+- The arguments hold no `macro_rules`, `macro`, `mod`, `extern`, `include` or
+  `use` token, since a nested `#[macro_export]` definition, a module, pasted
+  file text or a renaming import inside the pasted body can leave a function
+  body or redirect a nested call.
+- Every attribute in the arguments is a single-segment built-in that runs no
+  expander: `test`, `ignore`, `should_panic`, `allow`, `expect`, `warn`,
+  `deny`, `forbid`, `doc`, `inline`, `cfg`, `must_use`, `track_caller`, or
+  proptest's own `proptest_config` header. A `derive`, `cfg_attr` or path
+  attribute (`#[dep::define(..)]`) may invoke a procedural macro that emits
+  an exported definition beside the item it decorates.
+- Every nested macro call in the arguments is a single-segment trusted
+  assertion-context name, a single-segment `prop_*` macro above, or one
+  whose own arguments mention no trusted name. A path such as
+  `dep::prop_assert!` names whatever `dep` exports. Any other nested call
+  could define a name from its arguments where the call's scope cannot bound
+  it. When a nested `prop_*` call is trusted by name under a qualified outer
+  call, the bare `proptest!` conditions above must also hold, so the name
+  reaches the audited prelude.
+
+A confined argument mention rebinds nothing outside the call, so it does not
+make the trusted calls nested in the arguments (`assert_eq!(v, vec![1])`)
+opaque elsewhere in the file. A name the file genuinely rebinds still makes
+every one of its calls, inside the confined call too, a workspace-wide site
+for what its arguments mention.
 
 A `macro_rules!` or `macro` definition that takes one of the wrapper names
 and whose transcriber pastes caller tokens (any `$`) is itself a binding site

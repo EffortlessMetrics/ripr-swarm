@@ -14193,6 +14193,9 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
     // Fixture premise: the qualified call mentions `assert_eq`, which
     // refuses without the audited lock.
     let qualified = format!("proptest::proptest! {{\n    {body}\n}}\n");
+    // Without the prelude glob, a qualified call names its nested wrapper by
+    // path too.
+    let qualified_body = body.replace("prop_assert!", "proptest::prop_assert!");
     assert!(prelude_rebound(at(
         "premise",
         &lock_of(&[("proptest", "1.11.0", REGISTRY)]),
@@ -14202,19 +14205,34 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
         ("bare", format!("{glob}{bare}")),
         (
             "qualified",
-            format!("proptest::proptest! {{\n    {body}\n}}\n"),
+            format!("proptest::proptest! {{\n    {qualified_body}\n}}\n"),
         ),
         (
             "external",
-            format!("::proptest::proptest! {{\n    {body}\n}}\n"),
+            format!("::proptest::proptest! {{\n    {qualified_body}\n}}\n"),
         ),
         (
             "no-op-redefinition",
             format!(
-                "macro_rules! proptest {{ ($($t:tt)*) => {{}} }}\nproptest::proptest! {{\n    {body}\n}}\n"
+                "macro_rules! proptest {{ ($($t:tt)*) => {{}} }}\nproptest::proptest! {{\n    {qualified_body}\n}}\n"
             ),
         ),
         ("container-glob", format!("{glob}use super::*;\n{bare}")),
+        ("qualified-with-prelude", format!("{glob}{qualified}")),
+        (
+            "inert-attributes",
+            format!(
+                "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
+            ),
+        ),
+        // Trusted calls nested in the confined arguments rebind nothing, so
+        // the fixpoint must not reopen what their own arguments mention.
+        (
+            "nested-trusted-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ assert_eq!(vec![v], vec![v]); let _ = vec![assert_eq!(v, v)]; let _ = format!(\"{{}}\", matches!(v, 0)); prop_assert!(matches!(vec![assert_eq!(v, v)].len(), 1)); }} }}\n"
+            ),
+        ),
     ] {
         assert_eq!(at(label, &audited, &sibling)?, None, "{sibling}");
     }
@@ -14258,6 +14276,57 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             "other-wrapper",
             format!("other::proptest! {{\n    {body}\n}}\n"),
         ),
+        // A renamed import binds `prop_assert` to another macro, which can
+        // paste its argument into an exported definition.
+        (
+            "aliased-wrapper",
+            format!(
+                "use other::helper as prop_assert;\n{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "aliased-wrapper-qualified-call",
+            "use other::helper as prop_assert;\nproptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A qualified outer call establishes nothing about a bare nested
+        // `prop_assert!` without the audited prelude glob.
+        (
+            "qualified-call-nested-wrapper-without-prelude",
+            "proptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        (
+            "foreign-nested-path",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ other::prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "use-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::helper as prop_assert; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        // Procedural attributes may emit an exported definition beside the
+        // item they decorate.
+        (
+            "opaque-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[dep::define(assert_eq)] struct Marker; }} }}\n"
+            ),
+        ),
+        (
+            "derive-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[derive(Debug)] struct Marker; assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        (
+            "conditional-attribute",
+            format!(
+                "{glob}proptest! {{ #[cfg_attr(test, dep::define)] #[test] fn p(x in 0u8..3) {{ assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        ("imported-attribute", format!("use other::test;\n{glob}{bare}")),
     ] {
         assert!(
             prelude_rebound(at(label, &audited, &sibling)?),
