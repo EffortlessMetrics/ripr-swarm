@@ -22505,6 +22505,30 @@
       ]
     },
     {
+      "id": "rust_dyn_box_default_not_overridden_box",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_default_not_overridden_box",
+      "vector": "a_box_dyn_trait_call_on_a_type_that_keeps_the_default_still_reaches_it_beside_an_override",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_dyn_box_inherent_owner",
       "language": "rust",
       "tier": "pure",
