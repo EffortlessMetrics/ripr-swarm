@@ -741,7 +741,10 @@ Two pattern terms are used below.
     the assertion with comments and string literals masked, so a message
     that merely contains the placeholder's name does not lower it, and the
     rule applies on both extraction paths: the parser adapter and the
-    line-scanned `ensure!`/custom-helper path.
+    line-scanned `ensure!`/custom-helper path. Braces in a literal operand,
+    including quoted JSON in a raw string, do not read a local. A capture
+    in a formatting macro’s template reads it in both ordinary and raw
+    strings. Escaped braces and literal value arguments retain credit (#14897).
 
 ### Reveal admission of an excluded sibling
 

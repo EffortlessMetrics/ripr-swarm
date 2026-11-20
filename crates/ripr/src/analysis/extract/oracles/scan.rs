@@ -6160,6 +6160,56 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
+    fn raw_literal_braces_only_read_in_format_arguments() -> Result<(), String> {
+        for (operand, reads) in [
+            (r##"r#"{"expected":1}"#"##, false),
+            (r#"r"{expected}""#, false),
+            (r#"format!("{expected}")"#, true),
+            (r#"format!("{{expected}}")"#, false),
+            (r#"format!(r"{expected}")"#, true),
+            (r#"format!("{}", r"{expected}")"#, false),
+            (r#"format!("{}", expected)"#, true),
+        ] {
+            let body = format!(
+                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+            );
+            let fact = only_fact(&body)?;
+            if reads {
+                assert_eq!(
+                    (fact.kind, fact.strength),
+                    (OracleKind::Unknown, OracleStrength::Unknown),
+                    "{operand}"
+                );
+            } else {
+                assert_eq!(fact.strength, OracleStrength::Strong, "{operand}");
+                if operand.starts_with('r') {
+                    assert_eq!(fact.kind, OracleKind::ExactValue, "{operand}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn macro_operands_read_templates_and_evaluated_values() {
+        let placeholders = std::collections::BTreeSet::from([String::from("expected")]);
+        for (operand, reads) in [
+            (r#"write!(sink(), r"{expected}")"#, true),
+            (r#"write!(sink(), "{}", r"{expected}")"#, false),
+            (r#"write!(sink(), "{}", expected)"#, true),
+            (r#"concat!(r"{expected}")"#, false),
+            (r#"render!("{expected}")"#, true),
+        ] {
+            let assertion = format!("assert_eq!(result(), {operand})");
+            assert_eq!(
+                super::super::classify::assertion_reads_placeholder(&assertion, &placeholders),
+                reads,
+                "{operand}"
+            );
+        }
+    }
+
+    #[test]
     fn a_placeholder_read_through_a_format_interpolation_still_lowers() -> Result<(), String> {
         // #14810 round 3: `format!("{expected}")` reads the placeholder, so
         // masking the literal must not hide it.
