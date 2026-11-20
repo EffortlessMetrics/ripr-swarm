@@ -1759,6 +1759,29 @@ keeps its credit. A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
 fields are not this shape and keep their old reading.
 
+**Rule 25. A read of an unchanged child of a changed field is not witnessed
+(#14858).** When a changed field's new value is an object literal of simple
+`key: value` members whose values are plain literals (a number, a string,
+`true`, `false`, `null`, `undefined`) and none of which is `__proto__`, the
+children the change moves are those whose value differs from the old literal's
+same key, plus any key the change drops. A member with an effect
+(`n: (counter = 5)`) or a prototype entry keeps the existing credit, since it can
+move a child whose text is unchanged. When
+the old value is a number or boolean literal, every new child is moved, and so
+is every member the old primitive answered through its prototype (`toFixed`,
+`valueOf`); any other old value (a string, an array, `null`, an expression)
+keeps the existing credit, since its members (`.length`) or behavior (a throw)
+are not modeled. A strong assertion whose path is
+`<owner call>.<changed field>.<child>`, with the changed field read directly off
+the owner's result, and names a child the
+change does not move (`f().retries.other` while `retries: 3` becomes
+`retries: { n: 5 }`) observes a value the change never alters: the finding
+drops to `weakly_exposed`, not `exposed`. A read of a moved child
+(`f().retries.n`), the whole field and a changed value
+that is not an object literal keep the existing credit. The alias
+form of the sibling rule (`const cfg = f(); expect(cfg.verbose)`, #14856) reads
+`weakly_exposed` and its changed-field control (`cfg.retries`) stays `exposed`.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),

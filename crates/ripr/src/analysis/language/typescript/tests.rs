@@ -21831,6 +21831,7 @@ mod ava_throws_message_tests;
 mod boolean_pin_tests;
 mod call_lexer_tests;
 mod catch_arm_tests;
+mod changed_field_scope_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
 mod class_entry_tests;

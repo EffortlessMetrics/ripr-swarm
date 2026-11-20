@@ -14815,6 +14815,31 @@
       ]
     },
     {
+      "id": "ts_field_construction_changed_field_unchanged_child",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_changed_field_unchanged_child",
+      "vector": "read_of_unchanged_child_of_changed_field_does_not_pin_the_change",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_one_hop_field_projection",
       "language": "rust",
       "tier": "pure",
