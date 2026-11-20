@@ -700,14 +700,14 @@ thread_local! {
 /// Print one analysis disclosure on stderr, or buffer it under
 /// [`capture_disclosures`].
 pub(crate) fn emit_disclosure(message: String) {
-    let deferred = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
+    let unbuffered = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
         Some(buffer) => {
-            buffer.push(message.clone());
-            true
+            buffer.push(message);
+            None
         }
-        None => false,
+        None => Some(message),
     });
-    if !deferred {
+    if let Some(message) = unbuffered {
         eprintln!("{message}");
     }
 }

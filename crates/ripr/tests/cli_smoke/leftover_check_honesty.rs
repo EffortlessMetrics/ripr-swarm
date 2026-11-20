@@ -207,6 +207,10 @@ fn discarded_last_commit_retry_prints_no_deletion_note() -> Result<(), Box<dyn s
         "a discarded retry must not print its deletion note: {bare_err}"
     );
     assert!(
+        !bare_err.contains("analyzed the last commit"),
+        "the deletion-only retry must be discarded, not adopted: {bare_err}"
+    );
+    assert!(
         explicit_err.contains("diff deleted 1 file(s)"),
         "a reported deletion-only diff keeps its note: {explicit_err}"
     );
