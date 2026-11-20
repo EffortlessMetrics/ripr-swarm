@@ -9624,9 +9624,16 @@ struct TsUnusedDefault {
 /// whose arguments parse in `text`. `None` when any reference does not, so a
 /// call the argument reader drops (`name /* c */ ()`, an argument it cannot
 /// balance) refuses instead of leaving only the parsed calls to witness the
-/// default (#15393 review). `masked` must keep `text`'s byte offsets.
+/// default (#15393 review). The mask blanks each character to one space, so
+/// a reference is aligned by character position, not byte offset: a
+/// non-ASCII comment or string keeps the two texts comparable.
 fn ts_calls_at_code_references(text: &str, masked: &str, name: &str) -> Option<Vec<Vec<String>>> {
-    if name.is_empty() || masked.len() != text.len() {
+    if name.is_empty() {
+        return None;
+    }
+    let text_offsets: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+    let masked_offsets: Vec<usize> = masked.char_indices().map(|(at, _)| at).collect();
+    if text_offsets.len() != masked_offsets.len() {
         return None;
     }
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
@@ -9637,7 +9644,10 @@ fn ts_calls_at_code_references(text: &str, masked: &str, name: &str) -> Option<V
         if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
             continue;
         }
-        let rest = text.get(idx..)?.strip_prefix(name)?;
+        let position = masked_offsets.binary_search(&idx).ok()?;
+        let rest = text
+            .get(*text_offsets.get(position)?..)?
+            .strip_prefix(name)?;
         let inner = rest.trim_start().strip_prefix('(')?;
         calls.push(positional_prefix(balanced_call_arguments(inner)?));
     }
@@ -9725,12 +9735,24 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     // that names the owner (outside a pure `export { .. } from` re-export)
     // could be a caller this reader does not resolve.
     let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
-    let owner_stem = owner
+    // The names a loader can use for the owner's module: its file stem, and
+    // its directory for an `index` file (`require('./colors')`).
+    let stem = owner
         .file
         .file_stem()
         .and_then(|stem| stem.to_str())
         .filter(|stem| !stem.is_empty())?
         .to_string();
+    let mut owner_stems = vec![stem];
+    if owner_stems[0] == "index" {
+        let directory = owner
+            .file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())?;
+        owner_stems.push(directory.to_string());
+    }
     // A truncated scan or a skipped symlink may hide a caller.
     if scan.truncated || scan.skipped_links > 0 {
         return None;
@@ -9805,13 +9827,20 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             }
             continue;
         }
-        // A CommonJS `require` or a dynamic `import()` of the owner's module
-        // binds a namespace whose members this scan cannot follow
-        // (`Object.values(require('./def'))`, #15393 review).
-        if text.lines().any(|line| {
-            (line.contains("require(") || line.contains("import("))
-                && line.contains(owner_stem.as_str())
-        }) {
+        // A CommonJS `require`, a dynamic `import()` or a mock loader's
+        // `requireActual` / `importActual` of the owner's module binds a
+        // namespace whose members this scan cannot follow
+        // (`Object.values(require('./def'))`, #15393 review). The whole file
+        // is checked, so a loader call split across lines still refuses.
+        let loads_module = ["require(", "import(", "requireActual(", "importActual("]
+            .iter()
+            .any(|loader| text.contains(loader));
+        let names_module = |stem: &String| {
+            ['/', '\'', '"', '`']
+                .iter()
+                .any(|lead| text.contains(&format!("{lead}{stem}")))
+        };
+        if loads_module && owner_stems.iter().any(names_module) {
             return None;
         }
         // A namespace object can reach the owner under a computed key, and a

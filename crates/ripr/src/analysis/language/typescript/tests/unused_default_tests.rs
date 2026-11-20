@@ -89,6 +89,22 @@ fn a_default_every_call_fills_is_not_exposed() -> Result<(), String> {
         "{:?}",
         finding.missing
     );
+    // Non-ASCII text in a comment or string keeps the reader aligned.
+    let unicode_test = "import { it, expect } from 'vitest';\nimport { pick } from '../src/def';\n\n// café — contraste\nit('picks →', () => {\n  expect(pick('é', { level: 'B' })).toBe('éB');\n});\n";
+    let unicode = finding_at(
+        "default-filled-unicode",
+        PICK,
+        3,
+        PICK_OLD,
+        PICK_NEW,
+        &[("tests/def.test.ts", unicode_test)],
+    )?;
+    assert_eq!(
+        unicode.class,
+        ExposureClass::ReachableUnrevealed,
+        "{:?}",
+        unicode.missing
+    );
     // The advice names the omitted argument, not an untaken branch.
     let next_step = finding.recommended_next_step.as_deref().unwrap_or_default();
     assert!(
@@ -223,8 +239,9 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
     let sibling = format!("{filled}\nit('smoke', () => {{\n  pick('y');\n}});\n");
     let default_export = format!("{PICK}export default pick;\n");
     let computed = "import { it, expect } from 'vitest';\nimport * as m from '../src/def';\n\nit('picks', () => {\n  expect(m.pick('x', { level: 'B' })).toBe('xB');\n  m['pick']('y');\n});\n";
+    let split_require = "const m = require(\n  './def',\n);\nexport const runAll = () => Object.values(m).forEach((f) => f('y'));\n";
     let commonjs = "const m = require('./def');\nexport const runAll = () => Object.values(m).forEach((f) => f('y'));\n";
-    let cases: [Case<'_>; 6] = [
+    let cases: [Case<'_>; 7] = [
         (
             "default-recursive",
             &recursive,
@@ -261,6 +278,14 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
             "default-commonjs-namespace",
             PICK,
             vec![("tests/def.test.ts", &filled), ("src/all.ts", commonjs)],
+        ),
+        (
+            "default-split-require",
+            PICK,
+            vec![
+                ("tests/def.test.ts", &filled),
+                ("src/all.ts", split_require),
+            ],
         ),
     ];
     for (label, source, files) in cases {

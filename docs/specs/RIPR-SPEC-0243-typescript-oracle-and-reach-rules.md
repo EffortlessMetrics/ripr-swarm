@@ -2684,8 +2684,9 @@ keys); do not take the next number.
   The verdict stands on: an omitted argument; `undefined`, an identifier or a
   spread argument; a relation through a wrapper or entry; another caller; a
   default export or renaming re-export; an import that renames a binding or
-  has code after it on its line; a namespace import, `require` or dynamic
-  `import()` of the owner's module in another file; a loader or computed
+  has code after it on its line; a namespace import, `require`, dynamic
+  `import()`, `requireActual` or `importActual` of the owner's module
+  (its file stem, or its directory for an `index` file) in another file; a loader or computed
   key; an owner reference whose call arguments the reader cannot parse (a
   comment before the parenthesis, an unbalanced argument); and a truncated
   scan or a skipped symlink. The advice asks for a test call that omits the
