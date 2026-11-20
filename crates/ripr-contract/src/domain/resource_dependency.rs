@@ -134,3 +134,126 @@ impl ResourceDependencyEdgeV1 {
         format!("resource-edge:{semantic_digest}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn digest(
+        kind: ResourceKindV1,
+        path: &str,
+        consumer: &str,
+        access: ResourceAccessKindV1,
+        completeness: ResourceCompletenessClassV1,
+    ) -> String {
+        ResourceDependencyEdgeV1::mint_semantic_digest(
+            kind,
+            Path::new(path),
+            &SymbolId(consumer.to_string()),
+            access,
+            completeness,
+        )
+    }
+
+    fn sha256(canonical: &str) -> String {
+        format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()))
+    }
+
+    #[test]
+    fn resource_and_access_tokens_are_the_snake_case_variant_names() {
+        assert_eq!(
+            [
+                ResourceKindV1::CompileTimeEmbedded,
+                ResourceKindV1::RuntimeLiteralRead,
+                ResourceKindV1::FixtureOrTestdata,
+                ResourceKindV1::GoldenOrSnapshot,
+                ResourceKindV1::SchemaOrGrammar,
+                ResourceKindV1::TemplateOrGeneratedInput,
+                ResourceKindV1::DeclaredHarnessResource,
+                ResourceKindV1::ConfigurationInput,
+                ResourceKindV1::OpaqueOrDynamicResource,
+            ]
+            .map(ResourceKindV1::as_str),
+            [
+                "compile_time_embedded",
+                "runtime_literal_read",
+                "fixture_or_testdata",
+                "golden_or_snapshot",
+                "schema_or_grammar",
+                "template_or_generated_input",
+                "declared_harness_resource",
+                "configuration_input",
+                "opaque_or_dynamic_resource",
+            ]
+        );
+        assert_eq!(
+            [
+                ResourceAccessKindV1::ExactLiteralRepositoryPath,
+                ResourceAccessKindV1::ExactMacroOrHarnessBinding,
+                ResourceAccessKindV1::ExactDeclaredManifestBinding,
+                ResourceAccessKindV1::ConservativeDirectoryOrPatternBinding,
+                ResourceAccessKindV1::DynamicOrUnresolved,
+            ]
+            .map(ResourceAccessKindV1::as_str),
+            [
+                "exact_literal_repository_path",
+                "exact_macro_or_harness_binding",
+                "exact_declared_manifest_binding",
+                "conservative_directory_or_pattern_binding",
+                "dynamic_or_unresolved",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_semantic_digest_hashes_nul_separated_fields_with_forward_slashes() {
+        let minted = digest(
+            ResourceKindV1::FixtureOrTestdata,
+            "tests\\data/input.json",
+            "crate::load",
+            ResourceAccessKindV1::ExactLiteralRepositoryPath,
+            ResourceCompletenessClassV1::Conservative,
+        );
+        assert_eq!(
+            minted,
+            sha256(
+                "fixture_or_testdata\0tests/data/input.json\0crate::load\0exact_literal_repository_path\0conservative"
+            )
+        );
+        assert_eq!(
+            minted,
+            digest(
+                ResourceKindV1::FixtureOrTestdata,
+                "tests/data/input.json",
+                "crate::load",
+                ResourceAccessKindV1::ExactLiteralRepositoryPath,
+                ResourceCompletenessClassV1::Conservative,
+            )
+        );
+        for (completeness, token) in [
+            (ResourceCompletenessClassV1::Exact, "exact"),
+            (ResourceCompletenessClassV1::Opaque, "opaque"),
+        ] {
+            assert_eq!(
+                digest(
+                    ResourceKindV1::GoldenOrSnapshot,
+                    "a",
+                    "b",
+                    ResourceAccessKindV1::DynamicOrUnresolved,
+                    completeness,
+                ),
+                sha256(&format!(
+                    "golden_or_snapshot\0a\0b\0dynamic_or_unresolved\0{token}"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn the_edge_id_prefixes_the_semantic_digest() {
+        assert_eq!(
+            ResourceDependencyEdgeV1::mint_edge_id("sha256:abc"),
+            "resource-edge:sha256:abc"
+        );
+    }
+}

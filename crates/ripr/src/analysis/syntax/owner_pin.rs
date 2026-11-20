@@ -1888,16 +1888,19 @@ fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     segments
 }
 
-/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
-/// published export lists (checked against creusot-std 0.14.0, vstd
-/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
-/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
-/// kin. Each entry is the exact glob path; the crate must also resolve to the
-/// registry package (`drop_in_verified`) and not be shadowed.
+/// RIPR-SPEC-0369: glob imports of verification-framework and other common
+/// preludes whose published export lists (checked against creusot-std
+/// 0.14.0, vstd 0.0.0-2026-10-25-0158, prusti-contracts 0.3.3, proptest
+/// 1.12.0 and rayon 1.12.0) contain no macro named like a trusted assertion,
+/// so the glob cannot rebind `assert_eq!` and its kin. Each entry is the
+/// exact glob path; the crate must also resolve to the registry package
+/// (`drop_in_verified`) and not be shadowed.
 const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
     &["creusot_std", "prelude"],
     &["vstd", "prelude"],
     &["prusti_contracts"],
+    &["proptest", "prelude"],
+    &["rayon", "prelude"],
 ];
 
 fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
@@ -3374,6 +3377,11 @@ fn owner_pin_assertions_with_matches(
             name.text().to_string(),
         );
         *identities.entry(key.clone()).or_default() += 1;
+        let operand_try = if is_test_function(&function) {
+            OperandTry::FailsTest
+        } else {
+            OperandTry::MayLeave
+        };
         // An outcome-settling attribute is named first wherever it sits: it
         // is evidence of a gap, which RIPR-SPEC-0240 must not withhold.
         let refusal = if let Some(attr) = function.attrs().find(|attr| {
@@ -3392,12 +3400,14 @@ fn owner_pin_assertions_with_matches(
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(
+        } else if let Some(refusal) = has_escape_among(
             body.syntax(),
             trusted,
             &empty_macros,
             &json_uses,
+            &[],
             matches_context,
+            operand_try,
         ) {
             if let AssertionContextRefusal::OpaqueMacro(ref path) = refusal {
                 if super::bolero::bolero_macro_escape_allowed(&function, source, path) {
@@ -3436,6 +3446,7 @@ fn owner_pin_assertions_with_matches(
                     &json_uses,
                     COMPARISON_NESTED_MACROS,
                     false,
+                    operand_try,
                 )
                 .is_none()
                 && function.attrs().all(|attr| {
@@ -5921,7 +5932,46 @@ fn has_escape(
     json_uses: &[ast::Use],
     qualified_matches: bool,
 ) -> Option<AssertionContextRefusal> {
-    has_escape_among(body, trusted, empty, json_uses, &[], qualified_matches)
+    has_escape_among(
+        body,
+        trusted,
+        empty,
+        json_uses,
+        &[],
+        qualified_matches,
+        OperandTry::MayLeave,
+    )
+}
+
+/// How a `?` in a trusted macro's operands may leave the scanned body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandTry {
+    /// The body is a helper, or anything else whose caller may discard the
+    /// error: the `?` may skip the comparison unnoticed.
+    MayLeave,
+    /// The body is a test function's own: an error it returns fails the
+    /// test (RIPR-SPEC-0197 rule 3, "`?` in a root test"), so a `?` outside
+    /// any closure cannot skip the comparison and leave the test passing.
+    FailsTest,
+}
+
+/// `operand_try` for a macro call at `call` inside `body`: a call inside a
+/// closure, an `async` block or a nested `fn` returns its error to code that
+/// may discard it, so its `?` may leave without failing the test.
+fn operand_try_at(call: &SyntaxNode, body: &SyntaxNode, operand_try: OperandTry) -> OperandTry {
+    let nested_exit_scope = call
+        .ancestors()
+        .take_while(|node| node != body)
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::Fn::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        });
+    if nested_exit_scope {
+        OperandTry::MayLeave
+    } else {
+        operand_try
+    }
 }
 
 /// [`has_escape`] with `plain_nested` names also read as plain nested
@@ -5933,6 +5983,7 @@ fn has_escape_among(
     json_uses: &[ast::Use],
     plain_nested: &[&str],
     qualified_matches: bool,
+    operand_try: OperandTry,
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -5964,6 +6015,7 @@ fn has_escape_among(
                     trusted.contains(&"json") && json_visible,
                     plain_nested,
                     qualified_matches,
+                    operand_try_at(call.syntax(), body, operand_try),
                 )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
@@ -6004,7 +6056,7 @@ pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false, &[], false)
+    opaque_macro_operand_with_json(tree, false, &[], false, OperandTry::MayLeave)
 }
 
 fn opaque_macro_operand_with_json(
@@ -6012,13 +6064,19 @@ fn opaque_macro_operand_with_json(
     literal_json: bool,
     plain_nested: &[&str],
     qualified_matches: bool,
+    operand_try: OperandTry,
 ) -> bool {
     let tokens = operand_tokens(tree);
+    // A `?` may also sit in a closure or `async` block inside the operand,
+    // whose error a caller can discard; ripr does not tell the two apart in
+    // a token tree, so either keeps the `?` an exit.
+    let try_fails_test = operand_try == OperandTry::FailsTest
+        && !tokens
+            .iter()
+            .any(|token| matches!(token.text(), "|" | "||" | "async"));
     tokens.iter().any(|token| {
-        matches!(
-            token.text(),
-            "return" | "break" | "continue" | "yield" | "?"
-        )
+        matches!(token.text(), "return" | "break" | "continue" | "yield")
+            || token.text() == "?" && !try_fails_test
     }) || nested_invocation_sites(&tokens).any(|(at, name, plain)| {
         !(plain
             && (NESTED_EXPANSIONS.contains(&name)

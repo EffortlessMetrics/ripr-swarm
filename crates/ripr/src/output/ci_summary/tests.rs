@@ -371,7 +371,7 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
         "- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.",
         "- Status: `missing_start_here`",
         "- State: `missing_artifact`",
-        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`.",
+        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
         "PR review summary was not generated.",
         "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.",
         "Recommended next test was not generated.",

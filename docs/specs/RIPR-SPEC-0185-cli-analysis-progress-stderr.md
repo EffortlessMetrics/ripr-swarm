@@ -142,7 +142,9 @@ second stage vocabulary.
 - A long-running `ripr pilot` fixture emits stage and heartbeat evidence on
   stderr while `pilot-summary.json` stays byte-identical with `--quiet`;
   a pilot deadline closes the progress run as `cancelled`, never
-  `completed` (#5019).
+  `completed` (#5019). The controller projects that line itself, so a
+  timed-out run ends with exactly one `cancelled [repo]` even when the
+  worker is stuck past its cancel grace (#5444).
 - `ripr pilot -v` on a fixture prints the stage table on stderr, prints no
   table without `-v`, and leaves stdout and `pilot-summary.json` bytes
   unchanged (#10727).
@@ -209,6 +211,8 @@ second stage vocabulary.
 - `crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens`
 - `crates/ripr/src/cli/progress.rs::tests::failure_terminal_never_emits_completed`
 - `crates/ripr/src/cli/progress.rs::tests::cancelled_terminal_never_emits_completed`
+- `crates/ripr/src/cli/progress.rs::tests::abandon_with_scope_closes_a_run_the_worker_never_started`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line`
 - `crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary`
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
