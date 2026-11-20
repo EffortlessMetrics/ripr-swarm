@@ -348,7 +348,7 @@ fn a_binary_beside_a_custom_root_leaves_its_modules_unplaced() -> Result<(), Str
             ("src/core/legacy.rs", OWNER.to_string()),
         ]
         .into_iter()
-        .chain((test_file != "src/main.rs").then(|| (test_file, test)))
+        .chain((test_file != "src/main.rs").then_some((test_file, test)))
         .collect::<Vec<_>>()
     };
     let unit = |call: &str| {
