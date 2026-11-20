@@ -834,6 +834,12 @@ enum InitNextStep {
 /// The closing `Next:` line. Split from the probes so every state's wording
 /// pins without arranging a repository.
 fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String {
+    // `git init` acts on the caller's directory, so a configured `--root`
+    // binds it too (#15297). `check` carries the already shell-quoted root.
+    let git_init = check.strip_prefix("ripr check --root ").map_or_else(
+        || "git init".to_string(),
+        |root| format!("git -C {root} init"),
+    );
     match next {
         InitNextStep::Ready => format!(
             "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
@@ -842,10 +848,10 @@ fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String 
             "Next: run `{doctor}` to verify your setup. This repository has no commits yet, so `ripr check` has no base to compare: commit once, then edit a tracked source file and run `{check}`."
         ),
         InitNextStep::NoGit => format!(
-            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
+            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `{git_init}` or choose a root inside one first."
         ),
         InitNextStep::GitMissing => format!(
-            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `git init` if this directory is not a repository), or analyze a saved patch with `{check} --diff PATH`."
+            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `{git_init}` if the root is not a repository), or analyze a saved patch with `{check} --diff PATH`."
         ),
     }
 }
@@ -1693,6 +1699,13 @@ mod tests {
         let no_git = init_next_step_line(InitNextStep::NoGit, "ripr doctor", "ripr check");
         assert!(no_git.contains("run `git init`"), "{no_git}");
         assert!(!no_git.contains("no commits yet"), "{no_git}");
+        // A configured root binds `git init` to it, not the caller's directory.
+        let bound = init_next_step_line(
+            InitNextStep::NoGit,
+            "ripr doctor --root 'my repo'",
+            "ripr check --root 'my repo'",
+        );
+        assert!(bound.contains("run `git -C 'my repo' init`"), "{bound}");
 
         // #15297: with Git missing, `git init` cannot run either; the
         // advice is to install Git, and a saved patch still works.
@@ -1708,6 +1721,7 @@ mod tests {
             "{missing}"
         );
         assert!(!missing.contains("run `git init` or"), "{missing}");
+        assert!(missing.contains("`git -C repo init`"), "{missing}");
     }
 
     #[test]
