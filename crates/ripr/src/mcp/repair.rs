@@ -398,6 +398,9 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if !command_routes.is_empty() {
+        limitations.push("command_routes show repository-relative paths (the host-local root is not projected); run them from the repository root".to_string());
+    }
     if let Some(limitation) =
         crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
@@ -729,20 +732,49 @@ fn project_root_relative(value: &mut Value, root: &Path) {
 /// corrupt every path), dedupe, and order longest first.
 fn root_spellings(raw: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut push = |candidate: &str| {
+        let trimmed = candidate.trim_end_matches(['/', '\\']);
+        if !out.iter().any(|existing| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    };
     for spelling in raw {
-        for candidate in [spelling.clone(), spelling.replace('\\', "/")] {
-            let trimmed = candidate.trim_end_matches(['/', '\\']);
-            let bytes = trimmed.as_bytes();
-            let absolute = trimmed.starts_with('/')
-                || (bytes.len() > 2
+        // Windows verbatim roots (`\\?\C:\x`) also appear without the prefix.
+        let mut forms = vec![spelling.clone()];
+        for verbatim in ["\\\\?\\", "//?/"] {
+            if let Some(stripped) = spelling.strip_prefix(verbatim) {
+                forms.push(stripped.to_string());
+            }
+        }
+        for form in forms {
+            for candidate in [form.clone(), form.replace('\\', "/")] {
+                let trimmed = candidate.trim_end_matches(['/', '\\']);
+                let body = trimmed
+                    .strip_prefix("\\\\?\\")
+                    .or_else(|| trimmed.strip_prefix("//?/"))
+                    .unwrap_or(trimmed);
+                let bytes = body.as_bytes();
+                let drive = bytes.len() > 2
                     && bytes[0].is_ascii_alphabetic()
                     && bytes[1] == b':'
-                    && matches!(bytes[2], b'/' | b'\\'));
-            if !absolute || trimmed.is_empty() || trimmed.ends_with(':') {
-                continue;
-            }
-            if !out.iter().any(|existing| existing == trimmed) {
-                out.push(trimmed.to_string());
+                    && matches!(bytes[2], b'/' | b'\\');
+                if !(body.starts_with('/') || drive) || body.ends_with(':') {
+                    continue;
+                }
+                push(trimmed);
+                if drive {
+                    // Drive letters compare case-insensitively.
+                    let mut swapped = trimmed.to_string();
+                    let offset = trimmed.len() - body.len();
+                    let letter = bytes[0] as char;
+                    let other = if letter.is_ascii_uppercase() {
+                        letter.to_ascii_lowercase()
+                    } else {
+                        letter.to_ascii_uppercase()
+                    };
+                    swapped.replace_range(offset..=offset, &other.to_string());
+                    push(&swapped);
+                }
             }
         }
     }
@@ -764,8 +796,28 @@ fn project_root_text(text: &str, spelling: &str) -> String {
     while let Some(index) = rest.find(spelling) {
         let (head, tail) = rest.split_at(index);
         out.push_str(head);
-        let before = head.chars().next_back().or(previous);
         let after_root = &tail[spelling.len()..];
+        // A `file://` scheme or extra leading slashes sit before the root; they
+        // are part of the same path token, not a preceding path component.
+        let slashes = out.len() - out.trim_end_matches('/').len();
+        let token_len = out.trim_end_matches('/').len();
+        let token_start = &out[..token_len];
+        let scheme = slashes >= 2 && token_start.ends_with("file:");
+        let leading = slashes >= 1
+            && !scheme
+            && token_start
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_path_char(c));
+        let before = if scheme || leading {
+            token_start
+                .trim_end_matches("file:")
+                .chars()
+                .next_back()
+                .or(previous)
+        } else {
+            out.chars().next_back().or(previous)
+        };
         let start_ok = before.is_none_or(|c| !is_path_char(c));
         let next = after_root.chars().next();
         let sentence_dot = next == Some('.')
@@ -782,11 +834,23 @@ fn project_root_text(text: &str, spelling: &str) -> String {
             rest = after_root;
             continue;
         }
+        if scheme || leading {
+            out.truncate(if scheme {
+                token_len - "file:".len()
+            } else {
+                token_len
+            });
+        }
         if next.is_some_and(|c| matches!(c, '/' | '\\')) {
             rest = &after_root[1..];
             previous = None;
-            // `<root>/` at a path start: drop it; if nothing follows keep ".".
-            if rest.is_empty() || rest.starts_with(|c: char| !is_path_char(c)) {
+            // `<root>/` starts a relative path: drop it. A bare root before
+            // whitespace or punctuation (not a glob or name) stands for `.`.
+            if rest.is_empty()
+                || rest.starts_with(|c: char| {
+                    c.is_whitespace() || matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`')
+                })
+            {
                 out.push('.');
             }
         } else {
@@ -1461,6 +1525,32 @@ pub(super) mod tests {
     fn root_projection_leaves_sibling_prefixes_alone() {
         assert_eq!(projected("/w/repo2/x", &["/w/repo"]), "/w/repo2/x");
         assert_eq!(projected("/q/w/repo/x", &["/w/repo"]), "/q/w/repo/x");
+    }
+
+    #[test]
+    fn root_projection_handles_globs_urls_verbatim_and_lookalikes() {
+        assert_eq!(projected("see /w/repo/*.rs", &["/w/repo"]), "see *.rs");
+        assert_eq!(projected("file:///w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(projected("//w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(
+            projected("\\\\?\\C:\\w\\repo\\a.json", &["\\\\?\\C:\\w\\repo"]),
+            "a.json"
+        );
+        assert_eq!(
+            projected("C:\\w\\repo\\a.json", &["\\\\?\\C:\\w\\repo"]),
+            "a.json"
+        );
+        assert_eq!(projected("c:/w/repo/a.json", &["C:\\w\\repo"]), "a.json");
+        assert_eq!(projected("/a/repo.bak/x", &["/a/repo"]), "/a/repo.bak/x");
+        assert_eq!(projected("/a/repo-old/x", &["/a/repo"]), "/a/repo-old/x");
+        assert_eq!(
+            projected("/w/rép\u{00f8}/a.json", &["/w/rép\u{00f8}"]),
+            "a.json"
+        );
+        assert_eq!(
+            projected("/w/rép\u{00f8}s/a.json", &["/w/rép\u{00f8}"]),
+            "/w/rép\u{00f8}s/a.json"
+        );
     }
 
     #[test]
