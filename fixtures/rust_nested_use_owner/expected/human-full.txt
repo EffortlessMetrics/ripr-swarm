@@ -113,7 +113,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related tests already assert the exact boolean result of `thr`, so rewriting them with exact equality would check the same values. Add a test with an input whose boolean result differs between the old and new code, and assert that result
+  - Replace broad assertions with exact equality or a property that constrains the changed returned value
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_nested_use_owner/input --diff <cwd>/fixtures/rust_nested_use_owner/diff.patch --mode fast probe:src_internal.rs:return_value:42dc8ea8

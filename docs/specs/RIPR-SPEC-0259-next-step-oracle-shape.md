@@ -139,10 +139,13 @@ asserted-call identity end to end; the positive case covers the plain, `std::`, 
 call. It
 re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,
 `fixtures/rust_predicate_appended_str_arm_false_side_only`,
-`fixtures/rust_predicate_appended_char_arm_old_input`,
-`fixtures/rust_nested_use_owner` and `fixtures/guard_operand_dropped_agreement`,
-each confined to the `recommended_next_step` / `suggested_next_action` string
-and its human rendering.
+`fixtures/rust_predicate_appended_char_arm_old_input` and
+`fixtures/guard_operand_dropped_agreement`, each confined to the
+`recommended_next_step` / `suggested_next_action` string and its human
+rendering. `fixtures/rust_nested_use_owner` keeps the family template: its
+`thr` owner has a same-named function in another package, so no shared
+owner-call identity settles the qualified asserted calls and the step fails
+closed.
 
 ## Non-Goals
 
