@@ -1340,7 +1340,7 @@ a form the reader cannot read (a `*args` unpack, or a bare name it cannot bind
 such as a reassigned test local, a fixture, or a parametrize argname whose
 table is named by a variable or whose rows name values), that call is
 not established to reach the changed boundary: the finding fails closed to
-`weakly_exposed`, says the inputs went unread, and names no missing
+`weakly_exposed`, says why no call reaches the boundary, and names no missing
 discriminator, because the unread input may already sit on the boundary
 (#15287). When the calls the reader recognizes pass only expressions it does
 not evaluate (a list of objects, a constructor call, a dict display), or no
@@ -1351,7 +1351,7 @@ operand the owner rebinds keeps the same limitation. One rebinding is read
 through: when the owner's first statement is `name = float(name)` or
 `name = int(name)`, it is the only binding of that parameter, and every strong
 call binds it to a numeric literal the conversion leaves equal (integers for
-`int`; floats and integers within 2**53 for `float`, or a larger integer when
+`int`; finite floats and integers within 2**53 for `float`, or a larger integer when
 the other operand is a literal below 2**53, which rounding can never reach),
 the call's literal is the compared value (#15287). An operand the owner
 rebinds in any other way still keeps the limitation, unless the tests also

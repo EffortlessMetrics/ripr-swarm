@@ -1137,7 +1137,8 @@ fn classify_change_for_owner_inner<'a>(
     // (`Missing`) or passed test-side inputs the reader cannot see
     // (`UnreadInput`: a `*args` row, a test local, a parametrize row naming a
     // value). `Unresolved` (no recognized owner call, or an operand the owner
-    // rebinds) keeps the oracle verdict with its named limitation.
+    // rebinds while every call was read) keeps the oracle verdict with its
+    // named limitation.
     let boundary_gap = boundary.as_ref().filter(|evidence| {
         matches!(
             evidence.activation,
