@@ -1726,7 +1726,22 @@ fn rust_only_library_lint_rejects_removal_weakening_and_condition_drift() {
 
 #[test]
 fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
-    let blocks: Vec<_> = WORKFLOW.split("\n      - ").skip(1).collect();
+    check_fresh_golden_steps(WORKFLOW)?;
+    for condition in [PREPARE_GOLDENS_IF, CLEANUP_GOLDENS_IF] {
+        let disabled = WORKFLOW.replace(condition, &format!("{condition} && false"));
+        if check_fresh_golden_steps(&disabled).is_ok() {
+            return Err(format!("disabled workflow condition passed: {condition}"));
+        }
+    }
+    Ok(())
+}
+
+const PREPARE_GOLDENS_IF: &str =
+    "if: github.event_name == 'pull_request' && inputs.subject-sha == ''";
+const CLEANUP_GOLDENS_IF: &str = "if: always() && steps.goldens_fresh_merge.outputs.worktree != ''";
+
+fn check_fresh_golden_steps(source: &str) -> Result<(), String> {
+    let blocks: Vec<_> = source.split("\n      - ").skip(1).collect();
     let idx = |id: &str| -> Result<usize, String> {
         blocks
             .iter()
@@ -1746,10 +1761,12 @@ fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
     let cleanup = blocks
         .get(cleanup_idx)
         .ok_or("missing fresh worktree cleanup")?;
-    if !prep.contains("if: github.event_name == 'pull_request' && inputs.subject-sha == ''")
+    if !prep.lines().any(|line| line.trim() == PREPARE_GOLDENS_IF)
         || !prep.contains("git merge-tree --write-tree --no-messages")
         || !gate.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
-        || !cleanup.contains("if: always() && steps.goldens_fresh_merge.outputs.worktree != ''")
+        || !cleanup
+            .lines()
+            .any(|line| line.trim() == CLEANUP_GOLDENS_IF)
         || !cleanup.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
         || !cleanup.contains("ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}")
     {

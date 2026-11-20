@@ -453,6 +453,8 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
     let root = work.parent().ok_or("test checkout needs a parent")?;
     let scratch = root.join("leased-scratch");
     fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+    let scratch_alias = root.join("job-temp");
+    std::os::unix::fs::symlink(&scratch, &scratch_alias).map_err(|e| e.to_string())?;
     let orig_head = git(&work, &["rev-parse", "HEAD"])?;
     let pr_head = git(&work, &["rev-parse", "HEAD^2"])?;
     let output = root.join("step-output");
@@ -479,7 +481,7 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
             ("WRAPPER_LOG", wrapper_log),
             ("BASE_REF", "main"),
             ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
-            ("TMPDIR", scratch.to_str().ok_or("non-UTF-8 scratch")?),
+            ("TMPDIR", scratch_alias.to_str().ok_or("non-UTF-8 scratch")?),
             ("GITHUB_WORKSPACE", workspace),
             ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
         ],
@@ -617,6 +619,27 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
     }
     if fs::read_to_string(&report).map_err(|e| e.to_string())? != "fresh-main\n" {
         return Err("cleanup removed the fresh producer report before its upload".into());
+    }
+    let failed_removal = root.join("nonempty");
+    fs::create_dir(&failed_removal).map_err(|e| e.to_string())?;
+    fs::write(failed_removal.join("keep"), "owned fixture").map_err(|e| e.to_string())?;
+    for (path, expected) in [
+        (
+            failed_removal.to_str().ok_or("non-UTF-8 fixture")?,
+            orig_head.as_str(),
+        ),
+        (fresh, pr_head.as_str()),
+    ] {
+        let failed = run_bash(
+            &work,
+            &cleanup,
+            &[("FRESH_TREE", path), ("ORIG_HEAD", expected)],
+        )?;
+        if failed.status.success()
+            || !stdout(&failed).contains(&format!("expected={expected} actual={orig_head}"))
+        {
+            return Err("failed cleanup must retain the admitted checkout readback".into());
+        }
     }
     probe("")?;
     if fs::read_to_string(report).map_err(|e| e.to_string())? != "x\n" {

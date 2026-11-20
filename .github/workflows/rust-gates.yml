@@ -509,7 +509,8 @@ jobs:
             echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
             exit 0
           fi
-          fresh_tree="$(mktemp -d "${TMPDIR:-$RUNNER_TEMP}/ripr-goldens.XXXXXXXX")"
+          scratch_root="$(realpath -- "${TMPDIR:-$RUNNER_TEMP}")"
+          fresh_tree="$(mktemp -d "$scratch_root/ripr-goldens.XXXXXXXX")"
           echo "worktree=$fresh_tree" >> "$GITHUB_OUTPUT"
           git worktree add --detach "$fresh_tree" "$fresh_base"
           git -C "$fresh_tree" -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
@@ -550,12 +551,16 @@ jobs:
           FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
           ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
         run: |
+          status=0
           if git worktree list --porcelain | grep -Fx "worktree $FRESH_TREE" >/dev/null; then
-            git worktree remove --force "$FRESH_TREE"
+            git worktree remove --force "$FRESH_TREE" || status=1
           elif [ -d "$FRESH_TREE" ]; then
-            rmdir "$FRESH_TREE"
+            rmdir "$FRESH_TREE" || status=1
           fi
-          test "$(git rev-parse HEAD)" = "$ORIG_HEAD"
+          actual_head="$(git rev-parse HEAD)" || status=1
+          echo "Admitted checkout: expected=$ORIG_HEAD actual=$actual_head"
+          [ "$actual_head" = "$ORIG_HEAD" ] || status=1
+          exit "$status"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.

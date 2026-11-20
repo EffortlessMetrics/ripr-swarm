@@ -1308,8 +1308,12 @@ target/sample build residue and shares the same badge endpoint boundary.
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
-When the PR's base has advanced, this gate builds the fresh merge in a temporary
-worktree under the job scratch directory. Cargo gives its workspace packages a distinct artifact identity, reuses
+For a PR running without an explicit subject SHA, the gate checks for an advanced base.
+A clean merge against that base runs in a temporary worktree under the resolved
+job scratch directory (`TMPDIR`, falling back to `RUNNER_TEMP` on hosted jobs).
+An unchanged base or an unavailable base fetch leaves goldens on the admitted
+checkout. A confirmed merge conflict fails preparation. Exact-subject runs use
+their admitted checkout directly. For a fresh merge, Cargo gives its workspace packages a distinct artifact identity, reuses
 registry dependencies, and writes the fresh executables under that worktree.
 The original admitted checkout and its binaries remain available for capability,
 verdict and PR evidence checks. The gate writes its golden reports and wildcard
