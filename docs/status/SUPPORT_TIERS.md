@@ -44,9 +44,13 @@ one of the seven static verdict classes (`exposed`, `weakly_exposed`,
 `propagation_unknown`, `static_unknown`) is pinned by all three of:
 
 - at least one golden fixture under `fixtures/*/expected/check.json`;
-- at least one `must_not_promote` control in the evidence-promotion honesty
-  corpus (`fixtures/evidence-promotion-honesty-corpus/corpus.json`,
-  RIPR-SPEC-0108);
+- at least one honesty-corpus control in the evidence-promotion corpus
+  (`fixtures/evidence-promotion-honesty-corpus/corpus.json`,
+  RIPR-SPEC-0108): for non-`exposed` classes, a case pinning that class with
+  `must_not_promote`; for `exposed`, a negative counterpart case (same
+  behavior shape, weaker evidence) asserted `must_not_promote` at a lower
+  class, since a `must_not_promote` case itself fails if any finding is
+  `exposed`;
 - at least one discriminating test mapped to the behavior in
   `.ripr/traceability.toml` or `.ripr/traceability.d/`, with non-empty
   `tests` and `code` entries.
