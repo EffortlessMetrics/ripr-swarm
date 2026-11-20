@@ -2141,8 +2141,10 @@ fn build_entry_call(
         if !normalized_path_eq(&owner.file, source) || file_module_exists(root, &module) {
             continue;
         }
+        let mut imports = test.imports_in_file.to_vec();
+        imports[index].source = relative_module_specifier(&test.file, source);
         let mut view = test.clone();
-        view.imports_in_file[index].source = relative_module_specifier(&test.file, source);
+        view.imports_in_file = imports.into();
         if matches!(
             owner_call_relation(&view, owner, reexports, Some(map), Some(root)),
             Some(
