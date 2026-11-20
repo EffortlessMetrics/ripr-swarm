@@ -71,7 +71,7 @@ pub(super) fn attach_value_helpers(
             .iter()
             .filter(|helper| {
                 contains_call_name(&test.body_text, &helper.name)
-                    && !test.fixtures.iter().any(|fixture| *fixture == helper.name)
+                    && !test.fixtures.contains(&helper.name)
                     && !text_binds_name(&test.body_text, &helper.name)
             })
             .cloned()
