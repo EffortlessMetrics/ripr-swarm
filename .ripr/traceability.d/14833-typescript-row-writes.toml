@@ -8,3 +8,10 @@ code = [
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs",
 ]
+
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::row_writes_withhold_each_literals_and_disclose_for_registrations",
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::object_each_row_writes_keep_dynamic_expected_values",
+]
