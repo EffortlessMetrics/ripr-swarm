@@ -8046,6 +8046,107 @@ mod tests {
         );
     }
 
+    fn restated_value_finding(observed: &str, fact_value: &str) -> Finding {
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![ValueFact {
+            line: 3,
+            text: "pricing(50)".to_string(),
+            value: fact_value.to_string(),
+            context: ValueContext::FunctionArgument,
+        }];
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "total == 100".to_string(),
+            reason: format!(
+                "No related test call places total equal to 100; observed total values: {observed}"
+            ),
+            flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
+        }];
+        finding
+    }
+
+    fn explained(finding: &Finding) -> String {
+        super::render_finding_with_context_command(
+            finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        )
+    }
+
+    /// #15421: explain skips the Evidence row its Weakness reason restates.
+    #[test]
+    fn explain_skips_source_value_row_the_discriminator_reason_restates() {
+        let finding = restated_value_finding("50", "total = 50");
+        let row = "source function argument value total = 50 at line 3";
+
+        let rendered = explained(&finding);
+        assert!(!rendered.contains(row), "{rendered}");
+        assert!(rendered.contains("observed total values: 50"), "{rendered}");
+
+        // human-full keeps the row.
+        assert!(super::render_finding(&finding).contains(row));
+    }
+
+    /// #15594 review: skipping the only source-value row must not bring the
+    /// literal evidence lines back, which print only when no row was added.
+    #[test]
+    fn explain_skipping_the_only_value_row_keeps_literal_evidence_out() {
+        let mut finding = restated_value_finding("50", "total = 50");
+        // The value row is the only row beyond the five stage rows.
+        finding.flow_sinks.clear();
+        finding.related_tests.clear();
+        let literal = "literal evidence line for the restated value";
+        finding.evidence = vec![literal.to_string()];
+        let full = super::render_finding(&finding);
+        assert!(
+            full.contains("source function argument value total = 50"),
+            "{full}"
+        );
+        assert!(!full.contains(literal), "{full}");
+
+        let rendered = explained(&finding);
+        assert!(!rendered.contains(literal), "{rendered}");
+        assert!(!rendered.contains("source function argument value total = 50"));
+    }
+
+    #[test]
+    fn explain_keeps_source_value_row_the_reason_does_not_restate() {
+        let row = "source function argument value total = 50 at line 3";
+        // A different value, a different name, and a value that only shares a
+        // prefix with an observed one all keep the row.
+        for observed in ["500", "5, 100"] {
+            let rendered = explained(&restated_value_finding(observed, "total = 50"));
+            assert!(rendered.contains(row), "{observed}:\n{rendered}");
+        }
+        let mut other_name = restated_value_finding("50", "amount = 50");
+        other_name.activation.observed_values[0].value = "amount = 50".to_string();
+        assert!(explained(&other_name).contains("source function argument value amount = 50"));
+        // One of several observed values still restates the row.
+        let several = restated_value_finding("7, 50, 90", "total = 50");
+        assert!(!explained(&several).contains(row));
+    }
+
+    #[test]
+    fn explain_keeps_restated_row_when_the_window_is_truncated() {
+        let mut finding = restated_value_finding("50", "total = 50");
+        for index in 0..8 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+        let rendered = explained(&finding);
+        assert!(
+            rendered.contains("source function argument value total = 50 at line 3"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("showing 8 of 9"), "{rendered}");
+    }
+
     /// #8389: a bare `at line N` is ambiguous once the shown window mixes
     /// related-test files, so each line then names its file; a window from one
     /// file keeps `at line N`.
