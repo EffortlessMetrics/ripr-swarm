@@ -1,0 +1,45 @@
+{
+  "case_id": "py-route-clients-named-fixture",
+  "subject_id": "authored-py-pytest-route-clients",
+  "diff": "cases/py-route-clients-named-fixture.diff",
+  "anchor": {
+    "file": "routeclients/stock.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "named_pytest_fixture_returning_the_route_owners_client",
+  "hard_case": "The request receiver is injected from a conftest fixture named api_client.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.12.14, pytest 8.4.2, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"left\": 6}",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/stock/test_stock.py::test_stock_route",
+        "equivalence_review": "The response changes the number of items left from five to six."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The local api_client fixture constructs TestClient over routeclients.stock.app. The authored client dispatches GET /stock to stock, and its exact body assertion rejects the changed result. The runtime label records that assertion failure. Route-receiver recognition is checked independently by the Rust relation test.",
+  "labeling_observation": {
+    "ripr_commit": "c08d474a92d0edf97ad1e3d444ecb73fc5d439de",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

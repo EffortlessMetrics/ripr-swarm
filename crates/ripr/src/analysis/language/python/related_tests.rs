@@ -3173,7 +3173,7 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Optio
     if owner.route_paths.is_empty() {
         return None;
     }
-    let receivers = super::route_client::client_receivers(&test.body_text);
+    let receivers = super::route_client::test_client_receivers(test);
     let mut found = None;
     for (index, route) in owner.route_paths.iter().enumerate() {
         // An empty or missing verb list is an unknown verb, which keeps the

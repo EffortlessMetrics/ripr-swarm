@@ -88,9 +88,10 @@ this repository's license, one per test library or library feature:
   `TestClient`, with route owners whose request client is a conftest fixture
   over the owner's own app, a fixture over another module's `app` on the same
   path, a client built over a factory call, and a fixture built on a second
-  fixture. Each test only asserts the response is not `None`, so every mutant
-  survives and the cases score how the client's application is read, not the
-  oracle (run under Python 3.13.16 and pytest 9.1.1).
+  fixture. The original four cases use a weak response assertion. For
+  `/stock`, a differently named fixture constructs the client over the
+  route owner's app. The exact assertion in `test_stock_route` fails when
+  the stock count changes from five to six.
 - `authored-py-pytest-fixture-patch`: RIPR-SPEC-0238's fixture-substitution
   read, one directory per case so a conftest reaches only its own test. An
   autouse conftest fixture, a requested module fixture and a `setUp`
