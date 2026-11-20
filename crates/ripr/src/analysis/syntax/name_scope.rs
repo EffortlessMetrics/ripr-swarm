@@ -1179,6 +1179,7 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
             Ok(name_scopes_for_test_caller(
                 &parse.tree(),
                 &LineIndex::new(source),
+                None,
                 line,
                 "case",
                 origin,
