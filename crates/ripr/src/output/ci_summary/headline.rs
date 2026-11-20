@@ -8,6 +8,7 @@
 //! unparsable report prints nothing, so the older sections still tell that
 //! story.
 
+use crate::output::gate::discloses_bounded_analysis_document;
 use crate::output::markdown::code_span;
 use crate::output::pr_summary_comment::is_plain_command;
 use serde_json::Value;
@@ -32,11 +33,14 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
         .map_or(0, |items| items.len() as u64);
     let total = listed_rows.max(stated_rows) + counted.max(listed);
     let mut lines = vec!["### What RIPR found in this pull request".to_string()];
+    if discloses_bounded_analysis_document(report) {
+        lines.push("- The producer returned a bounded findings document. Counts cover only the reported subset.".to_string());
+    }
     if total == 0 {
         let complete = report["analysis_outcome"]["analysis_complete"].as_bool() == Some(true);
-        if complete && rows.is_some() {
+        if complete && rows.is_some() && !discloses_bounded_analysis_document(report) {
             lines.push("No changed-behavior spot with weak test evidence (static and advisory; not a statement that the tests are sufficient).".to_string());
-        } else {
+        } else if !complete || rows.is_none() {
             lines.push("The analysis did not complete or its report is unreadable for this revision, so this is not a clean result.".to_string());
         }
         return lines;

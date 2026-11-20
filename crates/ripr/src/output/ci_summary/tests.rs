@@ -1194,6 +1194,14 @@ fn a_clean_run_is_not_reported_as_an_unfinished_one() -> TestResult {
     let head = block(&summary, HEADLINE);
     assert!(head.contains("did not complete"), "{head}");
     assert!(!head.contains("No changed-behavior spot"), "{head}");
+    unfinished.json(
+        "target/ripr/review/comments.json",
+        &json!({"comments": [], "analysis_outcome": {"analysis_complete": true, "document_complete": false}}),
+    )?;
+    let summary = unfinished.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    assert!(head.contains("reported subset"), "{head}");
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
     Ok(())
 }
 
