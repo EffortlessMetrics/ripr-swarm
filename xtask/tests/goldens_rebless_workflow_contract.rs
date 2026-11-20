@@ -712,66 +712,60 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
     )
 }
 
-/// The full list-item block for the step containing `index`: from its `- `
-/// line to (not including) the next sibling item or shallower key.
-fn step_lines<'a>(lines: &[&'a str], index: usize) -> Vec<&'a str> {
-    let step_indent = lines[index].len() - lines[index].trim_start().len();
-    let mut start = index;
-    if !lines[index].trim_start().starts_with("- ") {
-        for candidate in (0..index).rev() {
-            let trimmed = lines[candidate].trim_start();
-            let indent = lines[candidate].len() - trimmed.len();
-            if trimmed.starts_with("- ") && indent <= step_indent {
-                start = candidate;
-                break;
-            }
-        }
-    }
-    let item_indent = lines[start].len() - lines[start].trim_start().len();
-    let mut end = lines.len();
-    for (offset, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let indent = line.len() - trimmed.len();
-        if indent < item_indent || (indent == item_indent && trimmed.starts_with("- ")) {
-            end = offset;
-            break;
-        }
-    }
-    lines[start..end].to_vec()
+/// The part of a block mapping or list item indented beneath its header.
+fn nested_lines<'a>(lines: &'a [&'a str], parent_indent: usize) -> &'a [&'a str] {
+    let end = lines
+        .iter()
+        .position(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && line.len() - trimmed.len() <= parent_indent
+        })
+        .unwrap_or(lines.len());
+    &lines[..end]
 }
 
-/// The `toolchain:` value under the step's `with:` mapping, if any.
-///
-/// Only a key directly under `with:` counts. A `toolchain:` under `env:`,
-/// inside a `run:` block, or in a sibling step is not the action input and
-/// must not satisfy the contract (#14563 review).
-///
-/// Only a direct child key of `with:` counts: the `toolchain:` line must sit
-/// at `with_indent + 2`. A deeper line is block-scalar content or a nested
-/// mapping, not an action input (#14563 review).
-fn with_toolchain_value(step: &[&str]) -> Option<String> {
-    let first = step.first()?;
-    let item_indent = first.len() - first.trim_start().len();
-    let with_index = step.iter().position(|line| {
-        let trimmed = line.trim_start();
-        trimmed == "with:" && line.len() - trimmed.len() == item_indent + 2
-    })?;
-    let with_indent = item_indent + 2;
-    let child_indent = with_indent + 2;
-    step[with_index + 1..]
+/// Read an unquoted block key after its indentation has been checked.
+/// A colon without a separator remains part of a plain scalar.
+fn mapping_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let value = line.strip_prefix(key)?.strip_prefix(':')?;
+    (value.is_empty() || value.starts_with([' ', '\t'])).then_some(value)
+}
+
+fn step_field<'a>(step: &[&'a str], key: &str) -> Option<(usize, &'a str)> {
+    step.iter().enumerate().find_map(|(index, line)| {
+        let prefix = if index == 0 { "      - " } else { "        " };
+        mapping_value(line.strip_prefix(prefix)?, key).map(|value| (index, value))
+    })
+}
+
+/// Match the action and its input on the same direct item of `bless.steps`.
+/// The two-space block layout keeps deeper mappings and script text out.
+fn pinned_step_toolchain(steps: &[&str]) -> Option<String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let action = format!("dtolnay/rust-toolchain@{reference}");
+    let step = steps
         .iter()
-        .take_while(|line| {
-            let trimmed = line.trim_start();
-            trimmed.is_empty() || line.len() - trimmed.len() > with_indent
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("      - "))
+        .map(|(index, _)| {
+            let body = nested_lines(&steps[index + 1..], 6);
+            &steps[index..index + 1 + body.len()]
         })
-        .find(|line| {
-            let trimmed = line.trim_start();
-            line.len() - trimmed.len() == child_indent && trimmed.starts_with("toolchain:")
-        })
-        .and_then(|line| line.trim_start().strip_prefix("toolchain:"))
+        .find(|step| {
+            step_field(step, "uses")
+                .and_then(|(_, value)| yaml_scalar(value))
+                .as_deref()
+                == Some(action.as_str())
+        })?;
+    let (with_index, with_value) = step_field(step, "with")?;
+    if !strip_trailing_comment(with_value).trim().is_empty() {
+        return None;
+    }
+    nested_lines(&step[with_index + 1..], 8)
+        .iter()
+        .find_map(|line| mapping_value(line.strip_prefix("          ")?, "toolchain"))
         .and_then(yaml_scalar)
 }
 
@@ -852,17 +846,18 @@ fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
     let source = repo_file(WORKFLOW)?;
     let lines = executable_lines(&source);
     let bless = job_block(&lines, "bless");
-    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
-    let needle = format!("uses: dtolnay/rust-toolchain@{reference}");
-    let index = bless
+    let steps_index = bless
         .iter()
-        .position(|line| line.contains(&needle))
-        .ok_or_else(|| {
-            "the bless job must install the toolchain the goldens are rendered with".to_string()
-        })?;
-    let step = step_lines(&bless, index);
-    let value = with_toolchain_value(&step).ok_or_else(|| {
-        "the no-default `v1` ref needs an explicit `with: toolchain:` input (#14563)".to_string()
+        .position(|line| {
+            line.strip_prefix("    ")
+                .and_then(|line| mapping_value(line, "steps"))
+                .is_some_and(|value| strip_trailing_comment(value).trim().is_empty())
+        })
+        .ok_or_else(|| "the bless job must define its steps".to_string())?;
+    let steps = nested_lines(&bless[steps_index + 1..], 4);
+    let value = pinned_step_toolchain(steps).ok_or_else(|| {
+        "the bless job must install the pinned action with an explicit `with: toolchain:` input (#14563)"
+            .to_string()
     })?;
     if value != "1.95.0" {
         return Err(format!(
@@ -872,14 +867,8 @@ fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse one synthetic step and return its `with: toolchain:` value.
 fn step_value(source: &str) -> Option<String> {
-    let lines: Vec<&str> = source.lines().collect();
-    let index = lines
-        .iter()
-        .position(|line| line.contains("uses: dtolnay/rust-toolchain@"))?;
-    let step = step_lines(&lines, index);
-    with_toolchain_value(&step)
+    pinned_step_toolchain(&source.lines().collect::<Vec<_>>())
 }
 
 #[test]
@@ -943,6 +932,62 @@ fn toolchain_parser_shapes() -> Result<(), String> {
             "blank line between uses and with",
             format!(
                 "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "blank line inside with",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with: # input\n\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "missing key separator",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain:1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action text in name",
+            format!(
+                "      - name: Example uses: dtolnay/rust-toolchain@{reference}\n        uses: actions/checkout@v4\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action and input text in run",
+            format!(
+                "      - run: |\n          - uses: dtolnay/rust-toolchain@{reference}\n            with:\n              toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action text in run before real step",
+            format!(
+                "      - run: |\n          uses: dtolnay/rust-toolchain@{reference}\n      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "input is on sibling step",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "different action ref",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}-extra\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "with before a quoted action",
+            format!(
+                "      - with:\n          toolchain: '1.95.0' # pinned\n        uses: \"dtolnay/rust-toolchain@{reference}\" # v1\n"
             ),
             Some("1.95.0"),
         ),
