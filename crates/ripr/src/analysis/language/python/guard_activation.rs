@@ -1237,6 +1237,24 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
     !owner_binding_lines(owner_source, owner, name).is_empty()
 }
 
+/// The 1-based last line of the owner's own multi-line `def` header (#15292).
+/// The shared span search looks ahead for the first `def`, so a header it
+/// does not recognize (`def\tquote(`) could hand back a later nested
+/// definition's span; a span counts only when its `def` line has the owner's
+/// own indentation (a decorator line shares it, a nested `def` does not).
+fn owner_header_end(owner_source: &str, owner: &PythonOwner) -> Option<usize> {
+    let indent = |line: usize| {
+        owner_source
+            .lines()
+            .nth(line.checked_sub(1)?)
+            .map(|text| text.len() - text.trim_start().len())
+    };
+    let (def_line, header_end) =
+        super::no_behavior::multi_line_def_header_span(owner_source, owner.start_line)?;
+    (indent(def_line)? == indent(owner.start_line)? && header_end > owner.start_line)
+        .then_some(header_end)
+}
+
 /// Every owner-body line (zero-based index into `owner_source`, trimmed text)
 /// that binds `name`, by the same over-refusing reading as
 /// [`name_rebound_in_owner`].
@@ -1250,9 +1268,7 @@ pub(super) fn owner_binding_lines<'a>(
     // whole header (#15292). The shared header owner gives no span for a
     // one-line or unrecognized header, which keeps the over-refusing reading
     // from the line after `owner.start_line`.
-    let body_start = super::no_behavior::multi_line_def_header_span(owner_source, owner.start_line)
-        .map_or(owner.start_line, |(_, header_end)| header_end)
-        .max(owner.start_line);
+    let body_start = owner_header_end(owner_source, owner).unwrap_or(owner.start_line);
     owner_source
         .lines()
         .enumerate()
@@ -1518,6 +1534,11 @@ mod tests {
         let rebound = format!("{quoted}    total = 1\n");
         let owner = quote_owner(&rebound)?;
         assert!(name_rebound_in_owner(&rebound, &owner, "total"));
+        // A header the span search does not recognize never borrows a later
+        // nested definition's span: the body rebinding before it is read.
+        let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    return total > helper(1)\n";
+        let owner = quote_owner(tabbed)?;
+        assert!(name_rebound_in_owner(tabbed, &owner, "total"));
         Ok(())
     }
 
