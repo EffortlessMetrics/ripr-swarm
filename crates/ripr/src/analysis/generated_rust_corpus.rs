@@ -33,7 +33,7 @@ pub(crate) fn absent_changed_rust_file_limitations(
             .map(PathBuf::as_path)
             .filter(|path| route(path) == Some(LanguageId::Rust) && !generated.contains(path)),
     );
-    workspace::supplement_absent_file_limitations(&absent)
+    workspace::supplement_absent_file_limitations(root, &absent)
 }
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
