@@ -1311,6 +1311,40 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// #15183: whether `assertion` is a bare standard assertion invocation
+    /// (`assert_eq!`, `assert!`, ..) whose name is really rebound where the
+    /// test runs it: a `macro_rules!`/`macro` definition or an import
+    /// covering the assertion, found by the same binding-site lookup the
+    /// refusal note reads. Such an invocation may compare nothing, so its
+    /// extracted strength is not evidence. A site that only may rebind the
+    /// name (a foreign glob, an unresolved `#[macro_use]`) is not counted
+    /// here. Withholds only; it never grants credit.
+    pub(in crate::analysis) fn assertion_macro_rebound(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        let Some(path) = outer_macro_path(&assertion.text) else {
+            return false;
+        };
+        let name = path.strip_prefix("r#").unwrap_or(&path);
+        // The memoized whole-index binding question answers the common
+        // workspace that binds none of these names without the per-test site
+        // lookup, which would otherwise pay the workspace macro-site scan
+        // for every assertion of a small stage.
+        // A test-file `macro_rules!` that cannot leave its body binds the name
+        // only after its definition (Rust textual scope), so a later one does
+        // not rebind this assertion; the lookup then still reads every other
+        // covering or workspace site.
+        let in_scope = |site: &MacroBindingSite| !defined_after(site, assertion.line);
+        ADMITTED_ASSERTION_MACROS.contains(&name)
+            && super::activation::macro_names_rebound(index, &ADMITTED_ASSERTION_MACROS)
+            && self
+                .macro_binding_site_accepting(test, assertion.line, name, index, &in_scope)
+                .is_some_and(|(_, site)| rebinds(&site))
+    }
+
     /// The outer assertion's identity, shared by admission and its refusal note.
     pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
         let path = outer_macro_path(text)?;
@@ -1388,6 +1422,19 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.macro_binding_site_accepting(test, assertion_line, name, index, &|_| true)
+    }
+
+    /// [`Self::macro_binding_site`] reading only the test-file scoped sites
+    /// `accept` keeps; the workspace site is read unchanged.
+    fn macro_binding_site_accepting(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+        accept: &dyn Fn(&MacroBindingSite) -> bool,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
             module_declaration_resolved(resolved_modules, index, path, line, declaration)
@@ -1424,6 +1471,7 @@ impl OwnerPinSyntax {
             &self.test_file_macro_sites,
             self.target_roots(index),
             &resolved,
+            accept,
         );
         if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
             local
@@ -4699,6 +4747,7 @@ fn test_macro_binding_site(
     memo: &SyncMemo<TestFileMacroSites>,
     roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    accept: &dyn Fn(&MacroBindingSite) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
         return None;
@@ -4718,8 +4767,21 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
+        .find(|(_, site)| accept(site) && site_covers_assertion(site, test, assertion_line, bytes))
         .map(|(_, site)| (test.file.clone(), site.clone()))
+}
+
+/// #15183: a non-exported, body-scoped `macro_rules!` whose item starts on a
+/// later line than the assertion. Rust's textual macro scope begins after the
+/// definition, so it does not rebind that earlier invocation. An unknown
+/// line (0), the same line, an exported or unscoped definition and any import
+/// stay counted.
+fn defined_after(site: &MacroBindingSite, assertion_line: usize) -> bool {
+    matches!(site.kind, MacroBindingKind::Definition)
+        && site.crate_local
+        && site.scope.is_some()
+        && site.line != 0
+        && site.line > assertion_line
 }
 
 /// `candidates` are the file's stored [`MacroBindingCandidates`]: a name
