@@ -347,7 +347,15 @@ pub(crate) fn resolve_package_discovery(
 fn manifest_test_script_is_placeholder(pkg_json: &str) -> bool {
     parse_manifest_facts(pkg_json)
         .and_then(|facts| facts.test_script)
-        .is_some_and(|script| script.contains("no test specified") && script.contains("exit 1"))
+        .is_some_and(|script| {
+            // The whole script is the placeholder: it starts with the `echo`,
+            // so a real command with a placeholder-like fallback branch
+            // (`npm run test:unit || (echo "..." && exit 1)`) stays runnable.
+            let script = script.trim_start();
+            script.starts_with("echo ")
+                && script.contains("no test specified")
+                && script.contains("exit 1")
+        })
 }
 
 // ─── Manifest helpers ─────────────────────────────────────────────────────────
@@ -1858,6 +1866,9 @@ mod tests {
         assert!(!manifest_test_script_is_placeholder(r#"{"name":"x"}"#));
         assert!(!manifest_test_script_is_placeholder(
             r#"{"scripts":{"test":"mocha || echo 'no test specified'"}}"#
+        ));
+        assert!(!manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"npm run test:unit || (echo \"Error: no test specified\" && exit 1)"}}"#
         ));
     }
 
