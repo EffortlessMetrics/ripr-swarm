@@ -70,7 +70,7 @@ Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (no default branch: add `--base <branch>`;
-           committed on it yourself: `--base HEAD~N`, N = your commit count).
+           committed on it yourself: `--base <sha of HEAD~N>`, N = your commits; a sha stays fixed).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
