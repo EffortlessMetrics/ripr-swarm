@@ -94,6 +94,13 @@ ripr receipt write --gap <canonical_gap_id> --packet <packet_id> \
 | `--status <verify_status>` | required | The outcome of the verify command. See valid values below. |
 | `--out <path>` | optional | Write the receipt JSON to this path. When omitted, writes to `target/ripr/receipts/<canonical_gap_id>.json` with filename-unsafe characters percent-encoded (see default path portability below). |
 
+The default output path is relative to the process's current directory;
+`--root` does not relocate it. Before writing there, the existing default
+output tree must resolve within that current directory, including when
+`RIPR_CACHE_DIR` is set or `--root` names another directory. Explicit `--out`
+paths retain their caller-selected location. This containment check does not
+defend against a directory link changed between the check and the write.
+
 The `ripr receipt check` command reads a receipt file and reports
 whether it is structurally valid and not stale:
 
@@ -235,7 +242,7 @@ defects that PR 2 of issue #1123 corrects.
 
 | Condition | Required behavior |
 | --- | --- |
-| `--gap` not provided | Explicit error: "receipt requires a canonical_gap_id; re-run with --gap". No receipt written. |
+| `--gap` not provided | Explicit error: "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>`". No receipt written. |
 | `canonical_gap_id` does not match any known gap in the ledger | Explicit error: "canonical_gap_id not found; verify the gap id with `ripr agent status`". No receipt written. |
 | `--verify-command` absent | Explicit error: "receipt requires --verify-command". No receipt written. |
 | `--status` absent | Explicit error: "receipt requires --status (passed|failed|not_run|unknown)". No receipt written. |

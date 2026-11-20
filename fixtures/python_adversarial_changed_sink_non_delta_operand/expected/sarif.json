@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": "fnv1a64:6865f76b1f82dc2a",
+            "git_candidate_subject": null,
+            "input_identity": "sha256:bc3a5d20d5c8cd336217961c8b93c0fc5a77f8b4ece664ef8420d01003891bab",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|src/account.py"
+          },
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/account.py"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "static_unknown static exposure for return_value probe:         return max(0, self._balance)"
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|src/account.py"
+          },
+          "properties": {
+            "changed_expression": "        return max(0, self._balance)",
+            "classification": "static_unknown",
+            "confidence": 0.2,
+            "finding_id": "probe:src_account.py:python_preview:c7d70a2d",
+            "flow_sinks": [],
+            "kind": "finding",
+            "language": "python",
+            "language_status": "preview",
+            "missing_discriminators": [],
+            "observed_values": [],
+            "owner": "python:src/account.py::Account.balance",
+            "owner_kind": "method",
+            "probe_delta": "value",
+            "probe_family": "return_value",
+            "probe_id": "probe:src_account.py:python_preview:c7d70a2d",
+            "python_no_action": {
+              "authority_boundary": "preview_advisory_only",
+              "changed_owner": "python:src/account.py::Account.balance",
+              "gap_state": "static_limitation",
+              "language": "python",
+              "language_status": "preview",
+              "limits": [
+                "Syntax-first Python preview evidence only.",
+                "No repair card or agent packet emitted for static limits.",
+                "No source edits, generated tests, mutation execution, provider calls, or gate authority."
+              ],
+              "no_action_kind": "static_limit",
+              "receipt": {
+                "command": null,
+                "status": "not_applicable_static_limit"
+              },
+              "repair_card_present": false,
+              "repair_packet_ready": false,
+              "repairability": "analyzer_limitation",
+              "source": "check_python_preview",
+              "static_limit_kind": "decorator_indirection",
+              "stop_conditions": [
+                "static_probe_unknown"
+              ],
+              "verify": {
+                "command": null,
+                "status": "not_applicable_static_limit"
+              },
+              "why_not_actionable": "Static limit `decorator_indirection`: owner `Account.balance` is decorated with `property`; syntax-first preview evidence does not resolve decorator-modified call behavior."
+            },
+            "related_tests": [],
+            "related_tests_total": 0,
+            "ripr": {
+              "discriminate": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "Static limit `decorator_indirection` prevents a safe Python discriminator claim."
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Static limit `decorator_indirection` prevents a safe Python infection claim."
+              },
+              "observe": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "Strongest extracted Python oracle kind: `unknown` (rank 0)"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Static limit `decorator_indirection` prevents a safe Python propagation claim."
+              },
+              "reach": {
+                "confidence": "low",
+                "state": "no",
+                "summary": "0 related Python test(s) found for owner `balance`"
+              }
+            },
+            "severity": "note",
+            "static_limit_kind": "decorator_indirection",
+            "stop_reasons": [
+              "static_probe_unknown"
+            ],
+            "suggested_next_action": "",
+            "tool": "ripr"
+          },
+          "ruleId": "ripr.finding.static_unknown"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

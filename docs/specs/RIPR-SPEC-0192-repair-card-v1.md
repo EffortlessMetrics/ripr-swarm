@@ -118,7 +118,15 @@ Authority:
 5. Field-for-field projections are documented at each site; the builder owns
    all derivation and renderers consume the card without re-implementing
    any gate or join.
-6. The card describes the work order and never marks itself complete:
+6. An attached attempt supplies the card's next step through the shared
+   builder. An ordinary `awaiting_edit` attempt names its recorded continue
+   route after the focused test edit; ended or finished attempts name status
+   for that exact attempt. Trust-bound, explicit-store and unparseable
+   continuations stay with status's advanced recovery route. These are
+   non-executable prerequisite/inspection projections, not a new execution
+   authority. New-start readiness and packet inspection remain unchanged for
+   cards without attempts. Existing card refusal gates remain in force.
+   The card describes the work order and never marks itself complete:
    observed completion lives in the RepairAttempt/receipt authorities, and
    the claim boundary says exactly that.
 7. The eight required shapes (ready, limited, stale, unavailable,

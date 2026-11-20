@@ -57,12 +57,12 @@
       "receipt": {
         "bash": "(cd -P -- <root> && ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command \"npx --no-install jest tests/discount.test.ts\" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json)",
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
       },
       "verify": {
         "bash": "(cd -P -- <root> && npx --no-install jest tests/discount.test.ts)",
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
       }
     },
     "recommended_repair_command": "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base origin/main --root <cwd>/fixtures/first_successful_pr/typescript-preview-gap --phase before"

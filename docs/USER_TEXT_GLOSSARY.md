@@ -98,10 +98,10 @@ what to do next (a flag to pass, a command to run, a file to create). The
 
 The cue is a clause that starts with an action (`pass ...`, `run ...`, `set
 ...`), or a named command, flag or `--help`. It proves the message offers
-something to do, not that it is the right thing. Existing messages without a
-cue are listed per source file in `policy/refusal-next-step.d/`; fixing one
-means deleting its line (`RIPR_PRUNE_REFUSAL_BASELINE=1` drops fixed lines and
-never adds any). Tracking: #11539.
+something to do, not that it is the right thing. The baseline in
+`policy/refusal-next-step.d/` is now empty (#13688), so any new message
+without a cue fails; `crates/ripr/tests/cli_error_message_snapshots.rs` pins
+the exact text of the argument refusals. Tracking: #11539, #13688.
 
 ## Baseline ceilings
 

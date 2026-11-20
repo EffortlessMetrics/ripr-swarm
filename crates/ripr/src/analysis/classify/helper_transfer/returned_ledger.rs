@@ -33,7 +33,7 @@ pub(crate) fn returned_ledger(
     let hop = chain
         .hops
         .first()
-        .filter(|hop| !hop.through_macro && hop.receiver.is_none())?;
+        .filter(|hop| !hop.reach_only() && hop.receiver.is_none())?;
     let owner_parse = parse_clean_source_file(&owner.body)?;
     let function = owner_parse
         .tree()
@@ -391,14 +391,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -428,6 +428,7 @@ mod tests {
                 arguments: vec!["&mut errors".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,

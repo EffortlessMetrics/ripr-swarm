@@ -53,5 +53,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_unittest_list_equal_equal_values/input --diff <cwd>/fixtures/python_unittest_list_equal_equal_values/diff.patch --mode fast probe:src_labels.py:python_preview:c34c7239
   ripr context --root <cwd>/fixtures/python_unittest_list_equal_equal_values/input --diff <cwd>/fixtures/python_unittest_list_equal_equal_values/diff.patch --mode fast --at probe:src_labels.py:python_preview:c34c7239
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

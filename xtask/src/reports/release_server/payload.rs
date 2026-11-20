@@ -17,6 +17,96 @@ const PAYLOAD_ROOT: &str = "target/ripr/distribution";
 const IDENTITY_JSON: &str = "payload-identity.json";
 const IDENTITY_MARKDOWN: &str = "payload-identity.md";
 
+/// Size-regression budgets for the shipped server payload, archive and
+/// executable. These are tripwires against accidental growth (for example
+/// debug artefacts, duplicated native libraries or an unintended extra
+/// payload file), not size-optimisation targets: the payload is one release
+/// executable plus a few KiB of licences/readme, so each ceiling leaves
+/// generous headroom over a single-binary payload for per-target variance.
+/// Raise a ceiling only in a change that documents the measured new size
+/// and why the growth is intended.
+///
+/// The archive ceiling is measured, not guessed: the current server archive
+/// is about 24 MiB (a gzip-9 executable proxy of 24,092,759 bytes plus a few
+/// KiB of licences/readme), so 64 MiB (67,108,864 bytes) is roughly 2.6x the
+/// current archive. That remains a catastrophe tripwire against accidental
+/// growth, not a size-optimisation target.
+pub(crate) const MAX_EXECUTABLE_SIZE_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) const MAX_PAYLOAD_TOTAL_SIZE_BYTES: u64 = 160 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_SIZE_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PayloadSizeSummary {
+    pub(crate) total_bytes: u64,
+    pub(crate) executable_bytes: u64,
+}
+
+impl FinalNativePayloadIdentity {
+    pub(crate) fn size_summary(&self) -> Result<PayloadSizeSummary, String> {
+        let mut total_bytes = 0u64;
+        let mut executable_bytes = 0u64;
+        for file in &self.files {
+            total_bytes = total_bytes.checked_add(file.size_bytes).ok_or_else(|| {
+                format!(
+                    "total payload size overflows u64 when adding `{}` ({} bytes)",
+                    file.path, file.size_bytes
+                )
+            })?;
+            if file.role == PayloadFileRole::Executable {
+                executable_bytes =
+                    executable_bytes
+                        .checked_add(file.size_bytes)
+                        .ok_or_else(|| {
+                            format!(
+                                "executable payload size overflows u64 when adding `{}` ({} bytes)",
+                                file.path, file.size_bytes
+                            )
+                        })?;
+            }
+        }
+        Ok(PayloadSizeSummary {
+            total_bytes,
+            executable_bytes,
+        })
+    }
+}
+
+pub(crate) fn check_archive_file_size_budget(asset_path: &Path) -> Result<u64, String> {
+    let archive_size_bytes = fs::metadata(asset_path)
+        .map_err(|err| format!("failed to stat {}: {err}", asset_path.display()))?
+        .len();
+    check_archive_size_budget(archive_size_bytes)?;
+    Ok(archive_size_bytes)
+}
+
+pub(crate) fn check_payload_size_budget(summary: PayloadSizeSummary) -> Result<(), String> {
+    if summary.executable_bytes > MAX_EXECUTABLE_SIZE_BYTES {
+        return Err(format!(
+            "executable size {} bytes exceeds budget {MAX_EXECUTABLE_SIZE_BYTES} bytes; \
+             shrink the executable or raise MAX_EXECUTABLE_SIZE_BYTES with a documented rationale",
+            summary.executable_bytes
+        ));
+    }
+    if summary.total_bytes > MAX_PAYLOAD_TOTAL_SIZE_BYTES {
+        return Err(format!(
+            "total payload size {} bytes exceeds budget {MAX_PAYLOAD_TOTAL_SIZE_BYTES} bytes; \
+             shrink the payload or raise MAX_PAYLOAD_TOTAL_SIZE_BYTES with a documented rationale",
+            summary.total_bytes
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_archive_size_budget(archive_bytes: u64) -> Result<(), String> {
+    if archive_bytes > MAX_ARCHIVE_SIZE_BYTES {
+        return Err(format!(
+            "archive size {archive_bytes} bytes exceeds budget {MAX_ARCHIVE_SIZE_BYTES} bytes; \
+             shrink the archive or raise MAX_ARCHIVE_SIZE_BYTES with a documented rationale"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FinalNativePayloadIdentity {
@@ -316,7 +406,7 @@ fn current_payload_repository_context(
     })
 }
 
-fn workspace_version() -> Result<String, String> {
+pub(super) fn workspace_version() -> Result<String, String> {
     let path = Path::new("Cargo.toml");
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -623,6 +713,14 @@ fn validate_identity_shape(identity: &FinalNativePayloadIdentity) -> Result<(), 
     {
         violations.push("native_runtime_evidence state and source must not be empty".to_string());
     }
+    match identity.size_summary() {
+        Ok(summary) => {
+            if let Err(error) = check_payload_size_budget(summary) {
+                violations.push(error);
+            }
+        }
+        Err(error) => violations.push(error),
+    }
 
     if violations.is_empty() {
         Ok(())
@@ -827,8 +925,15 @@ fn verify_identity_projection(
 }
 
 fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> String {
+    let (total_bytes, executable_bytes) = match identity.size_summary() {
+        Ok(summary) => (
+            summary.total_bytes.to_string(),
+            summary.executable_bytes.to_string(),
+        ),
+        Err(_) => ("overflow".to_string(), "overflow".to_string()),
+    };
     let mut output = format!(
-        "# Final native payload identity\n\n- schema version: {}\n- kind: `{}`\n- product: `{}`\n- version: `{}`\n- target: `{}`\n- executable: `{}`\n- source commit: `{}`\n- source tree: `{}`\n- Cargo.lock SHA-256: `{}`\n- selected features: `{}`\n- build OS/arch: `{}` / `{}`\n- CI provider: `{}`\n- runner image: `{}`\n- payload aggregate SHA-256: `{}`\n- native runtime evidence: `{}` from `{}`\n\n## Payload files\n\n| Path | Role | Bytes | SHA-256 |\n| --- | --- | ---: | --- |\n",
+        "# Final native payload identity\n\n- schema version: {}\n- kind: `{}`\n- product: `{}`\n- version: `{}`\n- target: `{}`\n- executable: `{}`\n- source commit: `{}`\n- source tree: `{}`\n- Cargo.lock SHA-256: `{}`\n- selected features: `{}`\n- build OS/arch: `{}` / `{}`\n- CI provider: `{}`\n- runner image: `{}`\n- payload aggregate SHA-256: `{}`\n- total payload bytes: {}\n- executable bytes: {}\n- native runtime evidence: `{}` from `{}`\n\n## Payload files\n\n| Path | Role | Bytes | SHA-256 |\n| --- | --- | ---: | --- |\n",
         identity.schema_version,
         identity.kind,
         identity.product,
@@ -848,6 +953,8 @@ fn render_payload_identity_markdown(identity: &FinalNativePayloadIdentity) -> St
             .as_deref()
             .unwrap_or("not recorded"),
         identity.payload_aggregate_sha256,
+        total_bytes,
+        executable_bytes,
         identity.native_runtime_evidence.state,
         identity.native_runtime_evidence.source,
     );
@@ -1024,6 +1131,142 @@ mod tests {
             validate_identity_repository_context(&stale, &context.repository),
             "stale runtime-evidence owner",
         )?;
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn payload_size_summary_and_budget_pass_under_and_fail_over() -> Result<(), String> {
+        let root = unique_temp_dir("size-budget")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let identity = identity_from_context(
+            &fixture_context(),
+            payload_file_identities(&payload, "ripr")?,
+        )?;
+        // Fixture bytes: executable 6, licences 3 + 6, readme 19.
+        assert_eq!(
+            identity.size_summary()?,
+            PayloadSizeSummary {
+                total_bytes: 34,
+                executable_bytes: 6
+            }
+        );
+        let markdown = render_payload_identity_markdown(&identity);
+        assert!(markdown.contains("- total payload bytes: 34\n"));
+        assert!(markdown.contains("- executable bytes: 6\n"));
+
+        // At the ceiling passes; one byte over fails (fail-when-exceeded).
+        check_payload_size_budget(PayloadSizeSummary {
+            total_bytes: MAX_PAYLOAD_TOTAL_SIZE_BYTES,
+            executable_bytes: MAX_EXECUTABLE_SIZE_BYTES,
+        })?;
+        check_archive_size_budget(MAX_ARCHIVE_SIZE_BYTES)?;
+        let error = require_error(
+            check_payload_size_budget(PayloadSizeSummary {
+                total_bytes: MAX_PAYLOAD_TOTAL_SIZE_BYTES,
+                executable_bytes: MAX_EXECUTABLE_SIZE_BYTES + 1,
+            }),
+            "executable over budget",
+        )?;
+        assert!(error.contains("executable size"));
+        let error = require_error(
+            check_payload_size_budget(PayloadSizeSummary {
+                total_bytes: MAX_PAYLOAD_TOTAL_SIZE_BYTES + 1,
+                executable_bytes: 1,
+            }),
+            "total payload over budget",
+        )?;
+        assert!(error.contains("total payload size"));
+        let error = require_error(
+            check_archive_size_budget(MAX_ARCHIVE_SIZE_BYTES + 1),
+            "archive over budget",
+        )?;
+        assert!(error.contains("archive size"));
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn validate_identity_shape_rejects_over_budget_payload() -> Result<(), String> {
+        let root = unique_temp_dir("shape-over-budget")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let identity = identity_from_context(
+            &fixture_context(),
+            payload_file_identities(&payload, "ripr")?,
+        )?;
+        validate_identity_shape(&identity)?;
+
+        let mut over_executable = identity.clone();
+        for file in &mut over_executable.files {
+            if file.role == PayloadFileRole::Executable {
+                file.size_bytes = MAX_EXECUTABLE_SIZE_BYTES + 1;
+            }
+        }
+        let error = require_error(
+            validate_identity_shape(&over_executable),
+            "over-budget executable through validate_identity_shape",
+        )?;
+        assert!(error.contains("executable size"), "{error}");
+
+        let mut over_total = identity;
+        for file in &mut over_total.files {
+            if file.path == "LICENSE-MIT" {
+                file.size_bytes = MAX_PAYLOAD_TOTAL_SIZE_BYTES;
+            }
+        }
+        let error = require_error(
+            validate_identity_shape(&over_total),
+            "over-budget total through validate_identity_shape",
+        )?;
+        assert!(error.contains("total payload size"), "{error}");
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn validate_identity_shape_rejects_overflowing_payload_without_panicking() -> Result<(), String>
+    {
+        let root = unique_temp_dir("shape-overflow")?;
+        let payload = root.join("payload");
+        write_fixture_payload(&payload)?;
+        let mut identity = identity_from_context(
+            &fixture_context(),
+            payload_file_identities(&payload, "ripr")?,
+        )?;
+        for file in &mut identity.files {
+            if file.role == PayloadFileRole::Executable {
+                file.size_bytes = u64::MAX;
+            }
+        }
+        let error = require_error(identity.size_summary(), "overflowing size_summary")?;
+        assert!(error.contains("overflows u64"), "{error}");
+        let error = require_error(
+            validate_identity_shape(&identity),
+            "overflowing identity through validate_identity_shape",
+        )?;
+        assert!(error.contains("overflows u64"), "{error}");
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn archive_file_size_budget_rejects_over_budget_file() -> Result<(), String> {
+        let root = unique_temp_dir("archive-file-budget")?;
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let archive = root.join("archive.tar.gz");
+        fs::write(&archive, b"small archive").map_err(|err| err.to_string())?;
+        assert_eq!(check_archive_file_size_budget(&archive)?, 13);
+        let file = fs::File::create(&archive).map_err(|err| err.to_string())?;
+        file.set_len(MAX_ARCHIVE_SIZE_BYTES + 1)
+            .map_err(|err| err.to_string())?;
+        drop(file);
+        let error = require_error(
+            check_archive_file_size_budget(&archive),
+            "over-budget archive file through release_server_archive seam",
+        )?;
+        assert!(error.contains("archive size"), "{error}");
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
     }

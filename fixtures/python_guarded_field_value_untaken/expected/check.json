@@ -1,0 +1,184 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_guarded_field_value_untaken/input",
+  "config_path": "<cwd>/fixtures/python_guarded_field_value_untaken/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:825965323e0eeb51fe090cf4ec4087c1349833dec82367777282c85077542d9f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:orders_views.py:python_preview:11327452",
+      "canonical_gap_id": "gap:python:orders/views.py:order_view:field_value:field_construction:return_status_422",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:orders/views.py:order_view:field_value:field_construction:return_status_422",
+        "language": "python",
+        "file": "orders/views.py",
+        "owner": "order_view",
+        "behavior_kind": "field_value",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "return_status_422"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:orders_views.py:python_preview:11327452",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "orders/views.py",
+        "line": 3,
+        "expression": "        return {\"status\": 422}",
+        "owner": "python:orders/views.py::order_view"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `order_view`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input."},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `order_view`", "infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches constructed field: return {\"status\": 422} (line 3)", "related test tests/test_views.py:4 test_view_ok uses strong exact value oracle: assert order_view(None, 100)[\"status\"] == 200", "source function argument value request = None at line 5", "source function argument value total = 100 at line 5", "missing discriminator total < 0: no strong related test input satisfies `total < 0`; observed total values: 100; the changed line never executes under an observed input"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"return {\"status\": 422}","line":3}
+      ],
+      "evidence": ["owner: order_view", "owner_kind: function", "missing_discriminator: total < 0", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_views.py", "suggested_test_name: test_view_ok", "suggested_test_node_id: tests/test_views.py::test_view_ok", "suggested_verify_command: python -m pytest tests/test_views.py::test_view_ok", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_view_ok)", "test_verify_command: python -m pytest tests/test_views.py::test_view_ok (test_view_ok)", "related_test_relation: syntactic_call (test_view_ok)", "test_oracle: exact_value strong (test_view_ok)", "test_oracle_shape: field_assertion (test_view_ok)"],
+      "missing": ["A strong Python oracle reaches `order_view`, but static evidence does not place a related test input inside the guarding arm `total < 0`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition."],
+      "assertion_texts": {
+        "5": "assert order_view(None, 100)[\"status\"] == 200"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "request = None",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "total = 100",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "total < 0",
+            "reason": "no strong related test input satisfies `total < 0`; observed total values: 100; the changed line never executes under an observed input",
+            "flow_sink": {"kind":"struct_field","text":"return {\"status\": 422}","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "request = None",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "total = 100",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "total < 0",
+          "reason": "no strong related test input satisfies `total < 0`; observed total values: 100; the changed line never executes under an observed input",
+          "flow_sink": {"kind":"struct_field","text":"return {\"status\": 422}","line":3}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_view_ok",
+          "file": "tests/test_views.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert order_view(None, 100)[\"status\"] == 200"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_views.py",
+        "suggested_test_name": "test_view_ok",
+        "suggested_test_node_id": "tests/test_views.py::test_view_ok",
+        "verify_command": "python -m pytest tests/test_views.py::test_view_ok",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:orders/views.py:order_view:field_value:field_construction:return_status_422",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "order_view",
+        "changed_behavior": "field_value changed at orders/views.py:3: `return {\"status\": 422}`",
+        "current_test_evidence": "tests/test_views.py:4 test_view_ok currently has oracle_strength=strong, oracle_kind=exact_value: assert order_view(None, 100)[\"status\"] == 200",
+        "missing_discriminator": "total < 0",
+        "recommended_test_shape": "Strengthen the existing pytest field/object assertion for `total < 0`.",
+        "suggested_assertion": "Assert the returned object or field satisfies `total < 0`.",
+        "suggested_location": {
+          "test_file": "tests/test_views.py",
+          "test_name": "test_view_ok",
+          "pytest_node_id": "tests/test_views.py::test_view_ok"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_views.py::test_view_ok",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `total < 0`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `total < 0`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "status",
+      "observed_sink": "assert order_view(None, 100)[\"status\"] == 200",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["orders/views.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"orders/views.py","digest":"sha256:54022f384a495e56ed55f04206a49d1b00ecf8eb6e587174f64bdf22e6b4c3c5"},{"path":"tests/test_views.py","digest":"sha256:7ab447469a64b1d0b0064354aeea8fd8dd50073112f86e600df2a75d4820d9f7"}]}
+}

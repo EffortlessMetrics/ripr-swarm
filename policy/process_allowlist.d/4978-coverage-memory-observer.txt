@@ -1,0 +1,1 @@
+tools/repo-policy/src/coverage_diagnostics/storage_tests.rs|Command::new|1|coverage/4978|Linux-only lifecycle test runs a bounded shell child with a release handshake to verify live memory receipts and native failure authority; no network or production spawn.

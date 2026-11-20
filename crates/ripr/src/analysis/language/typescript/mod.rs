@@ -46,6 +46,8 @@ pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+#[cfg(test)]
+mod actionability_proptest_tests;
 mod admission;
 #[cfg(test)]
 mod admission_tests;
@@ -65,6 +67,7 @@ mod boundary_label_tests;
 mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
+mod call_lexer;
 mod call_removal_guard;
 #[cfg(test)]
 mod call_removal_tests;
@@ -75,6 +78,7 @@ mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -87,6 +91,7 @@ mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
+mod fact_prefetch;
 mod fact_store;
 mod fast_check;
 #[cfg(test)]
@@ -98,6 +103,8 @@ mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
 #[cfg(test)]
 mod comment_whitespace_only_tests;
+#[cfg(test)]
+mod fact_prefetch_tests;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -128,6 +135,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
+mod module_value_reads;
 #[cfg(test)]
 mod negated_jest_assertion_tests;
 #[cfg(test)]
@@ -151,6 +159,7 @@ mod assertion_form_tests;
 mod asymmetric_matcher_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_credit;
 mod loop_count_guard;
 mod loop_rows;
 mod parse;
@@ -204,6 +213,9 @@ mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
+mod throw_boundary_guard;
+#[cfg(test)]
+mod throw_boundary_tests;
 pub(crate) mod tsconfig;
 mod typed_loose_equality_guard;
 mod types;
@@ -228,6 +240,7 @@ pub(crate) use boundary_selection::{
 };
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use call_lexer::inside_block_comment;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use close_to_guard::*;
@@ -290,6 +303,7 @@ pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
+pub(crate) use throw_boundary_guard::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
@@ -335,6 +349,34 @@ fn source_type_for_extension(path: &Path) -> SourceType {
         Some("js") => SourceType::mjs(),
         _ => SourceType::mjs(),
     }
+}
+
+/// Owners whose cross-module callers were not followed because more than
+/// `MAX_CROSS_MODULE_ENTRIES` of them call it, keyed by owner identity (#13592).
+type FanInLimitedOwners = std::collections::HashSet<(PathBuf, String, usize)>;
+
+/// The per-owner line context every changed-line pass (added and deleted)
+/// shares, carrying the owner's fan-in limit so no pass can drop it (#13592).
+fn changed_owner_line_context<'a>(
+    owner: &TypeScriptOwner,
+    all_tests: &'a [TypeScriptTest],
+    workspace_root: &Path,
+    reexport_index: &related_tests::ReExportIndex,
+    relation_index: &relation_index::RelationIndex,
+    alias_map: Option<&TsAliasMap>,
+    fan_in_limited: &FanInLimitedOwners,
+) -> OwnerLineContext<'a> {
+    let mut context = owner_line_context(
+        owner,
+        all_tests,
+        Some(workspace_root),
+        reexport_index,
+        relation_index,
+        alias_map,
+    );
+    context.cross_module_fan_in_limited =
+        fan_in_limited.contains(&(owner.file.clone(), owner.name.clone(), owner.start_line));
+    context
 }
 
 /// First owner in source order whose span contains `line`, over a
@@ -588,6 +630,7 @@ impl TypeScriptAdapter {
                 rust_diagnostic_origins: Default::default(),
                 rust_consumed_sources: Default::default(),
                 preview_fact_cache: Default::default(),
+                owner_opt_outs: Vec::new(),
             });
         }
         // Phase 1: discover and index every accepted file in the workspace
@@ -700,6 +743,27 @@ impl TypeScriptAdapter {
                 None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
             })
         };
+        // Per-package `paths` configs (#12754): a nested `paths`-declaring
+        // config is resolved for its own importers, so its content joins the
+        // cache digest, and a map must exist even with no root config.
+        let nested_configs = if options.resolve_tsconfig_paths {
+            tsconfig::nested_configs_fingerprint(&options.root, &workspace_files)
+        } else {
+            None
+        };
+        let alias_map = match nested_configs {
+            Some(fingerprint) => Some(
+                alias_map
+                    .unwrap_or_else(|| {
+                        TsAliasMap::workspace_packages_only(
+                            &options.root,
+                            workspace_packages::WorkspacePackages::default(),
+                        )
+                    })
+                    .with_nested_configs(fingerprint),
+            ),
+            None => alias_map,
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // #10725: persistent per-file fact store. One content-keyed lookup
@@ -722,8 +786,60 @@ impl TypeScriptAdapter {
         let mut export_facts_by_file: std::collections::HashMap<PathBuf, ModuleExportFacts> =
             std::collections::HashMap::new();
         let mut pending_fact_stores: Vec<PendingFactStore> = Vec::new();
+        // #13832: derive upcoming files' facts on a few threads, one window
+        // at a time; each result is seeded right before the loop's own
+        // lookup below, so the loop body and its outputs are unchanged.
+        let prefetch_workers = fact_prefetch::workers();
+        let prefetch_window = fact_prefetch::window(prefetch_workers);
+        let mut prefetched = fact_prefetch::Prefetched::default();
 
-        for relative in &workspace_files {
+        for (file_index, relative) in workspace_files.iter().enumerate() {
+            if prefetch_workers > 1 && file_index % prefetch_window == 0 {
+                let upcoming = workspace_files
+                    .iter()
+                    .skip(file_index)
+                    .take(prefetch_window)
+                    .filter_map(|relative| {
+                        let source = source_cache.get(relative)?;
+                        if extraction_cache::file_facts_in_memory(
+                            relative,
+                            source,
+                            &options.root,
+                            alias_map_ref,
+                        ) {
+                            return None;
+                        }
+                        // A file a persisted envelope could serve is left to
+                        // the loop's own lookup (the same lossless-path rule).
+                        let path_is_lossless = relative
+                            .to_str()
+                            .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
+                        if fact_store_usable
+                            && path_is_lossless
+                            && fact_store.entry_exists(&fact_store::TypeScriptFileFactKey::new(
+                                relative,
+                                source,
+                                &options.root,
+                                alias_map_ref,
+                            ))
+                        {
+                            return None;
+                        }
+                        Some(fact_prefetch::PrefetchRequest {
+                            relative,
+                            source,
+                            tests: is_test_file(relative)
+                                && !extraction_cache::test_extraction_in_memory(relative, source),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                prefetched = fact_prefetch::derive_window(
+                    &upcoming,
+                    &options.root,
+                    alias_map_ref,
+                    prefetch_workers,
+                );
+            }
             let Some(source) = source_cache.get(relative) else {
                 continue;
             };
@@ -763,6 +879,7 @@ impl TypeScriptAdapter {
             match lookup {
                 None => {}
                 Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
+                    prefetched.discard(relative);
                     fact_cache_stats.hits += 1;
                     persisted_gap = persisted
                         .partial_extraction
@@ -806,6 +923,7 @@ impl TypeScriptAdapter {
             // re-parsing. A refused/failed parse (`Err`) and a parse error
             // (`Some(parse_error)`) disclose exactly like the previous
             // dedicated parse-error pass.
+            prefetched.seed_facts(relative, source, &options.root, alias_map_ref);
             let facts = match extraction_cache::file_facts_cached(
                 relative,
                 source,
@@ -858,6 +976,7 @@ impl TypeScriptAdapter {
                 // is served from the content-keyed cache; the clone below is
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
+                prefetched.seed_tests(relative, source);
                 let (extraction, extraction_failure) =
                     extraction_cache::test_extraction_cached_disclosing(relative, source);
                 // #11132: a parse-worker failure during test extraction
@@ -1011,6 +1130,43 @@ impl TypeScriptAdapter {
             alias_map_ref,
             Some(&options.root),
         );
+
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // #13592: an owner of a changed file that no test calls directly is
+        // also reached through exports of OTHER modules that call it by an
+        // imported binding. Resolved only for changed files, through the
+        // re-export index's import identity, and bounded like the
+        // same-module caller chain. An owner past the fan-in limit gets none
+        // and its finding discloses the limit.
+        let mut cross_module_fan_in_limited = FanInLimitedOwners::new();
+        for owner in &mut all_owners {
+            if owner.class_name.is_none()
+                && changed_paths.contains(&normalized_path(&owner.file))
+                && !reexport_index.is_empty_outbound()
+            {
+                let cross =
+                    reexport_index.cross_module_entries(owner, alias_map_ref, Some(&options.root));
+                if cross.over_fan_in_limit {
+                    cross_module_fan_in_limited.insert((
+                        owner.file.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                    ));
+                }
+                if !cross.entries.is_empty() {
+                    owner.module_entries.extend(cross.entries);
+                    owner.module_entries.sort();
+                }
+            }
+        }
 
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
@@ -1213,6 +1369,14 @@ impl TypeScriptAdapter {
             // HashMap key.
             let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
                 std::collections::HashMap::new();
+            // #13827: removed lines that could have thrown the old side's
+            // error, read once per changed file for the message pin.
+            let removed_throw_candidates: Vec<String> = changed
+                .removed_lines
+                .iter()
+                .filter(|removed| removed_line_may_throw(&removed.text))
+                .map(|removed| removed.text.trim().to_string())
+                .collect();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
@@ -1248,11 +1412,46 @@ impl TypeScriptAdapter {
                 .filter(|facts| facts.parse_error.is_none())?;
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
+            // #14097: the wrapped signature of a new owner, read once per
+            // changed file. A header line whose removed counterpart looks
+            // like it is a changed signature, so it does not count as added
+            // and the whole header keeps its probes.
+            let wrapped_header_lines = ast_probe_facts
+                .as_ref()
+                .map(|(source_lines, _)| {
+                    let added_line_numbers: std::collections::HashSet<usize> = changed
+                        .added_lines
+                        .iter()
+                        .filter(|added| {
+                            !counterparts
+                                .get(&added.line)
+                                .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
+                        })
+                        .map(|added| added.line)
+                        .collect();
+                    new_owner_wrapped_header_lines(
+                        &changed.path,
+                        &changed_norm,
+                        source_lines,
+                        &all_owners,
+                        &removed_texts,
+                        |line| added_line_numbers.contains(&line),
+                        |line| {
+                            changed.added_lines.iter().any(|other| {
+                                other.line == line && is_probe_candidate(other.line, &other.text)
+                            })
+                        },
+                    )
+                })
+                .unwrap_or_default();
             for added in &changed.added_lines {
                 if inside_private_member_boundary(&private_boundaries, added.line) {
                     continue;
                 }
                 if !is_probe_candidate(added.line, &added.text) {
+                    continue;
+                }
+                if wrapped_header_lines.contains(&added.line) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,
@@ -1345,18 +1544,22 @@ impl TypeScriptAdapter {
                         // index: unique within this changed file, so the key
                         // needs no cloned Strings.
                         let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                            let mut context = owner_line_context(
+                            let mut context = changed_owner_line_context(
                                 owner,
                                 &all_tests,
-                                Some(&options.root),
+                                &options.root,
                                 &reexport_index,
                                 &relation_index,
                                 alias_map_ref,
+                                &cross_module_fan_in_limited,
                             );
                             context.single_line_replacement = matches!(
                                 (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                                 ([added], [removed]) if added.line == removed.new_side_line
                             );
+                            context
+                                .removed_throw_candidates
+                                .clone_from(&removed_throw_candidates);
                             context
                         });
                         classify_resolved_owner(
@@ -1476,14 +1679,19 @@ impl TypeScriptAdapter {
                         owner.end_line,
                     )?;
                     let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                        owner_line_context(
+                        let mut context = changed_owner_line_context(
                             owner,
                             &all_tests,
-                            Some(&options.root),
+                            &options.root,
                             &reexport_index,
                             &relation_index,
                             alias_map_ref,
-                        )
+                            &cross_module_fan_in_limited,
+                        );
+                        context
+                            .removed_throw_candidates
+                            .clone_from(&removed_throw_candidates);
+                        context
                     });
                     classify_resolved_owner(
                         &changed.path,
@@ -1846,6 +2054,7 @@ impl TypeScriptAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 }

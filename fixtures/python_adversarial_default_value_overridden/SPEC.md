@@ -37,6 +37,13 @@ default). The `missing` text names the parameter to exercise by omission. A
 companion unit test pins the inverse: the same change with a call that omits
 `verbose` (`render("Sam")`) and a strong oracle stays `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_render.py:python_preview:bc1138cb -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` for a default-value change when every strong related call binds

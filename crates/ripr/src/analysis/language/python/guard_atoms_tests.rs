@@ -590,3 +590,40 @@ fn a_parenthesized_scalar_is_not_a_one_element_container() -> Result<(), String>
     );
     Ok(())
 }
+
+// #14273: a call is a `(` after a name, `)` or `]`. A keyword before the
+// parenthesis (`in (...)`, `not (...)`) and a parenthesis inside a string are
+// not calls, so the membership and grouping forms stay readable.
+#[test]
+fn a_parenthesis_after_a_keyword_or_inside_a_string_is_not_a_call() {
+    use super::guard_activation::{conjunct_can_rebind, conjunct_has_call_or_walrus};
+    for (text, call) in [
+        ("fill(items)", true),
+        ("fill (items)", true),
+        ("items.pop()", true),
+        ("handlers[0](items)", true),
+        ("make()(items)", true),
+        ("(n := items)", true),
+        ("kind in ('a', 'b')", false),
+        ("kind not in ('a', 'b')", false),
+        ("not (kind)", false),
+        ("(kind is None)", false),
+        ("kind == 'f(x)'", false),
+        ("kind == \"it's\" and (kind)", false),
+        ("kind in ('a(', fill(kind))", true),
+        ("spin(kind)", true),
+    ] {
+        assert_eq!(conjunct_has_call_or_walrus(text), call, "{text}");
+    }
+    // The two atoms the guard reader evaluates itself are exempt; a call
+    // inside or after them is not.
+    for (text, rebinds) in [
+        ("len(items) > 0", false),
+        ("isinstance(kind, (int, str))", false),
+        ("len(fill(items)) > 0", true),
+        ("len(items) > count(items)", true),
+        ("lenient(items)", true),
+    ] {
+        assert_eq!(conjunct_can_rebind(text), rebinds, "{text}");
+    }
+}

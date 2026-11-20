@@ -13,7 +13,9 @@ use super::{
     GeneratedRustSources, LanguageId, RustAdapter, apply_repo_classified_finding, oracles,
     positive_limit_from_env, probe_shape, push_retained_finding,
 };
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::config::OraclePolicy;
 use crate::domain::SourceCurrentness;
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,7 +56,10 @@ impl RustAdapter {
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        // An unreadable below-root directory or file is skipped and disclosed
+        // through `partial_reason`; an unreadable root stays an error.
+        let (rust_files, unreadable_paths) =
+            workspace::discover_readable_rust_files(&options.root, &BTreeSet::new())?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
             .iter()
@@ -109,21 +114,16 @@ impl RustAdapter {
             &loaded_rust_files,
             &options.test_harnesses,
         )?;
-        #[cfg(test)]
-        {
-            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
-        }
+        rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
         }
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
+        rust_index::eprint_index_limit_disclosures(&index);
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_rust_files = origin_sources(loaded_rust_files, &index);
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
@@ -158,6 +158,9 @@ impl RustAdapter {
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
+                            // #15104: a repo scan has no diff, so no
+                            // declaration changed.
+                            .with_unchanged_module_declarations(&index)
                     });
                 let (mut finding, pre_cap_syntax_only) =
                     classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(
@@ -169,6 +172,7 @@ impl RustAdapter {
                         &transitive_reach,
                         None,
                         Some(&value_origins),
+                        None,
                     );
                 finding.language = Some(LanguageId::Rust);
                 finding.source_currentness = SourceCurrentness::CandidateCurrent;
@@ -213,7 +217,7 @@ impl RustAdapter {
             ),
             production_files: production_files.len(),
             skipped_files,
-            partial_reason: None,
+            partial_reason: workspace::unreadable_paths_partial_reason(&unreadable_paths),
             file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,

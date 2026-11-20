@@ -504,6 +504,49 @@ pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
     receivers
 }
 
+/// `(name, value)` of each statement binding a plain name, bound exactly once
+/// in the body, to a value that starts with a call of `callee` (`response =
+/// client.get("/price")` for `client.get`). A name bound twice may hold
+/// another response when an assertion reads it, so it is left out (#13869).
+pub(super) fn single_call_bindings(body_text: &str, callee: &str) -> Vec<(String, String)> {
+    let lines = logical_lines(body_text);
+    lines
+        .iter()
+        .filter_map(|line| simple_binding(line))
+        .filter(|(name, value)| {
+            value.strip_prefix(callee).is_some_and(call_closes_at_end)
+                && binding_count(&lines, name) == 1
+        })
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+/// Whether `rest` (string contents blanked) is one argument list whose closing
+/// bracket ends it: `("/x")` is, `("/x").json()` and `("/x") or y` are not.
+fn call_closes_at_end(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    if !rest.starts_with('(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (idx, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 {
+                    return idx + ch.len_utf8() == rest.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Whether `name` is bound anywhere in the body other than as a parameter of
 /// the first line's `def` (a local assignment, import, loop target, ...). An
 /// application name bound this way is not the module-level import it spells.

@@ -80,7 +80,9 @@ use super::test_styles::normalized_test_attribute_path as normalized_attribute_p
 use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
-use crate::analysis::extract::terminal_err_return_guard_oracle;
+use crate::analysis::extract::{
+    placeholder_bound_variables, terminal_err_return_guard_oracle, without_unfilled_expected,
+};
 use crate::analysis::rust_index::{
     OracleFact, classify_assertion, extract_assertions, extract_call_facts,
     extract_identifier_tokens, extract_literal_facts,
@@ -137,8 +139,13 @@ pub(super) fn apply_registrations(
             continue;
         };
         // A file no Cargo target compiles never runs its tests, whatever
-        // the registration says (#8999).
-        if facts.role_provenance.outside_module_tree {
+        // the registration says (#8999); nor does one whose every target
+        // `cargo test` skips (#14962).
+        if facts.role_provenance.outside_module_tree
+            || index
+                .cargo_test_skipped_files
+                .contains(&registration.target)
+        {
             continue;
         }
         let source = facts.source.clone();
@@ -431,20 +438,6 @@ fn apply_libtest_mimic_target(
         let masked_body = mask_dormant_template_spans(&body, &template_spans);
         let mut calls = extract_call_facts(&masked_body, start_line);
         let mut literals = extract_literal_facts(&masked_body, start_line);
-        let mut assertions = parser_oracles_for_node_tokens(
-            source,
-            &tokens,
-            matched.name_token_index,
-            close_index,
-            &line_index,
-        );
-        // #3603: a bare-identifier callback (`Trial::test("name",
-        // helper_fn)`) resolves to exactly one top-level function in this
-        // file, and that function's body is what the trial exercises —
-        // its parsed evidence joins the subject one level deep with real
-        // line attribution. Closures already scan through the claimed
-        // span; shadowed names, imports, paths, and unresolved or
-        // ambiguous names contribute nothing.
         // The enclosing scope for the shadow scan: resolved from the
         // invocation token's Fn ancestor when the trial is written as
         // plain code, and from the innermost line-span function fact
@@ -469,6 +462,47 @@ fn apply_libtest_mimic_target(
                     .map(|function| (function.body.clone(), function.start_line)),
             };
         let enclosing_body = enclosing_scope.as_ref().map(|(body, _)| body.as_str());
+        // #15020: a local the trial binds only to `todo!()` pins nothing, as
+        // on the ordinary `#[test]` paths (#14810, #14882). The callback can
+        // capture a binding of the enclosing function, outside the claimed
+        // span, so a name any such capturable binding holds keeps today's
+        // credit (#15063 review).
+        let mut placeholder_vars = placeholder_bound_variables(&masked_body);
+        if !placeholder_vars.is_empty() {
+            let captured = match tokens[position].parent_ancestors().find_map(ast::Fn::cast) {
+                Some(fn_node) => capturable_binding_names(
+                    &fn_node,
+                    ra_ap_syntax::TextRange::new(start, TextSize::new(end_offset)),
+                ),
+                // Inside another macro's token tree there is no syntax to
+                // scope by, so every binding in the enclosing text counts.
+                None => {
+                    let scope = enclosing_body.unwrap_or(source);
+                    let lowered = placeholder_bound_variables(scope);
+                    placeholder_vars
+                        .iter()
+                        .filter(|name| !lowered.contains(*name))
+                        .cloned()
+                        .collect()
+                }
+            };
+            placeholder_vars.retain(|name| !captured.contains(name));
+        }
+        let mut assertions = parser_oracles_for_node_tokens(
+            source,
+            &tokens,
+            matched.name_token_index,
+            close_index,
+            &line_index,
+            &placeholder_vars,
+        );
+        // #3603: a bare-identifier callback (`Trial::test("name",
+        // helper_fn)`) resolves to exactly one top-level function in this
+        // file, and that function's body is what the trial exercises —
+        // its parsed evidence joins the subject one level deep with real
+        // line attribution. Closures already scan through the claimed
+        // span; shadowed names, imports, paths, and unresolved or
+        // ambiguous names contribute nothing.
         if let Some(helper) =
             bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
                 .and_then(|ident_index| {
@@ -551,12 +585,12 @@ fn apply_libtest_mimic_target(
                 start_line,
                 end_line,
                 body: SourceText::from(body),
-                calls,
+                calls: calls.into(),
                 assertions,
-                literals,
-                attrs: Vec::new(),
-                nested_fn_names,
-                let_bindings,
+                literals: literals.into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: nested_fn_names.into(),
+                let_bindings: let_bindings.into(),
                 generated: None,
             },
             span_start: position,
@@ -892,6 +926,7 @@ fn parser_oracles_for_node_tokens(
     name_token_index: usize,
     trial_close_index: usize,
     line_index: &LineIndex,
+    placeholder_vars: &BTreeSet<String>,
 ) -> Vec<OracleFact> {
     let mut assertions = Vec::new();
     let mut depth: usize = 1;
@@ -915,6 +950,7 @@ fn parser_oracles_for_node_tokens(
                     if let Some(oracle) = terminal_err_return_guard_oracle(
                         &text,
                         line_index.line(token.text_range().start()),
+                        placeholder_vars,
                     ) {
                         assertions.push(oracle);
                     }
@@ -1129,7 +1165,8 @@ fn parser_oracles_for_node_tokens(
                     Some((_open_index, close_index)) => close_index + 1,
                     None => bang_index + 1,
                 };
-                let classification = classify_assertion(&text);
+                let classification =
+                    without_unfilled_expected(classify_assertion(&text), &text, placeholder_vars);
                 assertions.push(OracleFact {
                     line: line_index.line(tokens[text_start_token].text_range().start()),
                     kind: classification.kind,
@@ -1747,9 +1784,9 @@ fn apply_registered_attribute(
                 start_line: function.start_line,
                 end_line: function.end_line,
                 body: function.body.to_string(),
-                calls: function.calls.clone(),
+                calls: function.calls.to_vec(),
                 assertions: test.assertions.clone(),
-                literals: function.literals.clone(),
+                literals: function.literals.to_vec(),
                 selector: HarnessSelectorCapability::NamedUnexecuted,
                 claim: HarnessSubjectClaim::NamedFunction,
                 provenance: TestHarnessRegistration::provenance().to_string(),
@@ -2109,6 +2146,39 @@ const BACKSLASH: char = '\\';
 /// (#3636): run-entry anchoring, argument resolution, and the
 /// reachable/unknown/unreachable verdicts.
 mod reachability;
+
+/// Names a callback at `invocation` can capture from `fn_node`: every name a
+/// pattern binds outside the invocation — a function or enclosing-closure
+/// parameter, a `let`, an `if let`/`while let`, a `match` arm or a `for`
+/// pattern — unless the pattern sits in a closure that does not also hold the
+/// invocation (a sibling trial's callback, whose locals the callback cannot
+/// see). Over-collecting only keeps credit (#15063 review). Bindings inside
+/// another macro's token tree are not parsed, so they are not seen here.
+fn capturable_binding_names(
+    fn_node: &ast::Fn,
+    invocation: ra_ap_syntax::TextRange,
+) -> BTreeSet<String> {
+    fn_node
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|ident| {
+            let range = ident.syntax().text_range();
+            !(range.start() >= invocation.start() && range.end() <= invocation.end())
+        })
+        .filter(|ident| {
+            !ident
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| ancestor != fn_node.syntax())
+                .filter_map(ast::ClosureExpr::cast)
+                .any(|closure| !closure.syntax().text_range().contains_range(invocation))
+        })
+        .filter_map(|ident| ident.name())
+        .map(|name| name.text().to_string())
+        .collect()
+}
 
 #[cfg(test)]
 mod tests;

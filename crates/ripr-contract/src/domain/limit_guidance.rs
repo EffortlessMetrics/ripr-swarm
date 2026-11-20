@@ -14,10 +14,10 @@
 use super::{StaticLimitKind, StopReason};
 
 impl StaticLimitKind {
-    /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
-    /// this list in step with the enum.
-    #[cfg(test)]
-    pub const ALL: [StaticLimitKind; 34] = [
+    /// Every kind, so tests and closed consumers (for example the renderer
+    /// category set in #14965, which must not shadow a typed token) can walk
+    /// the vocabulary. The ordinal test keeps this list in step with the enum.
+    pub const ALL: [StaticLimitKind; 36] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -52,6 +52,8 @@ impl StaticLimitKind {
         StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         StaticLimitKind::TypescriptWorkspaceReadLimited,
+        StaticLimitKind::RustFutureNeverPolled,
+        StaticLimitKind::ActivationBoundaryInputUnresolved,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -87,8 +89,10 @@ impl StaticLimitKind {
                  exact assertion; ripr cannot see the inputs a property test generates."
             }
             StaticLimitKind::UnresolvedPytestFixture => {
-                "Define the fixture by a static name in the test file or its `conftest.py`, or \
-                 pass the input value inline in the test."
+                "Pass the input value inline in the test body. A fixture is read only when its \
+                 whole body is one of the supported shapes (for example \
+                 `return OwnerClass(<literals>)`); a fixture of another shape stays unread, \
+                 including one defined in a `conftest.py`."
             }
             StaticLimitKind::UnsupportedSyntax => {
                 "Move the changed logic into a plain function and test that function, or report \
@@ -201,6 +205,16 @@ impl StaticLimitKind {
             StaticLimitKind::TypescriptWorkspaceReadLimited => {
                 "Run ripr from a narrower root, or raise RIPR_TS_MAX_FILE_READ_BYTES and/or \
                  RIPR_TS_MAX_WORKSPACE_READ_BYTES to read the refused sources, then check again."
+            }
+            StaticLimitKind::RustFutureNeverPolled => {
+                "Await the changed `async fn` in an async test (for example `#[tokio::test]`), or \
+                 drive its future with an executor, and assert on its result; ripr does not \
+                 choose a runtime for you."
+            }
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "Add a test that calls the changed owner with inputs on each side of the \
+                 boundary and asserts on its exact result; ripr cannot map the computed operand \
+                 to test inputs, so it does not name those inputs for you."
             }
         }
     }
@@ -367,9 +381,11 @@ mod tests {
                 StaticLimitKind::RustInherentReceiverUnestablished => 31,
                 StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
                 StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
+                StaticLimitKind::RustFutureNeverPolled => 34,
+                StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
             }
         }
-        const COUNT: usize = 34;
+        const COUNT: usize = 36;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
@@ -425,6 +441,18 @@ mod tests {
             assert!(is_actionable(step), "{}: {step}", reason.as_str());
             assert!(!step.contains("  "), "{}: {step}", reason.as_str());
         }
+    }
+
+    #[test]
+    fn unresolved_pytest_fixture_advice_does_not_prescribe_defining_the_fixture() {
+        let step = StaticLimitKind::UnresolvedPytestFixture.next_step();
+        assert!(!step.contains("Define the fixture"), "{step}");
+        assert!(
+            step.contains("inline")
+                && step.contains("whole body")
+                && step.contains("another shape stays unread"),
+            "{step}"
+        );
     }
 
     #[test]

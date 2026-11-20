@@ -115,3 +115,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (10)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (11)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (12)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

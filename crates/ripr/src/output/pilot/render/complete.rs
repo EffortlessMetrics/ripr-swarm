@@ -74,7 +74,7 @@ pub(crate) fn render_pilot_summary_json(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let top = ranked_top(classified, context.max_seams, context);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -176,6 +176,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
     }
+    // #13340: the inventory's evidence pass failed. Omitted when healthy so
+    // the summary stays byte-identical.
+    if !context.inventory_evidence_limitations.is_empty() {
+        out.push_str("  \"inventory_evidence_limitations\": [\n");
+        for (idx, limitation) in context.inventory_evidence_limitations.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(",\n");
+            }
+            out.push_str(
+                &crate::output::repo_exposure::evidence_limitation_json_object(limitation, 4),
+            );
+        }
+        out.push_str("\n  ],\n");
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -216,9 +230,11 @@ pub(crate) fn render_pilot_summary_json(
     // withholding every seam as a static limitation with no Python card to
     // offer instead (#5497): there is no gap to snapshot or measure.
     let withheld_only = top.is_empty()
-        && withheld_static_limitations(classified) > 0
+        && (withheld_static_limitations(classified) > 0 || unreadable_skips(context) > 0)
         && python_top_repair_card(context.python_first_use).is_none();
-    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
+    let loop_withheld =
+        unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only;
+    if loop_withheld {
         out.push_str("    \"after_snapshot_command\": null,\n");
         out.push_str("    \"outcome_command\": null,\n");
     } else {
@@ -231,7 +247,7 @@ pub(crate) fn render_pilot_summary_json(
             json_escape(&commands.outcome)
         ));
     }
-    if let Some(before) = &commands.before_snapshot {
+    if let Some(before) = commands.before_snapshot.as_ref().filter(|_| !loop_withheld) {
         out.push_str(&format!(
             "    \"before_snapshot_command\": \"{}\",\n",
             json_escape(before)
@@ -258,7 +274,7 @@ pub(crate) fn render_pilot_human_summaries(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> (String, String) {
-    let top = top_actionable_seams(classified, context.max_seams.max(1), context.current_change);
+    let top = ranked_top(classified, context.max_seams.max(1), context);
     let terminal_top = &top[..top.len().min(1)];
     let markdown_top = &top[..top.len().min(context.max_seams)];
     let target = terminal_top
@@ -275,7 +291,7 @@ pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let top = ranked_top(classified, context.max_seams, context);
     let target = top
         .first()
         .and_then(|entry| uncommitted_inline_target(context.root, entry));
@@ -313,6 +329,7 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    push_inventory_evidence_limitations(&mut out, context, true);
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
             "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
@@ -324,8 +341,20 @@ fn render_pilot_summary_md_with_target(
         ));
     }
     if let Some(limit) = context.seam_limit {
+        // #5371: name how the analyzed slice was chosen. The pilot budget
+        // keeps the inventory's path-order prefix plus the seams the current
+        // change touches that still fit the budget (keeps_past_budget; the
+        // final truncate can drop even those — on the inventory-only path
+        // changed seams are added regardless of actionability), and ranking
+        // reorders only that slice — so a Rust recommendation, when present,
+        // is the highest-ranked seam in the slice, not necessarily of the
+        // whole repository. Saying "ranked" alone overstated it.
         out.push_str(&format!(
-            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
+            "- Seam limit reached: analyzed {} of {} seams, kept as the inventory's path-order \
+             slice plus seams your change touches that fit the budget, then ranked by \
+             actionability within that slice -- a Rust recommendation, when present, is the \
+             highest-ranked seam in this slice, not of the whole repository; actionable-seam \
+             and owner counts below cover this slice only\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(
@@ -397,6 +426,8 @@ fn render_pilot_summary_md_with_target(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
                 unanalyzed_label(unanalyzed)
             ));
+        } else if unreadable_skips(context) > 0 {
+            out.push_str(&format!("None ranked: {UNREADABLE_RANKING_WITHHELD}\n\n"));
         } else if withheld > 0 {
             out.push_str(&format!(
                 "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
@@ -605,6 +636,13 @@ fn render_pilot_summary_md_with_target(
         }
         // #5497: with every seam withheld there is no gap to test, so the
         // snapshot pair would only measure an edit nobody was asked to make.
+        // #13624: nothing was ranked because a path was unreadable, so there is
+        // no edit to measure; the recovery is read access, not a snapshot pair.
+        (None, None) if top.is_empty() && unreadable_skips(context) > 0 => {
+            out.push_str(UNREADABLE_NEXT);
+            out.push('\n');
+            return out;
+        }
         (None, None) if top.is_empty() && withheld > 0 => {
             out.push_str(&withheld_only_next(context.seam_limit));
             out.push('\n');
@@ -686,7 +724,7 @@ pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, 1, context.current_change);
+    let top = ranked_top(classified, 1, context);
     let target = top
         .first()
         .and_then(|entry| uncommitted_inline_target(context.root, entry));
@@ -726,6 +764,7 @@ fn render_pilot_terminal_with_target(
             limit.analyzed, limit.total
         ));
     }
+    push_inventory_evidence_limitations(&mut out, context, false);
     // #12108: the terminal states the byte cut too, as JSON and Markdown do.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
@@ -814,7 +853,11 @@ fn render_pilot_terminal_with_target(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        push_assertion_shape(&mut out, &outline.assertion_shape);
+        push_assertion_shape(
+            &mut out,
+            &outline.assertion_shape,
+            outline.assertion_drafted,
+        );
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
@@ -888,6 +931,10 @@ fn render_pilot_terminal_with_target(
             "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
             unanalyzed_label(unanalyzed)
         ));
+        false
+    } else if unreadable_skips(context) > 0 {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!("  none ranked: {UNREADABLE_RANKING_WITHHELD}\n\n"));
         false
     } else if withheld > 0 {
         out.push_str("Top recommendation:\n");
@@ -1009,6 +1056,11 @@ fn render_pilot_terminal_with_target(
     }
     if unanalyzed_only(context).is_some() {
         out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
+        return out;
+    }
+    if top.is_empty() && unreadable_skips(context) > 0 {
+        out.push_str(UNREADABLE_NEXT);
         out.push('\n');
         return out;
     }
@@ -1235,6 +1287,10 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
     if seams.touched == 0 && seams.unanalyzed.is_none() && diff_only.is_none() {
         return None;
     }
+    let skipped = unreadable_skips(context);
+    if skipped > 0 {
+        return Some(super::unreadable::unreadable_unranked_reason(skipped));
+    }
     let base = change.base().map(str::to_string);
     Some(CurrentChangeLabel::why_elsewhere(
         seams,
@@ -1384,11 +1440,53 @@ impl CurrentChangeLabel {
 }
 
 /// Project the producer's named coverage limitation, even with a changed top pick.
+/// #13340: names a failed inventory evidence pass, so a count read from the
+/// opaque stand-ins is never taken for an inventory result. Nothing for a
+/// healthy run.
+fn push_inventory_evidence_limitations(
+    out: &mut String,
+    context: PilotSummaryContext<'_>,
+    markdown: bool,
+) {
+    for limitation in context.inventory_evidence_limitations {
+        let prefix = if markdown {
+            "- Inventory limitation"
+        } else {
+            "  inventory limitation"
+        };
+        // #13624: an unreadable-path skip names the path, not the changed-file label.
+        let what = match limitation.path.as_deref() {
+            Some(path) => format!("Rust path `{path}` could not be read and was skipped"),
+            None => limitation.kind.plain_label().to_string(),
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {what}; spot counts and rankings below are not an inventory result. {}\n",
+            limitation.kind.as_str(),
+            limitation.recovery.detail
+        )));
+    }
+}
+
 fn push_changed_file_limitations(
     out: &mut String,
     change: Option<&PilotCurrentChange>,
     markdown: bool,
 ) {
+    // #13340: the classification's own pass-wide failure has no path and is
+    // not an absent file, so it is named on its own line before the files.
+    for limitation in change.map_or(&[][..], PilotCurrentChange::evidence_limitations) {
+        let prefix = if markdown {
+            "- Current change limitation"
+        } else {
+            "  current change limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
     let Some(limitations) = change.and_then(PilotCurrentChange::absent_file_limitations) else {
         return;
     };
@@ -1438,6 +1536,18 @@ fn push_current_change_json(
                 Some(path) => out.push_str(&format!("\"{}\"", json_escape(path))),
                 None => out.push_str("null"),
             }
+        }
+        out.push_str("],\n");
+    }
+    // #13340: present only when the change classification's evidence warm
+    // failed, so a healthy summary stays byte-identical.
+    if !change.evidence_limitations().is_empty() {
+        out.push_str("    \"evidence_limitations\": [");
+        for (index, limitation) in change.evidence_limitations().iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("\"{}\"", json_escape(limitation.kind.as_str())));
         }
         out.push_str("],\n");
     }
@@ -1588,6 +1698,37 @@ fn supported_headline_route(
         .language_routes
         .and_then(PilotLanguageRoutes::supported_headline_route)
 }
+
+/// Unreadable Rust paths the repo walk skipped (#13624). Seams whose tests
+/// live there are under-credited, so a gap can be a false gap: pilot ranks and
+/// offers nothing while any path was skipped (the evidence is not complete).
+fn unreadable_skips(context: PilotSummaryContext<'_>) -> usize {
+    context
+        .inventory_evidence_limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.kind
+                == crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+        })
+        .count()
+}
+
+/// [`top_actionable_seams`] unless an unreadable skip made every gap
+/// unreliable, in which case nothing is ranked and no repair is offered.
+fn ranked_top<'a>(
+    classified: &'a [ClassifiedSeam],
+    max_seams: usize,
+    context: PilotSummaryContext<'_>,
+) -> Vec<&'a ClassifiedSeam> {
+    if unreadable_skips(context) > 0 {
+        return Vec::new();
+    }
+    top_actionable_seams(classified, max_seams, context.current_change)
+}
+
+const UNREADABLE_NEXT: &str = "Restore read access to the Rust path(s) named above, then rerun `ripr pilot`; no snapshot or outcome comparison applies until a gap is ranked.";
+
+const UNREADABLE_RANKING_WITHHELD: &str = "a Rust path could not be read and was skipped, so a gap here may be only a test hidden in the skipped path; no gap is ranked and no repair is offered. Restore read access, then rerun `ripr pilot`.";
 
 /// Rust files excluded by `[languages] enabled`, when the exclusion emptied
 /// the ranking (#5205).
@@ -1780,7 +1921,10 @@ const TERMINAL_NO_REPAIR_START_LINE: &str =
     "not available for this gap (ripr did not start a repair here); add the test by hand";
 
 fn file_count_label(count: usize) -> String {
-    if count == 1 {
+    if count == 0 {
+        // Only an unreadable-only tree reaches 0 (#13624): the count is unknown.
+        "an unreadable path (file count unknown)".to_string()
+    } else if count == 1 {
         "1 file".to_string()
     } else {
         format!("{count} files")
@@ -2292,6 +2436,8 @@ fn repair_action_label(action: &str) -> &'static str {
 /// #9244 item 3: shared placeholder-assertion wording. The helper lives in
 /// `output::placeholder_assertion` so the other human handoff lines use the
 /// same fill-in note.
-fn push_assertion_shape(out: &mut String, shape: &str) {
-    crate::output::placeholder_assertion::push_terminal_assertion(out, "  ", shape);
+fn push_assertion_shape(out: &mut String, shape: &str, drafted: bool) {
+    crate::output::placeholder_assertion::push_drafted_terminal_assertion(
+        out, "  ", shape, drafted,
+    );
 }

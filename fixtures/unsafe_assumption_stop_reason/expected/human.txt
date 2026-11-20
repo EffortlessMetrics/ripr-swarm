@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:12
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -48,8 +48,7 @@ Hidden:
   4 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:3 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
     - ./src/lib.rs:4 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
-    - ./src/lib.rs:11 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
-    - ./src/lib.rs:12 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+    - ./src/lib.rs:11-12 (unknown: static analysis limited); 2 changed behaviors in `first`; kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)

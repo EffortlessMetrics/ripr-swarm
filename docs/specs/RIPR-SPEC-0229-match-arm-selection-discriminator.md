@@ -536,6 +536,14 @@ implies but does not spell out:
   call on the closing brace, or `let x = match ..;` followed by anything but
   the bare `x`) can remap the arm's result, so no assertion confirms that
   arm (#12143). A bare `let`-then-return and a tail `match` do not remap.
+- the read macros (`assert_eq!`, `println!`, `dbg!`, ...) are trusted by
+  name, so the unselected arm is not named when the workspace defines,
+  imports or may glob in another macro under a name that the owner, a
+  function it reaches, a related test or a helper that test reaches
+  invokes (#15022): a test-local `macro_rules! assert_eq` can run the owner
+  with an input the call it wraps never shows. A name nothing on those
+  paths invokes is not asked about. A glob of a workspace package does not
+  count as foreign; a glob of any other crate does.
 
 ## Required Evidence
 
@@ -645,13 +653,21 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
+- `crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs`:
+  `a_rebound_read_macro_keeps_the_arm_unnamed` (#15022): a test-local
+  `assert_eq!` that runs the owner with `Size::Medium` leaves that arm
+  unnamed, while the same test with the standard macro names it.
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
   case `grid-match-helper`.
   A same-file `macro_rules!` that may define an item of the owner's name
   (#7985) makes the owner call ambiguous, so it credits nothing; a macro
-  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  defining an unrelated name does not. A statement-position invocation of
+  a macro defined outside the file that spells an item declaration of the
+  owner's name (`emit!(fn suit_color(..) { .. });`) is ambiguous the same
+  way; a call or bare mention there, and a std macro that expands to a
+  literal (`stringify!`), are not (#8467). Unit tests: `macro_item_names.rs`
   `tests` and the `helper_transfer.rs` unit test
   `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
   test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in
