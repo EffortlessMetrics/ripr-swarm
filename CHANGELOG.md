@@ -7834,29 +7834,33 @@ entries below are the complete record.
   flags, repo-exposure unselected match arms, guarded-boundary refusals, tier
   values, Python sign/residue/text-length assertions, Python package-init
   receiver shadows, operator-credit withholding, Perl edited-producer replay and
-  Python/Perl spec-example pins. Adapter-substrate qualification gained
-  duplicate-key corpus coverage and refuses safety receipts with an unset
-  containment flag (#10875, #12078, #12126, #12237, #12317, #12523, #10581,
-  #13037, #12365, #10569, #1311, #1312, #1455, #13591, #13034).
+  Python/Perl spec-example pins. Limitations and witnesses are pinned across
+  re-blesses, a Perl two-binary proof harness was added, and adapter-substrate
+  qualification gained duplicate-key corpus coverage and refuses safety
+  receipts with an unset containment flag (#10875, #12078, #12126, #12237,
+  #12317, #12523, #10581, #13037, #12365, #10569, #1311, #1312, #1455, #13591,
+  #13034).
 - Verdict corpus reporting: abstentions a spec requires are now reported apart
   from avoidable ones, with the total abstention target at 0.24 and the
   avoidable bar at 0.2, and abstentions are split by missed side and observed
   classification. The seam evidence-path honesty check judges stage, state,
   confidence and summary rows against regeneration, and analyzer children use
   one-worker Rayon pools (#12766, #13657, #14555, #14586).
-- Typed corpus and contract plumbing: corpus summary envelope and evidence
-  assertions, external launch metadata, dialect/schema/migration/pgTAP
-  evidence contracts, the optional verification-allocation adapter and shared
-  path helpers moved into `ripr-contract`. A real stdio journey pins the
-  gap-list not-analyzed contract (#1348, #1349, #1350, #1368, #12662, #5736,
+- Typed corpus and contract plumbing: the corpus summary envelope and
+  evidence assertions, external launch metadata, dialect/schema/migration/pgTAP
+  evidence contracts and the optional verification-allocation adapter became
+  typed, shared path helpers moved into `ripr-contract`, and empty-scope
+  honesty cases were added. A real stdio journey pins the gap-list
+  not-analyzed contract (#1348, #1349, #1350, #1368, #12662, #5736,
   #12402, #4707, #12726, #13280).
 - Internal refactors with no behavior change: borrowing instead of owning in
   owner extraction and module-graph keys, allocation-free setter naming, review
   comment output split into placement, publish plan and render, repo grip
   evidence projected into a test evidence summary, hop receiver binding with
-  local-receiver helper fixtures, seam failures carried into scoped results,
-  and a single parse per file in the embed-macro shadow check (#10096, #10137,
-  #12047, #12355, #2954, #12410, #13411, #13340, #13570, #13847).
+  local-receiver helper fixtures, and a single parse per file in the
+  embed-macro shadow check. A failed seam-evidence pass now carries its
+  producer-failure limitation into scoped and full-inventory results (#10096,
+  #10137, #12047, #12355, #2954, #12410, #13411, #13340, #13570, #13847).
 - Mutation spot check: `cargo xtask mutation-spot-check` scores Python and
   TypeScript verdicts against real cosmic-ray, Stryker and mutmut outcomes
   through a synthetic-diff join. A hosted read-only workflow runs a pinned
@@ -7879,7 +7883,7 @@ entries below are the complete record.
   contracts landed with domain proofs moved to `ripr-contract`, a versioned
   Kani observation journal, positive cover evidence required before a harness
   counts as verified, five new selector-refusal harnesses, a source-derived
-  scoreboard and bounded setup retries. No verifier became a required check
+  scoreboard and bounded setup retries. Kani did not become a required check
   (#12109, #10745, #12904, #14471, #14472, #14460, #13707).
 - Hosted test cost: shards build without debug info and write partition lists
   before the run, Test Analytics runs as four partitions, Coverage and Test
@@ -7909,23 +7913,26 @@ entries below are the complete record.
   real Git patches with generated edits, and the first run found a `+S,0` hunk
   line-number error fixed separately. In-process hostile diff, config and source
   fuzzing joined the scheduled lane, fuzz seeds exercise error returns, and
-  cross-surface conformance checks add SARIF and annotation goldens (#12918,
-  #13098, #13508, #12924, #13651, #12925).
+  cross-surface conformance checks add opt-in SARIF and annotation goldens
+  (#12918, #13098, #13508, #12924, #13651, #12925).
 - Golden blessing and trace tests: `cargo xtask goldens bless` no longer
   appends a Pending block when output matches, refuses changed Windows output,
   and gains an opt-in Windows-to-Linux qualification path. Trace comparison uses
-  private cache locations and the human fixture normalizer keeps source-text
-  backslashes (#14498, #14509, #14510, #14546, #11178, #11317, #12605).
+  private cache locations, the human fixture normalizer keeps source-text
+  backslashes, and `owner_return_pin_json` golden checks parse with serde_json
+  (#14498, #14509, #14510, #14546, #11178, #11317, #12605).
 - Test reliability: process-control tests use FIFO witnesses, bounded `/proc`
   polling and quiescence waits, concurrent schema sweeps get exclusive temp
   roots, and procfs disappearance and Windows separator cases are tolerated.
-  The contract language test works with default features off (#10593, #13113,
+  The contract language test works with default features off, and QuickCheck
+  fixtures were added (#10593, #13113,
   #13443, #13424, #13474, #12672, #10613, #13897, #14522, #13285).
 - xtask policy checks: `check-lint-policy` covers table-form lint levels and
-  workspace inheritance, `check-local-context` and `check-file-policy` were
-  simplified, the LSP no-stderr guard scans all production regions, and
-  `ci-budget` ignores echoed command previews. Spec, review-procedure and
-  Linux provisioning guidance were aligned, and Clippy covers all-feature
+  workspace inheritance, `check-file-policy` shares its preparation build and
+  `check-local-context` searches drive separators directly, the LSP no-stderr
+  guard scans all production regions, and `ci-budget` ignores echoed command
+  previews. Spec and review-procedure guidance were aligned, Linux
+  provisioning is explicit, and Clippy covers all-feature
   targets (#13156, #13222, #13705, #14480, #13468, #13068, #13352, #10542,
   #13437, #13152).
 - Repo ops and flake tracking: a weekly issue-staleness watchdog and a PR
