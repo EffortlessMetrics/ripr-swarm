@@ -5501,13 +5501,13 @@ pub(crate) mod tests {
         };
         let finding = |class: ExposureClass| -> Finding {
             let mut finding = crate::app::repair_card_handoff::tests::producer_gap_finding(
-                "probe:src_pricing.rs:42:predicate",
+                "probe:src_pricing.rs:88:predicate",
                 "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold",
                 "src/pricing.rs",
                 "pricing::discounted_total",
                 "predicate",
             );
-            finding.probe.location = crate::domain::SourceLocation::new("src/pricing.rs", 42, 5);
+            finding.probe.location = crate::domain::SourceLocation::new("src/pricing.rs", 88, 5);
             finding.class = class;
             finding
         };
