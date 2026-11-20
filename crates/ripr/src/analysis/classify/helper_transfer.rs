@@ -759,7 +759,7 @@ pub(crate) fn direct_callers<'a>(
 }
 
 /// The bare type name of an inherent/trait impl self type, if any.
-fn impl_self_type(function: &FunctionSummary) -> Option<String> {
+pub(in crate::analysis) fn impl_self_type(function: &FunctionSummary) -> Option<String> {
     match &function.impl_context {
         crate::analysis::facts::FunctionImplContext::Impl { self_type } => self_type
             .split('<')
@@ -1464,7 +1464,7 @@ pub(crate) fn test_calls_method_entry(
 /// `String`, an iterator, a parameter or field) never relates the test: a
 /// method name alone is not type identity. Reads the owner-pin receiver
 /// reader, which also refuses a foreign or aliased import of the type.
-fn receivers_are_entry_type(
+pub(in crate::analysis) fn receivers_are_entry_type(
     index: &RustIndex,
     test: &crate::analysis::facts::TestSummary,
     entry: &FunctionSummary,

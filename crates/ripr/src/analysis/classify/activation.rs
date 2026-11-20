@@ -4686,8 +4686,38 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
         crate::analysis::facts::FunctionContainer::Free
             | crate::analysis::facts::FunctionContainer::Local
             | crate::analysis::facts::FunctionContainer::Inherent { .. }
-    ) || !super::helper_transfer::callee_is_unique(&owner.name, index)
-    {
+    ) {
+        return false;
+    }
+    // A same-named method on another type (`Other::rate` beside
+    // `Window::rate`) leaves the name ambiguous, but an inherent method
+    // call whose receiver the test built as the owner's own impl type
+    // (`let window = Window { .. }; window.rate(..)`) resolves to the owner
+    // (#15359 CI): there every mention of the name in the test must be such
+    // a call.
+    // The receiver reading compares bare type names, so another method of
+    // that name on the same bare type (a `Window<Silver>` impl beside
+    // `Window<Gold>`, or a trait method, which a by-value receiver may
+    // reach first) leaves the call ambiguous (#15359 review).
+    let unique = super::helper_transfer::callee_is_unique(&owner.name, index);
+    let inherent_method = matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) && owner.item.has_self_param
+        && super::helper_transfer::impl_self_type(owner).is_some_and(|self_type| {
+            index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    function.name == owner.name
+                        && !(function.file == owner.file && function.start_line == owner.start_line)
+                })
+                .all(|function| {
+                    super::helper_transfer::impl_self_type(function)
+                        .is_some_and(|other| other != self_type)
+                })
+        });
+    if !unique && !inherent_method {
         return false;
     }
     let selector =
@@ -4698,7 +4728,22 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
         let imports_foreign = index.files().get(&test.file).is_some_and(|facts| {
             context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
         });
-        !imports_foreign
+        let identity = unique
+            || test
+                .body
+                .lines()
+                .filter(|line| {
+                    !super::owner_pin::whole_word_offsets(
+                        &crate::analysis::extract::mask_comments_and_strings(line),
+                        &owner.name,
+                    )
+                    .is_empty()
+                })
+                .all(|line| {
+                    super::helper_transfer::receivers_are_entry_type(index, test, owner, line)
+                });
+        identity
+            && !imports_foreign
             && selector.observed_inputs(test).is_some_and(|observed| {
                 observed.selection == super::arm_selection::ArmSelection::Selects
             })

@@ -18776,6 +18776,8 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_guarded_arm_a_test_input_names_reads_activation_unknown",
   "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_selecting_input_to_a_foreign_callee_leaves_the_arm_activation_unknown",
   "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_selecting_input_to_a_trait_method_owner_leaves_the_arm_activation_unknown",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_typed_receiver_selects_a_method_arm_beside_a_same_named_method",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs::a_same_named_method_on_the_same_bare_type_leaves_the_arm_activation_unknown",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_head_edit_drops_the_unchanged_return_value",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_respelled_arm_value_drops_the_return_value_probe",

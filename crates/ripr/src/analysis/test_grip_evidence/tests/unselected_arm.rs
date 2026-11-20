@@ -691,3 +691,80 @@ fn a_selecting_input_to_a_trait_method_owner_leaves_the_arm_activation_unknown()
     }
     Ok(())
 }
+
+const WINDOW_RATE: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+
+/// #15359 CI: a same-named method on another type leaves the name
+/// ambiguous, but a call whose receiver the test built as the owner's impl
+/// type reaches the owner, so its selecting input shows the arm runs. A
+/// selecting input passed to the other type's method does not.
+#[test]
+fn a_typed_receiver_selects_a_method_arm_beside_a_same_named_method() -> Result<(), String> {
+    for (body, selected) in [
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(window.rate(\"silver\"), 5);",
+            true,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    let _o = Other.rate(\"silver\");\n    assert_eq!(window.rate(\"gold\"), 10);",
+            false,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(Window::rate(&window, \"silver\"), 5);",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use prices::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn rates() {{\n{body}\n}}\n"
+        );
+        let (full, compact, class) = arm_evidence_with_tests(WINDOW_RATE, &tests, "\"silver\"")?;
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{body}: {evidence:?}");
+        }
+        if !selected {
+            assert_ne!(class[0], SeamGripClass::StronglyGripped, "{body}: {full:?}");
+            assert_ne!(
+                class[1],
+                SeamGripClass::StronglyGripped,
+                "{body}: {compact:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: the receiver reading compares bare type names, so a
+/// same-named method on another impl of the same bare type (a typestate
+/// `Window<Silver>` beside `Window<Gold>`) or a trait method on the type
+/// (a by-value `self` method is found before the inherent `&self` one)
+/// leaves a typed-receiver call ambiguous.
+#[test]
+fn a_same_named_method_on_the_same_bare_type_leaves_the_arm_activation_unknown()
+-> Result<(), String> {
+    const TYPESTATE: &str = "pub struct Gold;\npub struct Silver;\npub struct Window<T> {\n    pub tier: T,\n}\n\nimpl Window<Gold> {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 1,\n        }\n    }\n}\n\nimpl Window<Silver> {\n    pub fn rate(&self, _kind: &str) -> u32 {\n        2\n    }\n}\n";
+    const TRAIT_SIBLING: &str = "pub struct Window {\n    pub tier: u32,\n}\n\npub trait Rate {\n    fn rate(self, kind: &str) -> u32;\n}\n\nimpl Rate for Window {\n    fn rate(self, _kind: &str) -> u32 {\n        2\n    }\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+    for (source, construct) in [
+        (TYPESTATE, "Window { tier: Silver }"),
+        (TRAIT_SIBLING, "Window { tier: 1 }"),
+    ] {
+        let tests = format!(
+            "use prices::*;\n\n#[test]\nfn rates() {{\n    let window = {construct};\n    assert_eq!(window.rate(\"silver\"), 5);\n}}\n"
+        );
+        let (full, compact, class) = arm_evidence_with_tests(source, &tests, "\"silver\"")?;
+        for evidence in [&full, &compact] {
+            assert_eq!(
+                evidence.activate.state,
+                StageState::Unknown,
+                "{construct}: {evidence:?}"
+            );
+        }
+        assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+        assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    }
+    Ok(())
+}
