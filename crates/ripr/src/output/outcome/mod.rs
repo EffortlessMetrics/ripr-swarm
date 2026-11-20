@@ -305,8 +305,8 @@ pub(crate) fn targeted_test_outcome_report_from_json(
     after_path: String,
 ) -> Result<TargetedTestOutcomeReport, String> {
     let heads = OutcomeHeadIdentity::from_snapshots(before_json, after_json);
-    let before = parse_repo_exposure_static_snapshot(before_json)?;
-    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    let before = parse_repo_exposure_static_snapshot(before_json, "before", &before_path)?;
+    let after = parse_repo_exposure_static_snapshot(after_json, "after", &after_path)?;
     build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
@@ -329,8 +329,8 @@ pub(crate) fn targeted_test_outcome_report_from_json_with_heads(
         before_repository_head: before_head,
         after_repository_head: after_head,
     };
-    let before = parse_repo_exposure_static_snapshot(before_json)?;
-    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    let before = parse_repo_exposure_static_snapshot(before_json, "before", &before_path)?;
+    let after = parse_repo_exposure_static_snapshot(after_json, "after", &after_path)?;
     build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
@@ -434,7 +434,7 @@ pub(crate) fn targeted_rerun_movement_from_json(
 
 fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse explicit before JSON: {err}"))?;
+        .map_err(|err| format!("--before file is not valid JSON ({err}); pass a file written by `ripr rerun --json` or `ripr check --format repo-exposure-json`"))?;
     if value.get("schema_version").and_then(Value::as_str) == Some("ripr-targeted-rerun-v1") {
         let seams = value
             .get("seams")
@@ -478,7 +478,7 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
     }
     // A seam the before snapshot withheld is absent from it, so a selected
     // current seam with that id is refused below as missing, never matched.
-    parse_repo_exposure_static_snapshot(json).map(|snapshot| snapshot.seams)
+    parse_repo_exposure_static_snapshot(json, "before", "--before").map(|snapshot| snapshot.seams)
 }
 
 /// One parsed static snapshot: its comparable seams, each repo seam's
@@ -548,9 +548,16 @@ fn repo_exposure_seam_owners(seams: &[Value]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
+fn parse_repo_exposure_static_snapshot(
+    json: &str,
+    role: &str,
+    path: &str,
+) -> Result<StaticSnapshot, String> {
+    let value: Value = serde_json::from_str(json).map_err(|err| {
+        format!(
+            "{role} snapshot {path} is not valid JSON ({err}); pass a file written by `ripr check --format repo-exposure-json`"
+        )
+    })?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or

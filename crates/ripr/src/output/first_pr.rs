@@ -784,8 +784,12 @@ fn materialize_check_output_gap_ledger(
     let check_output_path = resolve_path(root, check_output);
     let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
         format!(
-            "first-pr --check-output {} is invalid: read failed: {err}",
-            check_output_path.display()
+            "first-pr --check-output {} {}",
+            check_output_path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let mut report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(

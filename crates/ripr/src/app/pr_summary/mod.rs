@@ -154,7 +154,10 @@ Outputs:
 
 fn check_summary(path: &Path, expected: &str) -> Result<(), String> {
     let actual = fs::read_to_string(path).map_err(|err| {
-        format!("missing or unreadable {PR_SUMMARY_MD}: {err}; run `ripr pr-summary` to write it")
+        format!(
+            "missing or unreadable {PR_SUMMARY_MD}: {}; run `ripr pr-summary` to write it",
+            crate::bounded_input::read_failure_detail(&err)
+        )
     })?;
     if actual == expected {
         println!("PR evidence summary contract ok: {PR_SUMMARY_MD}");

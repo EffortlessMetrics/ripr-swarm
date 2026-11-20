@@ -1187,7 +1187,7 @@ pub fn function_selector_label(path: &str, function: &str) -> String {
 pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry>, String> {
     let display = path.display().to_string();
     let text = crate::bounded_input::read_to_string(path)
-        .map_err(|err| format!("failed to read suppression policy `{display}`: {err}"))?;
+        .map_err(|err| format!("failed to read suppression policy `{display}`: {}; pass an existing TOML file as `--suppression-policy`", crate::bounded_input::read_failure_detail(&err)))?;
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         return Ok(entries);

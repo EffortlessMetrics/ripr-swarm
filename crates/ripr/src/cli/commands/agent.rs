@@ -6929,7 +6929,7 @@ mod tests {
         assert!(matches!(
             missing,
             Err(CommandError::Failure(message))
-                if message.contains("canonicalize agent receipt --verify-json")
+                if message.contains("agent receipt --verify-json")
         ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

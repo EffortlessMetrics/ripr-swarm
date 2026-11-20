@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Input-file errors on `outcome`, `calibrate`, `agent receipt`, `gate evaluate`, `review-comments`, `swarm ingest`, `pr-evidence --check`, `pr-summary --check` and the report inputs now name the flag and file, say in plain words that it does not exist, is not UTF-8 text or is not JSON (keeping the line and column), and name the command that writes a valid file, instead of showing raw `(os error N)` or bare serde text (#15255).

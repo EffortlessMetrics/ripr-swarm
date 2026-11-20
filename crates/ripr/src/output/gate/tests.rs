@@ -2816,7 +2816,7 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
         report
             .config_errors
             .iter()
-            .any(|error| error.contains("failed to read exception policy")),
+            .any(|error| error.contains("failed to read --exception-policy")),
         "config_errors: {:?}",
         report.config_errors
     );

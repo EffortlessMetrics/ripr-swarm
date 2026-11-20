@@ -38,13 +38,17 @@ pub(crate) fn resolve_review_guidance_prepared_workspace<'a>(
     };
     let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
-            "review-comments --check-output {} is invalid: read failed: {err}",
-            crate::output::pr_inline_comment_publish_plan::display_path(path)
+            "review-comments --check-output {} {}",
+            crate::output::pr_inline_comment_publish_plan::display_path(path),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
         format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {err}",
+            "review-comments --check-output {} is not valid JSON ({err}); pass the file written by `ripr check --json`",
             crate::output::pr_inline_comment_publish_plan::display_path(path)
         )
     })?;
