@@ -592,7 +592,8 @@ mod unresolved_assertion_macro_tests {
         }];
         let before = rows[0].clone();
         let named = name_forwarded_callback_limits(&context, &mut rows);
-        let [row] = <[RelatedTest; 1]>::try_from(rows).map_err(|_| "one row".to_string())?;
+        let [row] = <[RelatedTest; 1]>::try_from(rows)
+            .map_err(|rows| format!("expected one row, got {}", rows.len()))?;
         // Nothing but the miss may move: no oracle, kind, strength or relation.
         let mut unchanged = row.clone();
         unchanged.miss = before.miss;
