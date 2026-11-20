@@ -163,7 +163,7 @@ const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 pub(crate) struct RelatedTestGrip {
     /// The full evidence pass confirmed this assertion-target relation belongs
     /// to an indexed, non-function owner. Older records lack that authority.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub(crate) assertion_targets_non_function: Option<bool>,
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
