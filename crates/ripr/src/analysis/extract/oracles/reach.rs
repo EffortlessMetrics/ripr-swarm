@@ -194,12 +194,16 @@ struct Groups {
     /// Groups that are a macro invocation's input (`name!(..)`, `name! {..}`,
     /// `macro_rules! name {..}`).
     macro_inputs: Vec<(usize, usize)>,
+    /// A local value item's name and the block in which it is visible,
+    /// including uses before its declaration.
+    variant_items: Vec<(Option<usize>, &'static str)>,
 }
 
 impl Groups {
     fn new(bytes: &[u8]) -> Option<Self> {
         let mut close = std::collections::HashMap::new();
         let mut macro_inputs = Vec::new();
+        let mut variant_items = Vec::new();
         let mut stack: Vec<(u8, usize)> = Vec::new();
         for (index, &byte) in bytes.iter().enumerate() {
             match byte {
@@ -219,12 +223,26 @@ impl Groups {
                         macro_inputs.push((open, index));
                     }
                 }
+                b'c' | b'f' if index == 0 || !is_ident_byte(bytes[index - 1]) => {
+                    let end = ident_end(bytes, index);
+                    if matches!(&bytes[index..end], b"const" | b"fn")
+                        && last_code_byte_before(bytes, index)
+                            .is_none_or(|at| matches!(bytes[at], b'{' | b';' | b'}' | b']'))
+                    {
+                        let name = skip_whitespace(bytes, end);
+                        if let Some(variant) = variant_name(&bytes[name..ident_end(bytes, name)]) {
+                            let scope = stack.last().map(|&(_, open)| open);
+                            variant_items.push((scope, variant));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         stack.is_empty().then_some(Self {
             close,
             macro_inputs,
+            variant_items,
         })
     }
 
@@ -413,6 +431,16 @@ fn whole_variant(masked: &str, start: usize, end: usize, groups: &Groups) -> Opt
     (head_end == trimmed_end).then_some(variant)
 }
 
+fn variant_name(word: &[u8]) -> Option<&'static str> {
+    match word {
+        b"None" => Some("None"),
+        b"Some" => Some("Some"),
+        b"Ok" => Some("Ok"),
+        b"Err" => Some("Err"),
+        _ => None,
+    }
+}
+
 /// At `start`: a `None`, `Some(..)`, `Ok(..)` or `Err(..)` variant
 /// expression or pattern, optionally with a turbofish, and its end.
 fn variant_head(masked: &str, start: usize, groups: &Groups) -> Option<(&'static str, usize)> {
@@ -421,13 +449,15 @@ fn variant_head(masked: &str, start: usize, groups: &Groups) -> Option<(&'static
         return None;
     }
     let name_end = ident_end(bytes, start);
-    let variant = match &masked[start..name_end] {
-        "None" => "None",
-        "Some" => "Some",
-        "Ok" => "Ok",
-        "Err" => "Err",
-        _ => return None,
-    };
+    let variant = variant_name(&bytes[start..name_end])?;
+    if groups.variant_items.iter().any(|&(scope, name)| {
+        name == variant
+            && scope.is_none_or(|open| {
+                open < start && groups.close_of(open).is_some_and(|close| start < close)
+            })
+    }) {
+        return None;
+    }
     let mut at = name_end;
     if masked[at..].starts_with("::<") {
         at = turbofish_end(bytes, at + 2, groups)?;

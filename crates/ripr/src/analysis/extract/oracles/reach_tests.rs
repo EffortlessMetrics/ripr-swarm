@@ -197,6 +197,14 @@ fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
             "let None = Some(1) else { if c() { return; } panic!() };",
             Unreached::Unrefused,
         ),
+        (
+            "{ const None: Option<()> = Some(()); } None?;",
+            Unreached::Unrefused,
+        ),
+        (
+            "const None: Option<()> = Some(()); Err(())?;",
+            Unreached::Unrefused,
+        ),
         ("Err::<(), i32>(1)?;", Unreached::Unrefused),
         ("Err(\"stop\")?;", Unreached::Unrefused),
         ("None::<i32>?;", Unreached::Unrefused),
