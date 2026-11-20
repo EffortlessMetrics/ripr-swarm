@@ -119,6 +119,55 @@ fn unknown_format_message(value: &str, accepted: &[&str]) -> String {
     }
 }
 
+/// How a flag typed where a command belongs (`ripr --base main`) relates to
+/// the flags `command` documents. The top-level error uses this so its
+/// placement example never names a spelling `command` would then reject.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FlagPlacement {
+    /// `command` documents the flag as typed.
+    Documented,
+    /// `command` documents a near spelling; the payload is that flag.
+    Near(String),
+    /// `command` documents nothing close to it.
+    Unknown,
+}
+
+/// Flags a command documents only as a modifier of `--help`. The parser
+/// rejects them on their own (`ripr check --all`), so a placement example
+/// must not name one.
+const HELP_ONLY_FLAGS: &[&str] = &["--all"];
+
+/// The flag name of a typed option: `--root=.` names `--root`
+/// (RIPR-SPEC-0438 accepts the `--name=value` spelling after a command).
+pub(crate) fn flag_name(arg: &str) -> &str {
+    match arg.split_once('=') {
+        Some((name, _)) if name.starts_with("--") => name,
+        _ => arg,
+    }
+}
+
+pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
+    let arg = flag_name(arg);
+    let Some(help_text) = help::help_text_for(command) else {
+        return FlagPlacement::Unknown;
+    };
+    let runnable: Vec<&str> = known_flags(command, help_text)
+        .into_iter()
+        .filter(|flag| !HELP_ONLY_FLAGS.contains(flag))
+        .collect();
+    if runnable.contains(&arg) {
+        return FlagPlacement::Documented;
+    }
+    // Only flag-shaped input gets a flag suggestion (see `closest_flag`).
+    if !arg.starts_with('-') {
+        return FlagPlacement::Unknown;
+    }
+    match closest(arg, runnable.into_iter()) {
+        Some(flag) => FlagPlacement::Near(flag.to_string()),
+        None => FlagPlacement::Unknown,
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be
@@ -141,11 +190,15 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // sibling subcommand's flag), but "did you mean the thing you just typed?"
     // is nonsense from any source, so it is excluded structurally rather than
     // left to depend on the scoping tables staying correct.
+    //
+    // A help-only modifier is no answer either: `ripr check --al` once
+    // suggested `--all`, which check then rejects without `--help` (#15201).
+    // The help pointer already names the working `--help --all` spelling.
     closest(
         arg,
         known_flags(command, help_text)
             .into_iter()
-            .filter(|flag| *flag != arg),
+            .filter(|flag| *flag != arg && !HELP_ONLY_FLAGS.contains(flag)),
     )
     .map(str::to_string)
 }
@@ -401,6 +454,20 @@ mod tests {
         );
     }
 
+    /// #15162: `first-pr` and `pr-comments` spell the directory flag
+    /// `--out-dir`; `check` spells it `--output-dir`. The other command's
+    /// spelling names the flag this one accepts.
+    #[test]
+    fn the_other_commands_out_dir_spelling_names_check_output_dir() {
+        let message = unknown_argument("check", "--out-dir");
+        assert_eq!(
+            message,
+            "unknown check argument \"--out-dir\". Did you mean `--output-dir`? Run `ripr check --help --all`."
+        );
+        let message = unknown_argument("first-pr", "--output-dir");
+        assert!(message.contains("Did you mean `--out-dir`?"), "{message}");
+    }
+
     /// #8158 item 2: the default `check --help` is a short summary, but typo
     /// suggestions keep mining the exhaustive reference, so a mistyped
     /// advanced flag is still named even though the summary omits it (the
@@ -420,6 +487,23 @@ mod tests {
         assert_eq!(
             message,
             "unknown check argument \"--totally-unrelated-flag\". Run `ripr check --help --all`."
+        );
+    }
+
+    /// #15201: `--all` only widens `--help`, and check rejects it alone, so a
+    /// near miss on it must not be answered with it. The pointer already
+    /// names the `--help --all` spelling that works.
+    #[test]
+    fn unknown_argument_never_suggests_a_help_only_modifier() {
+        let message = unknown_argument("check", "--al");
+        assert_eq!(
+            message,
+            "unknown check argument \"--al\". Run `ripr check --help --all`."
+        );
+        // Ordinary near misses on check keep their suggestion.
+        assert!(
+            unknown_argument("check", "--quite").contains("Did you mean `--quiet`?"),
+            "--quite"
         );
     }
 

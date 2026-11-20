@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/reach.rs::tests::out_of_root_member_identity_follows_its_traits_and_manifest",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::out_of_root_member_changes_change_cache_identity",
+]
+code = [
+  "crates/ripr/src/analysis/classify/reach.rs::out_of_root_member_identity",
+  "crates/ripr/src/analysis/facts/build.rs::out_of_root_member_dirs",
+]

@@ -257,6 +257,17 @@ pub(crate) fn probes_for_file_with_relations(
             }
         }
     }
+    // #15110: a complete item moved within its owner, with no other change,
+    // is the same program.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let moved = super::moved_item::moved_item_lines(changed, &facts.source, old_source);
+        for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+            *flag |= moved.added.contains(&line.new_side_line);
+        }
+        for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+            *flag |= moved.removed.contains(&line.line);
+        }
+    }
     // A line that is byte-identical on both sides of one replacement run
     // (unchanged or moved inside a rewritten block) is not an edit (#8389).
     for (new_side_line, old_line) in changed.identical_replacement_lines() {
@@ -894,7 +905,32 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            probes.extend(retargeted);
+            // #14132: two changed bindings that are operands of one comparison
+            // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
+            // it. The comparison is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded. Bindings in different
+            // terms of one line (`a < b && c < d`) keep their own probes.
+            for seeded in retargeted {
+                let already_retargeted = probes.iter().any(|kept| {
+                    kept.probe.family == seeded.probe.family
+                        && kept.probe.location.line == seeded.probe.location.line
+                        && kept.probe.expression == seeded.probe.expression
+                        && kept
+                            .binding_relation
+                            .as_ref()
+                            .zip(seeded.binding_relation.as_ref())
+                            .is_some_and(|(kept, seeded)| {
+                                bindings_share_a_comparison(
+                                    &seeded.predicate_expression,
+                                    &kept.binding,
+                                    &seeded.binding,
+                                )
+                            })
+                });
+                if !already_retargeted {
+                    probes.push(seeded);
+                }
+            }
             continue;
         }
         // #11400: a changed `const` value is its readers' new return value.
@@ -2781,6 +2817,20 @@ fn added_run_start(
     starts: &std::collections::BTreeMap<usize, usize>,
 ) -> usize {
     ChangedFile::added_run_start_from(starts, added_new_side_line)
+}
+
+/// Whether two bindings are named in the same `&&`/`||` term of a predicate
+/// line, so they are operands of one comparison (#14132).
+fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) -> bool {
+    let names = |term: &str, name: &str| {
+        term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name)
+    };
+    // Comment and string text is not an operand: `a < lo && c < hi { // a`.
+    mask_comments_and_strings(predicate_line)
+        .split("&&")
+        .flat_map(|term| term.split("||"))
+        .any(|term| names(term, first) && names(term, second))
 }
 
 fn has_matching_added_line(

@@ -1955,6 +1955,8 @@ impl FoldPlan {
     }
 }
 
+mod branch_index;
+
 #[cfg(test)]
 mod fold_plan;
 
@@ -3087,87 +3089,18 @@ pub(super) fn seam_branch_reached_by_call(
     for argument in &call_arguments {
         values.push(fold_expression(argument, &BTreeMap::new())?);
     }
-    let parse = parse_clean_source_file(owner.body.as_str())?;
-    let function = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .find_map(ast::Fn::cast)?;
-    let block = function.body()?;
-    let mut names = Vec::new();
-    for param in function.param_list()?.params() {
-        let ast::Pat::IdentPat(ident) = param.pat()? else {
-            return None;
-        };
-        names.push(ident.name()?.text().to_string());
-    }
-    if names.len() != values.len() {
-        return None;
-    }
-    let target = normalized_expression(seam_expression);
+    // #11738: the owner's branch structure is read once per owner text.
+    let index = branch_index::owner_branch_index(owner.body.as_str());
     // The seam's own line, in the coordinates of the parsed body. `body` starts
     // at the owner's `fn` token, so body line 1 is `owner.start_line`. Matching
     // the seam's line is what tells two same-text occurrences apart: a sibling
     // `return` after the `if` is a different line, so it can neither stand in
     // for the seam's branch nor make the branch scan ambiguous (#14496 review).
-    let body = owner.body.as_str();
     let seam_body_line = seam_line.checked_sub(owner.start_line)? + 1;
-    let mut matches = Vec::new();
-    for if_expr in block.syntax().descendants().filter_map(ast::IfExpr::cast) {
-        let then_block = if_expr.then_branch()?;
-        let else_block = match if_expr.else_branch() {
-            Some(ast::ElseBranch::Block(else_block)) => Some(else_block),
-            _ => None,
-        };
-        // Both arms holding the same expression means the seam's own branch
-        // is not established by text, so keep today's credit. This is a
-        // text-only check: the two arms are different lines, so the line
-        // match below would otherwise pick one and withhold credit for a
-        // value the other arm returns identically.
-        if block_holds_expression(&then_block, &target)
-            && else_block
-                .as_ref()
-                .is_some_and(|else_block| block_holds_expression(else_block, &target))
-        {
-            return None;
-        }
-        let in_then = block_holds_expression_at_line(&then_block, &target, body, seam_body_line);
-        let in_else = else_block.as_ref().is_some_and(|else_block| {
-            block_holds_expression_at_line(else_block, &target, body, seam_body_line)
-        });
-        if in_then || in_else {
-            matches.push((if_expr, in_then));
-        }
-    }
-    // No `if` branch holds the seam's own occurrence: the seam is not
-    // branch-local (a plain tail or a sibling `return`), so keep today's
-    // credit. More than one `if` holding it is ambiguous for the same reason.
-    let [(if_expr, in_then)] = matches.as_slice() else {
-        return None;
-    };
-    // The environment binds the call's literal arguments to the parameter
-    // names once. A `let` rebind, an assignment or a `for` pattern that
-    // targets one of those names changes what the condition reads, so the
-    // fold could disagree with the branch the call actually reaches. Keep
-    // today's credit rather than withhold a real discriminator. A `let` in a
-    // nested block that closes before the seam's path shadows nothing the
-    // fold reads, so it does not count (#14569).
-    if parameter_is_rebound_or_mutated(&block, &names, Some(if_expr)) {
-        return None;
-    }
-    let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
-    let condition = fold_condition(
-        &if_expr.condition()?.syntax().text().to_string(),
-        &environment,
-    )?;
-    let reached = if *in_then { condition } else { !condition };
-    if !reached {
-        return Some(false);
-    }
-    // The seam's own branch is taken, but an enclosing `if` can still keep the
-    // call from evaluating it. Every enclosing branch on the path must be the
-    // taken one too.
-    enclosing_branches_reached(if_expr, &environment)
+    index
+        .as_ref()
+        .as_ref()?
+        .reached(values, seam_expression, seam_body_line)
 }
 
 /// The arguments of the one owner call among the assertion's compared
@@ -3643,46 +3576,6 @@ fn parameter_is_rebound_or_mutated(
     })
 }
 
-/// Whether every `if` enclosing `if_expr` takes the branch that holds it.
-/// `None` when an enclosing branch cannot be read, so the caller keeps
-/// today's credit.
-fn enclosing_branches_reached(
-    if_expr: &ast::IfExpr,
-    environment: &BTreeMap<String, i128>,
-) -> Option<bool> {
-    let range = if_expr.syntax().text_range();
-    let mut current = if_expr.syntax().parent();
-    while let Some(node) = current {
-        if let Some(ancestor) = ast::IfExpr::cast(node.clone()) {
-            let in_then = ancestor
-                .then_branch()
-                .is_some_and(|block| block.syntax().text_range().contains_range(range));
-            let in_else = match ancestor.else_branch() {
-                Some(ast::ElseBranch::Block(block)) => {
-                    block.syntax().text_range().contains_range(range)
-                }
-                Some(ast::ElseBranch::IfExpr(inner)) => {
-                    inner.syntax().text_range().contains_range(range)
-                }
-                None => false,
-            };
-            if !in_then && !in_else {
-                return None;
-            }
-            let condition = fold_condition(
-                &ancestor.condition()?.syntax().text().to_string(),
-                environment,
-            )?;
-            let reached = if in_then { condition } else { !condition };
-            if !reached {
-                return Some(false);
-            }
-        }
-        current = node.parent();
-    }
-    Some(true)
-}
-
 /// 1-based line of `offset` in `text`, the same coordinates the parsed body
 /// uses. The body is a fresh parse of `owner.body`, so its offsets are not the
 /// file's; counting newlines in the body text is what maps a seam's file line
@@ -3701,43 +3594,6 @@ fn normalized_expression(text: &str) -> String {
         .collect::<String>()
         .trim_end_matches(';')
         .to_string()
-}
-
-/// Whether `block`'s tail expression or one of its statements is `target`,
-/// ignoring the line. Used only for the identical-arms check, where the two
-/// arms are different lines but return the same value.
-fn block_holds_expression(block: &ast::BlockExpr, target: &str) -> bool {
-    if block
-        .tail_expr()
-        .is_some_and(|tail| normalized_expression(&tail.syntax().text().to_string()) == target)
-    {
-        return true;
-    }
-    block
-        .statements()
-        .any(|statement| normalized_expression(&statement.syntax().text().to_string()) == target)
-}
-
-/// Whether `block`'s tail expression or one of its statements is `target` and
-/// starts on `line` (a body-relative line). The line check is what keeps a
-/// same-text sibling `return` from standing in for the seam's own occurrence.
-fn block_holds_expression_at_line(
-    block: &ast::BlockExpr,
-    target: &str,
-    body: &str,
-    line: usize,
-) -> bool {
-    let at_line = |expr: &ast::Expr| {
-        normalized_expression(&expr.syntax().text().to_string()) == target
-            && line_of_offset(body, usize::from(expr.syntax().text_range().start())) == line
-    };
-    if block.tail_expr().is_some_and(|tail| at_line(&tail)) {
-        return true;
-    }
-    block.statements().any(|statement| {
-        normalized_expression(&statement.syntax().text().to_string()) == target
-            && line_of_offset(body, usize::from(statement.syntax().text_range().start())) == line
-    })
 }
 
 /// Fold one `if` condition with the call's literal argument bindings.

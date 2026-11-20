@@ -163,7 +163,7 @@ Run these before publishing:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run   # packages from the publish stage (docs/RELEASE.md, Crate tarball contents)
 ```
 
 The authoritative packaged-crate install proof is produced by
@@ -240,7 +240,7 @@ cargo xtask release-readiness --version 0.11.0
 ```
 
 The readiness report must show that generated GitHub CI includes `#### First-run
-status`, `missing_start_here`, `start-here.md` in the `ripr-reports` artifact, and
+status`, `missing_start_here`, `ripr/reports/start-here.md` in the `ripr-reports` artifact, and
 the `ripr first-pr` safe next action; it must also verify that the VS Code manifest contributes `ripr: Start Current Repair`.
 
 ## Public Cargo Install Proof

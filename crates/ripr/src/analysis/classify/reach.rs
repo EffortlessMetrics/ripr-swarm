@@ -660,6 +660,44 @@ fn member_trait_names(directories: &[PathBuf]) -> HashSet<String> {
     names
 }
 
+/// Identity of what classification reads from workspace members outside the
+/// root (#15040): each such member's directory spelling, its `Cargo.toml`
+/// bytes (the crate name `workspace_member_crates` takes from it) and the
+/// trait names [`member_trait_names`] finds under it. Workspace discovery
+/// never walks these directories, so the corpus content hash does not cover
+/// them and the classified cache key folds this in instead. `None` when the
+/// workspace has no member outside the root, so such a workspace keeps the
+/// key it had.
+pub(in crate::analysis) fn out_of_root_member_identity(root: &Path) -> Option<String> {
+    let mut directories = crate::analysis::facts::out_of_root_member_dirs(root);
+    if directories.is_empty() {
+        return None;
+    }
+    directories.sort();
+    directories.dedup();
+    let mut identity = String::new();
+    for directory in directories {
+        // The bounded metadata reader, like every other manifest read: a
+        // manifest that is not a regular file or is over the metadata ceiling
+        // is "unreadable" here, never an unbounded read while keying.
+        let manifest = crate::bounded_input::read_metadata_toml(directory.join("Cargo.toml")).ok();
+        let mut traits: Vec<String> = member_trait_names(std::slice::from_ref(&directory))
+            .into_iter()
+            .collect();
+        traits.sort();
+        identity.push_str(&format!(
+            "{}\0{}\0{}\n",
+            directory.to_string_lossy(),
+            manifest.map_or_else(
+                || "manifest_unreadable".to_string(),
+                |text| crate::analysis::seam_cache::hash_str(&text),
+            ),
+            traits.join(","),
+        ));
+    }
+    Some(crate::analysis::seam_cache::hash_str(&identity))
+}
+
 /// Each identifier of every `use` item whose path starts outside the
 /// workspace (not `crate`, `self` or `super`), so a name imported from
 /// `std::ops` or a dependency shows up here. Comments and string and
@@ -2128,6 +2166,66 @@ mod tests {
         std::fs::write(member.join("src/declares.rs"), declaration)?;
         assert!(!allowed(), "trait under src must count");
         let _ = std::fs::remove_dir_all(&workspace);
+        Ok(())
+    }
+
+    /// #15040: a workspace member outside the root is read from disk but is
+    /// not in the corpus the cache key hashes, so its identity must move when
+    /// the trait names or the manifest move, and only then. A workspace with
+    /// every member below the root has no such identity.
+    #[test]
+    fn out_of_root_member_identity_follows_its_traits_and_manifest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("ripr-out-of-root-member-{stamp}"));
+        let root = base.join("ws");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(root.join("inner/src"))?;
+        std::fs::create_dir_all(shared.join("src"))?;
+        std::fs::write(root.join("inner/src/lib.rs"), "pub trait Inner {}\n")?;
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"shared\"\n")?;
+        std::fs::write(shared.join("src/lib.rs"), "pub use std::fmt::Display;\n")?;
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"inner\"]\n",
+        )?;
+        assert_eq!(out_of_root_member_identity(&root), None);
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"inner\", \"../shared\"]\n",
+        )?;
+        let before = out_of_root_member_identity(&root).ok_or("identity expected")?;
+        assert_eq!(
+            out_of_root_member_identity(&root).as_deref(),
+            Some(before.as_str()),
+            "identity is stable for unchanged inputs"
+        );
+        // An edit that declares no trait is not an input.
+        std::fs::write(shared.join("src/helper.rs"), "pub fn helper() {}\n")?;
+        assert_eq!(
+            out_of_root_member_identity(&root).as_deref(),
+            Some(before.as_str())
+        );
+        // An in-root member is covered by the corpus hash, not by this.
+        std::fs::write(root.join("inner/src/more.rs"), "pub trait More {}\n")?;
+        assert_eq!(
+            out_of_root_member_identity(&root).as_deref(),
+            Some(before.as_str())
+        );
+        std::fs::write(
+            shared.join("src/declares.rs"),
+            "pub trait Display {\n    fn fmt(&self);\n}\n",
+        )?;
+        let declared = out_of_root_member_identity(&root).ok_or("identity expected")?;
+        assert_ne!(declared, before, "a new trait name moves the identity");
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"renamed\"\n")?;
+        let renamed = out_of_root_member_identity(&root).ok_or("identity expected")?;
+        assert_ne!(renamed, declared, "the member manifest moves the identity");
+        let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
 

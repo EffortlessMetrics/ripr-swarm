@@ -47,6 +47,7 @@ const BUILD_USE_REFRESH: Duration = Duration::from_hours(1);
 
 /// Bytes read from the front of an entry to find its analyzer identity. Every
 /// store writes its identity fields before the facts body.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const ENTRY_PREFIX_BYTES: u64 = 8 * 1024;
 
 static BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, Instant>> = Mutex::new(BTreeMap::new());
@@ -75,6 +76,7 @@ pub(super) fn build_use_marker_name(identity: &str) -> String {
 
 /// Order of a schema directory that is a single decimal generation (`8`,
 /// `19`), as the TypeScript and Python stores use; `None` for any other name.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn integer_schema_rank(name: &str) -> Option<(u64, u64)> {
     if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -88,6 +90,7 @@ pub(crate) fn integer_schema_rank(name: &str) -> Option<(u64, u64)> {
 /// file path and the facts in every envelope, so the first occurrence of the
 /// key is the identity, never user text. `None` for anything unreadable,
 /// which the prune then leaves alone.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn analyzer_version_from_entry_prefix(path: &Path) -> Option<String> {
     use std::io::Read as _;
     let mut prefix = Vec::new();
