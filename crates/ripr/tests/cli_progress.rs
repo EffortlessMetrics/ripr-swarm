@@ -1501,17 +1501,34 @@ fn machine_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
-/// #11598 negative: the default flips only for machine formats. A human
-/// format on the same piped stderr keeps its progress.
+/// A human format on a piped stderr holds its progress for the first 2s: a
+/// fast run (an agent's shell tool, a CI log) prints no `ripr progress:` line
+/// at all, `RIPR_PROGRESS=1` restores the immediate stream, and `--quiet` /
+/// `RIPR_QUIET` still win over it (supersedes the #11598 "human keeps
+/// progress on a pipe" negative, which only the machine-format default flipped).
 #[test]
-fn human_format_on_a_pipe_keeps_progress_by_default() -> Result<(), String> {
+fn human_format_on_a_pipe_is_silent_when_the_run_finishes_fast() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
     let human = run_check_as(ripr_default(), &fixture, &[])?;
     assert!(human.status.success(), "{}", stderr_text(&human));
     assert!(
-        stderr_text(&human).contains("ripr progress: completed [diff]"),
-        "the human format keeps progress on a pipe: {}",
+        !stderr_text(&human).contains("ripr progress:"),
+        "a fast human run on a pipe prints no progress: {}",
         stderr_text(&human)
+    );
+    let forced = run_check_as(ripr(), &fixture, &[])?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: completed [diff]"),
+        "RIPR_PROGRESS=1 forces the stream (control): {}",
+        stderr_text(&forced)
+    );
+    let mut quiet = ripr();
+    quiet.env("RIPR_QUIET", "1");
+    let quiet = run_check_as(quiet, &fixture, &[])?;
+    assert!(
+        !stderr_text(&quiet).contains("ripr progress:"),
+        "RIPR_QUIET beats RIPR_PROGRESS: {}",
+        stderr_text(&quiet)
     );
     Ok(())
 }
@@ -1623,8 +1640,8 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         .output()
         .map_err(|error| format!("run ripr explain: {error}"))?;
     assert!(
-        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
-        "the human explain keeps progress on a pipe: {}",
+        !stderr_text(&human_default).contains("ripr progress:"),
+        "a fast human explain on a pipe prints no progress: {}",
         stderr_text(&human_default)
     );
     Ok(())

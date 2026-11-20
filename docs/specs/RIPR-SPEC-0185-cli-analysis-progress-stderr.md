@@ -69,6 +69,12 @@ second stage vocabulary.
    progress line, and stays silent below a 250ms minimum-duration threshold.
    A TTY stage that remains active past that threshold becomes visible even
    if the producer event arrived during the silence window.
+   A non-TTY stream holds its stage lines and the `completed` terminal for the
+   first 2s (`non_tty_hold`), so a run that finishes sooner prints nothing; a
+   longer run prints the current stage once, then heartbeats as below. A failed
+   or cancelled terminal still prints, preceded by the stage in flight.
+   `RIPR_PROGRESS` removes the hold (immediate lines); `--quiet` and
+   `RIPR_QUIET` still win.
 4. Heartbeats repeat only the current producer stage, start after 2s, and are
    time-throttled to at most one line every 8 seconds of stage activity for as
    long as the stage stays active (#4957). There is no per-run count ceiling on
@@ -180,6 +186,7 @@ second stage vocabulary.
    `ripr explain` selector miss (#9244, #13239); genuine internal failures
    still project `ripr progress: failed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
+5a. A non-TTY human-format run that finishes under 2s emits no progress; one past 2s prints its stage and `completed`; `RIPR_PROGRESS` forces immediate lines.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.
    The STANDARD policy places no per-run count ceiling, so the former
