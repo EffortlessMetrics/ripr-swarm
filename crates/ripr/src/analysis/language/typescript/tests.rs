@@ -15360,10 +15360,9 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
     Ok(())
 }
 
-/// Mocha fail-closed control: a detected mocha framework has NO file-target
-/// command mapping, so with no lockfile/runner evidence the inferred command
-/// is `None`. The evidence MUST NOT invent a `typescript_verify_command`.
-/// The runner is known (`typescript_test_runner: mocha`), so
+/// Mocha without a lockfile: like Vitest and Jest (#1239), a detected mocha
+/// framework launches the local binary through `npx --no-install`, which never
+/// downloads a missing package (#15340). The runner is known (`typescript_test_runner: mocha`), so
 /// `typescript_test_runner_unresolved` must stay omitted (#7646): that
 /// limitation names a missing runner, not a missing file-target command.
 #[test]
@@ -15438,14 +15437,15 @@ fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(),
         ));
     }
 
-    // No command must be invented.
-    let invented_cmd = finding
+    // The command launches the local mocha binary and never downloads it.
+    let has_local_launch = finding
         .evidence
         .iter()
-        .find(|ev| ev.starts_with("typescript_verify_command:"));
-    if let Some(cmd) = invented_cmd {
+        .any(|ev| ev == "typescript_verify_command: npx --no-install mocha tests/lib.test.ts");
+    if !has_local_launch {
         return Err(format!(
-            "mocha without lockfile: no command should be invented, but got: {cmd:?}"
+            "mocha without lockfile: expected the local npx --no-install mocha launch; evidence={:?}",
+            finding.evidence
         ));
     }
 
