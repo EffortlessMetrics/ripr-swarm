@@ -1056,10 +1056,16 @@ fn doc_roles_fixture() -> Result<Fixture, String> {
         (DOC_ROLE_ADR_PATH, DOC_ROLE_ADR),
         ("docs/proposals/README.md", "index, not a proposal\n"),
         ("docs/proposals/notes.md", "not a RIPR-PROP record\n"),
-        ("docs/proposals/RIPR-PROP-9001-not-markdown.txt", "not Markdown\n"),
+        (
+            "docs/proposals/RIPR-PROP-9001-not-markdown.txt",
+            "not Markdown\n",
+        ),
         ("docs/adr/README.md", "index, not an ADR\n"),
         ("docs/adr/notes.txt", "not Markdown\n"),
-        ("docs/handoffs/unstructured.md", "handoffs remain out of scope\n"),
+        (
+            "docs/handoffs/unstructured.md",
+            "handoffs remain out of scope\n",
+        ),
     ] {
         let path = fixture.0.join(relative);
         std::fs::create_dir_all(path.parent().ok_or("doc-role fixture parent")?)
@@ -1145,7 +1151,10 @@ fn doc_roles_frontdoor_preserves_scope_headings_and_report() -> Result<(), Strin
                 ),
                 "{error}"
             );
-            assert!(error.contains(relative) && error.contains(heading), "{error}");
+            assert!(
+                error.contains(relative) && error.contains(heading),
+                "{error}"
+            );
             let failed_report = std::fs::read_to_string(&report).map_err(|e| e.to_string())?;
             assert!(failed_report.starts_with("# check-doc-roles\n\nStatus: fail\n"));
             assert!(
@@ -1174,10 +1183,10 @@ fn doc_roles_frontdoor_propagates_report_write_failure() -> Result<(), String> {
     let refused = fixture.run("check-doc-roles")?;
     assert!(!refused.status.success());
     assert!(refused.stdout.is_empty(), "report failure printed success");
-    assert!(
-        String::from_utf8_lossy(&refused.stderr)
-            .contains(&format!("failed to write {}", relative.display()))
-    );
+    let error = String::from_utf8_lossy(&refused.stderr).replace('\\', "/");
+    if !error.contains("failed to write target/ripr/reports/doc-roles.md:") {
+        return Err(format!("unexpected report write diagnostic: {error}"));
+    }
     Ok(())
 }
 
