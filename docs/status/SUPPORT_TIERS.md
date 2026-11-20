@@ -33,6 +33,44 @@ ladder's tier table.
 All tiers are static evidence tiers. None of them means runtime mutation
 adequacy, coverage adequacy, or general correctness.
 
+## Full Coverage Definition
+
+"Full coverage" for a language means every applicable capability-registry
+cell for that language (language × mode × family in the Capability Registry
+Projection below) has all six pipeline stages present — detection, parsing,
+probe generation, classification, test-grip evidence, and output — and every
+one of the seven static verdict classes (`exposed`, `weakly_exposed`,
+`reachable_unrevealed`, `no_static_path`, `infection_unknown`,
+`propagation_unknown`, `static_unknown`) is pinned by all three of:
+
+- at least one golden fixture under `fixtures/*/expected/check.json`;
+- at least one `must_not_promote` control in the evidence-promotion honesty
+  corpus (`fixtures/evidence-promotion-honesty-corpus/corpus.json`,
+  RIPR-SPEC-0108);
+- at least one discriminating test mapped to the behavior in
+  `.ripr/traceability.toml` or `.ripr/traceability.d/`, with non-empty
+  `tests` and `code` entries.
+
+The language must also meet its tier's release-ladder bars measured with
+that language's own numbers (see [Metrics](../METRICS.md#release-ladder)):
+`preview` holds R0, `usable alpha` holds R0 and R1, and `usable` holds R0
+through R2 (precision at least 97%, recall at least 80%, repair starts on
+at least 80% of reported gaps). Unmeasured is not met, and fixture, spec, or
+traceability counts alone are not coverage.
+
+This definition is currently adopted for Rust, TypeScript, and Python.
+JavaScript is served by the TypeScript adapter and tracked with TypeScript
+until it carries distinct controls. Perl remains `not_proven` and the
+spec-only languages (Go, Ruby, PHP, .NET, JVM, Swift/Objective-C, Dart,
+BEAM, Lua, native, shell, R, Haskell, PowerShell, PostgreSQL, Julia, and
+Terraform) are deferred: they have contracts and traceability registration
+but no adapter, and this page correctly omits them.
+
+Naming note: the domain `LanguageStatus::Stable` value for Rust names the
+reference adapter implementation. The product support tier for Rust above
+remains `usable alpha`; `Stable` in output metadata is not a `usable` or
+`stable building block` tier claim.
+
 ## Structural Validation Claim
 
 This compact table is the cargo-allow `spec-system` structural claim surface.

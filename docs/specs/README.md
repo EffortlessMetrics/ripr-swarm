@@ -48,7 +48,7 @@ and `check-doc-index` read both places. Rows below predate that convention.
 | [RIPR-SPEC-0025](RIPR-SPEC-0025-pr-inline-comment-publisher.md) | proposed | PR inline comment publisher |
 | [RIPR-SPEC-0026](RIPR-SPEC-0026-language-adapter-contract.md) | accepted | Language adapter contract |
 | [RIPR-SPEC-0027](RIPR-SPEC-0027-typescript-preview-static-facts.md) | accepted | TypeScript preview static facts |
-| [RIPR-SPEC-0028](RIPR-SPEC-0028-python-preview-static-facts.md) | proposed | Python preview static facts |
+| [RIPR-SPEC-0028](RIPR-SPEC-0028-python-preview-static-facts.md) | accepted | Python preview static facts |
 | [RIPR-SPEC-0029](RIPR-SPEC-0029-policy-readiness-report.md) | proposed | Policy readiness report |
 | [RIPR-SPEC-0030](RIPR-SPEC-0030-preview-evidence-policy-boundary.md) | proposed | Preview evidence policy boundary |
 | [RIPR-SPEC-0031](RIPR-SPEC-0031-lane1-evidence-quality-audit.md) | proposed | Lane 1 evidence quality audit |

@@ -78,7 +78,11 @@ adding a roadmap entry does not promote a tier.
 | `stable building block` | Fixture-backed inside its documented scope; the ladder does not apply. |
 
 The bars apply per language, not to the product average. Unmeasured is not
-met.
+met. Per-language "full coverage" (every verdict class pinned by a golden, a
+`must_not_promote` honesty control, and a mapped discriminating test, on top
+of these ladder bars) is defined in
+[Support Tiers](status/SUPPORT_TIERS.md#full-coverage-definition) and is
+currently adopted for Rust, TypeScript, and Python.
 
 ### Position on 2026-11-04
 

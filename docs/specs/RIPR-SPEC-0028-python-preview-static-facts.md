@@ -1,6 +1,6 @@
 # RIPR-SPEC-0028: Python Preview Static Facts
 
-Status: proposed
+Status: accepted
 
 ## Problem
 
