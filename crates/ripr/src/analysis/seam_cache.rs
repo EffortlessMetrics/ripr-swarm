@@ -1944,6 +1944,9 @@ type ClassifiedCacheLoad = CacheLoad<(
     Vec<PathBuf>,
 )>;
 
+#[cfg(test)]
+type ClassifiedSeamsWithLimit = (Vec<ClassifiedSeam>, Option<CachedSeamLimitInfo>);
+
 /// Bounded read of a classified-seam cache file (single entry, shard, or
 /// manifest). The store never publishes a file above the encoded shard
 /// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
@@ -2786,7 +2789,7 @@ impl RepoSeamFactCache {
     pub(crate) fn load_classified_seams(
         &self,
         key: &RepoSeamCacheKey,
-    ) -> Result<CacheLoad<(Vec<ClassifiedSeam>, Option<CachedSeamLimitInfo>)>, String> {
+    ) -> Result<CacheLoad<ClassifiedSeamsWithLimit>, String> {
         Ok(match self.load_classified_seams_with_fallback(key)? {
             CacheLoad::Hit((seams, limit_info, _)) => CacheLoad::Hit((seams, limit_info)),
             CacheLoad::Miss => CacheLoad::Miss,
