@@ -4491,6 +4491,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::an_f_string_raise_argument_matches_the_one_line_verdict_under_a_match_pin",
   "crates/ripr/src/analysis/language/python/tests.rs::a_non_literal_percent_raise_argument_on_a_continuation_line_is_not_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::an_f_string_raise_argument_that_closes_the_call_is_an_error_path_not_exposed",
+  "crates/ripr/src/analysis/language/python/tests.rs::a_raise_argument_replaced_by_a_comment_is_an_error_path_not_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::a_non_raise_continuation_argument_keeps_its_own_shape",
   "crates/ripr/src/analysis/language/python/tests.rs::an_unlexable_file_keeps_a_changed_bare_string_quiet",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence",

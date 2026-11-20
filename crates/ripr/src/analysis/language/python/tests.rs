@@ -4628,6 +4628,30 @@ fn a_non_raise_continuation_argument_keeps_its_own_shape() -> Result<(), String>
 }
 
 #[test]
+fn a_raise_argument_replaced_by_a_comment_is_an_error_path_not_exposed() -> Result<(), String> {
+    // #15246 re-review: commenting out the message argument of a multi-line
+    // raise reached the shape reader with a comment-only line and was
+    // classified alone (predicate), so a success-only exact test read it
+    // `exposed`. A pure comment edit is a no-op upstream; this one had code
+    // on the old side, so it is the raise's error path.
+    let finding = classify_raise_continuation(
+        [
+            RAISE_OPEN,
+            "            # f\"Bad thing: {name!r}\"",
+            RAISE_CLOSE,
+        ],
+        (
+            "            # f\"Bad thing: {name!r}\"",
+            "            f\"Bad thing: {name!r}\"",
+        ),
+        SUCCESS_ONLY_TEST,
+    )?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn an_f_string_raise_argument_that_closes_the_call_is_an_error_path_not_exposed()
 -> Result<(), String> {
     // #15246 review: `f"msg {x}")` does not lex on its own (an unmatched

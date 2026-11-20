@@ -204,7 +204,7 @@ pub(super) fn enclosing_bracket_statement(
 /// onto one line, so its probe shape is the statement's (#13875): a message
 /// string inside `raise E(` is an error path, inside `return f(` a returned
 /// value. Any argument line of a multi-line `raise` resolves too (#15246).
-/// `None` when the line is blank or a comment, when it is neither a bare
+/// `None` when the line is blank, when it is neither a bare
 /// string nor inside a `raise`, or when the span or source is unknown.
 pub(super) fn bare_string_statement_text(
     line_text: &str,
@@ -212,8 +212,10 @@ pub(super) fn bare_string_statement_text(
     source: Option<&str>,
 ) -> Option<String> {
     let (open, close) = span?;
-    let trimmed = line_text.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
+    // A blank line has no shape. A comment line is kept: it reaches here only
+    // when the other side had code (a pure comment edit is a no-op upstream),
+    // so a raise argument commented out is the raise's error path too.
+    if line_text.trim().is_empty() {
         return None;
     }
     let lines: Vec<&str> = source?

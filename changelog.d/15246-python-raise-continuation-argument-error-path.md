@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Python: a changed non-literal argument (an f-string, `"msg" % x`, a name) on its own line of a multi-line `raise Exc(` is now classified as the raise's error path, so a success-only exact test no longer makes it a false `exposed`; the one-line and plain-literal shapes already agreed (#15246).
+- Python: a changed line inside a multi-line `raise Exc(...)` (an f-string or `"msg" % x` argument, an argument line that also closes the call such as `f"msg {x}")`, or a `) from exc` line) is now classified as the raise's error path, so a success-only exact test no longer makes it a false `exposed` (#15246). A literal message that closes the call (`"msg")`) is still not read by the `match=` message pin.
