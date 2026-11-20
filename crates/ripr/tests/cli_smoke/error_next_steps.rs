@@ -301,6 +301,7 @@ fn feedback_bad_reason_lists_the_taxonomy_and_help_lists_it_too() -> TestResult 
     )?;
     let text = stderr(&output);
     assert_eq!(output.status.code(), Some(2), "{text}");
+    assert!(text.contains("feedback record --reason"), "{text}");
     for code in FEEDBACK_REASONS {
         assert!(text.contains(code), "error must list {code}: {text}");
     }

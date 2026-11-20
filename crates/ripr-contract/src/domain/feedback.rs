@@ -120,7 +120,7 @@ impl FeedbackReason {
             .collect::<Vec<_>>()
             .join(", ");
         Err(format!(
-            "unknown feedback reason {value:?}; pass --reason with one of: {accepted}"
+            "unknown feedback reason {value:?}; expected one of: {accepted}"
         ))
     }
 
@@ -485,6 +485,22 @@ mod tests {
             attempt_id: None,
             receipt_id: None,
         }
+    }
+
+    #[test]
+    fn unknown_reason_lists_codes_without_naming_a_flag() -> Result<(), String> {
+        // Stored receipts read by `feedback export` also go through `parse`,
+        // and export takes no `--reason`; only `feedback record` adds the
+        // flag to this message (#15257).
+        let message = match FeedbackReason::parse("future_reason") {
+            Ok(reason) => return Err(format!("unknown reason parsed as {reason:?}")),
+            Err(message) => message,
+        };
+        assert!(!message.contains("--reason"), "{message}");
+        for reason in FeedbackReason::all() {
+            assert!(message.contains(reason.as_str()), "{message}");
+        }
+        Ok(())
     }
 
     #[test]

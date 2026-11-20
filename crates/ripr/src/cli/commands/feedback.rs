@@ -147,7 +147,10 @@ pub(in crate::cli) fn parse_record_options(
             }
             "--reason" => {
                 i += 1;
-                reason = Some(FeedbackReason::parse(expect_value(args, i, "--reason")?)?);
+                reason = Some(
+                    FeedbackReason::parse(expect_value(args, i, "--reason")?)
+                        .map_err(|err| format!("feedback record --reason: {err}"))?,
+                );
             }
             "--judgment" => {
                 i += 1;
