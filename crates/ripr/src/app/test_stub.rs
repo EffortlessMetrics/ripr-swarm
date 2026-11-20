@@ -734,19 +734,20 @@ pub(crate) enum StubRouteSeamChoice {
 pub(crate) fn stub_route_seam_choice(root: &Path, finding: &Finding) -> StubRouteSeamChoice {
     let config = crate::config::load_for_root(root).unwrap_or_default();
     let mut index = None;
-    let Some(route) = stub_route_for_finding(root, &config, finding, &mut index) else {
-        return StubRouteSeamChoice::Location;
-    };
-    match route.decision {
-        StubRouteDecision::SeamStub { seam_id } => StubRouteSeamChoice::SeamId(seam_id),
-        StubRouteDecision::Ambiguous { .. } | StubRouteDecision::Withheld { .. } => {
+    match stub_route_for_finding(root, &config, finding, &mut index).map(|route| route.decision) {
+        Some(StubRouteDecision::SeamStub { seam_id }) => StubRouteSeamChoice::SeamId(seam_id),
+        Some(StubRouteDecision::Ambiguous { .. } | StubRouteDecision::Withheld { .. }) => {
             StubRouteSeamChoice::Unrunnable
         }
-        StubRouteDecision::Stub { .. }
-        | StubRouteDecision::Refused { .. }
-        | StubRouteDecision::WeakOracle { .. } => {
-            // A refused or weak-oracle fold can also come from an ambiguous
-            // line; re-ask the `--at` resolver with the same seam index.
+        Some(
+            StubRouteDecision::Stub { .. }
+            | StubRouteDecision::Refused { .. }
+            | StubRouteDecision::WeakOracle { .. },
+        )
+        | None => {
+            // A refused or weak-oracle fold, and a route the resolver could
+            // not build (an ambiguity that names no seam ids), can also come
+            // from an ambiguous line; re-ask the `--at` resolver.
             let ambiguous = stub_route_location(finding, root).is_some_and(|(file, line, kind)| {
                 matches!(
                     resolve_at_location(root, &config, &file, line, Some(kind), &mut index),

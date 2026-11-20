@@ -6,4 +6,4 @@
   the changed seam (#15641).
 - The MCP `ripr_prepare_repair` refusal's `stub_route` command names `--seam-id`
   under the same ambiguity, and is left out when no single seam on that line
-  produces a stub instead of printing an `--at` command that refuses.
+  produces a stub instead of printing an `--at` command that refuses (#15641).
