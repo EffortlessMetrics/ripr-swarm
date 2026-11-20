@@ -157,7 +157,7 @@ fn check_tree(root: &Path, tree: &str) -> Result<(), String> {
         (root, Some(input.as_bytes())),
         &[],
         crate::run::ByteCaptureBudget {
-            timeout: std::time::Duration::from_secs(60),
+            timeout: std::time::Duration::from_mins(1),
             stdout_bytes: expected_bytes,
             stderr_bytes: 64 * 1024,
         },
@@ -239,24 +239,35 @@ mod tests {
             assert_eq!(take_blob(&mut data, header, 3)?, b"a\nb");
         }
         assert!(data.is_empty());
-        for mut bad in [
-            b"xyz blob 3\na\nb\n".as_slice(),
-            b"abc blob 2\na\n",
-            b"abc blob 3\na",
-            b"abc blob 3\na\nb!",
+        let wrong_header = "Git batch object identity, type or size mismatch";
+        for (mut bad, expected) in [
+            (b"xyz blob 3\na\nb\n".as_slice(), wrong_header),
+            (b"abc blob 2\na\n", wrong_header),
+            (b"abc blob 3\na", "truncated Git blob"),
+            (b"abc blob 3\na\nb!", "missing Git batch terminator"),
         ] {
-            assert!(take_blob(&mut bad, header, 3).is_err());
+            let actual = take_blob(&mut bad, header, 3).err();
+            if actual.as_deref() != Some(expected) {
+                return Err(format!("expected {expected}, got {actual:?}"));
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn pre_label_requires_exact_ordered_published_parents() {
+    fn pre_label_requires_exact_ordered_published_parents() -> Result<(), String> {
         let raw = "tree abc\nparent base\nparent head\n\nparent fake\n";
-        assert!(verify_parents(raw, "base", "head").is_ok());
-        assert!(verify_parents(raw, "new-base", "head").is_err());
-        assert!(verify_parents(raw, "head", "base").is_err());
-        assert!(verify_parents("tree abc\nparent base\n\nparent head", "base", "head").is_err());
+        verify_parents(raw, "base", "head")?;
+        for (commit, base, head) in [
+            (raw, "new-base", "head"),
+            (raw, "head", "base"),
+            ("tree abc\nparent base\n\nparent head", "base", "head"),
+        ] {
+            if !verify_parents(commit, base, head).is_err_and(|e| e.contains("expected parents")) {
+                return Err(format!("expected a parent mismatch for {base} and {head}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
