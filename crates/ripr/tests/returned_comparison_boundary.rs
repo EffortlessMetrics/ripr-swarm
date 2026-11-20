@@ -1810,6 +1810,26 @@ fn compound_return_unmasked_boundary_keeps_the_baseline_reading() -> Result<(), 
 }
 
 #[test]
+fn compound_string_return_pairs_the_reachable_qualified_call() -> Result<(), String> {
+    let findings = findings_with_parameter(
+        "label: &str, on: bool",
+        "",
+        "",
+        r#"    label == "beta" && on"#,
+        r#"    label == "alpha" && on"#,
+        r#"#[test]
+fn t() {
+    assert_eq!(thr::thr("beta", false), false);
+    assert_eq!(thr::thr("beta", true), true);
+}
+"#,
+    )?;
+    let returned = family(&findings, "return_value")?;
+    assert_eq!(returned.class, ExposureClass::Exposed, "{returned:?}");
+    Ok(())
+}
+
+#[test]
 fn masked_boundary_is_not_rescued_by_an_unmasked_non_boundary_call() -> Result<(), String> {
     let test = "use thr::thr;\n#[test]\nfn t() {\nassert_eq!(thr(5, false), false);\nassert_eq!(thr(9, true), true);\n}\n";
     let findings = findings_with_parameter(

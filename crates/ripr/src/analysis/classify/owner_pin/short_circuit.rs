@@ -90,6 +90,41 @@ impl ShortCircuitTail {
             .then_some(chain)
     }
 
+    /// A comparison edit with one unchanged Boolean parameter guarding its result.
+    pub(in crate::analysis::classify) fn comparison_gate(&self, before: &Self) -> Option<&str> {
+        if self.operator != before.operator
+            || self.operands.len() != 2
+            || before.operands.len() != 2
+        {
+            return None;
+        }
+        for (gate, changed) in [(0, 1), (1, 0)] {
+            if let OperandKind::Flag(parameter) = self.operands[gate].kind
+                && self.operands[gate] == before.operands[gate]
+                && self.operands[changed] != before.operands[changed]
+                && matches!(self.operands[changed].kind, OperandKind::Compare { .. })
+                && matches!(before.operands[changed].kind, OperandKind::Compare { .. })
+            {
+                return self.parameters.get(parameter).map(String::as_str);
+            }
+        }
+        None
+    }
+
+    pub(in crate::analysis::classify) fn result_on(&self, arguments: &[String]) -> Option<bool> {
+        if arguments.len() != self.parameters.len() {
+            return None;
+        }
+        let values: Vec<_> = arguments.iter().cloned().map(Some).collect();
+        let continues = self.operator == "&&";
+        for operand in &self.operands {
+            if operand.evaluate(&values)? != continues {
+                return Some(!continues);
+            }
+        }
+        Some(continues)
+    }
+
     /// The owner's parameters in declaration order.
     pub(in crate::analysis::classify) fn parameters(&self) -> &[String] {
         &self.parameters
