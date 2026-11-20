@@ -521,6 +521,26 @@ fn norecursedirs_plain_interior_slash_path_is_evaluated() -> Result<(), String> 
             return Err(format!("{file} should be excluded: {got:?}"));
         }
     }
+    // A config below the entry's first segment: pytest's `*/tests/mypy_test_cases`
+    // still matches the absolute path, so the config-relative tail
+    // `mypy_test_cases` is excluded too.
+    let nested = "tests/mypy_test_cases/test_calc.py";
+    let got = controls_of(
+        "config-below-entry",
+        &[
+            (
+                "tests/pytest.ini",
+                "[pytest]\nnorecursedirs = tests/mypy_test_cases\n",
+            ),
+            (nested, TEST_BODY),
+        ],
+        nested,
+    )?;
+    if got != ["pytest.collection(norecursedirs)"] {
+        return Err(format!(
+            "{nested} under tests/pytest.ini should be excluded: {got:?}"
+        ));
+    }
     // The pyproject spelling from marshmallow.
     assert_credited(
         "pyproject",
