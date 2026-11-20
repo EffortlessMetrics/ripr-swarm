@@ -9645,6 +9645,9 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             TypeScriptRelationKind::DirectOwnerCall
                 | TypeScriptRelationKind::ImportAliasOwnerCall
                 | TypeScriptRelationKind::ImportedOwnerCall
+                // The owner's own name through a barrel; a renaming
+                // re-export refuses in the workspace scan below.
+                | TypeScriptRelationKind::ReExportChainFollowed
         ) {
             return None;
         }
@@ -9660,7 +9663,7 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
         let body = test.body_text.as_str();
         if ['\'', '"', '`']
             .iter()
-            .any(|quote| body.contains(&format!("{quote}{}{quote}", owner.name)))
+            .any(|quote| body.contains(&format!("[{quote}{}{quote}]", owner.name)))
         {
             return None;
         }
@@ -9734,16 +9737,8 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             {
                 return None;
             }
-            let import_line = |_: usize, line: &str| {
-                let line = line.trim_start();
-                line.starts_with("import ") || line.starts_with("} from ")
-            };
-            if text
-                .lines()
-                .any(|line| import_line(0, line) && line.contains(" as "))
-            {
-                return None;
-            }
+            let import_lines = static_import_lines(&text)?;
+            let import_line = |number: usize, _: &str| import_lines.contains(&number);
             if !calls_all_fill(&text, &import_line) {
                 return None;
             }
@@ -9800,6 +9795,44 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
                 .join(", ")
         ),
     })
+}
+
+/// The 1-based lines of the file's static `import ... from '...'`
+/// statements, each gathered whole across lines. `None` when a statement
+/// renames a binding (`as`, which also covers `* as ns`) or never closes:
+/// a renamed owner has callers this text scan cannot name.
+fn static_import_lines(text: &str) -> Option<Vec<usize>> {
+    let mut lines = Vec::new();
+    let mut statement: Option<String> = None;
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        let starts = statement.is_none()
+            && trimmed
+                .strip_prefix("import")
+                .is_some_and(|rest| rest.starts_with([' ', '{', '*']));
+        if statement.is_none() && !starts {
+            continue;
+        }
+        lines.push(index + 1);
+        let mut gathered = statement.take().unwrap_or_default();
+        gathered.push(' ');
+        gathered.push_str(trimmed);
+        let masked = ts_mask_literals_and_comments(&gathered);
+        let closed = masked.contains(" from ")
+            || masked.contains("}from")
+            || gathered
+                .trim_end()
+                .trim_end_matches(';')
+                .ends_with(['\'', '"']);
+        if !closed {
+            statement = Some(gathered);
+            continue;
+        }
+        if word_occurrences(&masked, "as") > 0 {
+            return None;
+        }
+    }
+    statement.is_none().then_some(lines)
 }
 
 /// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread

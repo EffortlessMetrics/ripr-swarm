@@ -279,6 +279,9 @@ fn only_arguments_that_cannot_be_undefined_fill_a_default() {
         "() => 1",
         "function () {}",
         "new Map()",
+        "{ level: 'ZZZ' } as any",
+        "{} satisfies Opts",
+        "[1] as number[]",
     ] {
         assert!(argument_is_definitely_defined(argument), "{argument}");
     }
@@ -292,6 +295,9 @@ fn only_arguments_that_cannot_be_undefined_fill_a_default() {
         "a ?? b",
         "{ a: 1 }.b",
         "new Foo().bar",
+        "opts as Opts",
+        "undefined!",
+        "make() as Opts",
         "new Foo().get()",
         "new Foo() && undefined",
         "new Foo() ? undefined : 1",
@@ -313,6 +319,76 @@ fn a_describe_titled_with_the_owner_name_is_not_a_caller() -> Result<(), String>
         PICK_OLD,
         PICK_NEW,
         &[("tests/def.test.ts", test)],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// tinycolor's layout: a multi-line import list and a cast argument. An
+/// import that renames a binding keeps the verdict.
+#[test]
+fn a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses() -> Result<(), String> {
+    let test = |import: &str| {
+        format!(
+            "import {{ describe, expect, it }} from 'vitest';\n{import}\n\ndescribe('pick', () => {{\n  it('joins', () => {{\n    expect(pick('x', {{ level: 'B' }} as any)).toBe('xB');\n  }});\n}});\n"
+        )
+    };
+    let plain = test("import {\n  other,\n  pick,\n} from '../src/def';");
+    let finding = finding_at(
+        "default-multiline-import",
+        PICK,
+        3,
+        PICK_OLD,
+        PICK_NEW,
+        &[("tests/def.test.ts", &plain)],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{:?}",
+        finding.missing
+    );
+    let renamed = test(
+        "import {\n  pick,\n  pick as choose,\n} from '../src/def';\nconst run = () => choose('y');",
+    );
+    let finding = finding_at(
+        "default-renaming-import",
+        PICK,
+        3,
+        PICK_OLD,
+        PICK_NEW,
+        &[("tests/def.test.ts", &renamed)],
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// tinycolor's other half: the test imports the owner's own name through an
+/// `export *` barrel and is titled with that name. A barrel that renames the
+/// owner keeps the verdict.
+#[test]
+fn a_barrel_import_under_the_owner_name_is_followed() -> Result<(), String> {
+    let test = "import { it, expect } from 'vitest';\nimport { pick } from '../src/index';\n\nit('pick', () => {\n  expect(pick('x', { level: 'B' })).toBe('xB');\n});\n";
+    let finding = finding_at(
+        "default-barrel",
+        PICK,
+        3,
+        PICK_OLD,
+        PICK_NEW,
+        &[
+            ("tests/def.test.ts", test),
+            ("src/index.ts", "export * from './def';\n"),
+        ],
     )?;
     assert_eq!(
         finding.class,

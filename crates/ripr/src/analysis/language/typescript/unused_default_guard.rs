@@ -99,7 +99,7 @@ pub(crate) fn changed_default_parameter(
 /// An identifier, a member, a call, `undefined`, `void`, a spread, or any
 /// other expression may be `undefined`.
 pub(crate) fn argument_is_definitely_defined(argument: &str) -> bool {
-    let argument = argument.trim();
+    let argument = strip_type_casts(argument.trim());
     if argument.is_empty() || argument.starts_with("...") {
         return false;
     }
@@ -143,6 +143,33 @@ pub(crate) fn argument_is_definitely_defined(argument: &str) -> bool {
     }
     let unsigned = argument.strip_prefix('-').unwrap_or(argument);
     numeric_literal_value(unsigned).is_some_and(|text| text.parse::<f64>().is_ok())
+}
+
+/// The expression under trailing TypeScript casts (`x as T`,
+/// `x satisfies T`, `x!`), which do not change the runtime value. Only a
+/// plain type name, dotted, with optional `[]`, is read as the cast type.
+fn strip_type_casts(argument: &str) -> &str {
+    let mut argument = argument;
+    loop {
+        let before = argument;
+        argument = argument.strip_suffix('!').unwrap_or(argument).trim_end();
+        for keyword in [" as ", " satisfies "] {
+            if let Some(at) = argument.rfind(keyword) {
+                let cast = argument[at + keyword.len()..].trim();
+                let plain = !cast.is_empty()
+                    && cast
+                        .trim_end_matches("[]")
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'));
+                if plain {
+                    argument = argument[..at].trim_end();
+                }
+            }
+        }
+        if argument == before {
+            return argument;
+        }
+    }
 }
 
 /// The index of the bracket that closes the one at position 0, in masked
