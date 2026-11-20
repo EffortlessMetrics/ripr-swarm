@@ -191,6 +191,40 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/rerun-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-brief-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_brief_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root with an echoed base and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-brief-refusal.valid.json"],
+        // `ripr check` refusals share the agent brief's `0.2` version and the
+        // envelope's required fields, so they match this schema's top-level
+        // shape. They carry `mode` and a `diff` scope, which this schema
+        // rejects, and check.schema.json owns them.
+        excluded: &[(
+            "tests/fixtures/verification/ripr/check-limited.valid.json",
+            "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unknown seam (exit 3), an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-packet-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

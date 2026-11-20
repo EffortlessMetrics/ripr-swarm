@@ -1,0 +1,50 @@
+{
+  "analysis_scope": {
+    "basis": "repository_root_unusable",
+    "downstream_consumable": false,
+    "limitation": "repository_root_unusable",
+    "repair_route": "analysis/repository-root",
+    "run_status": "repository_root_unusable",
+    "scope": "repo"
+  },
+  "base": "main",
+  "findings": [],
+  "root": "./missing-root",
+  "run_limitations": [
+    {
+      "basis": "repository_root_unusable",
+      "category": "repository_root_unusable",
+      "downstream_consumable": false,
+      "message": "agent brief root ./missing-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+      "remedy": {
+        "alternatives": [],
+        "command": null,
+        "conditional": false,
+        "env": [],
+        "fill_in": [],
+        "flags": [],
+        "kind": "none",
+        "prose_has_more": false,
+        "retry_stated": null,
+        "tool": null
+      },
+      "repair_route": "analysis/repository-root",
+      "run_status": "repository_root_unusable"
+    }
+  ],
+  "schema_version": "0.2",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}
