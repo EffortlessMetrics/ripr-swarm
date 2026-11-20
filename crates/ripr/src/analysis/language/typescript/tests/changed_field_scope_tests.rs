@@ -136,7 +136,7 @@ fn non_object_changed_value_child_read_keeps_credit() -> Result<(), String> {
 }
 
 /// Review of #15644: a read of a member the OLD primitive answered through its
-/// prototype (`3 .toFixed`) changes when the field becomes an object, so it
+/// prototype (`f().retries.toFixed()`) changes when the field becomes an object, so it
 /// keeps its credit. An old value whose members the guard does not model (an
 /// array's or a string's `.length`, `null`) keeps the existing credit too.
 #[test]
@@ -144,7 +144,7 @@ fn non_object_old_value_member_read_keeps_credit() -> Result<(), String> {
     let prototype = class_for(
         NEW_OBJECT,
         OLD,
-        "expect(typeof f().retries.toFixed).toBe(\"undefined\");",
+        "expect(f().retries.toFixed()).toBe(\"3\");",
     )?;
     assert_class(prototype, true, "old number's prototype member")?;
     for old in [
