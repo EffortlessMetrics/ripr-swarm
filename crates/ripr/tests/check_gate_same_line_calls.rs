@@ -201,7 +201,7 @@ fn same_line_calls_off_the_boundary_keep_the_gap_in_both_views() -> Result<(), S
     let decisions = decision_classes(&gate)?;
     if !decisions.iter().any(|class| class == "weakly_gripped") {
         return Err(format!(
-            "the gate must keep a weak-grip gap for the untested boundary, got {decisions:?}: {gate}"
+            "the gate must keep a weak-grip gap for the uncovered boundary, got {decisions:?}: {gate}"
         ));
     }
     Ok(())
