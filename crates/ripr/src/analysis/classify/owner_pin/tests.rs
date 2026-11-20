@@ -13285,6 +13285,27 @@ fn walked_parameter_refuses_an_empty_literal_argument() {
     }
 }
 
+/// #15277 review: a turbofish call reads its arguments like a plain call, so
+/// the empty-walk refusal still sees an empty literal through `count::<u8>`.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_through_a_turbofish() {
+    let tail = "xs.iter().count()";
+    let lib = format!(
+        "pub fn count<T>(xs: &[T]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{}\n}}\n",
+        adaptor_test(
+            "        assert_eq!(count::<u8>(&[]), 0);\n        assert_eq!(count::<u8>(&[3, 4]), 2);"
+        )
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count", tail);
+    assert!(pin.is_some(), "the turbofish walk must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(count::<u8>(&[3, 4]), 2);".to_string()]
+    );
+}
+
 /// #9444 review: the refusal also reads a call wrapped in a rendered or
 /// indexed comparison, a spaced method call, and leaves a field receiver
 /// or a rebound parameter alone.
@@ -15012,7 +15033,10 @@ fn a_turbofish_call_has_the_plain_call_shape() {
     ] {
         assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
     }
-    assert_eq!(turbofish_len("::<u8>(5)"), "::<u8>".len());
-    assert_eq!(turbofish_len("(5)"), 0);
-    assert_eq!(turbofish_len("::<u8(5)"), 0);
+    assert_eq!(
+        crate::analysis::extract::turbofish_len("::<u8>(5)"),
+        "::<u8>".len()
+    );
+    assert_eq!(crate::analysis::extract::turbofish_len("(5)"), 0);
+    assert_eq!(crate::analysis::extract::turbofish_len("::<u8(5)"), 0);
 }

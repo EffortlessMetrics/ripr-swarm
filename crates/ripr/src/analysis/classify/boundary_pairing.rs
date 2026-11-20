@@ -356,7 +356,12 @@ fn path_qualified_whole_call<'a>(subject: &'a str, name: &str) -> Option<&'a str
 }
 
 fn owner_call_count(text: &str, name: &str) -> usize {
-    owner_call_argument_lists(text, name).len()
+    // The argument lists read only a plain `name(` call; a turbofish or
+    // macro spelling still counts (#15277 review), so the count can only
+    // overcount, which every caller reads as a refusal.
+    owner_call_argument_lists(text, name)
+        .len()
+        .max(super::owner_pin::closure_adaptor::call_count(text, name))
 }
 
 /// Activation already recorded a boundary `==` row bound down the chain
@@ -4573,6 +4578,18 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn owner_call_count_sees_a_turbofish_owner_call() {
+        // #15277 review: the #6780 "assertion holds no direct owner call"
+        // refusal must see `owner::<u8>(3)`.
+        assert_eq!(
+            owner_call_count("assert_eq!(wrapper(10), owner::<u8>(3));", "owner"),
+            1
+        );
+        assert_eq!(owner_call_count("owner(1) + owner::<u8>(2)", "owner"), 2);
+        assert_eq!(owner_call_count("assert_eq!(wrapper(10), 3);", "owner"), 0);
     }
 
     #[test]
