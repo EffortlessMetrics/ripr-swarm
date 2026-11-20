@@ -10,3 +10,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_unpinned_literal_arm_return (2)
+
+Reason:
+RIPR-SPEC-0243: the unpinned-arm line names only the changed arm's evidence (#15387 review)
+
+Command:
+`cargo xtask goldens bless typescript_vitest_unpinned_literal_arm_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

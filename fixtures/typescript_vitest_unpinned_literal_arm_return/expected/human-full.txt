@@ -58,7 +58,7 @@ Evidence
 
 Weakness
   - The change to `dir` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior
-  - No exact assertion on `dir` expects `'one'`, the result only the changed arm returned; every exact assertion on `dir` expects another arm's result (`'two'`), so each passes on both versions
+  - No exact assertion on `dir` expects `'one'`, the result only the changed arm returned; the exact assertions on `dir` expect other arms' results (`'two'`)
 
 Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
