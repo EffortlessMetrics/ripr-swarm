@@ -240,12 +240,21 @@ movement cannot promote the release claim by itself.
 
 ### Crate tarball contents
 
-The published source distribution carries what a build of `ripr` reads, the
-sample workspace (`examples/*/example.diff`, `examples/*/src/**`,
-`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`,
-which carries the package-qualified help evidence), and one integration
-target: `tests/cli_help_hierarchy.rs` with `tests/common/help_contract.rs`
-and `tests/common/help_workspace.rs`.
+The published source distribution carries what a build of `ripr` reads and
+the sample workspace (`examples/*/example.diff`, `examples/*/src/**`,
+`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`). It
+carries no development tests (#15216).
+
+The rendered-help harness (`tests/cli_help_hierarchy.rs` with
+`tests/common/help_contract.rs` and `tests/common/help_workspace.rs`) is a
+development test too. `cargo test -p ripr` runs it against the checkout
+binary. Qualification runs it against the release candidate itself: the
+qualified `release-negative-corpus` compiles the admitted commit's copy of the
+harness with `rustc --test`, binds `CARGO_BIN_EXE_ripr` to the executable
+installed from the qualified archive, and requires every declared case to be
+listed and pass (`candidate_harness/archive/help_contract.rs`). The result is
+recorded as `installed_help_contract` in the corpus report's qualification
+custody.
 
 Test-only sources are not packaged. crates.io rejects a `.crate` above its
 default 10 MiB (10,485,760 byte) upload limit unless its team has raised the
@@ -260,7 +269,7 @@ list in `crates/ripr/Cargo.toml` therefore leaves out:
   new production module with such a name must be added there, or the packaged
   crate does not compile (the publish rehearsal and the `package-install`
   check build the packaged crate and catch that);
-- every other file under `tests/`.
+- all of `tests/`.
 
 That list alone was not enough. Packaged straight from the checkout, the
 crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
@@ -321,21 +330,21 @@ the installed binary or library API. Changing the list is a release-contract
 change that must be reviewed against `cargo package -p ripr --list`, the
 measured `.crate` size and this document.
 
-The published `cli_help_hierarchy` target must compile and run from the
-extracted package without repository-root documentation. It keeps the rendered
-help and synthetic-document cases; its shared helper is packaged under
-`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
-the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
-real Cargo archive and rejects removal of the shared test helper:
+The `cli_help_hierarchy` target is not published. It needs no
+repository-root documentation, so it compiles standalone from its three files.
+It keeps the rendered help and synthetic-document cases. Seven live
+repository-guide audits belong to the unpublished `xtask` target
+`ripr_public_guide_contract`. That target also checks that a real Cargo
+archive carries no `tests/`, compiles the help target standalone against the
+checkout candidate, and rejects removal of the shared test helper:
 
 ```bash
 cargo test -p ripr --test cli_help_hierarchy
 cargo test -p xtask --test ripr_public_guide_contract
 ```
 
-These focused checks establish the help target's package boundary. Other
-packaged test targets retain their own asset requirements and are not qualified
-by this check.
+Release qualification runs the same cases against the installed candidate (see
+above).
 
 The example paths are enumerated rather than globbed as `examples/**` on
 purpose. `ripr` runs against the sample workspace during tests and writes a

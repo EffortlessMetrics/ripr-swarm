@@ -16,8 +16,10 @@ use std::rc::Rc;
 
 /// The owner's branch structure, or `None` when the owner cannot be read
 /// (no clean parse, no function or body, a parameter that is not a plain
-/// name, an `if` without a then block) or rebinds or mutates a parameter.
-/// Each of those made the per-pair answer `None` whatever the call.
+/// name, an `if` without a then block). Each of those made the per-pair
+/// answer `None` whatever the call. A rebound or mutated parameter is
+/// recorded per `if` instead, because a `let` in a block that closes before
+/// that `if`'s path shadows nothing its fold reads (#14569).
 pub(super) fn owner_branch_index(body: &str) -> Rc<Option<BranchIndex>> {
     run_memo::memoize(Product::OwnerBranchIndex, 0, body, || {
         Rc::new(BranchIndex::read(body))
@@ -36,6 +38,9 @@ pub(super) struct BranchIndex {
 
 struct IndexedIf {
     condition: Option<String>,
+    /// Whether the owner rebinds or mutates a parameter in scope for this
+    /// `if`'s condition or any condition on its path.
+    rebound: bool,
     /// Every `if` above this one, innermost first.
     enclosing: Vec<Enclosing>,
 }
@@ -64,9 +69,9 @@ impl BranchIndex {
             };
             names.push(ident.name()?.text().to_string());
         }
-        if parameter_is_rebound_or_mutated(&block, &names) {
-            return None;
-        }
+        // The scoped check only relaxes the unscoped one, so an owner that
+        // rebinds nothing anywhere skips the per-`if` walk.
+        let any_rebound = parameter_is_rebound_or_mutated(&block, &names, None);
         let newlines: Vec<usize> = body
             .bytes()
             .enumerate()
@@ -114,6 +119,8 @@ impl BranchIndex {
                 condition: if_expr
                     .condition()
                     .map(|condition| condition.syntax().text().to_string()),
+                rebound: any_rebound
+                    && parameter_is_rebound_or_mutated(&block, &names, Some(&if_expr)),
                 enclosing: enclosing_ifs(&if_expr),
             });
         }
@@ -150,6 +157,9 @@ impl BranchIndex {
             return None;
         };
         let indexed = self.ifs.get(*position)?;
+        if indexed.rebound {
+            return None;
+        }
         let condition = fold_condition(indexed.condition.as_ref()?, &environment)?;
         let reached = if *in_then { condition } else { !condition };
         if !reached {

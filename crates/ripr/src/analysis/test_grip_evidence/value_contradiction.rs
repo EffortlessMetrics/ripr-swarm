@@ -1116,7 +1116,7 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
         .into_iter()
         .map(|operand| {
             let name = operand.trim().to_string();
-            match let_initializer(test_body, &name) {
+            match let_initializer(test_body, &name, oracle_text) {
                 Some(text) => ResolvedOperand {
                     text,
                     binding: Some(name),
@@ -1137,8 +1137,17 @@ struct ResolvedOperand {
     binding: Option<String>,
 }
 
-/// The initializer of the single `let [mut] name = init;` in `body`.
-fn let_initializer(body: &str, name: &str) -> Option<String> {
+/// The initializer of the `let [mut] name = init;` in `body` that binds the
+/// `name` the assertion reads.
+///
+/// When `assertion` occurs once in `body`, that is the last plain `let` of
+/// `name` before it whose block is still open there, so a later rebind
+/// (`let got = owner(1); let got = owner(2); assert_eq!(got, ..)`) resolves to
+/// the call the assertion actually pins and a rebind inside a closed nested
+/// block does not (#14569). An initializer that reads `name` itself
+/// (`let got = got.unwrap();`) is not resolved. Without a single anchor, only
+/// a sole plain binding resolves, as before.
+fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
     if name.is_empty()
         || !name
             .chars()
@@ -1173,8 +1182,17 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
     if mutated {
         return None;
     }
+    let anchor = single_occurrence(body, assertion.trim());
+    // Braces inside comments, strings and char literals (`'{'`, `// }`) do
+    // not open or close a block; the mask keeps byte offsets.
+    let masked = anchor.map(|_| crate::analysis::mask_comments_and_strings(body));
     let mut found = None;
-    for (at, _) in body.match_indices("let ") {
+    let mut reaching = None;
+    // With an anchor, a `let` inside a comment or string is not a binding
+    // (`// let got = owner(2);`), so candidates come from the masked body;
+    // the initializer text is still read from `body` at the same offsets.
+    let scan = masked.as_deref().unwrap_or(body);
+    for (at, _) in scan.match_indices("let ") {
         if body[..at]
             .chars()
             .next_back()
@@ -1206,11 +1224,61 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
             continue;
         };
         let end = init.find(';')?;
-        if found.replace(init[..end].trim().to_string()).is_some() {
-            return None;
+        let initializer = init[..end].trim().to_string();
+        match anchor {
+            Some(anchor) => {
+                if at < anchor
+                    && masked
+                        .as_deref()
+                        .and_then(|masked| masked.get(at..anchor))
+                        .is_some_and(block_stays_open)
+                {
+                    reaching = Some(initializer);
+                }
+            }
+            // Without an anchor, a second plain binding is ambiguous.
+            None => {
+                if found.replace(initializer).is_some() {
+                    return None;
+                }
+            }
         }
     }
-    found
+    match anchor {
+        Some(_) => reaching.filter(|initializer| count_name_tokens(initializer, name) == 0),
+        None => found,
+    }
+}
+
+/// The byte offset of the only occurrence of `needle` in `haystack`.
+fn single_occurrence(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut occurrences = haystack.match_indices(needle).map(|(at, _)| at);
+    let first = occurrences.next()?;
+    occurrences.next().is_none().then_some(first)
+}
+
+/// Whether the block open at the start of `text` is still open at its end:
+/// no `}` closes it. `text` is already masked, so every brace is code. A
+/// `let` in a nested block that ends before the assertion does not bind what
+/// it reads.
+fn block_stays_open(text: &str) -> bool {
+    let mut depth = 0i64;
+    for ch in text.chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether a `let` pattern other than the plain `[mut] name[: type]` form
@@ -3181,7 +3249,7 @@ fn tail_reach(
     // the fold would read, so an attributed body is not read. (A cfg twin of
     // the owner itself fails `callee_is_unique` upstream.)
     if block.syntax().text().to_string().contains("#[")
-        || parameter_is_rebound_or_mutated(&block, &names)
+        || parameter_is_rebound_or_mutated(&block, &names, None)
     {
         return None;
     }
@@ -3409,8 +3477,52 @@ fn named_integer_range(function_text: &str) -> Option<(i128, i128)> {
 
 /// Whether the owner body rebinds or mutates one of `names` anywhere, which
 /// makes the call-argument environment stale for the condition fold.
-fn parameter_is_rebound_or_mutated(block: &ast::BlockExpr, names: &[String]) -> bool {
+///
+/// With `seam`, a `let` statement whose enclosing block neither holds the
+/// seam's `if` nor sits inside a condition on its path is out of scope for
+/// every condition the fold reads, so it does not count (#14569). Assignments
+/// and mutable borrows count wherever they are: they outlive their block.
+fn parameter_is_rebound_or_mutated(
+    block: &ast::BlockExpr,
+    names: &[String],
+    seam: Option<&ast::IfExpr>,
+) -> bool {
     let targets = |name: &str| names.iter().any(|candidate| candidate == name);
+    let seam_range = seam.map(|if_expr| if_expr.syntax().text_range());
+    let path_conditions: Vec<_> = seam
+        .map(|if_expr| {
+            if_expr
+                .syntax()
+                .ancestors()
+                .filter_map(ast::IfExpr::cast)
+                .filter_map(|ancestor| ancestor.condition())
+                .map(|condition| condition.syntax().text_range())
+                .collect()
+        })
+        .unwrap_or_default();
+    let out_of_seam_scope = |let_stmt: &ast::LetStmt| {
+        let Some(seam_range) = seam_range else {
+            return false;
+        };
+        let Some(scope) = let_stmt
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .find_map(ast::BlockExpr::cast)
+        else {
+            return false;
+        };
+        let scope = scope.syntax().text_range();
+        // Touching ranges do not overlap: a block that ends where the seam's
+        // `if` starts holds none of it.
+        let overlaps = |left: ra_ap_syntax::TextRange, right: ra_ap_syntax::TextRange| {
+            left.start() < right.end() && right.start() < left.end()
+        };
+        !overlaps(scope, seam_range)
+            && !path_conditions
+                .iter()
+                .any(|condition| overlaps(*condition, scope))
+    };
     // Every identifier a pattern binds, not only a top-level `IdentPat`:
     // `let (amount,) = (-amount,);` and `for (amount, _) in ..` rebind the
     // parameter too (#14496 review).
@@ -3426,7 +3538,7 @@ fn parameter_is_rebound_or_mutated(block: &ast::BlockExpr, names: &[String]) -> 
     };
     block.syntax().descendants().any(|node| {
         if let Some(let_stmt) = ast::LetStmt::cast(node.clone()) {
-            return pattern_binds_target(let_stmt.pat());
+            return !out_of_seam_scope(&let_stmt) && pattern_binds_target(let_stmt.pat());
         }
         if let Some(for_expr) = ast::ForExpr::cast(node.clone()) {
             return pattern_binds_target(for_expr.pat());
