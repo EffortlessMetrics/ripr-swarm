@@ -11,3 +11,6 @@ tests = [
   "crates/ripr/tests/predicate_constant_assertion.rs::a_callee_whose_identity_or_closure_is_unestablished_keeps_the_earlier_reading",
   "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_if_over_primitive_parameters_is_closed",
 ]
+fixtures = [
+  "fixtures/predicate_constant_of_other_function",
+]

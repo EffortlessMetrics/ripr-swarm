@@ -18965,6 +18965,42 @@
       ]
     },
     {
+      "id": "rust_predicate_constant_of_other_function",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_constant_of_other_function",
+      "vector": "constant_assertion_on_another_pure_function_credits_no_predicate_observation",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "smoke",
+          "file": "src/lib.rs",
+          "line": 18,
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "python_table_reflection_unconnected",
       "language": "python",
       "tier": "pure",

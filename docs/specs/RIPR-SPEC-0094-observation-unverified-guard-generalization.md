@@ -1175,7 +1175,11 @@ Proof: `closed_call_assertions_are_constants_only_on_literal_arguments` in
 `crates/ripr/src/analysis/classify/literal_assertion.rs`, and
 `crates/ripr/tests/predicate_constant_assertion.rs` through `check_workspace`
 (the issue's constant rows, an owner assertion beside a constant, and the
-global-state helper and binding-argument controls).
+global-state helper and binding-argument controls). The fixture
+`fixtures/predicate_constant_of_other_function` is registered in the
+evidence-promotion honesty corpus as
+`rust_predicate_constant_of_other_function`, so re-blessing its golden back to
+`weakly_exposed` fails `cargo xtask check-evidence-promotion-honesty`.
 
 ## Test Mapping
 
