@@ -1302,8 +1302,13 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         .findings
         .iter()
         .any(|finding| finding.related_tests_total() > finding.related_tests.len());
-    let related_tests_count = if let Some(phrase) = no_path_note::no_call_path_phrase(output) {
-        phrase
+    let related_tests_count = if !any_packed
+        && retained_related_tests > 0
+        && no_path_note::all_rows_lack_call_path(output)
+    {
+        format!(
+            "{retained_related_tests} related test(s) with no established call path to the changed code"
+        )
     } else if !any_packed {
         format!("{retained_related_tests} statically linked related test(s)")
     } else {

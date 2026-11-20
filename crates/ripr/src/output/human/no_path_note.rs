@@ -2,44 +2,15 @@
 //! tests that have no call path to the changed code.
 
 use crate::app::CheckOutput;
-use crate::domain::{Finding, RelatedTestMiss};
-use std::collections::BTreeSet;
+use crate::domain::RelatedTestMiss;
 
-/// The related-test clause of the note's `Scope analyzed:` sentence when
-/// every related test is a name or location match with no call path.
-///
-/// A row the producer typed [`RelatedTestMiss::NoCallPath`] is not a traced
-/// link, and the finding's own `Related test` line says so. Counting those
-/// rows as "statically linked" right after "found no static test path" reads
-/// as a contradiction. The absence wording is fail-closed: it needs at least
-/// one retained row, every retained row to carry that typed miss, and no row
-/// packed away (a packed row's miss is not available to check). Anything
-/// else returns `None` and the caller keeps its neutral count.
-pub(super) fn no_call_path_phrase(output: &CheckOutput) -> Option<String> {
-    let any_packed = output
+/// Whether every retained related-test row explicitly lacks a call path.
+pub(super) fn all_rows_lack_call_path(output: &CheckOutput) -> bool {
+    output
         .findings
         .iter()
-        .any(|finding| finding.related_tests_total() > finding.related_tests.len());
-    if any_packed {
-        return None;
-    }
-    let mut rows = output
-        .findings
-        .iter()
-        .flat_map(|finding: &Finding| finding.related_tests.iter())
-        .peekable();
-    rows.peek()?;
-    let mut tests = BTreeSet::new();
-    for test in rows {
-        if test.miss != Some(RelatedTestMiss::NoCallPath) {
-            return None;
-        }
-        tests.insert((test.file.as_path(), test.name.as_str(), test.line));
-    }
-    Some(format!(
-        "{} related test(s) with no established call path to the changed code",
-        tests.len()
-    ))
+        .flat_map(|finding| &finding.related_tests)
+        .all(|test| test.miss == Some(RelatedTestMiss::NoCallPath))
 }
 
 #[cfg(test)]
