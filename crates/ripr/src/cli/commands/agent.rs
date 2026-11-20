@@ -5810,7 +5810,7 @@ fn ensure_agent_start_out_contained(root: &Path, out_dir: &Path) -> Result<(), S
     // Resolve the deepest existing ancestor and require it to stay under the
     // canonical root. This sees a symlink inside the root that points outside
     // it, and compares an absolute `--out` in canonical form so a Windows
-    // verbatim (`\\?\`) root still matches a plain `C:\` path inside it.
+    // verbatim root still matches a plain drive path inside it.
     // With `..` refused, the missing tail below that ancestor cannot climb out.
     let rooted_relative = rooted && !out_dir.is_absolute();
     let outside = !has_parent
