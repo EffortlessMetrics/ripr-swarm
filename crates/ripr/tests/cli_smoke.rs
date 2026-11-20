@@ -74,6 +74,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/explicit_input_refusals.rs"]
+mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]
@@ -19402,7 +19404,8 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
         "--out-md",
         &missing_md.display().to_string(),
     ]);
-    assert_success(&missing);
+    // An unreadable required input writes the report, then refuses (#15254).
+    assert_eq!(missing.status.code(), Some(2));
     let missing_json =
         std::fs::read_to_string(&missing_out).map_err(|e| format!("read missing delta: {e}"))?;
     assert!(missing_json.contains("\"missing_current_input\": 1"));
@@ -37062,9 +37065,10 @@ fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
     Ok(())
 }
 
-/// These two flags fold an unreadable artifact into their established
-/// "missing" state rather than reporting the read error, so the limit never
-/// reaches stderr. What the bounded reader changes for them is that the
+/// These two flags fold an unreadable artifact into a "missing" state rather
+/// than reporting the read error, so the limit never reaches stderr; both now
+/// refuse with exit 2 (`pr-summary --baseline` since #15254, as an explicitly
+/// named unusable input). What the bounded reader changes for them is that the
 /// command finishes with its ordinary exit code instead of being ended for lack of
 /// memory (no exit code) or outliving the deadline.
 #[cfg(unix)]
@@ -37074,7 +37078,7 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
     let cases: [(&[&str], i32); 2] = [
-        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["pr-summary", "--baseline", "/dev/zero"], 2),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
     ];
     let result = (|| {
