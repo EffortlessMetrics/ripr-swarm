@@ -113,6 +113,10 @@ passes through untouched (#12420):
   back to the seam expression. A route can still have static target readiness
   without a finding witness; in that case the separate edit-cage admission
   below may supply a refusal as the blocker.
+- When the changed expression exceeds the inline JSON byte budget, the handoff
+  may point to `changed_expression` in the canonical packet. This requires the
+  selected seam's packet entry to contain the exact expression. Otherwise the
+  existing budget refusal applies (#15353).
 - The edit cage reuses the packet authority's exact derivation
   (`task_for(entry) == TASK_WRITE_TARGETED_TEST` and
   `recommended_test_for(entry)`): allowed files carry the recommended test

@@ -4,3 +4,9 @@ tests = [
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::bounded_discriminators_preserve_short_ids_and_name_the_exact_seam",
   "crates/ripr/tests/return_value_repair_start.rs::long_literal_gap_round_trips_through_explain_repair_and_receipt",
 ]
+
+[[extend]]
+id = "RIPR-SPEC-0194"
+tests = [
+  "crates/ripr/tests/return_value_repair_start.rs::long_literal_gap_round_trips_through_explain_repair_and_receipt",
+]
