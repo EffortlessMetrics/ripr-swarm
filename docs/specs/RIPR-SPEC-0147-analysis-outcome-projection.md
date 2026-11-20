@@ -134,7 +134,12 @@ mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
 `diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
 A header repeating one token on both sides, a header whose two paths differ,
 and a section carrying rename or copy metadata keep their literal paths; other
-custom side prefixes are not guessed (#15103).
+custom side prefixes are not guessed (#15103). When such a path reads as
+absent but the same path without its first component is a regular source file
+under the analysis root, the absent-file limitation stays and its recovery adds,
+as a conditional hint beside the checkout recovery, that a custom side prefix
+would explain it and names `git diff --src-prefix=a/ --dst-prefix=b/` or
+`--no-prefix`.
 
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse
