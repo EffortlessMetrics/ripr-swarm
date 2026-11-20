@@ -69,13 +69,11 @@ use crate::analysis::extract::{
     mask_comments_and_strings, outer_assertion_condition, test_body_defines_callee_fn,
     test_body_let_shadow_line,
 };
-#[cfg(test)]
-use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::member_crates::LibraryExportSummary;
 use crate::analysis::facts::{
-    DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
+    DOCTEST_FUNCTION_NAME, ExecutionContext, FileFactsView, FunctionContainer, ModulePathTarget,
     RustIncludeLimitation, SourceRoleProvenanceEdgeKind, literal_include_fragments,
 };
 use crate::analysis::sync_memo::SyncMemo;
@@ -5001,6 +4999,10 @@ struct ScannedMacroSites {
     retained: Vec<(PathBuf, String, usize, MacroBindingSite)>,
 }
 
+fn is_uncompiled_lexical_source(facts: FileFactsView<'_>) -> bool {
+    facts.used_lexical_fallback && facts.role_provenance.outside_module_tree
+}
+
 /// One parse per candidate file in the bounded pass. Singleton queries share
 /// that tree/index, and stored candidates prune impossible names.
 fn scan_macro_sites(
@@ -5024,6 +5026,15 @@ fn scan_macro_sites(
     }
     let names = assertion_context_macros();
     let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
+        // Composition established that this parser-refused text cannot be
+        // compiled. Its fallback cannot make a real test's macro ambiguous.
+        if index
+            .files()
+            .get(path)
+            .is_some_and(is_uncompiled_lexical_source)
+        {
+            return None;
+        }
         // A file whose stored candidates rule out every trusted name
         // reports no site, so it is not parsed.
         if !candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted) {
