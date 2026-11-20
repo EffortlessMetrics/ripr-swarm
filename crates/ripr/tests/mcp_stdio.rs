@@ -8323,6 +8323,7 @@ fn uncommitted_inline_target_refuses_every_surface_and_names_the_commit() -> Res
         .unwrap_or_default();
     if next.pointer("/kind") != Some(&json!("commit_then_refresh"))
         || !detail.contains("commit or stash `src/lib.rs`")
+        || next.pointer("/mcp/tool") != Some(&json!("ripr_refresh"))
         || !next
             .pointer("/after_editing_tests")
             .is_some_and(Value::is_null)
