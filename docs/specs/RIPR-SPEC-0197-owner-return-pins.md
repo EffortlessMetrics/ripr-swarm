@@ -4120,6 +4120,11 @@ condition keeps today's reading:
    empty value.
 
 The reading only withholds credit, so it does not refuse a possibly rebound
-`vec!`. A deleted guard whose remaining tail returns a different constant
+`vec!`. It also does not read the guard's condition: a condition with a side
+effect or a possible panic could still be observed by a state or
+`should_panic` test, but the demoted oracle is the return-value pin, which
+cannot see that difference. "Remaining tail" here means the candidate's
+constant tail, which the same diff may also have changed; that change has
+its own probe. A deleted guard whose remaining tail returns a different constant
 (`vec![9]`) keeps its credit. The fixture is
 `fixtures/rust_deleted_guard_same_value`.
