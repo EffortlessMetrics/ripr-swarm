@@ -20682,6 +20682,294 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_dyn_box_trait_impl",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_trait_impl",
+      "vector": "a_box_dyn_trait_call_runs_the_boxed_values_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_trait_default",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_trait_default",
+      "vector": "a_box_dyn_trait_call_runs_the_boxed_values_inherited_default",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_other_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_other_value",
+      "vector": "a_box_dyn_trait_call_on_another_boxed_type_does_not_reach_the_changed_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_inherent_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_inherent_owner",
+      "vector": "a_box_dyn_trait_call_does_not_reach_an_inherent_method",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_dyn_level_impl",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_dyn_level_impl",
+      "vector": "a_std_trait_implemented_for_the_trait_object_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_alias_impl",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_alias_impl",
+      "vector": "a_std_trait_implemented_for_a_trait_object_alias_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_bare_object_impl",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_bare_object_impl",
+      "vector": "a_std_trait_implemented_for_a_bare_trait_object_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_bare_object_other_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_bare_object_other_file",
+      "vector": "a_bare_trait_object_impl_in_another_file_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_blanket_default_same_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_blanket_default_same_file",
+      "vector": "a_same_file_blanket_trait_default_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_proc_macro_derive",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_proc_macro_derive",
+      "vector": "a_proc_macro_generated_box_impl_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_unindexed_member_blanket",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_unindexed_member_blanket",
+      "vector": "an_unindexed_member_blanket_impl_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_dyn_box_path_module",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_path_module",
+      "vector": "a_path_module_outside_the_root_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
     }
   ]
 }

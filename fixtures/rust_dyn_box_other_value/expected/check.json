@@ -1,0 +1,104 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_dyn_box_other_value/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:069d289b5e101160e5495fa6f1757e3b906167182b8983e09681ba23c056c1e7","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:c9e4727f",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Shape for Square::area:return_value:return_value:self.0*self.0+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Shape for Square::area:return_value:return_value:self.0*self.0+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Shape for Square::area",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "self.0*self.0+1"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c9e4727f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "self.0 * self.0 + 1"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling area; tests share only a name token"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: self.0 * self.0 + 1"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach weak: No test is seen calling area; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: self.0 * self.0 + 1", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: self.0 * self.0 + 1 (line 9)", "related test src/lib.rs:26 boxed_circle_area uses strong exact value oracle: assert_eq!(s.area(), 10);", "source assertion argument value 10 at line 28"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.0 * self.0 + 1","line":9}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: self.0 * self.0 + 1", "No assertion found on related tests", "No test is seen calling area; tests share only a name token", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "28": "assert_eq!(s.area(), 10);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 28,
+            "value": "10",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 28,
+          "value": "10",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "boxed_circle_area",
+          "file": "src/lib.rs",
+          "line": 26,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(s.area(), 10);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

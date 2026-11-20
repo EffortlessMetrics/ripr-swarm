@@ -1,0 +1,11 @@
+diff --git a/app/src/lib.rs b/app/src/lib.rs
+--- a/app/src/lib.rs
++++ b/app/src/lib.rs
+@@ -8,6 +8,6 @@
+ 
+ impl Shape for Square {
+     fn area(&self) -> u32 {
+-        self.0 * self.0
++        self.0 * self.0 + 1
+     }
+ }
