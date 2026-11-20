@@ -2698,8 +2698,67 @@ fn contradictions_from_one_source_are_incomplete() {
     assert_eq!(detail, "not scanned: warm check JSON");
     let (outcome, _) = contradiction_outcome(Some((2, vec!["x".to_string()])), &[]);
     assert!(matches!(outcome, SampleOutcome::Value(n) if (n - 2.0).abs() < 1e-9));
-    let (outcome, _) = contradiction_outcome(None, &["pilot repo-exposure.json"]);
-    assert!(matches!(outcome, SampleOutcome::NotMeasured));
+}
+
+#[test]
+fn missing_pilot_exposure_is_a_trust_gate_completion_loss() -> Result<(), String> {
+    let id = "trust.self_contradictions";
+    let repo = "fixture";
+    let config = load_config(&committed_config())?;
+    let boards = vec!["trust".to_string()];
+    let context = pinned_context("r", &[repo]);
+    let make_sample = |contradictions, missing_sources| {
+        let (outcome, detail) = contradiction_outcome(contradictions, missing_sources);
+        Sample {
+            detail,
+            ..sample(id, Some(repo), outcome)
+        }
+    };
+
+    let pilot = json!({"seams": [{"evidence": {"reach": "yes"}, "related_tests_total": 1}]});
+    let (pilot_count, pilot_examples) = repo_exposure_contradictions(&pilot);
+    let (warm_count, _) = check_contradictions(&json!({"findings": []}))?;
+    let complete = make_sample(Some((pilot_count + warm_count, pilot_examples)), &[]);
+    let baseline = build_report(&config, &boards, &[complete], &context, None, false);
+    assert_eq!(
+        metric(&baseline, id)?["samples"][0]["status"],
+        "meets_target"
+    );
+
+    let missing = make_sample(None, &["pilot repo-exposure.json", "warm check JSON"]);
+    let report = build_report(
+        &config,
+        &boards,
+        &[missing],
+        &context,
+        Some(&baseline),
+        true,
+    );
+    let row = metric(&report, id)?;
+    assert_eq!(row["samples"][0]["status"], "incomplete");
+    assert_eq!(
+        row["samples"][0]["detail"],
+        "not scanned: pilot repo-exposure.json, warm check JSON"
+    );
+    assert_eq!(report["gate"]["status"], "fail");
+    assert_eq!(
+        row["baseline"]["regressed_repos"],
+        json!([{"repo": repo, "reason": "did not complete where the baseline did"}])
+    );
+
+    let skipped = make_sample(None, &[]);
+    let report = build_report(
+        &config,
+        &boards,
+        &[skipped],
+        &context,
+        Some(&baseline),
+        true,
+    );
+    let row = metric(&report, id)?;
+    assert_eq!(row["samples"][0]["status"], "not_measured");
+    assert_eq!(report["gate"]["regressions"], json!([]));
+    Ok(())
 }
 
 #[test]

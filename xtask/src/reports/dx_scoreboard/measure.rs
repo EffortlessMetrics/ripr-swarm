@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
+const PILOT_REPO_EXPOSURE_JSON: &str = "pilot repo-exposure.json";
 /// Lifts the byte bound on `ripr check --format json` findings (`0` = full set).
 const FINDINGS_BYTES_ENV: &str = "RIPR_CHECK_FINDINGS_BYTES";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
@@ -322,11 +323,11 @@ pub(super) fn measure_corpus_entry(
                 let found = repo_exposure_contradictions(&exposure);
                 contradictions = Some(merge_contradictions(contradictions, found));
             } else {
-                missing_sources.push("pilot repo-exposure.json");
+                missing_sources.push(PILOT_REPO_EXPOSURE_JSON);
             }
         }
         Err(err) => {
-            missing_sources.push("pilot repo-exposure.json");
+            missing_sources.push(PILOT_REPO_EXPOSURE_JSON);
             samples.push(sample(
                 "speed.cold_pilot_ms",
                 SampleOutcome::Failed,
@@ -877,6 +878,10 @@ pub(crate) fn contradiction_outcome(
             } else {
                 format!("e.g. {}", examples.join("; "))
             },
+        ),
+        None if missing_sources.contains(&PILOT_REPO_EXPOSURE_JSON) => (
+            SampleOutcome::Incomplete(0.0),
+            format!("not scanned: {}", missing_sources.join(", ")),
         ),
         None => (
             SampleOutcome::NotMeasured,
