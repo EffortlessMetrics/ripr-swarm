@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::time::Duration;
 
-const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
+pub(crate) const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
 const MEASUREMENT_SCHEMA: &str = "ripr-lsp-saved-edit-measurement-v1";
 const REPORT_ENV: &str = "RIPR_LSP_PERFORMANCE_REPORT";
 const HARNESS_FILTER: &str = "saved_edit_sequence";

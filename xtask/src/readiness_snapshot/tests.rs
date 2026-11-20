@@ -285,3 +285,128 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn readiness_snapshot_adapters_saved_workspace_lifecycle() -> Result<(), String> {
+    let root = crate::tests::temp_dir("readiness-saved-workspace");
+    let result = check_saved_workspace_lifecycle(&root);
+    fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+    result
+}
+
+fn check_saved_workspace_lifecycle(root: &Path) -> Result<(), String> {
+    use ReadinessDimensionId::SavedWorkspaceLifecycle;
+    use ReadinessDimensionState::{Limited, NotProven, Stale};
+
+    let head = super::identity::git_rev_parse("HEAD")?;
+    let input = BuildInput {
+        root,
+        sha: &head,
+        rehearsal_receipt: None,
+    };
+    let report_dir = root.join("target/ripr/reports");
+    fs::create_dir_all(&report_dir).map_err(|err| err.to_string())?;
+    let artifact = report_dir.join("lsp-performance.json");
+    let missing = build_snapshot(&input)?;
+    let missing_dimension = dimension(&missing, SavedWorkspaceLifecycle)?;
+    assert_eq!(missing_dimension.state, NotProven);
+    assert!(missing_dimension.evidence.is_empty());
+
+    let mut receipt = serde_json::json!({
+        "schema_version": "ripr-lsp-saved-edit-sequence-v1",
+        "tool": "ripr",
+        "report": "lsp-performance",
+        "identity": {
+            "source_sha": "0000000000000000000000000000000000000000",
+            "binary_path": "ripr --lib saved_edit_sequence",
+            "binary_digest": "not_measured",
+            "host_class": "linux-x86_64",
+            "features": ["lsp"],
+            "cache_reset_procedure": "isolated fixture",
+            "sample_count": 1
+        },
+        "steps": [
+            {"step": "cold_start"}, {"step": "unchanged_save"}, {"step": "unchanged_refresh"},
+            {"step": "production_edit"}, {"step": "related_test_edit"}, {"step": "unrelated_test_edit"},
+            {"step": "rename"}, {"step": "config_change"}, {"step": "cancellation"},
+            {"step": "corrupt_cache"}, {"step": "explicit_full_refresh"}
+        ],
+        "claim_boundary": "fixture sequence only"
+    });
+
+    let write = |receipt: &serde_json::Value| {
+        fs::write(&artifact, receipt.to_string()).map_err(|err| err.to_string())
+    };
+    write(&receipt)?;
+    let wrong = build_snapshot(&input)?;
+    let wrong_dimension = dimension(&wrong, SavedWorkspaceLifecycle)?;
+    assert_eq!(wrong_dimension.state, Stale);
+    assert_eq!(wrong_dimension.evidence.len(), 1);
+    assert!(wrong_dimension.evidence[0].stale_reason.is_some());
+
+    receipt["identity"]["source_sha"] = serde_json::json!(head);
+    write(&receipt)?;
+    let current = build_snapshot(&input)?;
+    let lifecycle = dimension(&current, SavedWorkspaceLifecycle)?;
+    assert_eq!(lifecycle.state, Limited);
+    assert_eq!(lifecycle.evidence.len(), 1);
+    let record = &lifecycle.evidence[0];
+    assert_eq!(record.schema_version, "ripr-lsp-saved-edit-sequence-v1");
+    assert_eq!(record.artifact, "target/ripr/reports/lsp-performance.json");
+    assert_eq!(
+        record.artifact_digest.as_deref(),
+        Some(super::identity::digest_file(&artifact)?.as_str())
+    );
+    assert!(record.stale_reason.is_none());
+    assert!(
+        lifecycle
+            .limitations
+            .iter()
+            .any(|line| line.contains("1 sample(s), 11 steps covered out of 11"))
+    );
+    assert_ne!(
+        current.semantic_identity_digest,
+        missing.semantic_identity_digest
+    );
+    for (id, row) in &current.dimensions {
+        if id != "saved_workspace_lifecycle" {
+            assert_eq!(Some(row), missing.dimensions.get(id), "{id}");
+        }
+    }
+    assert!(markdown_matches_json(&current, &render_markdown(&current)));
+
+    receipt["steps"][0]["elapsed_ms"] = serde_json::json!(123);
+    write(&receipt)?;
+    let retimed = build_snapshot(&input)?;
+    let retimed_lifecycle = dimension(&retimed, SavedWorkspaceLifecycle)?;
+    assert_ne!(
+        retimed_lifecycle.evidence[0].artifact_digest,
+        record.artifact_digest
+    );
+    assert_eq!(
+        retimed.semantic_identity_digest,
+        current.semantic_identity_digest
+    );
+
+    receipt["steps"][0]["step"] = serde_json::json!("cancellation");
+    write(&receipt)?;
+    let duplicate = build_snapshot(&input)?;
+    assert_eq!(
+        dimension(&duplicate, SavedWorkspaceLifecycle)?.state,
+        NotProven
+    );
+
+    receipt["steps"][0]["step"] = serde_json::json!("cold_start");
+    receipt["identity"]["sample_count"] = serde_json::json!(0);
+    write(&receipt)?;
+    let empty = build_snapshot(&input)?;
+    assert_eq!(dimension(&empty, SavedWorkspaceLifecycle)?.state, NotProven);
+
+    fs::write(&artifact, "{").map_err(|err| err.to_string())?;
+    let malformed = build_snapshot(&input)?;
+    assert_eq!(
+        dimension(&malformed, SavedWorkspaceLifecycle)?.state,
+        NotProven
+    );
+    Ok(())
+}

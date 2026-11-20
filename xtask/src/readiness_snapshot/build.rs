@@ -25,6 +25,12 @@ pub(crate) fn build_snapshot(input: &BuildInput<'_>) -> Result<ReadinessSnapshot
     let identity_inputs =
         super::identity::collect_identity_inputs_for_commit(input.root, &source_sha)?;
     let mut dimensions = default_dimensions(&source_sha, tree_clean);
+    dimensions.insert(
+        ReadinessDimensionId::SavedWorkspaceLifecycle
+            .as_str()
+            .to_string(),
+        super::saved_workspace::project(input.root, &source_sha, tree_clean),
+    );
 
     let rehearsal_path = rehearsal_receipt_path(input.root, input.rehearsal_receipt);
     if rehearsal_path.is_file() {
