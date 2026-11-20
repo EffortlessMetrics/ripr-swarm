@@ -13660,6 +13660,34 @@ return Err(\"typed pin\".into());
         assert_eq!(discriminate.state, StageState::Yes);
     }
 
+    /// #15476: only a test tied to the owner by a reach relation drops a
+    /// closed constant. The same test related only by file or module
+    /// proximity, or only by name, keeps its earlier reading even when the
+    /// callee is vouched closed.
+    #[test]
+    fn closed_constant_drop_needs_a_reach_relation() {
+        let probe = probe(ProbeFamily::Predicate, "total > 200");
+        let test = test_with_body_assertions(
+            "smoke",
+            "fn smoke() {\n    let _ = discount(50);\n    assert_eq!(label(0), \"zero\");\n}",
+            vec![OracleFact {
+                line: 3,
+                ..oracle(
+                    "assert_eq!(label(0), \"zero\");",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )
+            }],
+        );
+        for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
+            let (observe, _, _) =
+                reveal_evidence_closed_constant(&probe, &[(&test, reason)], &|_, _, path| {
+                    path == "label"
+                });
+            assert_eq!(observe.state, StageState::Yes, "{reason:?}");
+        }
+    }
+
     // --- RIPR-SPEC-0107: ErrorPath now requires variant/token confirmation ---
 
     /// RIPR-SPEC-0107 Control A (REPRO): an ErrorPath probe with ONLY a broad

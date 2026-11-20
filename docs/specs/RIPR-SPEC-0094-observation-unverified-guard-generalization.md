@@ -1114,16 +1114,16 @@ JSON `ripr` object and `evidence_stages`), while the human card re-derived
 "assertion missing". `label(0)` is the same value on every run whatever
 `discount` does, so the assertion is a constant, like `assert!(true)`.
 
-Rule, for every family, beside the #14968 literal rule. In a related test
-that may supply the oracle and is tied to the owner by a reach relation (a
-direct or helper call, not a name-only or same-file/module proximity
-relation), an assertion that is an unconditional top-level statement of the
-test body (the same position test as #14968) is dropped from the assertions reveal credits when its compared
-operands (never its message arguments) are built only from literals, `!`,
-`-`, parentheses, binary operators, and at least one call of a plain function
-path (`label`, `crate::label`, `demo::label`, `super::label`, no turbofish,
-type qualifier or raw identifier) on arguments of the same grammar, where
-every called function
+Rule, for every family, beside the #14968 literal rule. In a related test that
+may supply the oracle and is tied to the owner by a reach relation (a direct
+or helper call, not a name-only or same-file/module proximity relation), an
+assertion that is an unconditional top-level statement of the test body (the
+same position test as #14968) is dropped from the assertions reveal credits
+when its compared operands (never its message arguments) are built only from
+literals, `!`, `-`, parentheses, binary operators, and at least one call of a
+plain function path (`label`, `crate::label`, `demo::label`, `super::label`,
+no turbofish, type qualifier or raw identifier) on arguments of the same
+grammar, where every called function
 (`TransitiveReachIndex::assertion_calls_closed_constant`):
 
 - is the only indexed function of its name, a free function, not the owner,
