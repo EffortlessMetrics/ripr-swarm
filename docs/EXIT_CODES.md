@@ -196,6 +196,11 @@ reached the caller.
   output was cut short; it never turns a would-be `3` into a pass. Output
   small enough to be written in full before the reader closes never meets
   the closed pipe, so that run keeps its own exit code.
+- **Failed stdout write**: stdout failed for another reason (a full disk
+  behind a redirect, `ripr --version > /dev/full`). ripr prints
+  `ripr: write to stdout failed: <cause>` with a next step, no backtrace and
+  no internal-error wording, and exits `2` because the output is incomplete
+  (#15369).
 
 ## When you see exit code 3
 
