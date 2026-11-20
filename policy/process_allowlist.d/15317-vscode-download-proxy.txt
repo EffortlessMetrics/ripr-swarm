@@ -1,0 +1,2 @@
+editors/vscode/test/suite/download_proxy.test.ts|child_process|1|lsp/editor-test|#15317: one test-only import generates throwaway TLS material with openssl for the local CONNECT proxy suite; fixed argv, no shell, no production spawn authority.
+editors/vscode/test/suite/download_proxy.test.ts|cp.execFile|2|lsp/editor-test|#15317: two fixed-argv openssl calls create a trusted and an untrusted throwaway certificate for the TLS-through-tunnel tests; no shell, no network.
