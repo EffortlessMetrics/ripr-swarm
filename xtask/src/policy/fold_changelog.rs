@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use super::changelog_fragments::{
-    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, changelog_fragment_violations,
-    fragment_violations, section_of,
+    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, bullet_entries,
+    changelog_fragment_violations, duplicate_entry_violations, fragment_violations, section_of,
 };
 
 const USAGE: &str = "usage: cargo xtask fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]";
@@ -224,16 +224,20 @@ pub(super) fn fold_text(
     let mut lines: Vec<String> = changelog.lines().map(str::to_string).collect();
     let trailing_newline = changelog.ends_with('\n');
     let mut folded = Vec::new();
+    let mut entry_sources = Vec::new();
     for (name, text) in fragments {
         let (section, body) = parse_fragment(name, text)?;
         let (start, end) = unreleased_range(&lines)?;
-        let block = lines[start..end].join("\n");
-        let entry_text = body.join("\n");
-        if block.contains(&entry_text) {
-            return Err(format!(
-                "refusing to fold {FRAGMENT_DIR}/{name}: its entry text is already in `{UNRELEASED}` (folded earlier?); delete the fragment or fix the duplicate"
+        if entry_sources.is_empty() {
+            entry_sources.push((
+                format!("{CHANGELOG} Unreleased"),
+                bullet_entries(lines[start + 1..end].iter().map(String::as_str)),
             ));
         }
+        entry_sources.push((
+            format!("{FRAGMENT_DIR}/{name}"),
+            bullet_entries(body.iter().map(String::as_str)),
+        ));
         let heading = format!("### {section}");
         let at = match lines[start..end].iter().position(|line| *line == heading) {
             Some(offset) => {
@@ -259,6 +263,10 @@ pub(super) fn fold_text(
         let from = at;
         lines.splice(from..from, insert);
         folded.push((name.clone(), section, count));
+    }
+    let duplicates = duplicate_entry_violations(&entry_sources);
+    if !duplicates.is_empty() {
+        return Err(format!("refusing to fold:\n  {}", duplicates.join("\n  ")));
     }
     let mut out = lines.join("\n");
     if trailing_newline {
