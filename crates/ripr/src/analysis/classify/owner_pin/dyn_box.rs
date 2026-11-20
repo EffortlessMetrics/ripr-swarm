@@ -157,7 +157,8 @@ pub(super) fn binding_is_mut(masked_body: &str, receiver: &str) -> bool {
 ///   then `impl Iterator for DynShape`);
 /// - an `impl` self type or a `type` alias's value names `trait_name` itself,
 ///   which before edition 2021 is the trait object (`impl Iterator for
-///   Shape`, `impl Shape { .. }`);
+///   Shape`, `impl Shape { .. }`), or the trait is renamed anywhere
+///   (`use crate::Shape as Sh;`), which hides that spelling;
 /// - `dyn <path>::trait_name` or `dyn trait_name` is spelled anywhere except
 ///   as a `: Box<dyn trait_name>` annotation (a macro argument such as
 ///   `exact!(dyn Shape)`, an `as` cast, a generic argument).
@@ -208,7 +209,20 @@ fn workspace_may_extend_dyn_or_box(trait_name: &str, index: &RustIndex) -> bool 
                     item.split_once('=')
                         .is_some_and(|(_, value)| !whole_word_offsets(value, trait_name).is_empty())
                 });
+        // `use crate::Shape as Sh;` gives the trait object a name the checks
+        // above never read (`impl Iterator for Sh` before edition 2021).
+        let renamed = whole_word_offsets(&masked, trait_name)
+            .into_iter()
+            .any(|at| {
+                let after = masked[at + trait_name.len()..].trim_start();
+                after.strip_prefix("as").is_some_and(|rest| {
+                    !rest.starts_with(|character: char| {
+                        character.is_alphanumeric() || character == '_'
+                    })
+                })
+            });
         bare_object
+            || renamed
             || item_mentions("impl", &['{', ';'])
             || item_mentions("type", &[';', '{'])
             || whole_word_offsets(&masked, "dyn")
