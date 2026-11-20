@@ -2671,6 +2671,19 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15261: the same rule reads `Array.isArray(p)` and a strict
+  `typeof p === 'lit'` / `!==` (either operand order) on a stable parameter
+  `p` against the literal argument of every related test call: primitives,
+  an omitted argument (`undefined`), and whole array, object and
+  arrow-function literals. Loose `==` / `!=` against `typeof`, a computed,
+  indexed, cast or member-read argument, a defaulted or rebound parameter,
+  and an owner that may shadow or replace `Array` (a parameter or local
+  binding, a member write or `delete`) read no condition.
+  `typeof_and_array_is_array_read_literal_argument_shapes` pins the reader,
+  `array_is_array_and_typeof_guards_withdraw_exposed_for_other_inputs` is the
+  production-path positive and negative, and the honesty-corpus fixtures
+  `typescript_array_is_array_guard_skipped_input` and
+  `typescript_typeof_guard_skipped_input` refuse promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with

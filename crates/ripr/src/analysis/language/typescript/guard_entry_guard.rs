@@ -1495,16 +1495,33 @@ enum Shape {
     Function,
 }
 
-/// Whether the owner mentions `Array` other than as `Array.member` or a
-/// type `Array<..>`: a local binding (`const Array`, `{ Array }`) may
-/// shadow the global. A module-level import is not visible here.
+/// Whether the owner mentions `Array` other than as a read `Array.member`
+/// or a type `Array<..>`: a local binding (`const Array`, `{ Array }`) may
+/// shadow the global, and a member write or delete (`Array.isArray = ..`,
+/// `delete Array.isArray`) may replace the predicate. A module-level
+/// import or patch is not visible here.
 fn owner_may_shadow_array(owner_source: &str) -> bool {
     let masked = ts_mask_literals_and_comments(owner_source);
     super::mock_payload_guard::identifier_offsets(&masked, "Array")
         .into_iter()
         .any(|at| {
             let rest = masked[at + "Array".len()..].trim_start();
-            !(rest.starts_with('.') || rest.starts_with('<'))
+            if rest.starts_with('<') {
+                return false;
+            }
+            let Some(member) = rest.strip_prefix('.') else {
+                return true;
+            };
+            let after = member
+                .trim_start()
+                .trim_start_matches(is_identifier_char)
+                .trim_start();
+            let writes =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            let compound = ["+=", "-=", "||=", "&&=", "??="]
+                .iter()
+                .any(|op| after.starts_with(op));
+            writes || compound || masked[..at].trim_end().ends_with("delete")
         })
 }
 
@@ -1965,7 +1982,13 @@ mod tests {
             );
         }
         // A local that may shadow `Array` makes `Array.isArray` unreadable.
-        for shadow in ["const Array = makeArray();", "const { Array } = o;"] {
+        for shadow in [
+            "const Array = makeArray();",
+            "const { Array } = o;",
+            "Array.isArray = Boolean;",
+            "Array.isArray ??= Boolean;",
+            "delete Array.isArray;",
+        ] {
             let shadowed = format!(
                 "function f(x) {{\n  {shadow}\n  if (Array.isArray(x)) {{\n    a();\n  }}\n}}\n"
             );
@@ -1973,8 +1996,16 @@ mod tests {
         }
         // The same body without the shadow excludes, so the row above
         // discriminates the shadow check.
-        let unshadowed = "function f(x) {\n  const y = makeArray();\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
-        assert!(excludes_plain(unshadowed, 4, "a();", &["5"]));
+        for read in [
+            "const y = makeArray();",
+            "const y = Array.isArray == f;",
+            "const y = Array.from(z);",
+        ] {
+            let unshadowed = format!(
+                "function f(x) {{\n  {read}\n  if (Array.isArray(x)) {{\n    a();\n  }}\n}}\n"
+            );
+            assert!(excludes_plain(&unshadowed, 4, "a();", &["5"]), "{read}");
+        }
         let typed = "function f(x: Array<number> | number) {\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
         assert!(excludes_plain(typed, 3, "a();", &["5"]));
         // A body that rebinds the parameter is not read.
