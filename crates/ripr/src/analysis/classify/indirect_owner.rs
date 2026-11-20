@@ -195,11 +195,23 @@ fn judged_for_owner(
         )
     });
     for test in index.tests() {
-        // Both forms below need a masked mention of the owner's name, and
-        // masking only blanks bytes, so a body whose raw text never spells
-        // the name cannot qualify. This pass runs over every test for each
-        // withheld finding; skipping the mask there is #13754's saving.
-        if is_ignored(test) || test.assertions.is_empty() || !test.body.contains(&*owner.name) {
+        if is_ignored(test) || test.assertions.is_empty() {
+            continue;
+        }
+        // The function-value and executor forms below need a masked mention of
+        // the owner's name, and masking only blanks bytes, so a body whose raw
+        // text never spells the name cannot qualify for them. This pass runs
+        // over every test for each withheld finding; skipping the mask there
+        // is #13754's saving. Only the blanket hop (#6732) is defined by the
+        // test NOT spelling the name, so it is judged here without the mask.
+        if !test.body.contains(&*owner.name) {
+            if is_related(test, false)
+                && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+                    test, owner, index,
+                )
+            {
+                judged.push((label(test), Form::BlanketImpl));
+            }
             continue;
         }
         let code = mask_comments_and_strings(&test.body);
