@@ -701,6 +701,7 @@ pub(in crate::analysis) fn bool_owner_exact_result_next_step(
     class: &ExposureClass,
     owner: Option<&FunctionSummary>,
     related: &[RelatedTest],
+    asserted_call_is_owner: &dyn Fn(&RelatedTest, &[String]) -> bool,
 ) -> Option<String> {
     if *class != ExposureClass::WeaklyExposed || probe.family != ProbeFamily::ReturnValue {
         return None;
@@ -722,12 +723,18 @@ pub(in crate::analysis) fn bool_owner_exact_result_next_step(
     // A row annotated `missing_exact_assertion` says the assertion shape IS
     // the gap (the same exclusion `exact_oracle_gap_next_step` makes), so it
     // keeps the family template here rather than being read as exact.
+    // The row's relation reason is test-level reach: the test calls the
+    // owner somewhere, not necessarily in this assertion. A same-named rival
+    // asserted beside an unasserted owner call must not borrow the owner's
+    // step, so the asserted call itself must settle on the owner (#15537
+    // review); anything unsettled keeps the family template.
     if !reaching.all(|test| {
         test.miss != Some(RelatedTestMiss::MissingExactAssertion)
             && test
                 .oracle
                 .as_deref()
-                .is_some_and(|oracle| asserts_bool_owner_result(oracle, &owner.name))
+                .and_then(|oracle| asserted_bool_owner_call(oracle, &owner.name))
+                .is_some_and(|qualifier| asserted_call_is_owner(test, &qualifier))
     }) {
         return None;
     }
@@ -740,46 +747,42 @@ pub(in crate::analysis) fn bool_owner_exact_result_next_step(
 /// Whether `text` is `assert!(owner(..))` or `assert!(!owner(..))` (plain,
 /// `std::` or `core::` rooted, with optional message arguments), where the
 /// condition is exactly one call of `owner` through an optional plain path.
-/// The owner is matched by the path's last segment only: the row's relation
-/// reason, not this text, establishes that the call reaches the changed
-/// owner, and this step is guidance that changes no class.
-fn asserts_bool_owner_result(text: &str, owner: &str) -> bool {
+/// Returns the call's module-path qualifier in source order (empty for a
+/// bare call), or `None` for any other shape. The text match is by the
+/// path's last segment only; which definition the qualified call names is
+/// the caller's `asserted_call_is_owner` question.
+fn asserted_bool_owner_call(text: &str, owner: &str) -> Option<Vec<String>> {
     let text = text.trim().trim_end_matches(';').trim_end();
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     if masked.len() != text.len() {
-        return false;
+        return None;
     }
-    let Some(bang) = masked.find("assert!") else {
-        return false;
-    };
+    let bang = masked.find("assert!")?;
     if !matches!(
         masked[..bang].trim(),
         "" | "std::" | "core::" | "::std::" | "::core::"
     ) {
-        return false;
+        return None;
     }
-    let Some(open) = masked[bang..].find('(').map(|at| at + bang) else {
-        return false;
-    };
+    let open = masked[bang..].find('(')? + bang;
     if !masked[bang + "assert!".len()..open].trim().is_empty()
         || matching_close(&masked, open) != Some(masked.len() - 1)
     {
-        return false;
+        return None;
     }
     let inner = &masked[open + 1..masked.len() - 1];
     let condition = inner[..top_level_comma(inner).unwrap_or(inner.len())].trim();
     let condition = condition
         .strip_prefix('!')
         .map_or(condition, str::trim_start);
-    let Some(call_open) = condition.find('(') else {
-        return false;
-    };
-    let mut segments = condition[..call_open]
+    let call_open = condition.find('(')?;
+    let mut segments: Vec<String> = condition[..call_open]
         .trim_end()
-        .rsplit("::")
-        .map(str::trim);
-    segments.next() == Some(owner)
-        && segments.all(|segment| {
+        .split("::")
+        .map(|segment| segment.trim().to_string())
+        .collect();
+    let readable = segments.pop().as_deref() == Some(owner)
+        && segments.iter().all(|segment| {
             !segment.is_empty()
                 && segment
                     .chars()
@@ -787,7 +790,8 @@ fn asserts_bool_owner_result(text: &str, owner: &str) -> bool {
         })
         // The call's own parenthesis closes the condition, so
         // `owner(a) && other` or `owner(a).not()` is not this shape.
-        && matching_close(condition, call_open) == Some(condition.len() - 1)
+        && matching_close(condition, call_open) == Some(condition.len() - 1);
+    readable.then_some(segments)
 }
 
 /// The offset of the bracket closing the one at `open` in `text`.
@@ -1925,6 +1929,11 @@ mod tests {
         }
     }
 
+    /// Every asserted call settles on the owner.
+    fn any_call(_: &RelatedTest, _: &[String]) -> bool {
+        true
+    }
+
     fn bool_row(name: &str, oracle: &str) -> RelatedTest {
         let mut row = related_test_full(
             name,
@@ -1957,6 +1966,7 @@ mod tests {
             &ExposureClass::WeaklyExposed,
             Some(&owner),
             &rows,
+            &any_call,
         );
         let step = step.as_deref().unwrap_or("");
         assert!(
@@ -1997,6 +2007,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     Some(&owner),
                     &rows,
+                    &any_call,
                 ),
                 None,
                 "{broad}"
@@ -2012,6 +2023,7 @@ mod tests {
                 &ExposureClass::WeaklyExposed,
                 Some(&owner),
                 &[exact.clone(), shape_gap],
+                &any_call,
             ),
             None,
             "a missing_exact_assertion row keeps the family template"
@@ -2025,6 +2037,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     Some(&bool_owner("pub fn is_small(n: u32) -> u8")),
                     &rows,
+                    &any_call,
                 ),
             ),
             (
@@ -2034,6 +2047,7 @@ mod tests {
                     &ExposureClass::Exposed,
                     Some(&owner),
                     &rows,
+                    &any_call,
                 ),
             ),
             (
@@ -2043,6 +2057,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     Some(&owner),
                     &rows,
+                    &any_call,
                 ),
             ),
             (
@@ -2052,6 +2067,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     None,
                     &rows,
+                    &any_call,
                 ),
             ),
             (
@@ -2061,6 +2077,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     Some(&owner),
                     &[],
+                    &any_call,
                 ),
             ),
             (
@@ -2070,6 +2087,7 @@ mod tests {
                     &ExposureClass::WeaklyExposed,
                     Some(&owner),
                     &[exact.clone(), no_oracle],
+                    &any_call,
                 ),
             ),
         ] {
@@ -2085,6 +2103,7 @@ mod tests {
                 &ExposureClass::WeaklyExposed,
                 Some(&owner),
                 &[exact, proximity.clone()],
+                &any_call,
             )
             .is_some()
         );
@@ -2094,6 +2113,54 @@ mod tests {
                 &ExposureClass::WeaklyExposed,
                 Some(&owner),
                 &[proximity],
+                &any_call,
+            ),
+            None
+        );
+    }
+
+    // #15537 review: `let _ = crate::a::is_small(1); assert!(crate::b::is_small(1));`
+    // reaches the owner in `a` but asserts the rival in `b`. The step reads
+    // the asserted call's own identity, so the rival's assertion keeps the
+    // family template; the owner's own assertion is the positive control.
+    #[test]
+    fn bool_owner_step_needs_the_asserted_call_to_be_the_owner() {
+        let owner = bool_owner("pub fn is_small(n: u32) -> bool");
+        let return_value = probe(ProbeFamily::ReturnValue, "n == 1 || n == 2");
+        let owner_module = |_: &RelatedTest, qualifier: &[String]| {
+            qualifier == ["crate".to_string(), "a".to_string()]
+        };
+        let rival = [bool_row("mixed", "assert!(crate::b::is_small(1));")];
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &rival,
+                &owner_module,
+            ),
+            None
+        );
+        let own = [bool_row("mixed", "assert!(crate::a::is_small(1));")];
+        assert!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &own,
+                &owner_module,
+            )
+            .is_some()
+        );
+        // One unsettled row among owner rows keeps the template.
+        let both = [own[0].clone(), rival[0].clone()];
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &both,
+                &owner_module,
             ),
             None
         );

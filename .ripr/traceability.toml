@@ -15730,6 +15730,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_space_that_separates_words_is_part_of_the_retained_operand",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::operand_tokens_split_words_and_merge_punctuation_runs",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_layout_only_generic_close_keeps_the_dropped_guard_read",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_tuple_field_spacing_edit_keeps_the_dropped_guard_read",
 
 
 
@@ -21026,6 +21027,9 @@ tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::missing_exact_assertion_row_keeps_the_family_template",
   "crates/ripr/src/analysis/classify/decision.rs::tests::bool_owner_exact_result_rows_name_the_deciding_input",
   "crates/ripr/src/analysis/classify/decision.rs::tests::bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::bool_owner_step_needs_the_asserted_call_to_be_the_owner",
+  "crates/ripr/tests/bool_owner_next_step.rs::the_owners_own_boolean_assertions_get_the_deciding_input_step",
+  "crates/ripr/tests/bool_owner_next_step.rs::a_rivals_assertion_beside_an_owner_call_keeps_the_template",
 ]
 code = [
   "crates/ripr/src/analysis/classify/decision.rs",

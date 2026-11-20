@@ -2209,7 +2209,8 @@ and only per pinned call:
    still separates words, so `a as u8` (three words) and `aasu8` (one) do
    not; adjacent punctuation is one run whatever the spacing inside it, so
    `Vec<Vec<u8> >` and `Vec<Vec<u8>>` (and `> =` and `>=`) match, which keeps
-   a layout-only edit withheld; and each literal is one entry compared
+   a layout-only edit withheld; a `.` is always punctuation, so
+   `x.0.0` and `x.0 .0` match; and each literal is one entry compared
    exactly, contents included. Fail open to today's
    reading: a rewritten operand, an unreadable argument, a
    call with no run, or any shape outside this one keeps its current
@@ -3649,7 +3650,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_char_literal_operator_is_not_an_arithmetic_split`,
   `a_quote_char_literal_does_not_flip_the_literal_scan`,
   `a_space_that_separates_words_is_part_of_the_retained_operand`,
-  `a_layout_only_generic_close_keeps_the_dropped_guard_read` and
+  `a_layout_only_generic_close_keeps_the_dropped_guard_read`,
+  `a_tuple_field_spacing_edit_keeps_the_dropped_guard_read` and
   `operand_tokens_split_words_and_merge_punctuation_runs`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,

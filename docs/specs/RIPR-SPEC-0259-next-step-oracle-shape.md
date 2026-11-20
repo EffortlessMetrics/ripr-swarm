@@ -91,9 +91,13 @@ alone:
   deciding-input fact. Any other row on the owner (a compound condition, a
   method receiver, a turbofish, a bound result, a double negation, a
   closure call, an unreadable oracle, or a row annotated
-  `missing_exact_assertion`) keeps the family template. The owner is matched
-  by the call path's last segment; the row's relation reason establishes
-  reach.
+  `missing_exact_assertion`) keeps the family template. A row's relation
+  reason is test-level reach, so the asserted call itself must be the owner
+  (#15537 review): with a same-package rival the shared owner-call identity
+  (`OwnerCallIdentity::resolve_call`) must settle the spelled call on the
+  owner; with no such identity only a bare call, with no other same-named
+  function in the index, counts. A test that calls the owner but asserts a
+  same-named rival keeps the family template.
 - Shapes with dedicated guidance are untouched: boxed wrapper-error seams
   keep the typed `wrapper_error_binding_unresolved` limitation step, and a
   changed `Err(...)` construction keeps the "reaches the changed error path"
@@ -125,7 +129,12 @@ The boolean-owner step is covered by
 double-negation, closure, `debug_assert!` or `assert_ne!` row, a
 `missing_exact_assertion` row, a non-`bool` owner, a non-weak class, a
 predicate probe, no owner, no rows, an unreadable oracle, and a
-proximity-only row); the positive case covers the plain, `std::`, `core::`,
+proximity-only row), and
+`bool_owner_step_needs_the_asserted_call_to_be_the_owner` plus
+`crates/ripr/tests/bool_owner_next_step.rs`
+(`the_owners_own_boolean_assertions_get_the_deciding_input_step`,
+`a_rivals_assertion_beside_an_owner_call_keeps_the_template`) cover the
+asserted-call identity end to end; the positive case covers the plain, `std::`, `core::`,
 `::std::` and `::core::` rooted forms, a message argument and a path-qualified
 call. It
 re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,

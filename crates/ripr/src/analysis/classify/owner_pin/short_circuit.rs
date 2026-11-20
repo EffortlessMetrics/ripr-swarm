@@ -437,9 +437,12 @@ fn flush_punctuation(punctuation: &mut String, tokens: &mut Vec<String>) {
 
 /// The words of `code`, a stretch of operand text that holds no literal,
 /// with the punctuation between them gathered into `punctuation` runs. A
-/// word is a run of identifier characters; a number may also hold a `.`
-/// followed by a digit (`1.5`). Whitespace inside a punctuation run is
-/// dropped, so the run continues across it.
+/// word is a run of identifier characters, digits included; a `.` is always
+/// punctuation, so `1.5` is `1`, `.`, `5`. Absorbing a decimal point into a
+/// number read the `0.0` of `x.0.0` as one word but `x.0 .0` as two, so a
+/// tuple-field spacing edit looked like a rewrite and dropped the withholding
+/// (#15537 review). Whitespace inside a punctuation run is dropped, so the
+/// run continues across it.
 fn push_code_tokens(code: &str, punctuation: &mut String, tokens: &mut Vec<String>) {
     let is_word = |ch: char| ch == '_' || ch.is_alphanumeric();
     let mut rest = code;
@@ -453,17 +456,7 @@ fn push_code_tokens(code: &str, punctuation: &mut String, tokens: &mut Vec<Strin
             rest = &rest[first.len_utf8()..];
             continue;
         }
-        let mut end = 0;
-        let mut chars = rest.char_indices().peekable();
-        while let Some((offset, ch)) = chars.next() {
-            let decimal_point = ch == '.'
-                && first.is_ascii_digit()
-                && chars.peek().is_some_and(|(_, next)| next.is_ascii_digit());
-            if !is_word(ch) && !decimal_point {
-                break;
-            }
-            end = offset + ch.len_utf8();
-        }
+        let end = rest.find(|ch: char| !is_word(ch)).unwrap_or(rest.len());
         flush_punctuation(punctuation, tokens);
         tokens.push(rest[..end].to_string());
         rest = &rest[end..];
@@ -1399,6 +1392,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tuple_field_spacing_edit_keeps_the_dropped_guard_read() -> Result<(), String> {
+        // #15537 review: `0.0` absorbed a decimal point, so `((n,),).0 .0`
+        // and `((n,),).0.0` compared unequal and the dropped guard was not
+        // read (fail-open toward exposed). Both spacing directions.
+        let tight = "fn f(n: u32) -> bool {\n    ((n,),).0.0 == 4\n}";
+        let change =
+            GuardOperandChange::read(tight, "((n,),).0.0 == 4", "n != 0 && ((n,),).0 .0 == 4")
+                .ok_or("the spaced tuple field must read as the retained operand")?;
+        assert_eq!(change.differing.len(), 1);
+        assert!(change.runs_agree(&[run(&["4"]), run(&["5"])]));
+        let spaced = "fn f(n: u32) -> bool {\n    ((n,),).0 .0 == 4\n}";
+        let change =
+            GuardOperandChange::read(spaced, "((n,),).0 .0 == 4", "n != 0 && ((n,),).0.0 == 4")
+                .ok_or("the tight tuple field must read as the retained operand")?;
+        assert_eq!(change.differing.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn operand_tokens_split_words_and_merge_punctuation_runs() {
         assert_eq!(operand_tokens("a as u8"), ["a", "as", "u8"]);
         assert_eq!(operand_tokens("aasu8"), ["aasu8"]);
@@ -1416,7 +1428,12 @@ mod tests {
             operand_tokens("Vec<Vec<u8> >"),
             operand_tokens("Vec<Vec<u8>>")
         );
-        assert_eq!(operand_tokens("v < 1.5"), ["v", "<", "1.5"]);
+        assert_eq!(operand_tokens("v < 1.5"), ["v", "<", "1", ".", "5"]);
+        // A tuple-field chain reads the same whatever the spacing between
+        // its fields (#15537 review), in both directions.
+        assert_eq!(operand_tokens("x.0.0"), operand_tokens("x.0 .0"));
+        assert_eq!(operand_tokens("x.0 .0"), operand_tokens("x.0.0"));
+        assert_eq!(operand_tokens("x.0.0"), ["x", ".", "0", ".", "0"]);
         assert_eq!(
             operand_tokens("check(n, \"a  b\")"),
             ["check", "(", "n", ",", "\"a  b\"", ")"]
