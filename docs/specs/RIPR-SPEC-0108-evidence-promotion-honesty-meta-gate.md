@@ -662,6 +662,16 @@ Run it in a checkout whose diff against `origin/main` is non-empty. On a
 clean checkout the command exits 2 with "analysis outcome NoScope requires
 every count to be zero". This note stands until that defect is fixed.
 
+The `perl_return_without_concrete_discriminator` case uses the existing
+`fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json`
+packet with `patches/14842-perl-return.diff`. Its report retains the return
+finding and advisory guidance. Capture it with the Perl-enabled command above
+using `--diff` for that patch, then make the checkout paths in navigation
+commands repository-relative. The companion fixture test
+`perl_actionability_proptest_fixture_is_actionable` exercises the same
+unmodified packet in the private strict mapper and checks both concrete
+discriminator channels as positive controls.
+
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
 Packet fingerprints follow the `recompute_packet_fingerprint` recipe in
