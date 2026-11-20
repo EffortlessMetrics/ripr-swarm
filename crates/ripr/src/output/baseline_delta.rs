@@ -4230,16 +4230,30 @@ mod tests {
         // which both consumers read as no owner. `plain` resolves.
         let baseline = owner_baseline(&[
             ("spelled", Some(".\\src\\g.rs::skipped")),
+            ("spelled_suffixed", Some("./src\\g.rs::twin#L3")),
             ("empty", Some("  ")),
             ("plain", Some("src/g.rs::fixed")),
+            ("other_file", Some("src/h.rs::skipped")),
         ]);
         let current = opted_out_gate_decision(serde_json::json!({
             "withheld": 1,
             "reason": "owner_mutants_skip",
             "seam_ids": ["fresh0001"],
-            "owners": ["src/g.rs::skipped"],
+            "owners": ["src/g.rs::skipped", "src/g.rs::twin#L9"],
         }));
         let items = owner_delta(&baseline, &current)?;
+        assert_eq!(
+            items.get("spelled_suffixed").map(|item| item.2.clone()),
+            Some(serde_json::json!("not_evaluated")),
+            "{items:?}"
+        );
+        // Normalization stays file-scoped: the same item in another file
+        // is not the withheld owner.
+        assert_eq!(
+            items.get("other_file").map(|item| item.0.as_str()),
+            Some("resolved"),
+            "{items:?}"
+        );
         assert_eq!(
             items.get("spelled").map(|item| item.1.clone()),
             Some(serde_json::json!("owner_mutants_skip")),
@@ -4256,11 +4270,13 @@ mod tests {
             "{items:?}"
         );
         let kept = owner_update_keeps(&baseline, &current)?;
+        for id in ["spelled", "spelled_suffixed", "empty"] {
+            assert!(kept.contains(id), "{id}: {kept:?}");
+        }
         assert!(
-            kept.contains("spelled") && kept.contains("empty"),
+            !kept.contains("plain") && !kept.contains("other_file"),
             "{kept:?}"
         );
-        assert!(!kept.contains("plain"), "{kept:?}");
         Ok(())
     }
 
