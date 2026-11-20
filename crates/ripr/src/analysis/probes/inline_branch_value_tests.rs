@@ -205,6 +205,26 @@ fn a_whitespace_only_branch_edit_is_no_value_edit() -> Result<(), String> {
         );
         assert!(keeps_predicate(&rows, "price > 100"), "{after:?}: {rows:?}");
     }
+    // A literal in the untouched branch does not turn the respacing into an
+    // edit: formatting compares as token text, not as "no quote on the line".
+    for (before, after) in [
+        (
+            "    if price > 100 { price + 1 } else { \"x\".len() as u32 }\n",
+            "    if price > 100 { price +1 } else { \"x\".len() as u32 }\n",
+        ),
+        (
+            "    if price > 100 { price + 1 } else { 'x' as u32 }\n",
+            "    if price > 100 { price +1 } else { 'x' as u32 }\n",
+        ),
+    ] {
+        let rows = rows(&owner(before), &owner(after))?;
+        assert!(
+            rows.iter()
+                .all(|(family, _, _)| *family != ProbeFamily::ReturnValue),
+            "{after:?}: {rows:?}"
+        );
+        assert!(keeps_predicate(&rows, "price > 100"), "{after:?}: {rows:?}");
+    }
     Ok(())
 }
 
@@ -300,4 +320,18 @@ fn a_non_tail_inline_if_statement_keeps_its_predicate() -> Result<(), String> {
         "{rows:?}"
     );
     Ok(())
+}
+
+#[test]
+fn formatting_free_text_keeps_literals_and_word_boundaries() {
+    use super::classify::formatting_free_text as text;
+    assert_eq!(text("{ price + 1 }"), text("{price +1}"));
+    assert_ne!(text("{ \"a b\" }"), text("{ \"ab\" }"));
+    assert_ne!(text("{ ' ' }"), text("{ '' }"));
+    assert_ne!(text("x as u32"), text("xasu32"));
+    assert_eq!(text("{ \"a\\\"b\" }"), text("{\"a\\\"b\"}"));
+    assert_eq!(text("fn f<'a>(x: &'a str)"), text("fn f<'a>(x:&'a str)"));
+    assert_eq!(text("{ 1 } // note"), None);
+    assert_eq!(text("{ r\"a b\" }"), None);
+    assert_eq!(text("{ \"open"), None);
 }
