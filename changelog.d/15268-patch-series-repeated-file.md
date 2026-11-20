@@ -4,4 +4,5 @@
   more than one commit. That file is now refused with a located limitation and
   the recovery "analyze one diff of the whole change" (`git diff <base>...HEAD`
   or `ripr check --base <base>`); files changed once in the series are still
-  analyzed (#15268).
+  analyzed. The report is marked incomplete (`partial_with_limitations`) and
+  exits like other partial results (#15268).

@@ -123,7 +123,11 @@ limitation at stage `diff_parse` names it with recovery `use_two_way_diff`
 enabled analyzed language and outside ripr's own artifact roots; paths changed
 in a single section of the same input keep their lines, and an operator scope
 that admits only refused paths reports the limitation rather than
-`scope_filter_matched_nothing` (#15268).
+`scope_filter_matched_nothing` (#15268). The refusal makes the outcome
+`partial_with_limitations`, never complete, with the exit status of other
+partial outcomes rather than the `unsupported_input` exit. A refused path in a
+language that is routable but not enabled is dropped like any other
+out-of-language limitation, so it carries no refusal and no preview advisory.
 
 A `diff --git` section whose header names one path under two different
 mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
