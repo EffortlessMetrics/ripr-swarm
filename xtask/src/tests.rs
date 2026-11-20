@@ -7657,6 +7657,8 @@ fn unguarded_allow_requires_its_own_reason() {
         #[cfg_attr(unix, cfg_attr(test, allow(clippy::never_loop)), allow(other, reason = "conditional"))]
         #[allow(clippy::documented, reason /* explanation */ = r#"conditional"#)]
         #[allow(clippy::mixed, GUARDED)]
+        #[r#cfg_attr(test, cfg_attr(windows, r#allow(clippy::raw_missing)))]
+        #[r#allow(clippy::raw_documented, r#reason = "documented")]
         #[expect(clippy::outside_budget)]
         fn example() {}
     "####;
@@ -7670,6 +7672,7 @@ fn unguarded_allow_requires_its_own_reason() {
             (2, "clippy::never_loop".to_owned()),
             (5, "clippy::never_loop".to_owned()),
             (7, "clippy::mixed".to_owned()),
+            (8, "clippy::raw_missing".to_owned()),
         ]
     );
 }
@@ -7680,19 +7683,22 @@ fn allow_attributes_gate_requires_a_reason_outside_the_budget() -> Result<(), St
         badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
         write(&root.join(".ripr/allow-attributes.txt"), "");
         let source = "#[cfg_attr(windows, allow(clippy::never_loop))]\nfn example() {}";
-        write(&root.join("src/lib.rs"), source);
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            source,
+        );
         write(&root.join("fixtures/demo/src/lib.rs"), source);
         badge_fixture_git(&["add", "."])?;
         assert!(super::check_allow_attributes_impl().is_err());
         let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
             .map_err(|error| error.to_string())?;
         assert!(
-            report.contains("src/lib.rs:1 allow(clippy::never_loop) needs a written reason"),
+            report.contains("xtask/src/reports/fixtures/preparation.rs:1 allow(clippy::never_loop) needs a written reason"),
             "{report}"
         );
         assert!(!report.contains("fixtures/demo"), "{report}");
         write(
-            &root.join("src/lib.rs"),
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
             &source.replace(
                 "never_loop)",
                 "never_loop, reason = \"platform-specific loop\")",
