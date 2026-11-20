@@ -3465,11 +3465,6 @@ pub(crate) fn test_from_statement<'s, 'a>(
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
         line: source.line_for_offset(call.span.start as usize),
-        node_test_registration: registration.is_some_and(|resolved| {
-            resolved
-                .context
-                .registration_is_node_test_in(call, &resolved.names)
-        }),
         // The referenced function's text joins the call's, so the relation
         // gates see the owner call the runner actually executes.
         body_text: match referenced {

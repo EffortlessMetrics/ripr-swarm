@@ -178,8 +178,7 @@ never suggest a Rust test for a TypeScript gap
 ### Supported runner inference
 
 A `verify_command` is emitted only when repo evidence supports it
-(package manifests, lockfiles, declared scripts, workspace layout, or runtime
-imports in the selected related test):
+(package manifests, lockfiles, declared scripts, workspace layout):
 
 ```bash
 bun test <file>
@@ -201,12 +200,11 @@ the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
 
-If the package has no framework hint, a selected registration bound to a
-runtime `node:test` import supports `node --test <file>` when the test's
-nearest package is the reported command directory. The whole-file command
-requires every indexed registration to resolve to Node and the extraction
-check to report no registration gaps. Mixed or partially indexed files
-retain the existing verification fallback.
+Choose the verification route from package runner evidence. An import in a
+related test cannot establish that the entire file runs directly under Node.
+File startup still evaluates skipped registration calls, which may rely on a
+package script to supply their runner. Retain the package route when test
+extraction is the only evidence for a direct Node command.
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from

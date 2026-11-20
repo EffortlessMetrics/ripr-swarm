@@ -667,7 +667,6 @@ impl TypeScriptAdapter {
             .collect::<Vec<_>>();
         let mut all_owners: Vec<TypeScriptOwner> = Vec::new();
         let mut all_tests: Vec<TypeScriptTest> = Vec::new();
-        let mut direct_node_test_files = std::collections::HashSet::new();
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
         let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
         let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
@@ -1026,7 +1025,6 @@ impl TypeScriptAdapter {
                 // serves the recorded one instead of parsing the file again.
                 // Only a completed check is recorded: a worker failure says
                 // nothing about the file.
-                let partial_recorded = persisted_gap.is_some();
                 let (partial, partial_checked) = match persisted_gap {
                     Some(recorded) => (recorded, false),
                     None => match try_detect_partial_test_extraction_expanded(
@@ -1050,16 +1048,6 @@ impl TypeScriptAdapter {
                         partial_extraction: partial_checked
                             .then(|| PersistedPartialExtraction::of(partial.as_ref())),
                     });
-                }
-                // A direct Node command runs the whole file. Every indexed
-                // registration must resolve to Node, and partial extraction
-                // must have completed without finding a registration gap.
-                if (partial_recorded || partial_checked)
-                    && partial.is_none()
-                    && !tests.is_empty()
-                    && tests.iter().all(|test| test.node_test_registration)
-                {
-                    direct_node_test_files.insert(relative.as_path());
                 }
                 if let Some(gap) = partial {
                     extraction_gaps.push(gap);
@@ -1185,17 +1173,6 @@ impl TypeScriptAdapter {
         // passes) pre-filter by body-name / import-shape / re-export-exposure
         // keys instead of scanning every workspace test per owner.
         let relation_index = relation_index::RelationIndex::build(&all_tests, &reexport_index);
-
-        // The related-test projection preserves this identity.
-        fn registration_key(test: &TypeScriptTest) -> (&Path, usize, &str) {
-            (test.file.as_path(), test.line, test.name.as_str())
-        }
-        let node_test_registrations: std::collections::HashSet<_> = all_tests
-            .iter()
-            .filter(|test| direct_node_test_files.contains(test.file.as_path()))
-            .map(registration_key)
-            .collect();
-        let mut node_test_packages = std::collections::HashMap::new();
 
         // Phase 2: for each accepted changed file, classify each changed
         // line that falls inside an owner.
@@ -1632,32 +1609,7 @@ impl TypeScriptAdapter {
                         &finding,
                     )
                     .and_then(|best_test| {
-                        let key = (
-                            best_test.file.as_path(),
-                            best_test.line,
-                            best_test.name.as_str(),
-                        );
-                        if pkg_discovery.framework_hint.is_some()
-                            || !node_test_registrations.contains(&key)
-                        {
-                            return verify_command_for_discovery(&pkg_discovery, &best_test.file);
-                        }
-                        // The output pairs the command with the changed owner's
-                        // package root. Refuse the inferred route when the test
-                        // belongs to a different or unresolved nearest package.
-                        let test_package = node_test_packages
-                            .entry(best_test.file.clone())
-                            .or_insert_with(|| {
-                                resolve_package_discovery(&best_test.file, &options.root)
-                            });
-                        if test_package.package_root.is_none()
-                            || test_package.package_root != pkg_discovery.package_root
-                        {
-                            return None;
-                        }
-                        let mut discovery = test_package.clone();
-                        discovery.framework_hint = Some(TsFramework::NodeTest);
-                        verify_command_for_discovery(&discovery, &best_test.file)
+                        verify_command_for_discovery(&pkg_discovery, &best_test.file)
                     });
                     if let Some(cmd) = inferred_cmd {
                         finding

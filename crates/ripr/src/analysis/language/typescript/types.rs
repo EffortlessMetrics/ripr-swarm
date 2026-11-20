@@ -154,8 +154,6 @@ pub(crate) struct TypeScriptTest {
     pub(crate) describe_names: Vec<String>,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
-    /// The selected registration's callee resolves to a Node test export.
-    pub(crate) node_test_registration: bool,
     pub(crate) body_text: String,
     /// Reach-only source with unreferenced local function values masked.
     /// The original body remains available for snippets and oracle evidence.
