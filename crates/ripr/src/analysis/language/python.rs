@@ -1942,7 +1942,10 @@ impl PythonAdapter {
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        limitations.extend(limitations_for_absent_changed_files(
+            &options.root,
+            &absent_changed_files,
+        )?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))

@@ -5,9 +5,12 @@
 //! exporter, a Perl runtime, or an LSP protocol session. Production routing
 //! lands only after the fact packet and strict actionability slices are
 //! fixture-backed.
-#![allow(
-    dead_code,
-    reason = "Perl strict-actionability scaffold is feature-gated and currently exercised by tests before public projection is enabled"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the Perl strict-actionability, repair-card and exporter-command scaffold has only test consumers until public projection is enabled; the test build lints it"
+    )
 )]
 
 use crate::analysis::AnalysisOptions;
@@ -1635,69 +1638,6 @@ impl PerlFactPacket {
         }
 
         Ok(refs)
-    }
-
-    fn has_blocking_dynamic_boundary(
-        &self,
-        change: &ChangeFact,
-        evidence: Option<&PerlRelatedTestEvidence>,
-    ) -> bool {
-        let test_file_id = evidence.and_then(|evidence| {
-            self.test(&evidence.test_id)
-                .map(|test| test.file_id.as_str())
-        });
-        self.dynamic_boundaries.iter().any(|boundary| {
-            if let Some(owner_id) = boundary.owner_id.as_deref() {
-                owner_id == change.owner_id
-            } else {
-                boundary.file_id == change.file_id
-                    || test_file_id == Some(boundary.file_id.as_str())
-            }
-        })
-    }
-
-    fn has_blocking_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation_kind_blocks_strict_actionability(&limitation.kind)
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation_for_change(&self, change: &ChangeFact) -> bool {
-        let relevant_refs = self.change_evidence_ids(change);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
     }
 
     fn change_evidence_ids(&self, change: &ChangeFact) -> BTreeSet<String> {

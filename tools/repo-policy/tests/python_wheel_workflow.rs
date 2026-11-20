@@ -310,7 +310,7 @@ fn wheel_records_and_ambiguous_inputs_qualify() -> TestResult {
             wheel,
             &wheel.replace(WHEEL, ".github/workflows/renamed-wheel.yml"),
         ),
-        initial.replace(wheel, &wheel.replace("|194|", "|195|")),
+        initial.replace(wheel, &wheel.replace("|243|", "|244|")),
         initial.replace(wheel, &format!("{wheel} changed")),
         format!("{initial}\n{wheel}\n"),
         format!("{initial}\n{}\n", wheel.replace('/', "\\")),
@@ -405,7 +405,10 @@ fn main_drift_and_independent_matching_edits_use_the_merge_base() -> TestResult 
     let fixture = Fixture::new()?;
     let original = fixture.ledger()?;
     let fork = fixture.git(&["rev-parse", "HEAD"])?;
-    let main_ledger = original.replace("|194|", "|195|");
+    let main_ledger = original.replace(
+        ".github/workflows/python-wheel-qualification.yml|243|",
+        ".github/workflows/python-wheel-qualification.yml|244|",
+    );
     assert_ne!(main_ledger, original, "wheel budget fixture value changed");
     let main = fixture.change(LEDGER, &main_ledger)?;
     fixture.git(&["checkout", "-b", "candidate", &fork])?;
