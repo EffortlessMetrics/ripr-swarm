@@ -731,7 +731,26 @@ pub(crate) fn render_pilot_terminal(
     render_pilot_terminal_with_target(classified, context, &top, target.as_deref())
 }
 
+/// The pilot terminal summary. Repository paths and function names reach it
+/// verbatim (gap row, "Next, by hand"), so the finished text goes through the
+/// same [`terminal_safe`] escape as `ripr check` (#14285). Lines already
+/// escaped where they are built stay unchanged: the escape is idempotent. The
+/// Markdown summary is a written artifact and keeps its own rendering.
 fn render_pilot_terminal_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
+    terminal_safe(render_pilot_terminal_unescaped(
+        classified,
+        context,
+        top,
+        uncommitted_inline_target,
+    ))
+}
+
+fn render_pilot_terminal_unescaped(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
     top: &[&ClassifiedSeam],
