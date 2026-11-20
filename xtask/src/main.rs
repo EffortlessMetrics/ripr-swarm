@@ -14689,7 +14689,7 @@ fn check_architecture() -> Result<(), String> {
             ],
             rerun_command: "cargo xtask check-architecture",
             exception_template: Some(
-                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
+                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)\n!cfg(test):path|forbidden_pattern|reason (only inside top-level #[cfg(test)] items)",
             ),
         },
         &violations,
@@ -14706,7 +14706,8 @@ fn check_architecture() -> Result<(), String> {
 /// (#4146). An exception that suppresses nothing is itself a violation,
 /// mirroring the count-policy stale/orphan convention (#2413): exception
 /// budget that matches nothing is invisible slack, so the entry must be
-/// removed or the denied usage restored.
+/// removed or the denied usage restored. The `!cfg(test):path` form counts
+/// only occurrences inside parser-identified top-level test items.
 fn architecture_rule_violations(
     records: &[Vec<String>],
     file_texts: &[(String, String)],
@@ -14727,18 +14728,26 @@ fn architecture_rule_violations(
             if !glob_matches(glob, path) || !text.contains(forbidden) {
                 continue;
             }
-            let exception_index =
-                exceptions
-                    .iter()
-                    .position(|(exception_path, exception_pattern, _)| {
-                        exception_pattern == forbidden && exception_path == path
-                    });
-            match exception_index {
-                Some(index) => suppressed[index] = true,
-                None => violations.push(format!(
-                    "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
-                )),
+            if let Some(index) = exceptions.iter().position(|(selector, pattern, _)| {
+                pattern == forbidden
+                    && selector.strip_prefix("cfg(test):").unwrap_or(selector) == path
+            }) {
+                if !exceptions[index].0.starts_with("cfg(test):") {
+                    suppressed[index] = true;
+                    continue;
+                }
+                // The parser scans malformed source verbatim. A production match
+                // still fails even when another match uses the test exception.
+                let production = rust_region_scan::production_text_regions(text);
+                let production_count = production.text.matches(forbidden).count();
+                suppressed[index] = production_count < text.matches(forbidden).count();
+                if production_count == 0 {
+                    continue;
+                }
             }
+            violations.push(format!(
+                "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
+            ));
         }
     }
 
@@ -14914,47 +14923,95 @@ mod architecture_rule_tests {
     }
 
     #[test]
-    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    fn cli_exceptions_allow_test_fixtures_and_imports_but_reject_production_imports()
     -> Result<(), String> {
         let policy_path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
         let records =
             super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
-        let required_paths = [
-            "crates/ripr/src/output/**",
-            "!crates/ripr/src/output/first_pr.rs",
+        let paths = [
+            "crates/ripr/src/app/impacted_evidence.rs",
+            "crates/ripr/src/app/pr_evidence.rs",
+            "crates/ripr/src/app/pr_summary/mod.rs",
+            "crates/ripr/src/app/ripr_plus.rs",
+            "crates/ripr/src/output/first_pr.rs",
         ];
         let records = records
             .into_iter()
             .filter(|record| {
-                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+                let selector = record[0].as_str();
+                record[1] == "crate::cli"
+                    && (matches!(
+                        selector,
+                        "crates/ripr/src/app/**" | "crates/ripr/src/output/**"
+                    ) || selector
+                        .strip_prefix("!cfg(test):")
+                        .or_else(|| selector.strip_prefix('!'))
+                        .is_some_and(|path| paths.contains(&path)))
             })
             .collect::<Vec<_>>();
-        for path in required_paths {
+        let fixture = r#"#[cfg(test)] mod tests {
+            const FIXTURE: &str = "use crate::cli::parse_options;";
+            use crate::cli::parse_options;
+        }"#;
+        let files = paths.map(|path| (path.to_owned(), fixture.to_owned()));
+        assert_eq!(
+            architecture_rule_violations(&records, &files),
+            Vec::<String>::new()
+        );
+
+        // Same bytes on the same line after the item's closing brace.
+        for (index, path) in paths.iter().enumerate() {
+            let mut mixed = files.clone();
+            mixed[index].1.push_str(" use crate::cli::parse_options;");
+            let violations = architecture_rule_violations(&records, &mixed);
+            assert_eq!(violations.len(), 1, "{path}: {violations:?}");
             assert!(
-                records.iter().any(|record| record[0] == path),
-                "policy/architecture.txt must retain {path}|crate::cli"
+                violations[0].starts_with(&format!(
+                    "{path} contains forbidden architecture pattern `crate::cli`"
+                )),
+                "{violations:?}"
             );
         }
-        let violations = architecture_rule_violations(
-            &records,
-            &[
-                (
-                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
-                    "use crate::cli::unknown_argument;".to_string(),
-                ),
-                (
-                    "crates/ripr/src/output/first_pr.rs".to_string(),
-                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
-                ),
-            ],
-        );
+
+        let mut with_sibling = files.to_vec();
+        let sibling = "crates/ripr/src/output/first_pr/options.rs";
+        with_sibling.push((sibling.to_owned(), fixture.to_owned()));
+        let violations = architecture_rule_violations(&records, &with_sibling);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(
-            violations[0].contains("first_pr/options.rs"),
-            "{violations:?}"
-        );
+        assert!(violations[0].contains(sibling), "{violations:?}");
         Ok(())
+    }
+
+    #[test]
+    fn test_exception_requires_a_match_in_a_parsed_test_item() {
+        let records = [
+            record(BROAD_RULE),
+            record(&format!(
+                "!cfg(test):{RUNNER_TESTS_PATH}|crate::output|test fixture"
+            )),
+        ];
+        for source in [
+            "// #[cfg(test)]\nuse crate::output;",
+            "#[cfg(any(test, unix))] use crate::output;",
+            "#[cfg(test)] mod broken { use crate::output;",
+        ] {
+            let violations = architecture_rule_violations(
+                &records,
+                &[(RUNNER_TESTS_PATH.to_owned(), source.to_owned())],
+            );
+            assert_eq!(violations.len(), 2, "{source}: {violations:?}");
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("forbidden architecture pattern")),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains("is stale")),
+                "{violations:?}"
+            );
+        }
     }
 }
 
