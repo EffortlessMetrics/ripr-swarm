@@ -1048,6 +1048,15 @@ reason = "Untouched native Kani exports, exact source data and an authored porta
 covered_by = ["cargo test -p ripr --test kani_report_cli"]
 
 [[allow]]
+glob = "crates/ripr/tests/fixtures/dependent-test-host.check.json"
+kind = "json_fixture"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pins the public check JSON evidence for direct dependent tests, a specific facade witness and an independent Cargo package."
+covered_by = ["cargo test -p ripr --lib dependent_test_host_hint_yields_to_the_facade_witness", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
 kind = "causal_attribution_fixture"
 owner = "analysis/causal-attribution"
