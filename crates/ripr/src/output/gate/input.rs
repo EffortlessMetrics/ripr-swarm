@@ -234,10 +234,14 @@ pub(super) fn read_gap_ledger_impl(
 /// Names the way forward for a mode that needs a baseline the run does not
 /// have (#11206): start non-blocking, then create the baseline from a real
 /// gate decision.
-const BASELINE_START_HINT: &str = "To start without blocking, use --mode visible-only \
-     (RIPR_GATE_MODE=visible-only). To adopt baseline-check, create a baseline from a \
-     gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, \
-     commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)";
+fn baseline_start_hint(mode: &str) -> String {
+    format!(
+        "To start without blocking, use --mode visible-only \
+         (RIPR_GATE_MODE=visible-only). To adopt {mode}, create a baseline from a \
+         gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, \
+         commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)"
+    )
+}
 
 /// A `--gap-ledger` that is not a gap decision ledger usually is the
 /// repo-exposure report or another full-repo document. Say which input the
@@ -409,8 +413,9 @@ pub(super) fn read_baseline_impl(
     if input.mode.requires_baseline() && input.baseline.is_none() {
         config_errors.push(format!(
             "{} mode requires an explicit --baseline artifact (RIPR_GATE_BASELINE in the \
-             generated workflow). {BASELINE_START_HINT}",
-            input.mode.as_str()
+             generated workflow). {}",
+            input.mode.as_str(),
+            baseline_start_hint(input.mode.as_str())
         ));
         return BaselineIndex::default();
     }
@@ -471,8 +476,9 @@ pub(super) fn read_baseline_impl(
         }
         Err(error) if input.mode.requires_baseline() => {
             config_errors.push(format!(
-                "required baseline {} is invalid: {error}. {BASELINE_START_HINT}",
-                display_path(path)
+                "required baseline {} is invalid: {error}. {}",
+                display_path(path),
+                baseline_start_hint(input.mode.as_str())
             ));
             BaselineIndex::default()
         }

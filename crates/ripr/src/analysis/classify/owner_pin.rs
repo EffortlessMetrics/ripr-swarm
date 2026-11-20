@@ -1311,6 +1311,40 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// #15183: whether `assertion` is a bare standard assertion invocation
+    /// (`assert_eq!`, `assert!`, ..) whose name is really rebound where the
+    /// test runs it: a `macro_rules!`/`macro` definition or an import
+    /// covering the assertion, found by the same binding-site lookup the
+    /// refusal note reads. Such an invocation may compare nothing, so its
+    /// extracted strength is not evidence. A site that only may rebind the
+    /// name (a foreign glob, an unresolved `#[macro_use]`) is not counted
+    /// here. Withholds only; it never grants credit.
+    pub(in crate::analysis) fn assertion_macro_rebound(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        let Some(path) = outer_macro_path(&assertion.text) else {
+            return false;
+        };
+        let name = path.strip_prefix("r#").unwrap_or(&path);
+        // The memoized whole-index binding question answers the common
+        // workspace that binds none of these names without the per-test site
+        // lookup, which would otherwise pay the workspace macro-site scan
+        // for every assertion of a small stage.
+        // A test-file `macro_rules!` that cannot leave its body binds the name
+        // only after its definition (Rust textual scope), so a later one does
+        // not rebind this assertion; the lookup then still reads every other
+        // covering or workspace site.
+        let in_scope = |site: &MacroBindingSite| !defined_after(site, assertion.line);
+        ADMITTED_ASSERTION_MACROS.contains(&name)
+            && super::activation::macro_names_rebound(index, &ADMITTED_ASSERTION_MACROS)
+            && self
+                .macro_binding_site_accepting(test, assertion.line, name, index, &in_scope)
+                .is_some_and(|(_, site)| rebinds(&site))
+    }
+
     /// The outer assertion's identity, shared by admission and its refusal note.
     pub(in crate::analysis) fn assertion_macro_name(text: &str) -> Option<String> {
         let path = outer_macro_path(text)?;
@@ -1388,6 +1422,19 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.macro_binding_site_accepting(test, assertion_line, name, index, &|_| true)
+    }
+
+    /// [`Self::macro_binding_site`] reading only the test-file scoped sites
+    /// `accept` keeps; the workspace site is read unchanged.
+    fn macro_binding_site_accepting(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+        accept: &dyn Fn(&MacroBindingSite) -> bool,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
             module_declaration_resolved(resolved_modules, index, path, line, declaration)
@@ -1424,6 +1471,7 @@ impl OwnerPinSyntax {
             &self.test_file_macro_sites,
             self.target_roots(index),
             &resolved,
+            accept,
         );
         if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
             local
@@ -4699,6 +4747,7 @@ fn test_macro_binding_site(
     memo: &SyncMemo<TestFileMacroSites>,
     roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    accept: &dyn Fn(&MacroBindingSite) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
         return None;
@@ -4718,8 +4767,21 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
+        .find(|(_, site)| accept(site) && site_covers_assertion(site, test, assertion_line, bytes))
         .map(|(_, site)| (test.file.clone(), site.clone()))
+}
+
+/// #15183: a non-exported, body-scoped `macro_rules!` whose item starts on a
+/// later line than the assertion. Rust's textual macro scope begins after the
+/// definition, so it does not rebind that earlier invocation. An unknown
+/// line (0), the same line, an exported or unscoped definition and any import
+/// stay counted.
+fn defined_after(site: &MacroBindingSite, assertion_line: usize) -> bool {
+    matches!(site.kind, MacroBindingKind::Definition)
+        && site.crate_local
+        && site.scope.is_some()
+        && site.line != 0
+        && site.line > assertion_line
 }
 
 /// `candidates` are the file's stored [`MacroBindingCandidates`]: a name
@@ -5682,6 +5744,23 @@ pub(in crate::analysis) fn returned_closure_pin_required(
 }
 
 impl OwnerReturnPin {
+    /// #15345: the call text the closed owner subset evaluates. An admitted
+    /// associated `T::name(..)` call is read as the bare `name(..)` it
+    /// resolves to, so a value neither version computes is refused for an
+    /// associated owner as it is for a free function; a trailing `.unwrap()`
+    /// is dropped as before.
+    fn closed_call_text<'a>(&self, call: &'a str) -> &'a str {
+        let call = call.trim();
+        match &self.call {
+            PinCall::Associated { type_name } => call
+                .strip_prefix(type_name.as_str())
+                .and_then(|rest| rest.trim_start().strip_prefix("::"))
+                .map_or(call, str::trim_start),
+            _ => call,
+        }
+        .trim_end_matches(".unwrap()")
+    }
+
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
     /// short-circuit and adaptor paths require their own pinned-input gates.
@@ -6185,11 +6264,10 @@ impl OwnerReturnPin {
                     .map(Box::new)
                 });
         let call = pin_call(owner, index)?;
-        // #6617 keeps the associated-function pin to a return value: a
-        // `T::new()` whole-value field pin is a separate claim.
-        if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
-        {
+        // #15345: an associated constructor (`Cfg::new()`) pins its fields
+        // through the same `T::name(..)` call identity a return value uses
+        // (#6617, RIPR-SPEC-0172).
+        if other_definition_competes(owner, index, call.kind(), None) {
             return None;
         }
         Some(Self {
@@ -7365,7 +7443,7 @@ impl OwnerReturnPin {
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), expected)
         {
             return false;
         }
@@ -7405,7 +7483,7 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && let Some(pinned) = gate.pinned_field_text(expected)
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
+            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), &pinned)
         {
             return false;
         }
