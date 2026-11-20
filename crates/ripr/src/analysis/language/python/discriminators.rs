@@ -102,19 +102,34 @@ pub(super) fn python_multiline_return_dict_entry_discriminator(
     let mut depth = 1usize;
     for text in source?.lines().skip(line).take(close - line - 1) {
         let trimmed = text.trim();
+        let next = python_line_bracket_depth(text, depth)?;
         if depth == 1 && !trimmed.is_empty() {
-            let first = top_level_python_segments(trimmed)
+            // Every entry on the line, not only the first.
+            for segment in top_level_python_segments(trimmed)
                 .into_iter()
-                .find(|segment| !segment.is_empty())?;
-            if !(first.starts_with('"') || first.starts_with('\'')) || first.contains('#') {
-                return None;
+                .filter(|segment| !segment.is_empty())
+            {
+                if !(segment.starts_with('"') || segment.starts_with('\'')) || segment.contains('#')
+                {
+                    return None;
+                }
+                let (later, _) = python_dict_field_segment_parts(segment)?;
+                if later.contains(['"', '\'', '\\']) || later == key {
+                    return None;
+                }
             }
-            let (later, _) = python_dict_field_segment_parts(first)?;
-            if later.contains(['"', '\'', '\\']) || later == key {
+        } else if depth > 1 && next == 1 {
+            // A line that closes a nested value may start the next entry after
+            // the bracket (`"x": 1}, "k": 5,`); only a bare close is read.
+            if !trimmed
+                .trim_end_matches(',')
+                .chars()
+                .all(|ch| matches!(ch, '}' | ']' | ')'))
+            {
                 return None;
             }
         }
-        depth = python_line_bracket_depth(text, depth)?;
+        depth = next;
     }
     let value = python_expected_value_or_placeholder(value);
     let read = if owner.route_paths.is_empty() {

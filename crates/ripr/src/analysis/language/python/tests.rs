@@ -1584,6 +1584,27 @@ fn multiline_return_dict_entry_refuses_what_it_cannot_prove() -> Result<(), Stri
         None
     );
     assert_eq!(check("        \"k\": 1,\n        # \"k\": 2,\n", 1)?, None);
+    // A later line with several entries is read whole, and a line that closes
+    // a nested value may not start another entry.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"k\": 5,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, **over,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"x\": 1}, \"k\": 5,\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"m\": 3,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
     // Later nested values are skipped; only their entry keys are read.
     assert_eq!(
         check(
