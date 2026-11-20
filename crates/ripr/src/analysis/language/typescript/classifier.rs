@@ -3867,6 +3867,9 @@ fn nullish_argument_reaches_read_argument(
     left: &str,
     owner: &TypeScriptOwner,
 ) -> bool {
+    if !can_read_positional_argument(left, owner) {
+        return false;
+    }
     let position = comparison_read_position(left, owner);
     let readable = |idx: usize| match position {
         ReadPosition::Index(read) => idx == read,
@@ -3877,6 +3880,13 @@ fn nullish_argument_reaches_read_argument(
         .iter()
         .enumerate()
         .any(|(idx, argument)| readable(idx) && matches!(argument.trim(), "null" | "undefined"))
+}
+
+/// A member or expression does not read a whole argument. The parser's
+/// binding names include Unicode parameters outside the ASCII alias reader.
+fn can_read_positional_argument(operand: &str, owner: &TypeScriptOwner) -> bool {
+    let operand = operand.trim();
+    is_bare_identifier(operand) || owner.params.iter().any(|name| name == operand)
 }
 
 /// The operand text a changed comparison reads, with constant-shaped operands
@@ -5751,6 +5761,9 @@ fn boundary_literal_reaches_read_argument(
     } else {
         right
     };
+    if !can_read_positional_argument(operand, owner) {
+        return false;
+    }
     let position = comparison_read_position(operand, owner);
     let readable = |idx: usize| match position {
         ReadPosition::Index(read) => idx == read,

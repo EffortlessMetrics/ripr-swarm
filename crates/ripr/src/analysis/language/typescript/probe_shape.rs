@@ -1485,10 +1485,11 @@ fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<Str
 }
 
 fn is_simple_typescript_discriminator_operand(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|ch| {
-            ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '"' || ch == '\''
-        })
+    oxc_syntax::identifier::is_identifier_name(value)
+        || (!value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '"' | '\'')))
 }
 
 fn is_simple_typescript_object_key(value: &str) -> bool {

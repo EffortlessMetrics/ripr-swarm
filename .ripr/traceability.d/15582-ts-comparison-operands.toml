@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/boundary_label_tests.rs::arithmetic_on_either_side_has_no_truncated_boundary",
+]
+fixtures = [
+  "fixtures/typescript_boundary_operand_arithmetic",
+  "fixtures/typescript_boundary_operand_field",
+  "fixtures/typescript_boundary_operand_unicode_local",
+  "fixtures/typescript_boundary_operand_unicode_parameter",
+]
