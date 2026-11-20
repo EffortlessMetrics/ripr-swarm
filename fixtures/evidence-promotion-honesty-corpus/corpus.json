@@ -207,6 +207,23 @@
   ],
   "cases": [
     {
+      "id": "rust_review_card_unrelated_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-review-card-unrelated-oracle.json",
+      "vector": "unrelated_same_file_assertion_cannot_lend_an_oracle_or_test_to_a_changed_predicate",
+      "assertions": [
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "e49f8011f2288c94"
+        },
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "1077a643e5ccaff8"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_json_patch",
       "language": "python",
       "tier": "pure",

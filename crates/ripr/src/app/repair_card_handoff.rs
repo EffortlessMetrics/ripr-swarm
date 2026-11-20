@@ -1608,6 +1608,7 @@ pub(crate) mod tests {
             drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: std::path::PathBuf::from("src/pricing.rs"),
             line: 120,

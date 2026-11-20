@@ -2170,6 +2170,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing_tests.rs"),
                     line: 12,
@@ -2293,6 +2294,7 @@ mod tests {
 
     fn external_language_related_test(file: &str, evidence_summary: &str) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies shared buffers".to_string(),
             file: PathBuf::from(file),
             line: 41,
@@ -2322,6 +2324,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "target_token_affinity_is_not_owner_call".to_string(),
                     file: PathBuf::from("tests/target_affinity.rs"),
                     line: 9,
@@ -4097,6 +4100,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "pricing_module_smoke".to_string(),
                 file: PathBuf::from("tests/pricing/integration.rs"),
                 line: 44,

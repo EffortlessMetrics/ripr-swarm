@@ -5367,6 +5367,7 @@ pub(crate) mod tests {
 
     pub(crate) fn weak_related_test() -> crate::analysis::test_grip_evidence::RelatedTestGrip {
         crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "at_threshold_runs".to_string(),
             file: std::path::PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -6763,6 +6764,7 @@ pub(crate) mod tests {
         let root = Path::new("/repo");
 
         let targeted = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "it_works".to_string(),
             file: std::path::PathBuf::from("src/lib.rs"),
             line: 14,

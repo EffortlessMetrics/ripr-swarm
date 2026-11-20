@@ -7873,6 +7873,8 @@ tests = [
   "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_emits_proposed_integration_target",
   "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_keeps_related_test_when_a_proposal_is_also_present",
   "crates/ripr/src/output/review_comments/mod.rs::tests::gap_record_proposed_target_projects_object_or_null",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_withholds_an_unrelated_assertion_and_keeps_a_weaker_observer",
+  "crates/ripr/tests/check_guidance_parity.rs::unrelated_assertion_matches_the_review_card_honesty_corpus",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_card_carries_oracle_kind_and_strength",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_working_set_card_projects_domain_canonical_gap_id",
   "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_names_missing_domain_canonical_gap_id_as_null",
