@@ -14639,6 +14639,9 @@ fn check_architecture() -> Result<(), String> {
     // #2958: ratchet against new inline consumer evidence-state literals.
     violations.extend(policy::evidence_state_literals::violations(&files)?);
 
+    // #15193: ratchet against new inline test modules in the published crates.
+    violations.extend(policy::inline_test_modules::violations(&files)?);
+
     // RIPR-SPEC-0087 §8 (issue #2028): repair-packet authority coupling guard.
     for file in &files {
         if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
@@ -14943,6 +14946,24 @@ mod architecture_rule_tests {
     }
 }
 
+/// Reads every Rust file under `scan_root` and returns the out-of-line test
+/// files and directories `rust_region_scan::out_of_line_test_exemptions`
+/// derives from their module declarations (#15193).
+fn out_of_line_test_files(
+    files: &[String],
+    scan_root: &str,
+) -> Result<(BTreeSet<String>, Vec<String>), String> {
+    let mut sources = Vec::new();
+    for file in files {
+        if file.starts_with(scan_root) && file.ends_with(".rs") {
+            sources.push((file.clone(), read_text_lossy(Path::new(file))?));
+        }
+    }
+    Ok(rust_region_scan::out_of_line_test_exemptions(
+        files, &sources,
+    ))
+}
+
 /// #3534: Rust source-role authority. Producer modules derive source role
 /// from Cargo target declarations, role configuration, test-defining
 /// attributes, cfg predicates, harness registrations, and composition
@@ -14973,12 +14994,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
-        (
-            "crates/ripr/src/output/related_test_role_tests.rs",
-            "\"#[cfg(test)]\"",
-            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
-        ),
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 6] = [
         (
             "crates/ripr/src/output/review_comments/placement.rs",
             "starts_with(\"tests",
@@ -15008,16 +15024,6 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "crates/ripr/src/analysis/classify/related_tests.rs",
             "starts_with(\"tests",
             "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
-        ),
-        (
-            "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
-            "\"#[cfg(test)]\"",
-            "owner-pin collectability preservation fixture in the cfg(test)-gated tests module; source spelling is input data, while cfg_predicates owns the production availability decision (#4478)",
-        ),
-        (
-            "crates/ripr/src/lsp/tests.rs",
-            "\"#[cfg(test)]\"",
-            "LSP test fixtures split source text on the attribute spelling; the string is test data, not a role decision",
         ),
     ];
     /// Rules: (pattern, owner guidance). Patterns are matched as plain
@@ -15088,10 +15094,17 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     ];
 
     let files = tracked_files()?;
+    // #15193: unit tests move to out-of-line `#[cfg(test)] mod tests;` files.
+    // Such a file is test code as a whole, exactly like the interior of the
+    // inline module it replaces, so it gets the same exemption.
+    let (test_files, test_dirs) = out_of_line_test_files(&files, SCAN_ROOT)?;
     let mut violations = Vec::new();
     let mut fallbacks = Vec::new();
     for file in &files {
         if !file.starts_with(SCAN_ROOT) || !file.ends_with(".rs") {
+            continue;
+        }
+        if test_files.contains(file) || test_dirs.iter().any(|dir| file.starts_with(dir.as_str())) {
             continue;
         }
         if OUT_OF_SCOPE_PREFIXES

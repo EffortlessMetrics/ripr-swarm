@@ -8,6 +8,12 @@ repository.workspace = true
 description = "Internal contract types for the ripr facade: domain DTOs and adapter result shells (ADR 0027). Implementation package; the public API is the ripr crate."
 keywords = ["mutation-testing", "testing", "static-analysis"]
 categories = ["development-tools", "development-tools::testing"]
+# Development tests stay out of the published source (#15193). Unit tests live
+# in owner-local out-of-line modules declared under `#[cfg(test)]` (`tests.rs`,
+# `tests/`, `*_tests.rs`); an ordinary build never reads those files, so the
+# packaged crate compiles without them. This crate has no production module
+# whose file name matches these patterns. Patterns are gitignore-style.
+exclude = ["src/**/tests.rs", "src/**/tests/**", "src/**/*_tests.rs"]
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]

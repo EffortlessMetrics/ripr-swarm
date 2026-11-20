@@ -13,7 +13,7 @@ tests = [
   "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::plain_venv_without_pytest_is_low_on_every_surface",
   "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::venv_with_unreadable_pytest_fact_is_medium_on_every_surface",
   "crates/ripr/src/output/python_repair_card.rs::native_route_runs_the_producer_selected_interpreter_only",
-  "crates/ripr-contract/src/domain/language.rs::pytest_verify_interpreter_names_path_or_project_venv_python_only",
+  "crates/ripr-contract/src/domain/language/tests.rs::pytest_verify_interpreter_names_path_or_project_venv_python_only",
   "crates/ripr/src/lsp/gap_artifacts.rs::command_payload_accepts_python_test_verify_commands",
 ]
 code = [
