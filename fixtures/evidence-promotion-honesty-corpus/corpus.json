@@ -2498,6 +2498,30 @@
       ]
     },
     {
+      "id": "rust_guard_operand_wrapper_agreement",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/guard_operand_wrapper_agreement",
+      "vector": "rendered_helper_pin_leaves_dropped_guard_operand_at_its_identity_value",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_guard_operand_added_deciding_row",
       "language": "rust",
       "tier": "pure",
