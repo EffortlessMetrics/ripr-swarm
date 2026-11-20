@@ -243,6 +243,7 @@ mod tests {
             reach_body_text: None,
             assertions: Vec::new(),
             mocks_in_file: Default::default(),
+            node_test_registration: false,
             imports_in_file: imports.into(),
             unstable_member_roots_in_file: Default::default(),
             scope_bindings: Default::default(),

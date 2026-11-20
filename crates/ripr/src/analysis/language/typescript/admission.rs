@@ -389,6 +389,45 @@ impl TypeScriptAdmissionContext {
         expected_describe: bool,
         names: &RegistrationNames,
     ) -> bool {
+        let expected = if expected_describe {
+            RegistrationKind::Describe
+        } else {
+            RegistrationKind::Test
+        };
+        self.registration_in(call, names)
+            .is_some_and(|registration| registration.kind == expected)
+    }
+
+    pub(crate) fn registration_is_node_test_in(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        names: &RegistrationNames,
+    ) -> bool {
+        // The Node test API supports a direct call and the active .only form.
+        let direct = match call.callee.get_inner_expression() {
+            Expression::Identifier(_) => true,
+            Expression::StaticMemberExpression(member) => {
+                member.property.name == "only"
+                    && matches!(
+                        member.object.get_inner_expression(),
+                        Expression::Identifier(_)
+                    )
+            }
+            _ => false,
+        };
+        direct
+            && self
+                .registration_in(call, names)
+                .is_some_and(|registration| {
+                    registration.kind == RegistrationKind::Test && registration.node_test
+                })
+    }
+
+    fn registration_in<'a, 'b>(
+        &self,
+        call: &'b oxc_ast::ast::CallExpression<'a>,
+        names: &RegistrationNames,
+    ) -> Option<Registration<'a, 'b>> {
         let mut scan = Scan::new(self, false);
         if let Some((Expression::Identifier(root), _, _)) = registration_shape(call)
             && names.binds(root.name.as_str(), &self.imports)
@@ -398,13 +437,7 @@ impl TypeScriptAdmissionContext {
         } else {
             scan.scopes.push(BTreeMap::new());
         }
-        let expected = if expected_describe {
-            RegistrationKind::Describe
-        } else {
-            RegistrationKind::Test
-        };
         scan.registration(call)
-            .is_some_and(|registration| registration.kind == expected)
     }
 
     /// Whether `root` is bound, in a context from `registration_context`, by
@@ -1433,6 +1466,7 @@ fn registration_shape<'a, 'b>(
 /// A recognized `test`/`describe` registration call.
 struct Registration<'a, 'b> {
     kind: RegistrationKind,
+    node_test: bool,
     /// Arguments of a factory in the callee (`.each(table)`, `.skipIf(c)`).
     factory_args: &'b [Argument<'a>],
     /// The factory is `.each` / `.for`, so callback parameters take rows.
@@ -1539,14 +1573,18 @@ impl<'c> Scan<'c> {
         let Expression::Identifier(root) = root else {
             return None;
         };
-        let kind = match self.resolve(root.name.as_str()) {
-            Name::Global => registration_kind(root.name.as_str())?,
+        let (kind, node_test) = match self.resolve(root.name.as_str()) {
+            Name::Global => (registration_kind(root.name.as_str())?, false),
             Name::Import(import) if self.context.import_class(import) == ImportClass::Runner => {
-                match import.imported.as_deref() {
+                let imported = import.imported.as_deref();
+                let kind = match imported {
                     // `import test from 'ava'` / `'node:test'` / `'tape'`.
                     Some("default") | None => RegistrationKind::Test,
                     Some(imported) => registration_kind(imported)?,
-                }
+                };
+                let node_test = import.source == "node:test"
+                    && matches!(imported, Some("default" | "test" | "it"));
+                (kind, node_test)
             }
             _ => return None,
         };
@@ -1561,6 +1599,7 @@ impl<'c> Scan<'c> {
         };
         Some(Registration {
             kind,
+            node_test,
             factory_args,
             table,
         })
@@ -1574,6 +1613,7 @@ impl<'c> Scan<'c> {
             kind: RegistrationKind::Test,
             factory_args,
             table,
+            ..
         }) = self.registration(call)
         else {
             // A custom registration (`const it = base.extend({...})`) runs

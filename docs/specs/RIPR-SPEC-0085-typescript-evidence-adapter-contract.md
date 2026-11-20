@@ -201,9 +201,10 @@ the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
 
-If the package has no framework hint, a runtime import from `node:test` in
-the selected test supports `node --test <file>` from the package root, even
-when the package's test script is a wrapper.
+If the package has no framework hint, a selected registration bound to a
+runtime `node:test` import supports `node --test <file>` when the test's
+nearest package is the reported command directory. This also applies when
+the package's test script is a wrapper.
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from

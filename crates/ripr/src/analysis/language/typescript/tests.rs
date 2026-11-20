@@ -146,6 +146,7 @@ pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some(owner_name.to_string()),
@@ -219,6 +220,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some(owner_name.to_string()),
@@ -278,6 +280,7 @@ pub(super) fn direct_test_with_assertion(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some(owner_name.to_string()),
@@ -331,6 +334,7 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }
 }
@@ -1901,6 +1905,7 @@ fn find_related_tests_matches_by_call_name() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
         TypeScriptTest {
@@ -1927,6 +1932,7 @@ fn find_related_tests_matches_by_call_name() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
     ];
@@ -1982,6 +1988,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
 
@@ -3788,6 +3795,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
 
@@ -3844,6 +3852,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
         TypeScriptTest {
@@ -3869,6 +3878,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
     ];
@@ -4123,6 +4133,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
     let finding = classify_change(
@@ -4528,6 +4539,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
 
@@ -4620,6 +4632,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
         TypeScriptTest {
@@ -4645,6 +4658,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: Default::default(),
         },
     ];
@@ -5482,6 +5496,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -5583,6 +5598,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -7855,6 +7871,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: vec![TypeScriptImport {
                 source: "../src/lib".to_string(),
                 imported: Some("applyDiscount".to_string()),
@@ -7886,6 +7903,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             conditional_registration: None,
             factory_call_line: None,
             setup_hook_bodies: Vec::new(),
+            node_test_registration: false,
             imports_in_file: vec![TypeScriptImport {
                 source: "../src/lib".to_string(),
                 imported: Some("applyDiscount".to_string()),
@@ -8095,6 +8113,7 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -8219,6 +8238,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
     let paths = collect_related_mock_paths(
@@ -8279,6 +8299,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
     let paths = collect_related_mock_paths(
@@ -8340,6 +8361,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
     let finding = classify_change(
@@ -8442,6 +8464,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
 
@@ -8593,6 +8616,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
     let finding = classify_change(
@@ -8708,6 +8732,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     }];
     let finding = classify_change(
@@ -8978,6 +9003,7 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
     let finding = classify_change(
@@ -9625,6 +9651,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
             imported: Some("clamp".to_string()),
@@ -9715,6 +9742,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
             imported: Some("clamp".to_string()),
@@ -9789,6 +9817,7 @@ fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_erro
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
             imported: Some("clamp".to_string()),
@@ -9860,6 +9889,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/clamp".to_string(),
             imported: Some("clamp".to_string()),
@@ -9947,6 +9977,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
     let finding = classify_change(
@@ -10140,6 +10171,7 @@ fn package_local_filter_selects_same_package_test() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/work".to_string(),
             imported: Some("doWork".to_string()),
@@ -10240,6 +10272,7 @@ fn package_local_filter_rejects_cross_package_test() {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
 
@@ -10294,6 +10327,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../../../packages/utils/src/helpers".into(),
             imported: Some("toArray".into()),
@@ -10369,6 +10403,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/cart".into(),
             imported: Some("Cart".into()),
@@ -10606,6 +10641,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
     // Same-package test that correctly imports
@@ -10632,6 +10668,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -10716,6 +10753,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![import].into(),
     };
 
@@ -10859,6 +10897,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: Default::default(),
     };
     // No workspace_root → no package-local filter → no typescript_target_unresolved
@@ -10977,6 +11016,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11093,6 +11133,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11202,6 +11243,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11311,6 +11353,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11418,6 +11461,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11525,6 +11569,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11653,6 +11698,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11761,6 +11807,7 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![
             TypeScriptImport {
                 source: "../src/receipt".to_string(),
@@ -11877,6 +11924,7 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -11987,6 +12035,7 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -12097,6 +12146,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/config".to_string(),
             imported: Some("buildConfig".to_string()),
@@ -12205,6 +12255,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/config".to_string(),
             imported: Some("buildConfig".to_string()),
@@ -12838,6 +12889,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -12947,6 +12999,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/tracker".to_string(),
             imported: Some("trackLogin".to_string()),
@@ -13087,6 +13140,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -13180,6 +13234,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -13275,6 +13330,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: source.to_string(),
             imported: Some(imported.to_string()),
@@ -13703,6 +13759,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -13792,6 +13849,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "lodash".to_string(),
             imported: Some("cloneDeep".to_string()),
@@ -13874,6 +13932,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "react".to_string(),
             imported: Some("default".to_string()),
@@ -13953,6 +14012,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("default".to_string()),
@@ -14033,6 +14093,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14129,6 +14190,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14226,6 +14288,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14332,6 +14395,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "@/owner".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14443,6 +14507,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14493,6 +14558,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14603,6 +14669,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14708,6 +14775,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -14846,6 +14914,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/discount".to_string(),
             imported: Some("applyDiscount".to_string()),
@@ -15294,6 +15363,18 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             "import { it as test } from 'mocha';",
             None,
         ),
+        (
+            "incidental",
+            "ng test app --code-coverage",
+            "import { mock, test as nodeCheck } from 'node:test';\nnodeCheck('unrelated', () => {});",
+            None,
+        ),
+        (
+            "nested",
+            "node suite.mjs",
+            "import { test } from 'node:test';",
+            None,
+        ),
     ] {
         let package = root.join("packages").join(name);
         ts_write_file(
@@ -15304,10 +15385,18 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             &package.join("src/pricing.ts"),
             "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
         )?;
+        let (test_package, price_import) = if name == "nested" {
+            let test_package = package.join("child");
+            ts_write_file(&test_package.join("package.json"), r#"{"name":"child"}"#)?;
+            (test_package, "../../src/pricing.ts")
+        } else {
+            (package, "../src/pricing.ts")
+        };
+        let test_file = test_package.join("test/pricing.test.mjs");
         ts_write_file(
-            &package.join("test/pricing.test.mjs"),
+            &test_file,
             &format!(
-                "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '../src/pricing.ts';\ntest('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
+                "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '{price_import}';\ntest('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
             ),
         )?;
 
@@ -15324,7 +15413,9 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
                 removed_lines: Vec::new(),
             }],
         )?;
-        let expected_test = PathBuf::from(format!("packages/{name}/test/pricing.test.mjs"));
+        let expected_test = test_file
+            .strip_prefix(&root)
+            .map_err(|err| err.to_string())?;
         let finding = result
             .findings
             .iter()
@@ -15337,7 +15428,12 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             .evidence
             .iter()
             .find_map(|line| line.strip_prefix("typescript_verify_command: "));
-        if expected_command.is_some() {
+        if name == "nested" {
+            assert_eq!(
+                verify, None,
+                "the reported working directory belongs to the parent package"
+            );
+        } else if expected_command.is_some() {
             assert_eq!(verify, expected_command, "{name} verification evidence");
         } else {
             assert!(
@@ -15829,6 +15925,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/limiter".to_string(),
             imported: Some("parseLimit".to_string()),
@@ -15946,6 +16043,7 @@ pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str)
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "../src/lib".to_string(),
             imported: Some(owner_name.to_string()),
@@ -22032,6 +22130,7 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         conditional_registration: None,
         factory_call_line: None,
         setup_hook_bodies: Vec::new(),
+        node_test_registration: false,
         imports_in_file: vec![TypeScriptImport {
             source: "bundle".into(),
             imported: Some("build".into()),
