@@ -766,11 +766,24 @@ impl CliProgressSink {
     /// later events, so the refusal text that follows does not interleave
     /// with progress output.
     pub(crate) fn abandon(&self) {
+        self.abandon_or_close(None);
+    }
+
+    /// [`Self::abandon`] for a caller that owns the run's scope even before
+    /// the worker reports a stage (`pilot`'s deadline, #5444): the run always
+    /// ends with exactly one `cancelled` line at that scope, whether or not
+    /// the worker reached its first stage or its own cancellation checkpoint
+    /// before the process exits.
+    pub(crate) fn abandon_with_scope(&self, scope: AnalysisProgressScope) {
+        self.abandon_or_close(Some(scope));
+    }
+
+    fn abandon_or_close(&self, fallback: Option<AnalysisProgressScope>) {
         self.stop_heartbeat();
         {
             let mut projection = Self::lock_state(&self.inner);
             if !projection.terminal
-                && let Some(scope) = projection.current_scope
+                && let Some(scope) = projection.current_scope.or(fallback)
             {
                 Self::project_terminal(
                     &mut projection,
@@ -1539,6 +1552,32 @@ mod tests {
         );
         assert!(!text.contains("building_output"), "{text}");
         assert!(!text.contains("completed"), "{text}");
+    }
+
+    /// #5444: a deadline that fires before the worker's first stage still
+    /// closes the run with one `cancelled` line at the caller's scope, and a
+    /// worker terminal that lands before the controller acts is not doubled.
+    #[test]
+    fn abandon_with_scope_closes_a_run_the_worker_never_started() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.abandon_with_scope(AnalysisProgressScope::Repo);
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Cancelled));
+        assert_eq!(buffer.text(), "ripr progress: cancelled [repo]\n");
+
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.emit(event(AnalysisProgressStage::Cancelled));
+        sink.abandon_with_scope(AnalysisProgressScope::Repo);
+        let text = buffer.text();
+        assert_eq!(
+            text.matches("ripr progress: cancelled").count(),
+            1,
+            "{text}"
+        );
     }
 
     #[test]

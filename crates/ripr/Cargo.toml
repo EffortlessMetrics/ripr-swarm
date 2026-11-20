@@ -19,7 +19,12 @@ categories = ["development-tools", "development-tools::testing"]
 # Include patterns are gitignore-style and the last match wins, so the
 # production modules whose names end in `_tests.rs` are listed again after the
 # exclusion. A new production module with such a name must be added there, or
-# the packaged crate will not compile. See docs/RELEASE.md before changing it.
+# the packaged crate will not compile. Even so the crate is packaged and
+# published from the publish stage (`cargo xtask publish-dry-run`, which leaves
+# it at target/publish-stage), whose `src` has its inline `#[cfg(test)]`
+# modules removed (#14198); packaged straight from the checkout it is over the
+# limit. The stage writes `.ripr-publish-stage` (its commit), which identifies
+# the package as that commit. See docs/RELEASE.md before changing it.
 # The example paths are enumerated rather than globbed as `examples/**` so that
 # `examples/*/target/` test residue cannot enter the package. `ripr` runs
 # against the sample workspace during tests and writes a fact cache there; that
@@ -49,6 +54,7 @@ include = [
   "examples/*.rs",
   "examples/support/*.rs",
   "/README.md",
+  "/.ripr-publish-stage",
   "LICENSE-*",
   "Cargo.toml",
   "build.rs"

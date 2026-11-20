@@ -2405,7 +2405,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
 }
 
 /// The package a file belongs to. A relative path keeps
-/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// [`super::related_tests::package_prefix`] (`[<dirs>/]crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an
 /// absolute path outside a `crates/` layout unscoped (#3235) and drops the
 /// workspace directory from an absolute `crates/<name>/`, so two packages

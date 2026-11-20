@@ -3347,9 +3347,14 @@ fn owner_pin_assertions_with_matches(
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
+        // #14116: a plain `#[cfg(..)]` on the declaration that the package's
+        // default features settle on mounts the module in a plain
+        // `cargo test`, the rule #8780 applies to a test's own gate.
+        let context = item_context_refusal(module.syntax(), default_features).is_none();
         let admitted = ModuleDeclarationAdmission {
-            context: supported_item_context(module.syntax()),
-            source_preserved: supported_targeted_item_context(module.syntax()),
+            context,
+            source_preserved: context
+                && item_attributes_preserve_source_items(module.syntax(), default_features),
         };
         result
             .module_declarations
@@ -3389,6 +3394,11 @@ fn owner_pin_assertions_with_matches(
             name.text().to_string(),
         );
         *identities.entry(key.clone()).or_default() += 1;
+        let operand_try = if is_test_function(&function) {
+            OperandTry::FailsTest
+        } else {
+            OperandTry::MayLeave
+        };
         // An outcome-settling attribute is named first wherever it sits: it
         // is evidence of a gap, which RIPR-SPEC-0240 must not withhold.
         let refusal = if let Some(attr) = function.attrs().find(|attr| {
@@ -3407,12 +3417,14 @@ fn owner_pin_assertions_with_matches(
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
-        } else if let Some(refusal) = has_escape(
+        } else if let Some(refusal) = has_escape_among(
             body.syntax(),
             trusted,
             &empty_macros,
             &json_uses,
+            &[],
             matches_context,
+            operand_try,
         ) {
             if let AssertionContextRefusal::OpaqueMacro(ref path) = refusal {
                 if super::bolero::bolero_macro_escape_allowed(&function, source, path) {
@@ -3451,6 +3463,7 @@ fn owner_pin_assertions_with_matches(
                     &json_uses,
                     COMPARISON_NESTED_MACROS,
                     false,
+                    operand_try,
                 )
                 .is_none()
                 && function.attrs().all(|attr| {
@@ -4373,14 +4386,24 @@ pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
 /// items. The selected function's own harness attributes are outside this
 /// check; its parent and the resolved module declarations supply the context.
 pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
-    supported_item_context(item)
-        && item.ancestors().all(|node| {
-            node.children().filter_map(ast::Attr::cast).all(|attr| {
-                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
-                    &attr.syntax().text().to_string(),
-                )
-            })
+    supported_item_context(item) && item_attributes_preserve_source_items(item, None)
+}
+
+/// Whether every attribute on `item` and its enclosing items keeps the
+/// source items it gates as written. A plain `#[cfg(..)]` that
+/// `default_features` settle on is active in a plain `cargo test`, so it
+/// keeps them too (#14116).
+fn item_attributes_preserve_source_items(
+    item: &SyntaxNode,
+    default_features: Option<&BTreeSet<String>>,
+) -> bool {
+    item.ancestors().all(|node| {
+        node.children().filter_map(ast::Attr::cast).all(|attr| {
+            crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                &attr.syntax().text().to_string(),
+            ) || default_enabled_gate(&attr, default_features)
         })
+    })
 }
 
 /// A plain outer `#[cfg(..)]` that is provably true in a plain `cargo test`
@@ -5926,7 +5949,46 @@ fn has_escape(
     json_uses: &[ast::Use],
     qualified_matches: bool,
 ) -> Option<AssertionContextRefusal> {
-    has_escape_among(body, trusted, empty, json_uses, &[], qualified_matches)
+    has_escape_among(
+        body,
+        trusted,
+        empty,
+        json_uses,
+        &[],
+        qualified_matches,
+        OperandTry::MayLeave,
+    )
+}
+
+/// How a `?` in a trusted macro's operands may leave the scanned body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandTry {
+    /// The body is a helper, or anything else whose caller may discard the
+    /// error: the `?` may skip the comparison unnoticed.
+    MayLeave,
+    /// The body is a test function's own: an error it returns fails the
+    /// test (RIPR-SPEC-0197 rule 3, "`?` in a root test"), so a `?` outside
+    /// any closure cannot skip the comparison and leave the test passing.
+    FailsTest,
+}
+
+/// `operand_try` for a macro call at `call` inside `body`: a call inside a
+/// closure, an `async` block or a nested `fn` returns its error to code that
+/// may discard it, so its `?` may leave without failing the test.
+fn operand_try_at(call: &SyntaxNode, body: &SyntaxNode, operand_try: OperandTry) -> OperandTry {
+    let nested_exit_scope = call
+        .ancestors()
+        .take_while(|node| node != body)
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::Fn::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        });
+    if nested_exit_scope {
+        OperandTry::MayLeave
+    } else {
+        operand_try
+    }
 }
 
 /// [`has_escape`] with `plain_nested` names also read as plain nested
@@ -5938,6 +6000,7 @@ fn has_escape_among(
     json_uses: &[ast::Use],
     plain_nested: &[&str],
     qualified_matches: bool,
+    operand_try: OperandTry,
 ) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
@@ -5969,6 +6032,7 @@ fn has_escape_among(
                     trusted.contains(&"json") && json_visible,
                     plain_nested,
                     qualified_matches,
+                    operand_try_at(call.syntax(), body, operand_try),
                 )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
@@ -6009,7 +6073,7 @@ pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, false, &[], false)
+    opaque_macro_operand_with_json(tree, false, &[], false, OperandTry::MayLeave)
 }
 
 fn opaque_macro_operand_with_json(
@@ -6017,13 +6081,19 @@ fn opaque_macro_operand_with_json(
     literal_json: bool,
     plain_nested: &[&str],
     qualified_matches: bool,
+    operand_try: OperandTry,
 ) -> bool {
     let tokens = operand_tokens(tree);
+    // A `?` may also sit in a closure or `async` block inside the operand,
+    // whose error a caller can discard; ripr does not tell the two apart in
+    // a token tree, so either keeps the `?` an exit.
+    let try_fails_test = operand_try == OperandTry::FailsTest
+        && !tokens
+            .iter()
+            .any(|token| matches!(token.text(), "|" | "||" | "async"));
     tokens.iter().any(|token| {
-        matches!(
-            token.text(),
-            "return" | "break" | "continue" | "yield" | "?"
-        )
+        matches!(token.text(), "return" | "break" | "continue" | "yield")
+            || token.text() == "?" && !try_fails_test
     }) || nested_invocation_sites(&tokens).any(|(at, name, plain)| {
         !(plain
             && (NESTED_EXPANSIONS.contains(&name)

@@ -2516,6 +2516,22 @@ impl ModuleTreeScanEnvelope {
     }
 }
 
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
+}
+
 /// Persists the module-graph walk's per-file scans between runs so a warm
 /// check skips the parse that produced them. Layout:
 ///

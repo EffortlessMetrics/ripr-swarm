@@ -152,7 +152,7 @@ Editor & Agent:
 
 PR & Review:
   ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
-  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check|--run-chain]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--output-dir target/ripr/reports] [--check|--run-chain]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]
@@ -163,8 +163,8 @@ PR & Review:
   ripr pr-ledger record --pr-number 123 --base SHA --head SHA (--gate target/ripr/reports/gate-decision.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json|--pr-guidance target/ripr/review/comments.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--out target/ripr/reports/pr-evidence-ledger.json] [--out-jsonl .ripr/pr-evidence-ledger.jsonl]
   ripr pr-comments existing [--root .] [--raw target/ripr/review/existing-comments.raw.json|-] [--out target/ripr/review/existing-comments.json]
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json [--existing-comments target/ripr/review/existing-comments.json] [--mode off|plan|inline] [--out target/ripr/review/comment-publish-plan.json]
-  ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--out-dir target/ripr/review/publish]
-  ripr pr-comments summary --pull-request N --head-sha SHA [--root .] [--pr-guidance target/ripr/review/comments.json] [--raw PATH|-] [--run-url URL] [--out-dir target/ripr/review/summary]
+  ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--output-dir target/ripr/review/publish]
+  ripr pr-comments summary --pull-request N --head-sha SHA [--root .] [--pr-guidance target/ripr/review/comments.json] [--raw PATH|-] [--run-url URL] [--output-dir target/ripr/review/summary]
   ripr pr-review front-panel (--pr-guidance target/ripr/review/comments.json|--first-action target/ripr/reports/first-useful-action.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--assistant-health target/ripr/reports/assistant-loop-health.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/pr-review-front-panel.json]
   ripr coverage-grip frontier (--ledger target/ripr/reports/pr-evidence-ledger.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json) [--coverage target/ripr/reports/coverage-summary.json] [--out target/ripr/reports/coverage-grip-frontier.json]
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json [--out target/ripr/reports/test-oracle-assistant-proof.json]
