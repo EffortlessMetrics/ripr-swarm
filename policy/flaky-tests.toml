@@ -319,3 +319,29 @@ evidence = ["merge-queue run for PR #14491, test shard 4 (a Rust analyzer change
 symptom = "Error: \"shared runtime owner left a live descendant at return\" on a queue entry that does not touch process ownership."
 root_cause = "Read from source, not reproduced: the shared process owner sent SIGKILL to the owned group at the deadline and reaped its leader without waiting for the other group members to reach a terminal state, so the test's /proc read straight after return could still see the descendant running under load. Fixed by #14503: on Linux the owner observes group quiescence under one signal-bound settlement deadline before it reaps the leader, and an expired or unobservable settlement is a retained cleanup failure rather than a success."
 guard = "linux_wait_refuses_expired_settlement_before_reaping"
+
+[[flake]]
+id = "scale-guard-retry-baseline-masks-growth"
+test = "testing::scale::tests::real_clock_rejects_quadratic_work_at_the_guard_sizes"
+lane = "merge-queue test shard 2 (Linux, nextest)"
+class = "wall-clock-load"
+status = "fixed"
+issue = 15100
+first_seen = "2026-11-18"
+evidence = ["run 44256914948 (job 134641352128, merge group composing #14207)", "#15112"]
+symptom = "The should_panic control did not panic: the first measurement saw a 4.16x ratio, but the remeasure's small-size sample was slow (101 ms against about 65 ms expected), so the large size fit inside 3x plus the allowance and the guard accepted quadratic work."
+root_cause = "On a ratio failure the growth guard remeasured both sizes and judged the retry alone, so a small-only slowdown on a loaded runner inflated the baseline and erased the growth the first batch had observed. Fixed by #15112: the retry keeps the faster small baseline across batches, normalized for equal repetitions."
+guard = "inflated_retry_small_samples_cannot_hide_observed_quadratic_growth"
+
+[[flake]]
+id = "lsp-cancelled-refresh-refused-filter-pin-race"
+test = "lsp::diagnostics::cancelled_refresh_is_named_by_the_token_not_the_error_text"
+lane = "merge-queue test shard 1 (Linux, nextest)"
+class = "timing"
+status = "fixed"
+issue = 15148
+first_seen = "2026-11-18"
+evidence = ["run 44367316085 (#15122 composition)", "run 44394089976 (#15147 on main 00635178, job 135120346064)", "#15150"]
+symptom = "Error: \"public wording must stay unchanged: workspace analysis failed: the working-tree diff from `HEAD` cannot start: ...\" instead of the DeadlineExceeded cancellation."
+root_cause = "After #15122, a refresh whose token was already cancelled still built git commands: the filter-pin listing observed the cancellation and was mapped to a refused pin, so the real merge-base ran with an unknown option and exited 129 at once. Whether the collector saw that exit before checking the token depended on timing, and when the exit won it was classified as a repository error. Fixed by #15150: a call made after cancellation spawns no git process and returns the cancellation."
+guard = "a_cancelled_analysis_spawns_no_git_call_and_reports_the_cancellation"
