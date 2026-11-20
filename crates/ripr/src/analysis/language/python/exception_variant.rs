@@ -424,7 +424,10 @@ pub(super) fn old_class_outside(
     };
     let facts = ModuleBindingFacts::of(source, &module.body);
     if new_imported {
-        return builtin_exception_parent(old).is_some()
+        // A builtin name imported from elsewhere (`from compat import KeyError`)
+        // is not the builtin class.
+        return builtin_exception_parent(new).is_none()
+            && builtin_exception_parent(old).is_some()
             && owner_imports.iter().all(|import| import.alias != old)
             && facts.unbound(old);
     }

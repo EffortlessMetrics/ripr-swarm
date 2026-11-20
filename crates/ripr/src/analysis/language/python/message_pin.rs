@@ -172,12 +172,12 @@ pub(super) fn python_raised_type_pin_gap(
                 && !rebinding.rebinds(&new_type)
                 && match (owner_import, test_import) {
                     (Some(own), Some(theirs)) => {
-                        // The same plain absolute import in both modules; an
-                        // unresolved relative spelling or a test-local package
-                        // of that root never compares equal.
+                        // The same import in both modules (relative imports are
+                        // stored resolved against their own file, so packages
+                        // that differ never compare equal); a test-local package
+                        // of the import's root demotes it.
                         own.imported == theirs.imported
                             && !own.source_module.is_empty()
-                            && !own.source_module.starts_with('.')
                             && own.source_module == theirs.source_module
                             && module_name_identifies_owner_for(
                                 owner,
@@ -189,7 +189,6 @@ pub(super) fn python_raised_type_pin_gap(
                     (None, Some(theirs)) => {
                         !builtin
                             && theirs.imported == new_type
-                            && !theirs.source_module.starts_with('.')
                             && import_source_module_matches_owner(theirs, owner, &test.file)
                     }
                     (None, None) => {

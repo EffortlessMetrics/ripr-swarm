@@ -338,8 +338,9 @@ fn owner_module_resolution_refuses_shadowed_and_relative_imports() -> Check {
         ExposureClass::Exposed,
         "shadowed: {finding:?}"
     );
-    // The same relative spelling in the owner and the test names different
-    // packages.
+    // Relative imports are stored resolved against their own file
+    // (`src.verlib.errors` in the owner, `tests.errors` in the test), so the
+    // same spelling in two packages never compares equal.
     let relative_owner = SOURCE.replace("from verlib.errors", "from .errors");
     let relative_test = matching_tests(
         &format!("from .errors import InvalidVersion\n{IMPORT_RELEASE}"),
@@ -401,5 +402,69 @@ fn exact_class_credit_guards_name_bindings_in_the_test_module() -> Check {
         ExposureClass::Exposed,
         "imported base: {finding:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_foreign_import_root_shadowed_by_a_test_local_package_is_refused() -> Check {
+    let source = SOURCE.replace("verlib.errors", "otherpkg.errors");
+    let tests = matching_tests(
+        &format!("from otherpkg.errors import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(&source, &tests, Some(OLD), NEW)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "control: {finding:?}"
+    );
+    let finding = classify_in(
+        &source,
+        &tests,
+        Some(OLD),
+        NEW,
+        &[
+            "src/verlib/version.py",
+            "tests/otherpkg/__init__.py",
+            "tests/test_version.py",
+        ],
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "shadowed: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_imported_name_spelling_a_builtin_is_not_the_builtin_class() -> Check {
+    let source = "from compat import KeyError\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise KeyError(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+    let tests = matching_tests(
+        &format!("from compat import KeyError\n{IMPORT_RELEASE}"),
+        "KeyError",
+    );
+    let finding = classify(
+        source,
+        &tests,
+        Some("        raise ValueError(\"invalid version\")"),
+        "        raise KeyError(\"invalid version\")",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// Pins the documented residual: the imported module is not read, so
+/// `InvalidVersion = ValueError` there (making the asserted class the old one)
+/// is still credited. A future cross-file class resolver should flip this to
+/// `assert_ne!`.
+#[test]
+fn residual_an_imported_alias_of_the_old_builtin_is_still_credited() -> Check {
+    let tests = matching_tests(
+        &format!("from verlib.errors import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(SOURCE, &tests, Some(OLD), NEW)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
