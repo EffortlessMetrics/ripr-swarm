@@ -1621,6 +1621,40 @@ fn coerced_parameter_reads_the_literal_through_the_conversion() -> Result<(), St
     let negative = "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10)\n";
     let (old, new) = ("    if value < 0:", "    if value <= 0:");
     let off = classify_edit_case(source, negative, 3, old, new)?;
+    // marshmallow's suite also passes an integer above 2**53; `float` may
+    // round it, but never onto the `0` bound, so it does not block the read.
+    let with_overflow = negative.replace(
+        "        from_timestamp(-10)\n",
+        "        from_timestamp(-10)\n\ndef test_overflow():\n    with pytest.raises(ValueError):\n        from_timestamp(9223372036854775)\n",
+    );
+    let overflow = classify_edit_case(source, &with_overflow, 3, old, new)?;
+    assert_eq!(overflow.class, ExposureClass::WeaklyExposed, "{overflow:?}");
+    // The real owner passes `value` on as a keyword-adjacent argument
+    // (`fromtimestamp(value, tz=...)`), which the line reader takes for a
+    // tuple target; the parsed body shows it is not a binding.
+    let marshmallow = "import datetime as dt\n\n\ndef from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    try:\n        return dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)\n    except OverflowError as exc:\n        raise ValueError(\"big\") from exc\n";
+    let real = classify_edit_case(marshmallow, negative, 6, old, new)?;
+    assert_eq!(real.class, ExposureClass::WeaklyExposed, "{real:?}");
+    // Controls that keep the rebinding unreadable: a second binding, and a
+    // module that shadows `float`.
+    for refused in [
+        source.replace(
+            "    return value\n",
+            "    value = abs(value)\n    return value\n",
+        ),
+        format!("float = int\n{source}"),
+    ] {
+        let line = refused
+            .lines()
+            .position(|text| text == old)
+            .map_or(0, |i| i + 1);
+        let finding = classify_edit_case(&refused, negative, line, old, new)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{refused}: {finding:?}"
+        );
+    }
     assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
     assert_eq!(
         off.activation

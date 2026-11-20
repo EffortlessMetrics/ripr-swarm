@@ -270,14 +270,17 @@ pub(super) fn python_boundary_evidence(
         .then_some(walk)
     });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
-        for operand in [left, right] {
+        for (operand, other) in [(left, right), (right, left)] {
+            let small_bound = static_operand(other, &constants)
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(|value| value.abs() < 9_007_199_254_740_992.0);
             if owner
                 .parameters
                 .iter()
                 .any(|parameter| parameter.name == *operand)
                 && name_rebound_in_owner(source, owner, operand)
                 && walk.is_none()
-                && !numeric_coercion_rebinding(source, owner, operand, &rows)
+                && !numeric_coercion_rebinding(source, owner, operand, &rows, small_bound)
             {
                 // The owner rebinds the operand (a loop counter such as
                 // `start -= 1`), so the call argument does not stay the
@@ -2158,38 +2161,31 @@ fn imported_constant_value(
 /// conversion then runs unconditionally before any comparison and the call's
 /// literal still fixes the compared value. An `int` conversion takes only
 /// integer literals (it truncates a float); a `float` one takes floats and
-/// integers within 2**53 (larger ones may round onto another integer).
+/// integers within 2**53. A larger integer may round onto a neighbour, so it
+/// is taken only when the other operand is a literal below 2**53 in
+/// magnitude (`small_bound`): the rounded value can then never equal it, and
+/// equality is all the boundary rule reads.
 /// Anything else stays a rebinding the boundary rule cannot see through.
 fn numeric_coercion_rebinding(
     owner_source: &str,
     owner: &PythonOwner,
     name: &str,
     rows: &[CallRow],
+    small_bound: bool,
 ) -> bool {
-    let [(index, text)] = owner_binding_lines(owner_source, owner, name)[..] else {
+    let Some(conversion) = leading_numeric_coercion(owner_source, owner, name) else {
         return false;
     };
-    let Some(conversion) = ["float", "int"]
-        .into_iter()
-        .find(|conversion| text == format!("{name} = {conversion}({name})"))
-    else {
-        return false;
-    };
-    let first_statement = owner_source
-        .lines()
-        .enumerate()
-        .skip(owner.start_line)
-        .take(owner.end_line.saturating_sub(owner.start_line))
-        .find(|(_, line)| !line.trim().is_empty())
-        .map(|(line_index, _)| line_index);
-    if first_statement != Some(index) || rows.is_empty() {
+    if rows.is_empty() {
         return false;
     }
     rows.iter().all(|row| {
         row.bindings.get(name).is_some_and(|binding| {
             let value = binding.value.as_str();
             match value.parse::<i128>() {
-                Ok(integer) => conversion == "int" || integer.unsigned_abs() <= 1 << 53,
+                Ok(integer) => {
+                    conversion == "int" || integer.unsigned_abs() <= 1 << 53 || small_bound
+                }
                 Err(_) => {
                     conversion == "float"
                         && value.parse::<f64>().is_ok_and(f64::is_finite)
@@ -2198,6 +2194,85 @@ fn numeric_coercion_rebinding(
             }
         })
     })
+}
+
+/// `"float"` or `"int"` when the parsed module defines the function owner
+/// once, undecorated, and its body opens with `name = float(name)` (or
+/// `int`), after an optional docstring, and binds `name` nowhere else. The
+/// parse avoids the line reader's over-refusal (`fromtimestamp(value, tz=..)`
+/// reads like a tuple target there); a nested scope, `global`, `match` or any
+/// other binding the scope walk cannot enumerate refuses, and so does any
+/// binding of the conversion's own name in the module.
+fn leading_numeric_coercion(
+    owner_source: &str,
+    owner: &PythonOwner,
+    name: &str,
+) -> Option<&'static str> {
+    use rustpython_parser::ast::{Constant, Expr, Mod, Stmt};
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || !owner.class_path.is_empty()
+        || !owner.decorators.is_empty()
+    {
+        return None;
+    }
+    let Ok(Mod::Module(module)) =
+        super::source_facts::parse_module_result(std::path::Path::new("<owner>"), owner_source)
+    else {
+        return None;
+    };
+    let mut definitions = module.body.iter().filter(|stmt| match stmt {
+        Stmt::FunctionDef(function) => function.name.as_str() == owner.name,
+        Stmt::AsyncFunctionDef(function) => function.name.as_str() == owner.name,
+        _ => false,
+    });
+    let Some(Stmt::FunctionDef(function)) = definitions.next() else {
+        return None;
+    };
+    if definitions.next().is_some() || !function.decorator_list.is_empty() {
+        return None;
+    }
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(docstring), rest @ ..] = body
+        && matches!(
+            docstring.value.as_ref(),
+            Expr::Constant(constant) if matches!(constant.value, Constant::Str(_))
+        )
+    {
+        body = rest;
+    }
+    let [Stmt::Assign(assign), rest @ ..] = body else {
+        return None;
+    };
+    let [Expr::Name(target)] = assign.targets.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = assign.value.as_ref() else {
+        return None;
+    };
+    let Expr::Name(callee) = call.func.as_ref() else {
+        return None;
+    };
+    let conversion = match callee.id.as_str() {
+        "float" => "float",
+        "int" => "int",
+        _ => return None,
+    };
+    let [Expr::Name(argument)] = call.args.as_slice() else {
+        return None;
+    };
+    if target.id.as_str() != name
+        || argument.id.as_str() != name
+        || !call.keywords.is_empty()
+        || super::module_constants::body_rebinds_name(rest, name)
+        || super::module_constants::body_bound_names(rest)?
+            .iter()
+            .any(|bound| bound == name)
+        // A module that binds `float`/`int` anywhere may shadow the builtin.
+        || super::related_tests::text_binds_name(owner_source, conversion)
+    {
+        return None;
+    }
+    Some(conversion)
 }
 
 /// A comparison operand's value in one call row: its own literal, the literal
