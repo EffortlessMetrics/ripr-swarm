@@ -623,6 +623,58 @@ fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     }
 }
 
+/// The imported class a sole-line raised-type replacement now constructs
+/// (#15356): `raise Old(args)` -> `raise New(args)` where `New` is bound by
+/// a plain `from M import New` of the owner module, and the arguments are the
+/// same inert text. The call of `New` is the exception constructor the edit
+/// swaps, not an imported implementation the adapter must follow, so the
+/// imported-symbol abstention does not apply. Nothing here resolves `New`'s
+/// hierarchy, so it grants no exposure credit.
+pub(super) fn imported_raised_class_swap(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    imports: &[super::PythonImport],
+) -> bool {
+    let (Some(old_line), Some(new_type), true) = (
+        old_line_text,
+        raised_type_name(line_text),
+        line_text.trim_start().starts_with("raise "),
+    ) else {
+        return false;
+    };
+    let Some(old_type) = raised_type_name(old_line) else {
+        return false;
+    };
+    let arguments = |line: &str, name: &str| {
+        line.trim()
+            .strip_prefix("raise ")
+            .and_then(|rest| rest.trim_start().strip_prefix(name))
+            .map(|rest| rest.trim().to_string())
+    };
+    let (Some(old_arguments), Some(new_arguments)) = (
+        arguments(old_line, &old_type),
+        arguments(line_text, &new_type),
+    ) else {
+        return false;
+    };
+    // A class by PEP 8 naming; a `snake_case` factory may build anything.
+    old_type != new_type
+        && new_type.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && old_arguments == new_arguments
+        && old_arguments.starts_with('(')
+        && imports
+            .iter()
+            .filter(|import| import.alias == new_type)
+            .count()
+            == 1
+        && imports.iter().any(|import| {
+            import.alias == new_type
+                && import.imported == new_type
+                && !import.source_module.is_empty()
+        })
+        && imports.iter().all(|import| import.alias != old_type)
+}
+
 /// The class a one-line `raise Name(...)` or bare `raise Name` constructs. A
 /// dotted `mod.Exc` is not read: its hierarchy is not resolvable here, so it
 /// could alias an ancestor of the other class. The arguments, keywords

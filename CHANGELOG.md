@@ -18,6 +18,12 @@ entries below are the complete record.
 
 ### Changed
 
+- Python preview: a sole-line raised-type swap to a class imported with a plain
+  `from M import Name` (`raise ValueError(f"...")` -> `raise InvalidVersion(f"...")`)
+  no longer abstains as `missing_import_graph` ("changed line calls an imported
+  symbol"); it reads as a `weakly_exposed` error-path gap naming the new class.
+  No exposure credit is added: a `pytest.raises` of the superclass, `Exception`
+  or the new class alone stays weak (#15356).
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence
