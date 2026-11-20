@@ -10,4 +10,6 @@ tests = [
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_directory_at_the_manifest_path_fails_instead_of_passing",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_control_byte_in_the_manifest_path_is_escaped_on_success",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_default_manifest_link_fails",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_configured_manifest_link_fails",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_manifest_link_to_a_real_file_is_read",
 ]

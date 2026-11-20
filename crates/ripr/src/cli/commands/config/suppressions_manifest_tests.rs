@@ -201,3 +201,44 @@ fn a_dangling_default_manifest_link_fails() -> Result<(), String> {
         other => Err(format!("dangling default link was not refused: {other:?}")),
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_configured_manifest_link_fails() -> Result<(), String> {
+    let root = workspace("dangling-configured")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        "[suppressions]\npath = \"policy/s.toml\"\n",
+    )?;
+    fs::create_dir_all(root.join("policy")).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(root.join("policy/missing.toml"), root.join("policy/s.toml"))
+        .map_err(|error| error.to_string())?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    match result {
+        Err(error) if error.contains("`policy/s.toml` is a link that names no file") => Ok(()),
+        other => Err(format!(
+            "dangling configured link was not refused: {other:?}"
+        )),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_manifest_link_to_a_real_file_is_read() -> Result<(), String> {
+    let root = workspace("linked-default")?;
+    write(&root, ".ripr/real.toml", VALID_MANIFEST)?;
+    std::os::unix::fs::symlink(
+        root.join(".ripr/real.toml"),
+        root.join(".ripr/suppressions.toml"),
+    )
+    .map_err(|error| error.to_string())?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let output = result?;
+    if !output.contains("✓ suppressions valid (.ripr/suppressions.toml, 1 entry)") {
+        return Err(format!("linked manifest was not read: {output:?}"));
+    }
+    Ok(())
+}
