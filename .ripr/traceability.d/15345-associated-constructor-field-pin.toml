@@ -7,11 +7,15 @@ tests = [
 ]
 fixtures = [
   "fixtures/rust_whole_value_associated_constructor_field",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field",
 ]
 outputs = [
   "fixtures/rust_whole_value_associated_constructor_field/expected/check.json",
   "fixtures/rust_whole_value_associated_constructor_field/expected/human.txt",
   "fixtures/rust_whole_value_associated_constructor_field/expected/human-full.txt",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/check.json",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/human.txt",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/human-full.txt",
 ]
 code = [
   "crates/ripr/src/analysis/classify/owner_pin.rs",

@@ -15552,6 +15552,20 @@
       ]
     },
     {
+      "id": "rust_whole_value_associated_constructor_unpinned_field_construction",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_whole_value_associated_constructor_unpinned_field",
+      "vector": "associated_constructor_literal_neither_version_computes_stays_weak",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_returned_error_drop_exit_error_path",
       "language": "rust",
       "tier": "pure",
