@@ -41,15 +41,18 @@ fn install_panic_hook() {
         // stays 2: the output was cut short, and a command that would have
         // exited 3 (a gate block, a typed refusal) must never read as a
         // pass under `pipefail`.
-        if is_closed_stdout_panic(message) {
-            std::process::exit(2);
-        }
         // Any other stdout write failure (a full disk behind `> report.txt`,
         // `>/dev/full`, a revoked file) is the output destination failing,
         // not a ripr bug: name it like the typed stdout writers do, without
         // a backtrace. The exit stays 2: the output is incomplete.
-        if let Some(report) = stdout_write_failure_report(message) {
-            write_stderr_report(format_args!("{}", terminal_safe_report(report)));
+        let closed_stdout = is_closed_stdout_panic(message);
+        let stdout_failure = (!closed_stdout)
+            .then(|| stdout_write_failure_report(message))
+            .flatten();
+        if closed_stdout || stdout_failure.is_some() {
+            if let Some(report) = stdout_failure {
+                write_stderr_report(format_args!("{}", terminal_safe_report(report)));
+            }
             std::process::exit(2);
         }
         // A panic message can quote repository text (a path, a parsed value),
