@@ -1514,6 +1514,11 @@ fn resolve_at(
 
 /// Whether `inner`'s source span lies within `outer`'s.
 fn seam_spans_nest(outer: &RepoSeam, inner: &RepoSeam) -> bool {
+    // An arm's display text starts at the pattern, but its identity offset
+    // points at the arrow. Use parser ranges when both arms have them.
+    if outer.kind() == SeamKind::MatchArm && outer.span().is_some() && inner.span().is_some() {
+        return outer.strictly_encloses(inner);
+    }
     outer.byte_offset() <= inner.byte_offset()
         && inner.byte_offset() + inner.expression().len()
             <= outer.byte_offset() + outer.expression().len()
