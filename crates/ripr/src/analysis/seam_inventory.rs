@@ -2235,18 +2235,49 @@ pub(crate) fn inventory_diff_scoped_seam_at_with_config(
     changed_files: &[PathBuf],
     seam_id: &str,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
-    let first = |seam: &RepoSeam| seam.id().as_str() == seam_id;
+    let identity = file_seam_guidance_reuse_identity(changed_files, seam_id);
+    inventory_selected_guidance(root, config, changed_files, &identity, &|seam| {
+        seam.id().as_str() == seam_id
+    })
+}
+
+/// Evaluate the union of eligible stub choices once against the full evidence corpus.
+pub(crate) fn inventory_stub_choices(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+    choices: &BTreeSet<String>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let files = [file.to_path_buf()];
+    if let Some(id) = choices.first().filter(|_| choices.len() == 1) {
+        return inventory_diff_scoped_seam_at_with_config(root, config, &files, id);
+    }
+    let mut identity = b"stub-choice-guidance-v1\0".to_vec();
+    identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+    identity.push(0);
+    for id in choices {
+        identity.extend_from_slice(&id.len().to_le_bytes());
+        identity.extend_from_slice(id.as_bytes());
+    }
+    inventory_selected_guidance(root, config, &files, &identity, &|seam| {
+        choices.contains(seam.id().as_str())
+    })
+}
+
+fn inventory_selected_guidance(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    identity: &[u8],
+    first: &dyn Fn(&RepoSeam) -> bool,
+) -> Result<ScopedClassifiedSeamInventory, String> {
     let stages = DiffScopeEvidenceStages {
-        first: &first,
+        first,
         sufficient: &|_| true,
         reuse: None,
     };
-    // Repeated lookups of one seam reuse the result under the same exact-path
-    // rule and content key as the whole-file guidance (#11358), with an
-    // identity that also binds the seam id.
-    let identity = file_seam_guidance_reuse_identity(changed_files, seam_id);
     let mut inputs = DiffScopeInputs::canonical(changed_files, &[]);
-    inputs.complete_scope_reuse = Some(&identity);
+    inputs.complete_scope_reuse = Some(identity);
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
