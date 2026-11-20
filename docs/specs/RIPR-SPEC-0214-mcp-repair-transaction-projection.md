@@ -175,7 +175,9 @@ read-only and without execution authority (ADR 0022):
   concrete `CommandSpec` routes are published only by the durable CLI
   before phase), the shared non-claims, and resource links. Repeating the
   call for the same current snapshot, item, and root returns the identical
-  document and never creates a second transaction. The transaction is
+  document and never creates a second transaction, except that a live
+  durable attempt that appeared since (below) turns the replay into the
+  durable-attempt refusal. The transaction is
   in-memory like the snapshot: a restart drops it.
 - Single attempt per seam (#15244): when the shared CLI rule
   (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's
@@ -185,8 +187,11 @@ read-only and without execution authority (ADR 0022):
   `attempt: null`, an additive `existing_attempt` (`attempt_id`, state,
   `origin: durable_cli`) with `links.repair_attempt`/`links.receipt`, and
   `next` routing to `ripr_get_repair_attempt`. Without a live durable attempt
-  the session route above is unchanged. MCP still creates and edits nothing
-  durable.
+  the session route above is unchanged. MCP has no attempt authority of its
+  own, so it fails closed: a ready item with no seam binding, or an
+  unreadable HEAD or attempt store, returns a typed failure
+  (`no_snapshot`, `seam_not_found`, `analysis_failed`) and creates no session
+  transaction. MCP still creates and edits nothing durable.
 - When a gate is not established, the tool returns an
   `isError: false` document with `repair_packet_ready: false`, the typed
   `ineligibility.reason`, and `attempt: null` — never a failure envelope,

@@ -4236,8 +4236,21 @@ pub(crate) struct ReusableAttempt {
 /// unreadable store or HEAD also starts a new attempt: the attempt
 /// authority then makes its own decision.
 pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<ReusableAttempt> {
-    let head = current_git_head(root).ok()?;
-    let entries = inventory_repair_attempts_from(root, None).ok()?;
+    checked_reusable_awaiting_attempt(root, seam_id)
+        .ok()
+        .flatten()
+}
+
+/// [`reusable_awaiting_attempt`] with the read failure kept: `Err` means the
+/// HEAD or the attempt store could not be read, which is not the same fact as
+/// "no live attempt". The CLI has its own attempt authority behind the lenient
+/// form; the MCP adapter has none and refuses on `Err` (#15244).
+pub(crate) fn checked_reusable_awaiting_attempt(
+    root: &Path,
+    seam_id: &str,
+) -> Result<Option<ReusableAttempt>, String> {
+    let head = current_git_head(root)?;
+    let entries = inventory_repair_attempts_from(root, None)?;
     let manifests = entries
         .iter()
         .filter_map(|entry| match entry {
@@ -4251,7 +4264,7 @@ pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<Re
                 && crate::app::repair_attempt::repair_attempt_baseline_reading(root, manifest)
                     .permits_continuation()
         });
-    pick_reusable_attempt(manifests, seam_id, &head)
+    Ok(pick_reusable_attempt(manifests, seam_id, &head))
 }
 
 /// Decision law after [`reusable_awaiting_attempt`] has admitted the retained

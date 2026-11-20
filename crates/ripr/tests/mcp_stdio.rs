@@ -6491,6 +6491,21 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
             )?;
             let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
             check_prepare_schema_fields(&schema, &prepare)?;
+            if prepare["repair_packet_ready"] == true {
+                // Replay before the CLI starts a durable attempt: identical bytes.
+                let replay = session.call_tool(
+                    "prepare-replay-early",
+                    "ripr_prepare_repair",
+                    json!({ "canonical_id": id }),
+                    REPLY_TIMEOUT,
+                )?;
+                let replay = structured_prepare_document(&replay, "inline prepare replay")?;
+                if replay != prepare {
+                    return Err(format!(
+                        "inline prepare replay changed the packet: {replay}"
+                    ));
+                }
+            }
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -6531,9 +6546,14 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                     REPLY_TIMEOUT,
                 )?;
                 let replay = structured_prepare_document(&replay, "inline prepare replay")?;
-                if replay != prepare {
+                // The CLI start above made a live durable attempt for this
+                // seam (#15244): prepare now discloses it instead of replaying.
+                if replay["ineligibility"]["reason"] != "durable_attempt_awaiting"
+                    || !replay["attempt"].is_null()
+                    || replay["existing_attempt"]["origin"] != "durable_cli"
+                {
                     return Err(format!(
-                        "inline prepare replay changed the packet: {replay}"
+                        "prepare after the CLI start must disclose the durable attempt: {replay}"
                     ));
                 }
                 check_prepare_schema_fields(&schema, &replay)?;

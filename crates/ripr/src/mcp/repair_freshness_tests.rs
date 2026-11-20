@@ -1334,3 +1334,38 @@ fn durable_command_routes_refuse_a_spec_under_the_wrong_role_or_invalid_shape() 
     assert!(limitations.is_empty());
     Ok(())
 }
+
+/// #15244: the durable check MCP prepare uses finds the live awaiting attempt
+/// the CLI's single-attempt rule finds, for its own seam only.
+#[test]
+fn durable_attempt_for_seam_finds_the_live_attempt_for_its_seam_only() -> Result<(), String> {
+    let (root, id) = prepared("dup-live")?;
+    let found = durable_attempt_for_seam(&root, "seam:freshness")
+        .map_err(|failure| failure.detail)?
+        .ok_or_else(|| "the live awaiting attempt must be found".to_string())?;
+    assert_eq!(found.attempt_id, id.as_str());
+    // Negative control: another seam has no live attempt.
+    let other = durable_attempt_for_seam(&root, "seam:other").map_err(|failure| failure.detail)?;
+    assert!(other.is_none(), "another seam must not match");
+    Ok(())
+}
+
+/// #15244: an unreadable HEAD/store is a typed failure, never "no attempt".
+#[test]
+fn durable_attempt_for_seam_fails_closed_on_an_unreadable_store() -> Result<(), String> {
+    let root = fixture_root("dup-unreadable")?;
+    // A Git checkout with no commit: HEAD cannot be read.
+    git(&root, &["init"])?;
+    let failure = match durable_attempt_for_seam(&root, "seam:freshness") {
+        Err(failure) => failure,
+        Ok(found) => {
+            return Err(format!(
+                "an unreadable store must fail closed: {}",
+                found.is_some()
+            ));
+        }
+    };
+    assert_eq!(failure.code, super::super::workspace::CODE_ANALYSIS_FAILED);
+    assert!(failure.detail.contains("no session attempt was created"));
+    Ok(())
+}
