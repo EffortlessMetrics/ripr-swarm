@@ -78,11 +78,11 @@ fn one_missing_file_among_present_ones_is_the_only_one_named() -> Result<(), Str
     let result = validate_config(&root);
     let _ = fs::remove_dir_all(&root);
     let error = result.err().ok_or("one missing declared file must fail")?;
-    if !(error.contains("ripr.toml names 1 path that is not a file under")
-        && error.contains("`tests/harness.rs`")
-        && !error.contains("`tests/support.rs`")
-        && !error.contains("`src/gen/handwritten.rs`"))
-    {
+    let named = error.contains("ripr.toml names 1 path that is not a file under")
+        && error.contains("`tests/harness.rs`");
+    let present_named =
+        error.contains("`tests/support.rs`") || error.contains("`src/gen/handwritten.rs`");
+    if !named || present_named {
         return Err(format!("unexpected error: {error}"));
     }
     Ok(())
@@ -111,4 +111,34 @@ fn configs_without_declared_paths_stay_valid() -> Result<(), String> {
     let result = validate_config(&root);
     let _ = fs::remove_dir_all(&root);
     result.map(|_| ())
+}
+
+#[test]
+fn preview_language_keys_and_later_harnesses_are_named() -> Result<(), String> {
+    let root = workspace("preview")?;
+    write(
+        &root,
+        CONFIG_FILE_NAME,
+        "[[analysis.test_harnesses]]\nregistration_id = \"h1\"\ntarget = \"tests/one.rs\"\nkind = \"custom_harness\"\nadapter = \"libtest_mimic_v1\"\nmarker = \"libtest_mimic\"\n\n[[analysis.test_harnesses]]\nregistration_id = \"h2\"\ntarget = \"tests/two.rs\"\nkind = \"custom_harness\"\nadapter = \"libtest_mimic_v1\"\nmarker = \"libtest_mimic\"\n\n[languages.python]\nhandwritten_files = [\"build/lib/pipeline.py\"]\n\n[languages.typescript]\nhandwritten_files = [\"dist/app.ts\"]\n",
+    )?;
+    write(&root, "tests/one.rs", "")?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result
+        .err()
+        .ok_or("missing preview-language files must fail")?;
+    for expected in [
+        "ripr.toml names 3 paths",
+        "- analysis.test_harnesses[1].target: `tests/two.rs`",
+        "- languages.python.handwritten_files: `build/lib/pipeline.py`",
+        "- languages.typescript.handwritten_files: `dist/app.ts`",
+    ] {
+        if !error.contains(expected) {
+            return Err(format!("missing `{expected}` in: {error}"));
+        }
+    }
+    if error.contains("`tests/one.rs`") {
+        return Err(format!("a present harness target was named: {error}"));
+    }
+    Ok(())
 }

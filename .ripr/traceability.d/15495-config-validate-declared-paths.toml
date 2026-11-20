@@ -7,4 +7,5 @@ tests = [
   "crates/ripr/src/cli/commands/config/declared_paths_tests.rs::one_missing_file_among_present_ones_is_the_only_one_named",
   "crates/ripr/src/cli/commands/config/declared_paths_tests.rs::a_directory_at_a_declared_path_counts_as_missing",
   "crates/ripr/src/cli/commands/config/declared_paths_tests.rs::configs_without_declared_paths_stay_valid",
+  "crates/ripr/src/cli/commands/config/declared_paths_tests.rs::preview_language_keys_and_later_harnesses_are_named",
 ]

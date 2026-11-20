@@ -640,7 +640,8 @@ violations fail the command, and a valid one adds
 `✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
 advisory case above loads no config, so it does not check the manifest.
 
-Exact-path keys must also name a file under `--root`:
+Exact-path keys must also name a file under `--root`, the same base `check`
+matches them against:
 `analysis.production_like_targets`, each `analysis.test_harnesses[].target`,
 and `languages.rust.handwritten_files`, `languages.python.handwritten_files`
 and `languages.typescript.handwritten_files`. Analysis treats a path that
