@@ -32,7 +32,7 @@
     {
       "release": "0.11.0",
       "path": "docs/release-candidates/0.11.0-live-head-selection.json",
-      "sha256": "1a65a687ce7749341f45da2088459e04e07d8d1b18264e5d058c597a6b0fa25b",
+      "sha256": "2a7394054482716a03e478c423cf5fcb7a00796edb160a7a6c1442b325756104",
       "schema_generation": "ripr_swarm_live_head_release_authority/1.1",
       "authority_issue": 2379,
       "state": "active_selection_template",
