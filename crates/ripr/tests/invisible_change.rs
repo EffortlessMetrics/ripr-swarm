@@ -376,6 +376,7 @@ fn a_method_call_through_a_path_is_not_read_as_the_owner() -> Result<(), String>
         MIN_OLD,
         "#[test]\nfn low() {\n    assert_eq!(invisible::other().capped(3), 103);\n}\n",
     )?;
+    assert!(!findings.is_empty(), "the changed owner should be analyzed");
     for finding in &findings {
         assert!(
             !finding
