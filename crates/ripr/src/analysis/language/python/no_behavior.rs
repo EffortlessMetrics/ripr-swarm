@@ -169,9 +169,14 @@ fn continuation_line_ranges(source: &str) -> Option<ContinuationRanges> {
     let mut expression_start = None;
     let mut previous_end = 0;
     let mut explicit_join = false;
+    let mut header_lambdas = None;
     for result in lex(source, Mode::Module) {
         let (token, range) = result.ok()?;
-        if matches!(token, Tok::Newline | Tok::Semi) {
+        // A compound header's colon separates an inline suite just as a
+        // semicolon separates simple statements. A colon binding a lambda
+        // in the header is still inside the header expression.
+        let suite_colon = depth == 0 && matches!(token, Tok::Colon) && header_lambdas == Some(0);
+        if matches!(token, Tok::Newline | Tok::Semi) || suite_colon {
             if explicit_join && let Some(start) = expression_start {
                 // One statement can mix brackets and explicit joins.
                 ranges.explicit_statements.push(
@@ -179,6 +184,7 @@ fn continuation_line_ranges(source: &str) -> Option<ContinuationRanges> {
                 );
             }
             expression_start = None;
+            header_lambdas = None;
             explicit_join = false;
             continue;
         }
@@ -199,9 +205,37 @@ fn continuation_line_ranges(source: &str) -> Option<ContinuationRanges> {
             ranges.join_lines.extend(from..to);
             explicit_join = true;
         }
-        if !matches!(token, Tok::String { .. }) {
+        if expression_start.is_none() && !matches!(token, Tok::String { .. }) {
             // A sequence of plain string literals alone remains a no-op.
-            expression_start.get_or_insert(start);
+            expression_start = Some(start);
+            if matches!(
+                token,
+                Tok::If
+                    | Tok::Elif
+                    | Tok::Else
+                    | Tok::While
+                    | Tok::For
+                    | Tok::Try
+                    | Tok::Except
+                    | Tok::Finally
+                    | Tok::With
+                    | Tok::Def
+                    | Tok::Class
+                    | Tok::Async
+                    | Tok::Match
+                    | Tok::Case
+            ) {
+                header_lambdas = Some(0usize);
+            }
+        }
+        if depth == 0
+            && let Some(count) = &mut header_lambdas
+        {
+            match token {
+                Tok::Lambda => *count += 1,
+                Tok::Colon => *count -= 1,
+                _ => {}
+            }
         }
         previous_end = usize::from(range.end());
         match token {
@@ -350,7 +384,7 @@ pub(super) fn multi_line_string_line_ranges(
     for result in lex(source, Mode::Module) {
         let (token, range) = result.ok()?;
         if matches!(token, Tok::String { .. }) {
-            let start = usize::from(range.start());
+            let start = line_at(usize::from(range.start()));
             let end = line_at(usize::from(range.end()));
             if start < end {
                 spans.push(start..=end);

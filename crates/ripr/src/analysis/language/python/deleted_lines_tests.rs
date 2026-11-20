@@ -1867,10 +1867,14 @@ fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<()
     let returned = shape("return (", "    )\n")?;
     assert_eq!(returned.0, crate::domain::ProbeFamily::ReturnValue);
     assert_eq!(shape("return\\", "")?, returned);
-    assert_eq!(
-        shape("msg = \"Could not load\" \\", "    return msg\n")?,
-        shape("msg = (\"Could not load\"", "    )\n    return msg\n")?,
-    );
+    // Each assignment must produce a current finding. Probe classification
+    // already distinguishes parenthesized and plain right-hand sides.
+    let explicit = shape("msg = \"Could not load\" \\", "    return msg\n")?;
+    let bracketed = shape("msg = (\"Could not load\"", "    )\n    return msg\n")?;
+    assert_eq!(explicit.1, bracketed.1);
+    // An annotation or lambda colon is still part of an expression.
+    shape("msg: \\", "    return items\n")?;
+    shape("msg = lambda: \\", "    return msg()\n")?;
     Ok(())
 }
 
@@ -1895,6 +1899,8 @@ fn explicit_join_lookalikes_and_standalone_strings_stay_quiet() -> Result<(), St
         "    msg = \"literal \\\\\"",
         "    \"first part\" \\",
         "    value = 1; \"first part\" \\",
+        "    if items: \"first part\" \\",
+        "    if lambda: items: \"first part\" \\",
     ] {
         let source =
             format!("def capped_total(items):\n{preceding}\n    \"new text\"\n    return items\n");
