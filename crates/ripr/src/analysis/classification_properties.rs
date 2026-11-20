@@ -1,4 +1,8 @@
 //! Shared, test-only projections for #12927. No total ordering of unknowns.
+// The module is already `#[cfg(test)]` in analysis/mod.rs; repeating the
+// attribute here marks the whole file as test code for the refusal-text scanner
+// (tests/refusal_next_step.rs), which skips everything from the first marker.
+#[cfg(test)]
 use crate::domain::ExposureClass;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 use crate::domain::{Finding, LanguageId, ProbeFamily, StageState};
