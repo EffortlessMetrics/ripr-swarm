@@ -66,10 +66,7 @@ pub(super) fn comparison(
             (branch.expr()?, no?, yes?)
         }
         ast::Expr::MethodCallExpr(method) => {
-            if method.name_ref()?.text() != "then_some"
-                || method.generic_arg_list().is_some()
-                || !super::standard_some_in_scope(test, assertion, index, syntax)
-            {
+            if method.name_ref()?.text() != "then_some" || method.generic_arg_list().is_some() {
                 return None;
             }
             let args = method.arg_list()?;
@@ -78,8 +75,19 @@ pub(super) fn comparison(
             if args.next().is_some() {
                 return None;
             }
-            let expected = literal(operand(super::some_payload(expected)?)?)?;
-            (method.receiver()?, false, carried.agrees(&expected)?)
+            let (absent, present) = if expected.trim() == "None" {
+                if !super::standard_variant_in_scope("None", test, assertion, index, syntax) {
+                    return None;
+                }
+                (true, false)
+            } else {
+                if !super::standard_variant_in_scope("Some", test, assertion, index, syntax) {
+                    return None;
+                }
+                let expected = literal(operand(super::some_payload(expected)?)?)?;
+                (false, carried.agrees(&expected)?)
+            };
+            (method.receiver()?, absent, present)
         }
         _ => return None,
     };

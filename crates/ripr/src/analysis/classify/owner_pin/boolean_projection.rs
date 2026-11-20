@@ -69,7 +69,7 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         {
             // Standard Some(T) equality compares its payload. A rebound
             // constructor need not carry the argument into equality.
-            if !standard_some_in_scope(test, assertion, index, syntax) {
+            if !standard_variant_in_scope("Some", test, assertion, index, syntax) {
                 return None;
             }
             let [left, right] = compared;
@@ -116,14 +116,15 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
     Some((before_matches != unequal, after_matches != unequal))
 }
 
-fn standard_some_in_scope(
+fn standard_variant_in_scope(
+    name: &str,
     test: &TestSummary,
     assertion: &OracleFact,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
     if test.generated.is_some()
-        || syntax.macro_may_declare("Some", index)
+        || syntax.macro_may_declare(name, index)
         || !syntax
             .option_prelude_available
             .get_or_init(|| option_prelude_available(index))
@@ -138,10 +139,10 @@ fn standard_some_in_scope(
         return false;
     };
     scopes.scopes.iter().all(|scope| {
-        !scope.defines.contains("Some")
-            && !scope.block_binds("Some")
-            && scope.imports_of("Some").next().is_none()
-            && !scope.local_bindings.get("Some").is_some_and(|sites| sites.iter().any(|site| {
+        !scope.defines.contains(name)
+            && !scope.block_binds(name)
+            && scope.imports_of(name).next().is_none()
+            && !scope.local_bindings.get(name).is_some_and(|sites| sites.iter().any(|site| {
                 site.line <= assertion.line && site.end_line.is_none_or(|end| end >= assertion.line)
             }))
             && scope.globs.iter().all(|glob| {

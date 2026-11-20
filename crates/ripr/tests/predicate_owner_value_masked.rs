@@ -402,6 +402,23 @@ fn sibling_module_glob_cannot_rebind_the_tests_option_constructor() -> Result<()
 #[test]
 fn a_primitive_branch_must_change_the_compared_value_on_one_version() -> Result<(), String> {
     for (body, expected) in [
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(over(10).then_some(1), None);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(None, over(10).then_some(1));"#,
+            "infection_unknown",
+        ),
+        (r#"assert_eq!(None, over(10).then_some(1));"#, "exposed"),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_ne!(None, over(10).then_some(1));"#,
+            "exposed",
+        ),
+        (
+            r#"const None: Option<i32> = Some(1); assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(over(10).then_some(1), None);"#,
+            "exposed",
+        ),
         (r#"assert_eq!(if over(10) { 1 } else { 2 }, 1);"#, "exposed"),
         (r#"assert_eq!(2, if over(10) { 1 } else { 2 });"#, "exposed"),
         (
