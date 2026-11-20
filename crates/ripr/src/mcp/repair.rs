@@ -885,10 +885,7 @@ impl WorkspaceSession {
             // of the same tree reproduces the refusal, so the step is the
             // commit the CLI names, not an edit-and-recheck loop.
             if reason == super::repair_admission::SEAM_GATE_REFUSED
-                && let Some(file) = readiness
-                    .seam_detail
-                    .as_deref()
-                    .and_then(crate::app::task_first::held_inline_file_in_reason)
+                && let Some(file) = readiness.held_file.as_deref()
             {
                 next = held_target_next(file, &item.canonical_id);
             }

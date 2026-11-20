@@ -582,24 +582,6 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
-        // `ripr repair` and the per-item admission hold a start whose inline
-        // test target has uncommitted changes (#11397). The card asks the same
-        // shared predicate, so it never claims `repair_ready` for a seam the
-        // gate refuses; the refusal names the commit step.
-        if let Some(file) = crate::app::task_first::held_inline_start_file(
-            root,
-            entry.seam.id().as_str(),
-            &producers.candidate_seams,
-        ) {
-            return Err(agent_card_failure(AgentCardError::refusal(
-                AgentCardRefusalKind::IncompleteInventory,
-                format!(
-                    "repair card for canonical item {} was refused: the shared repair gate (`ripr repair`) refuses this seam: {}. Commit or stash `{file}`, then run ripr_refresh again",
-                    item.canonical_id,
-                    crate::app::task_first::held_inline_reason(&file)
-                ),
-            )));
-        }
         // The refresh-time probe and custody are not re-run per read, so a
         // source edit after the refresh (the server does not watch the
         // worktree) would otherwise ride a card labeled current. Re-verify the
@@ -622,6 +604,24 @@ impl WorkspaceSession {
                 "run ripr_refresh again to analyze the current source, then retry",
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
+        // The shared per-item admission (`ripr_list_gaps` / `ripr_prepare_repair`)
+        // holds a start whose inline test target has uncommitted changes
+        // (#11397). The card reads that same verdict from the committed item,
+        // after the drift check, so it never claims `repair_ready` where the
+        // item is refused and list, prepare and card never disagree.
+        if let Some(file) = item.repair_readiness.held_file.as_deref() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {}. Commit or stash `{file}`, then run ripr_refresh again",
+                    item.canonical_id,
+                    item.repair_readiness
+                        .seam_detail
+                        .as_deref()
+                        .unwrap_or("the shared repair gate refuses this seam")
+                ),
+            )));
         }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();

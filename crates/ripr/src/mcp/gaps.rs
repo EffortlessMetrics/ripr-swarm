@@ -121,6 +121,10 @@ pub(crate) struct RepairReadiness {
     /// The shared repair validator's own explanation when the seam-level
     /// admission refused an otherwise finding-ready item (#8717).
     pub(crate) seam_detail: Option<String>,
+    /// The inline test target whose uncommitted changes hold the seam's repair
+    /// start (typed, from the shared held-target predicate); set only with
+    /// `seam_gate_refused`, never parsed from `seam_detail`.
+    pub(crate) held_file: Option<String>,
     /// The producer-owned new-test proposal the seam's repair follows
     /// (#13204): the shared projection. When it also takes a fix-site shape
     /// (#13538) it is the item's fix site and the item is ready.
@@ -146,6 +150,14 @@ impl RepairReadiness {
             self.fix_site = None;
             self.ineligibility = Some(*code);
             self.seam_detail = Some(detail.clone());
+            self.held_file = None;
+        }
+        if let Some(SeamVerdict::Held { file, detail }) = verdict {
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some(crate::mcp::repair_admission::SEAM_GATE_REFUSED);
+            self.seam_detail = Some(detail.clone());
+            self.held_file = Some(file.clone());
         }
         // A fix site on the seam's own production file is not a test surface,
         // but the shared validator admitted that seam with its one governed
@@ -288,6 +300,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -311,6 +324,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -335,6 +349,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some(ineligibility),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -357,6 +372,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         };
@@ -369,6 +385,7 @@ impl RepairReadiness {
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         };
@@ -377,6 +394,7 @@ impl RepairReadiness {
             fix_site: Some(fix_site),
             ineligibility: None,
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
     }
@@ -2151,6 +2169,7 @@ mod tests {
             }),
             ineligibility: None,
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
     }
@@ -2394,6 +2413,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
         .with_seam_verdict(Some(&refused));
@@ -2419,6 +2439,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
         .with_seam_verdict(Some(&withheld));
@@ -2517,6 +2538,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("discriminator_not_populated_for_language"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         };
         let truncated = unready.clone().with_seam_verdict(Some(&refused));
@@ -2529,6 +2551,36 @@ mod tests {
             code: "seam_gate_refused",
             detail: "gate".to_string(),
         };
+        // The held-target file is typed: only a `Held` verdict carries it; an
+        // ordinary `seam_gate_refused` (even one whose prose names a file)
+        // yields none.
+        let prose = SeamVerdict::Refused {
+            code: "seam_gate_refused",
+            detail: crate::app::task_first::held_inline_reason("src/lib.rs"),
+        };
+        if unready
+            .clone()
+            .with_seam_verdict(Some(&prose))
+            .held_file
+            .is_some()
+            || unready
+                .clone()
+                .with_seam_verdict(Some(&ordinary))
+                .held_file
+                .is_some()
+        {
+            return Err("a non-held refusal must carry no held file".to_string());
+        }
+        let held = SeamVerdict::Held {
+            file: "src/lib.rs".to_string(),
+            detail: "held".to_string(),
+        };
+        let held = unready.clone().with_seam_verdict(Some(&held));
+        if held.held_file.as_deref() != Some("src/lib.rs")
+            || held.ineligibility != Some("seam_gate_refused")
+        {
+            return Err(format!("a held verdict must type its file: {held:?}"));
+        }
         let outranked = unready.clone().with_seam_verdict(Some(&ordinary));
         if outranked.ineligibility != Some("seam_gate_refused") || outranked.seam_detail.is_none() {
             return Err(format!(
@@ -2596,6 +2648,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         };
         let reason = readiness.reason();

@@ -8249,6 +8249,30 @@ fn error_variant_item_readiness_agrees_across_list_prepare_and_card() -> Result<
     let state = item_readiness_over_stdio(&root, "err_e_toolong")?;
     let prepare_ready = state.prepare.pointer("/repair_packet_ready") == Some(&json!(true));
     let card_ready = served_card_repair_ready(&state.card_reply) == Some(true);
+    // The card's seam is the Err-variant seam of this very item, not another
+    // finding's seam the gap id happens to name.
+    let card = state
+        .card_reply
+        .pointer("/result/structuredContent/card")
+        .ok_or("card missing")?;
+    let subject_gap = card
+        .pointer("/subject/canonical_gap_id")
+        .and_then(Value::as_str);
+    let fix_file = state
+        .prepare
+        .pointer("/fix_site/file")
+        .and_then(Value::as_str);
+    if subject_gap.is_none_or(|id| !id.contains("err_e_toolong"))
+        || card
+            .pointer("/subject/seam_id")
+            .and_then(Value::as_str)
+            .is_none()
+        || fix_file != Some("src/lib.rs")
+    {
+        return Err(format!(
+            "card/prepare name another subject: gap {subject_gap:?} fix {fix_file:?}: {card}"
+        ));
+    }
     if !state.list_ready || !prepare_ready || !card_ready {
         return Err(format!(
             "list_ready={} (ineligibility {}) prepare_ready={prepare_ready} card_ready={card_ready}: {}",
