@@ -45,7 +45,6 @@ fn check(root: &Path) -> Result<String, String> {
         ])
         .output()
         .map_err(|error| format!("spawn ripr: {error}"))?;
-    let _ = fs::remove_dir_all(root);
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -61,6 +60,7 @@ fn test_outside_the_guarded_ignore_keeps_credit() -> Result<(), String> {
     if !out.contains("Static exposure\n  exposed (") {
         return Err(format!("expected exposed:\n{out}"));
     }
+    let _ = fs::remove_dir_all(&root);
     Ok(())
 }
 
@@ -79,5 +79,6 @@ fn test_in_the_possibly_ignored_file_is_not_credited() -> Result<(), String> {
     if !out.contains("collect_ignore") {
         return Err(format!("limit should name collect_ignore:\n{out}"));
     }
+    let _ = fs::remove_dir_all(&root);
     Ok(())
 }
