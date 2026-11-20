@@ -57,6 +57,14 @@ Commands covered: `reports gap-ledger|ts-limitations|ts-false-actionable`,
 `assistant-loop proof|health`, and `policy readiness|operations|history|
 promote|preview-promote|waiver-aging|suppression-health`.
 
+`--out-jsonl` append targets (#14352) follow the same filesystem identity.
+`pr-ledger record --out-jsonl` is refused when it names `--out`, `--out-md` or
+an evidence input, and `policy history --out-jsonl` when it names `--out`,
+`--out-md` or `--current`, by any spelling (lexically equal, absolute, or a
+symlink), with exit `2` and `<command> --out-jsonl must not be the same path as
+...`. `--history` equal to `--out-jsonl` is the intended append flow and is
+not refused.
+
 ## Explicitly Named Input That Cannot Be Used
 
 The same commands treat an input file the caller named explicitly as part of
@@ -93,13 +101,13 @@ ripr: <command> <flag> <path> <why>. Pass an existing file ...
   input bytes for refused cases across the covered commands.
 - Discriminating negatives: distinct paths write; the in-place exemptions
   are not refused; a symlinked parent plus `..` reaching another file writes;
-  a missing input is not refused.
+  a missing input is not refused; `--history` equal to `--out-jsonl`
+  appends on each run.
 
 ## Non-Goals
 
 - `gate` (inputs resolve against `--root`; its flags are owned elsewhere),
   `reports index` (directory inputs) and `review-comments`.
-- `--out-jsonl` append targets (#14352).
 - Hard-link detection.
 
 ## Acceptance Examples

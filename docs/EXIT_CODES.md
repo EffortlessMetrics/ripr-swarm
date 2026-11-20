@@ -29,25 +29,25 @@ its output, or run the gate.
 ripr uses exit code `2` for all could-not-complete conditions (not `1`) to
 distinguish it from shell-level errors (which typically use `1`). Code `3` is
 reserved for outcomes where the command itself ran to a deliberate, typed
-answer — a blocking gate decision, or a typed refusal such as `ripr agent
+answer — a blocking gate decision, or a refusal such as `ripr agent
 verify-execute` declining a packet (the refusal JSON document is on stdout)
 — so an orchestrator can branch on the exit status alone:
 
 - `0`: the command completed (for `verify-execute`, the verification ran;
   read the disposition in the stdout JSON).
-- `3`: the command completed by reaching a blocking decision or typed
+- `3`: the command completed by reaching a blocking decision or
   refusal; read the report or the stdout JSON document for the answer
   (standalone `ripr agent verify` is the exception: its refusal is named on
   stderr and stdout stays empty; see below. `ripr agent repair`,
   `ripr agent card` and `ripr agent stub` print their refusal document
   (`agent_card_refusal` / `rust_test_stub` `state: refused`), and the
-  typed `ripr repair` / `ripr continue` / `ripr status` refusals the
+  `ripr repair` / `ripr continue` / `ripr status` refusals the
   `cli_refusal` document (#14931), on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
-  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  stderr names the cause. An unknown `--seam-id` is one refusal with
   one exit, `3`, on `agent start`, `agent card`, `agent stub`,
   `agent packet`, and `agent repair --phase before`. A known seam that
-  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  agent policy withholds (#10712) is the same refusal (exit `3`) on
   `agent start`, `agent card`, `agent packet`, and
   `agent repair --phase before`; `agent stub` still produces the stub
   (exit `0`) with the omission disclosed in `warnings` and no repair
@@ -222,9 +222,9 @@ reached the caller.
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A
   usage error or a failure before a report exists stays exit `2`.
-- **Typed refusal**: `ripr agent verify-execute` refused the packet (for
+- **Refusal**: `ripr agent verify-execute` declined the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
-  rendered the typed refusal JSON on stdout; `ripr agent repair --phase
+  rendered the refusal JSON on stdout; `ripr agent repair --phase
   after` refused with a named cause after selecting its attempt — a diverged
   HEAD, drifted analysis inputs, a no-movement verify refusal, a replaced
   trust-binding manifest, or a receipt refused on trusted-surface grounds
@@ -335,7 +335,7 @@ reached the caller.
   `needs_selection` (name one of several), or `not_started` (nothing
   started). The codes are closed. Operational errors (a store or argument error on a shared
   `agent repair` path) exit `2` with prose only and no code line. Some
-  existing typed refusals still exit `3` without a code line (for example
+  existing refusals still exit `3` without a code line (for example
   `agent repair --phase before` on an unknown or policy-withheld seam). The
   table is the covered set, not a claim over every error path. The two
   not-started start holds (`start_refused_uncommitted_target`,
