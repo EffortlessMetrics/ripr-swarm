@@ -197,6 +197,9 @@ fn switch_literal_return_controls() -> Result<(), String> {
         "switch-exact",
         "import { price } from '../src/price';\ntest('price', () => { expect(price('silver')).toBe(7); });\n",
     )?;
+    if exact.class != ExposureClass::Exposed {
+        eprintln!("DIAG exact={exact:#?}");
+    }
     assert_eq!(exact.class, ExposureClass::Exposed);
     let other = switch_return("switch-other", &weak_test("price('gold')"))?;
     assert_ne!(other.class, ExposureClass::Exposed);
