@@ -774,7 +774,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "perl-migration-refresh --producer-bin <path> [--case <id>]",
         "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
         "public-proof [--check] [--refresh-receipts]",
-        "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
+        "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>",
         "check-traceability",
         "check-spec-ids",
         "check-behavior-manifest",
@@ -2406,12 +2406,12 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Renders the public proof page from the committed receipts under metrics/public-proof/; --check fails when the page differs from its receipts or a receipt has drifted from its canonical in-repo source. The xtask unit test checks only the page against its receipts, so source drift is advisory: it fails only the Public Proof Drift workflow, a non-required lane that runs --check nightly and on source changes, and a drifted --check lists the page lines a refresh would change.",
         ),
         command_entry(
-            "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
+            "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>",
             "non_mutating_check",
             "target/ripr/reports/evidence-promotion-honesty.md, target/ripr/reports/corpus-summary.{json,md}, and optional target/ripr/reports/evidence-promotion-pinned-external.{json,md}",
             false,
             true,
-            "Reads byte-pinned golden check.json files for pure charter members, writes a typed corpus summary envelope, and asserts semantic promotion honesty; with --pinned-external, runs exact external repo+commit+patch cases through the current ripr binary using an opt-in clone/cache path.",
+            "Reads byte-pinned golden check.json files for pure charter members, writes a typed corpus summary envelope, and asserts semantic promotion honesty; with --pinned-external, runs exact external repo+commit+patch cases through the current ripr binary using an opt-in clone/cache path. The standalone --pre-label form checks committed report generations on the published target/PR composition.",
         ),
         command_entry(
             "check-traceability",
