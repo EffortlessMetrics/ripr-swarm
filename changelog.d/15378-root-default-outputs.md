@@ -5,3 +5,6 @@
   gate report's own hints look, instead of under the invoking directory. An
   explicit relative `--out`/`--guidance-out` still resolves against the
   invoking directory (#15378).
+- Review cards (`comments.md`) now print a PowerShell line under each card
+  command that PowerShell cannot run as written, from the same translator the
+  terminal output uses (#15378).
