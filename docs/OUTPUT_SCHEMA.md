@@ -1352,7 +1352,8 @@ next=ripr context ... --at SELECTOR
   `no_static_path`, unknown classes).
   A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
   `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
-  currentness. A policy-suppressed finding prints a suppression `stop=`; a
+  currentness. An owner opt-out prints `stop=owner_mutants_skip|owner=NAME|scope=SCOPE`
+  with `|scope_label=LABEL` for a named enclosing scope. A policy-suppressed finding prints a suppression `stop=`; a
   `--from` replay with `--suppression-policy` is refused for this format. All
   are static advisory, never runtime mutation outcomes.
 - `owner=` is the function the changed line belongs to (the producer's probe
@@ -2476,14 +2477,14 @@ badge, or proof route, and it is not portable between machines.
 An `unsupported_input` outcome exits `2` with its ordinary incomplete report
 and direct-input navigation, without creating or replacing the artifact.
 Existing valid and advisory `partial_with_limitations` artifact behavior is
-unchanged. Older v1 artifacts do not record the producing outcome; regenerate
-an artifact if it may have come from an unsupported-input run.
+unchanged. Re-run `ripr check --write-artifact` to replace a v1 artifact.
+That version did not record owner opt-outs.
 
-Envelope (`schema_version = "ripr-check-artifact-v1"`):
+Envelope (`schema_version = "ripr-check-artifact-v2"`):
 
 ```json
 {
-  "schema_version": "ripr-check-artifact-v1",
+  "schema_version": "ripr-check-artifact-v2",
   "tool": "ripr",
   "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
   "identity": {
@@ -2500,7 +2501,8 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
     "config_identity_version": 1,
     "config_identity_hash": "fnv1a64:fedcba9876543210"
   },
-  "findings": [ /* complete Finding set, full fidelity */ ]
+  "findings": [ /* complete Finding set, full fidelity */ ],
+  "owner_opt_outs": [ /* finding_id, owner, reason, scope, scope_label */ ]
 }
 ```
 
@@ -2515,6 +2517,8 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 - `findings` serializes the complete `Finding` set with serde: uncapped
   `related_tests` (no 8-entry render cap), always-present probe `owner`,
   and no render-time severity projection.
+- `owner_opt_outs` records the producing check’s decisions after suppression
+  policy. An empty array means that no finding was withheld by an owner.
 - The identity gate is fail-closed: any mismatch on `diff_bytes_hash`,
   `root`, `mode`, `enabled_languages`, `analysis_options.*`,
   `config_identity_version`, `config_identity_hash`, or `analyzer_version`
@@ -4159,8 +4163,9 @@ the editor supplies no suppression policy (#14610).
 withheld finding and starts with one line stating the withholding, taken from
 the same run's `owner_opt_outs`, for example
 ``Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)``.
-`explain --format agent` and `explain --from <artifact>` do not add it (the
-check artifact does not record opt-outs).
+Agent output names the owner, scope and reason in its `stop=` record.
+`explain --from <artifact>` uses the recorded opt-out in both formats.
+Agent explanations and human artifact replay offer no repair for a withheld finding.
 
 #### Repo scope owner opt-outs (#14139)
 

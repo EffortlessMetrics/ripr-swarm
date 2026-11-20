@@ -2145,6 +2145,7 @@ fn check_inner(
             &limited_check_input,
             &config,
             &output.findings,
+            &output.owner_opt_outs,
             worktree_run,
         )
         .map_err(|err| {
