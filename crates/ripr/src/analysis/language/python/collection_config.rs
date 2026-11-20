@@ -693,13 +693,16 @@ impl IniRules {
             // is not evaluated.
             // Conservative reading, not pytest semantics: read a single
             // trailing slash (`env/`) as the basename pattern `env`, which may
-            // withhold more than pytest does but never grants credit. Any other `/`
-            // (`a/b/`, `/`, `env//`) stays unevaluated.
+            // withhold more than pytest does but never grants credit. A plain
+            // interior-slash path (`tests/mypy_test_cases`) is evaluated by
+            // `norecursedir_path_matches`; any other `/` (`a/b/`, `/`, `env//`,
+            // or a slash entry holding a glob) stays unevaluated.
             let words = if key == "norecursedirs" {
                 words.map(|words| {
                     words
                         .into_iter()
                         .map(|word| match word.strip_suffix('/') {
+                            Some(name) if name.contains('/') => format!("{name}//"),
                             Some(name) => name.to_string(),
                             None => word,
                         })
@@ -713,7 +716,9 @@ impl IniRules {
                     && words.iter().all(|word| {
                         !word.is_empty()
                             && !word.contains('[')
-                            && (key == "testpaths" || !word.contains('/'))
+                            && (key == "testpaths"
+                                || !word.contains('/')
+                                || (key == "norecursedirs" && plain_relative_path(word)))
                     })
             });
             match usable {
@@ -813,9 +818,13 @@ impl IniRules {
             let directories = &all[..all.len() - 1];
             if directories.iter().any(|directory| {
                 let name = directory.rsplit('/').next().unwrap_or(directory);
-                patterns
-                    .iter()
-                    .any(|pattern| segment_glob_matches(pattern, name))
+                patterns.iter().any(|pattern| {
+                    if pattern.contains('/') {
+                        norecursedir_path_matches(pattern, directory)
+                    } else {
+                        segment_glob_matches(pattern, name)
+                    }
+                })
             }) {
                 return Some(NORECURSEDIRS);
             }
@@ -866,6 +875,27 @@ impl IniRules {
         }
         None
     }
+}
+
+/// A `norecursedirs` entry with an interior `/` that holds no glob
+/// metacharacter, no empty or dot segment and is not absolute.
+fn plain_relative_path(word: &str) -> bool {
+    !word.contains(['*', '?', '[', '\\'])
+        && word
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+/// pytest's `fnmatch_ex` turns a separator-bearing pattern `p` into `*/p`
+/// and matches it against the absolute directory path, so a plain path
+/// matches any directory whose path ends in `/p`. `directory` is relative to
+/// the config directory, so the ancestors that may supply the front of `p`
+/// are unseen: also treat a directory that is a tail of `p` as excluded.
+/// That only withholds credit, never grants it.
+fn norecursedir_path_matches(pattern: &str, directory: &str) -> bool {
+    directory == pattern
+        || directory.ends_with(&format!("/{pattern}"))
+        || pattern.ends_with(&format!("/{directory}"))
 }
 
 /// pytest's `python_classes` / `python_functions` rule: a prefix, or a glob

@@ -137,6 +137,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_export_json_conforms_and_counts_what_it_copied in crates/ripr/tests/cache_export_json_schema.rs validates the real CLI bytes of an export and holds its counts to the directory it names, cache_export_without_a_cache_writes_no_json pins that a failed export writes no JSON, and published_cache_export_schema_rejects_documents_it_forbids is the negative experiment; the report names a host-absolute directory, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-export.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/cache-status.schema.json",
         pointer: None,
         corpus: Corpus::Authority(

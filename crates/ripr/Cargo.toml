@@ -10,17 +10,11 @@ description = "Static check for Rust changes: does your test suite notice if the
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
-# The source distribution carries what a build of `ripr` reads, the sample
-# workspace, and the one integration target qualified to run from an extracted
-# package (`cli_help_hierarchy` and its two shared helpers). Test-only sources
-# are left out because the crate otherwise exceeds the crates.io 10 MiB upload
-# limit (#14071): out-of-line unit-test modules (`tests.rs`, `tests/`,
-# `*_tests.rs`, all declared under `#[cfg(test)]`) and the rest of `tests/`,
-# plus test-only modules with other names (`src/testing/**`, the Kani proof
-# harnesses and the enumerated `#[cfg(test)]` modules) and test fixture data.
-# `cargo xtask publish-dry-run` reads the packaged members and refuses any
-# module that only a test or Kani build compiles, any undeclared source and any
-# `src/` data that no production `include_*!` reads (#15216).
+# Ship production sources and the sample workspace. Development tests stay out
+# of the source archive (#15216), which keeps it under the crates.io 10 MiB
+# limit (#14071). Release qualification runs the rendered-help harness against
+# the installed executable. The publish rehearsal checks both archives for
+# test-only modules, unreferenced source files and unused source data.
 # Include patterns are gitignore-style and the last match wins, so the
 # production modules whose names end in `_tests.rs` are listed again after the
 # exclusion. A new production module with such a name must be added there, or
@@ -66,9 +60,6 @@ include = [
   "src/analysis/language/typescript/related_tests.rs",
   "src/analysis/test_grip_evidence/related_tests.rs",
   "vendor/**",
-  "tests/cli_help_hierarchy.rs",
-  "tests/common/help_contract.rs",
-  "tests/common/help_workspace.rs",
   "examples/*/example.diff",
   "examples/*/src/**",
   "examples/*/tests/**",

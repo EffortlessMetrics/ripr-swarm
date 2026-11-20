@@ -101,7 +101,25 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             }
         }
     }
-    let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let root_explicit = root.is_some();
+    let mut root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // #15304: diagnose the root `ripr check` would analyze from here. Without
+    // `--root`, check widens to the enclosing workspace, package or Git top
+    // level (#4610, #8767), so a doctor that stayed at the invocation
+    // directory detected languages and suggested an `enabled` list for a
+    // tree check never analyzes. The shared resolver prints the same stderr
+    // disclosure as check; `--root .` still diagnoses this directory alone.
+    if let Err(error) = super::check::resolve_implicit_command_root(&mut root, root_explicit) {
+        // Doctor diagnoses rather than refuses: report on the current
+        // directory, whose own checks name what is wrong with it.
+        eprintln!(
+            "{}",
+            crate::output::human::terminal_safe(format!(
+                "ripr: could not resolve the root `ripr check` would analyze ({error}); diagnosing the current directory"
+            ))
+        );
+        root = PathBuf::from(".");
+    }
     // #8540: one clock for the whole run, shared by both surfaces, so the
     // total the human screen prints is the total the JSON document carries.
     let run_started = std::time::Instant::now();
@@ -1717,7 +1735,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
     // enabled that belong in this repo: a per-language `["typescript"]`
     // snippet would disable Python in a mixed repository, so following one
     // tip would produce the other. Default `rust` is kept only when Rust is
-    // actually detected (#7648).
+    // actually detected (#7648) or the user enabled it explicitly (#15304).
     let names = gaps
         .iter()
         .map(|gap| gap.label.as_str())
@@ -1798,12 +1816,33 @@ fn preview_languages_to_enable(
     if gaps.is_empty() {
         return None;
     }
+    // #15304 review: only the built-in default `rust` is dropped when no Rust
+    // marker is found (#7648). A `rust` the user wrote into
+    // `[languages].enabled` is their selection, and the replacement list must
+    // keep it.
+    let keep_rust = detected.contains(&LanguageId::Rust) || languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
-        detected.contains(&LanguageId::Rust),
+        keep_rust,
         gaps.iter().map(|gap| gap.entry),
     );
     Some(PreviewEnablement { gaps, suggestion })
+}
+
+/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
+/// than leaving the built-in default in place. Reads the exact text the
+/// config was parsed from, so a config-free run and a `[languages]` table
+/// without `enabled` both read as the default.
+fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
+    config
+        .source_text()
+        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        .is_some_and(|document| {
+            document
+                .get("languages")
+                .and_then(|languages| languages.get("enabled"))
+                .is_some()
+        })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the
@@ -8938,7 +8977,11 @@ mod tests {
     /// A mixed repository must get one snippet that keeps the languages
     /// already enabled: a `["rust", "typescript"]` snippet would switch off
     /// Python, and the next doctor run would then suggest `["rust",
-    /// "python"]`, undoing the first edit.
+    /// "python"]`, undoing the first edit. The `rust` written in
+    /// `[languages].enabled` is kept too, though no Rust marker is found:
+    /// markers are shallow, and dropping an explicit entry would switch off
+    /// Rust in a repository that keeps it below `rust/` (#15304). Only the
+    /// built-in default is left out (#7648).
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn doctor_enable_tip_keeps_already_enabled_languages() -> Result<(), String> {
@@ -8965,13 +9008,8 @@ mod tests {
             suggestions[0]
         );
         assert!(
-            suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
-            "the snippet must keep python and omit undetected rust; got:\n{}",
-            suggestions[0]
-        );
-        assert!(
-            !suggestions[0].contains(r#""rust""#),
-            "no Rust markers means the tip must not name rust; got:\n{}",
+            suggestions[0].contains(r#"enabled = ["rust", "python", "typescript"]"#),
+            "the snippet must keep the explicitly enabled rust and python; got:\n{}",
             suggestions[0]
         );
         assert_eq!(

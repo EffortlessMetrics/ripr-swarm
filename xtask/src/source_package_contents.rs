@@ -27,17 +27,6 @@ use std::path::Path;
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, AstToken, Edition, SourceFile};
 
-/// The `ripr` package still carries the portable help harness compiled from
-/// the extracted package (`xtask/tests/common/ripr_help.rs`). #15216 item 5
-/// moves those assertions onto the executable installed from the qualified
-/// archive and removes these members; until then they are the one named
-/// exception.
-const RIPR_PACKAGED_HELP_HARNESS: [&str; 3] = [
-    "tests/cli_help_hierarchy.rs",
-    "tests/common/help_contract.rs",
-    "tests/common/help_workspace.rs",
-];
-
 /// Reads every regular member of a `.crate` (gzip tar) below `top_dir/`,
 /// keyed by package-relative path.
 pub(crate) fn read_crate_members(
@@ -94,8 +83,7 @@ pub(crate) fn check_source_package(
 ) -> Result<(), String> {
     let mut refused: BTreeMap<String, &'static str> = BTreeMap::new();
     for path in members.keys() {
-        let exempt = package == "ripr" && RIPR_PACKAGED_HELP_HARNESS.contains(&path.as_str());
-        if (path.starts_with("tests/") || path.starts_with("benches/")) && !exempt {
+        if path.starts_with("tests/") || path.starts_with("benches/") {
             refused.insert(path.clone(), "integration test or bench target");
         }
     }
@@ -861,17 +849,18 @@ mod tests {
             error.contains("benches/speed.rs (integration test"),
             "{error}"
         );
-        // The named help-harness exception is `ripr`'s only, and covers
-        // exactly its three files.
-        check_source_package(
-            "ripr",
-            &members(&[
-                ("src/lib.rs", ""),
-                ("tests/cli_help_hierarchy.rs", ""),
-                ("tests/common/help_contract.rs", ""),
-                ("tests/common/help_workspace.rs", ""),
-            ]),
-        )?;
+        for path in [
+            "tests/cli_help_hierarchy.rs",
+            "tests/common/help_contract.rs",
+            "tests/common/help_workspace.rs",
+        ] {
+            let error = refusal("ripr", &[("src/lib.rs", ""), (path, "")])?;
+            if !error.contains(&format!("{path} (integration test or bench target)")) {
+                return Err(format!(
+                    "retired help harness member was not refused: {error}"
+                ));
+            }
+        }
         let error = refusal("ripr", &[("src/lib.rs", ""), ("tests/other.rs", "")])?;
         assert!(error.contains("tests/other.rs"), "{error}");
         Ok(())

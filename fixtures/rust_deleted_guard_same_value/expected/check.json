@@ -1,0 +1,439 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_deleted_guard_same_value/input",
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":2,"static_unknown":0,"conflicting_expressions":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:75ef48a575822675a38ddd1c7c70ec3c491c5d3cfd4da8647fe5b338e8741255","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":2,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:211468fb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:211468fb",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick: pick_pins_the_guard_input"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_pins_the_guard_input", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/deleted_guard_same_value.rs:4 pick_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick(0), Vec::<u32>::new());", "related test tests/deleted_guard_same_value.rs:9 pick_nine_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick_nine(0), Vec::<u32>::new());", "source function argument value x = 0 at line 5", "source function argument value x == 0 at line 5"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach pick: pick_pins_the_guard_input", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "5": "assert_eq!(pick(0), Vec::<u32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "pick_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick(0), Vec::<u32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "pick_nine_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick_nine(0), Vec::<u32>::new());",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:9e0c05e4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick:return_value:return_value:if_x==0_return_vec_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick:return_value:return_value:if_x==0_return_vec_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "if_x==0_return_vec_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:9e0c05e4",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick: pick_pins_the_guard_input"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_pins_the_guard_input", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "local flow reaches returned value: if x == 0 { return Vec::new(); } (line 4)", "related test tests/deleted_guard_same_value.rs:4 pick_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick(0), Vec::<u32>::new());", "related test tests/deleted_guard_same_value.rs:9 pick_nine_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick_nine(0), Vec::<u32>::new());", "source function argument value x = 0 at line 5", "source function argument value x == 0 at line 5"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"if x == 0 { return Vec::new(); }","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick: pick_pins_the_guard_input"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert_eq!(pick(0), Vec::<u32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "pick_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick(0), Vec::<u32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "pick_nine_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick_nine(0), Vec::<u32>::new());",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:5e34d019",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick_nine:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick_nine:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick_nine",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:5e34d019",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/deleted_guard_same_value.rs:9 pick_nine_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick_nine(0), Vec::<u32>::new());", "source function argument value x = 0 at line 10", "source function argument value x == 0 at line 10"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "10": "assert_eq!(pick_nine(0), Vec::<u32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick_nine(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick_nine(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pick_nine_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick_nine(0), Vec::<u32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a31b578c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick_nine:return_value:return_value:if_x==0_return_vec_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick_nine:return_value:return_value:if_x==0_return_vec_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick_nine",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "if_x==0_return_vec_new"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a31b578c",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: if x == 0 { return Vec::new(); } (line 8)", "related test tests/deleted_guard_same_value.rs:9 pick_nine_pins_the_guard_input uses strong exact value oracle: assert_eq!(pick_nine(0), Vec::<u32>::new());", "source function argument value x = 0 at line 10", "source function argument value x == 0 at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"if x == 0 { return Vec::new(); }","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick_nine: pick_nine_pins_the_guard_input", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "assert_eq!(pick_nine(0), Vec::<u32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick_nine(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick_nine(0), Vec::<u32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pick_nine_pins_the_guard_input",
+          "file": "tests/deleted_guard_same_value.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick_nine(0), Vec::<u32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}
