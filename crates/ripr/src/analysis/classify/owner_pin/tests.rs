@@ -15005,7 +15005,7 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         )],
     )?;
     let lib = "pub fn weights(x: u32) -> Vec<u32> {\n    vec![x * 3]\n}\n";
-    let refusal_under = |root: &Path, import: &str| {
+    let refusal_under = |root: &Path, import: &str| -> Result<Option<AssertionRefusal>, String> {
         let tests = format!(
             "#[cfg(test)]\nmod test {{\n    use demo::weights;\n    {import}\n\n    #[test]\n    fn weighs() {{\n        assert_eq!(weights(4), vec![12]);\n    }}\n}}\n"
         );
@@ -15014,12 +15014,14 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         let test = index
             .tests()
             .iter()
-            .find(|test| test.file == Path::new(TESTS))?;
+            .find(|test| test.file == Path::new(TESTS))
+            .ok_or_else(|| format!("no indexed test under `{import}`"))?;
         let assertion = test
             .assertions
             .iter()
-            .find(|assertion| assertion.text.starts_with("assert_eq!(weights(4)"))?;
-        OwnerPinSyntax::default().refusal(test, assertion, &index)
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weights(4)"))
+            .ok_or_else(|| format!("no indexed assertion under `{import}`"))?;
+        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
     };
     let rebound = |refusal: Option<AssertionRefusal>| {
         matches!(
@@ -15031,8 +15033,8 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
     };
     // Fixture premise: with no import the assertion is credited, and a
     // foreign import of `vec` does refuse it.
-    assert_eq!(refusal_under(&plain, ""), None);
-    assert!(rebound(refusal_under(&plain, "use other::vec;")));
+    assert_eq!(refusal_under(&plain, "")?, None);
+    assert!(rebound(refusal_under(&plain, "use other::vec;")?));
     for import in [
         "use std::vec;",
         "use ::std::vec;",
@@ -15041,7 +15043,7 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         "use core::assert_eq;",
         "use std::{vec, fmt};",
     ] {
-        assert_eq!(refusal_under(&plain, import), None, "{import}");
+        assert_eq!(refusal_under(&plain, import)?, None, "{import}");
     }
     for import in [
         // Not where the standard library exports the macro.
@@ -15057,11 +15059,14 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
         "extern crate other as alloc;\n    use alloc::vec;",
         "use crate::alloc::vec;",
     ] {
-        assert!(rebound(refusal_under(&plain, import)), "{import}");
+        assert!(rebound(refusal_under(&plain, import)?), "{import}");
     }
     // A manifest dependency named `alloc` may be the crate `use alloc::vec`
     // names, so the import stays a rebinding there; `std` is unaffected.
-    assert!(rebound(refusal_under(&alloc_dependency, "use alloc::vec;")));
-    assert_eq!(refusal_under(&alloc_dependency, "use std::vec;"), None);
+    assert!(rebound(refusal_under(
+        &alloc_dependency,
+        "use alloc::vec;"
+    )?));
+    assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
     Ok(())
 }
