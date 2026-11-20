@@ -1,0 +1,10 @@
+# Registers the TypeScript expected-value shape wording tests (#15331) under RIPR-SPEC-0085.
+[[extend]]
+id = "RIPR-SPEC-0085"
+tests = [
+  "crates/ripr/tests/typescript_expected_value_shape_wording.rs::a_named_variable_keeps_the_generic_wording",
+  "crates/ripr/tests/typescript_expected_value_shape_wording.rs::undefined_is_not_called_a_variable",
+  "crates/ripr/tests/typescript_expected_value_shape_wording.rs::an_object_literal_holding_variables_says_it_contains_variables",
+  "crates/ripr/src/analysis/language/typescript/static_limit.rs::expected_value_shapes_get_distinct_reasons",
+  "crates/ripr/src/analysis/language/typescript/static_limit.rs::container_scan_ignores_keys_strings_and_keyword_literals",
+]
