@@ -1719,3 +1719,71 @@ fn differing_inline_arms_repair_still_claims_existing_tests_already_check() -> R
     );
     Ok(())
 }
+
+#[test]
+fn long_literal_gap_round_trips_through_explain_repair_and_receipt() -> Result<(), String> {
+    for literal in ["a".repeat(2000), "é🚀".repeat(5000)] {
+        let old = format!("pub fn calc(x: usize) -> usize {{\n    x + \"{literal}\".len()\n}}\n");
+        let new = old.replace("x +", "x * 2 +");
+        let repo = Repo::create(
+            &old,
+            &new,
+            "use ar::calc;\n#[test]\nfn positive() {\n    assert!(calc(2) > 0);\n}\n",
+        )?;
+        let check = repo.ripr(&["check", "--base", "HEAD~1", "--format", "json"])?;
+        let report: serde_json::Value =
+            serde_json::from_slice(&check.stdout).map_err(|e| e.to_string())?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|f| {
+                f["canonical_gap"]["owner"] == "calc"
+                    && f["canonical_gap"]["probe_kind"] == "return_value"
+            })
+            .ok_or("missing calc return-value finding")?;
+        assert_eq!(finding["classification"], "weakly_exposed");
+        let gap = finding["canonical_gap_id"]
+            .as_str()
+            .ok_or("missing gap ID")?;
+        assert_eq!(finding["canonical_gap"]["id"], gap);
+        assert!(
+            gap.len() < 150,
+            "long literal produced a {}-byte gap ID",
+            gap.len()
+        );
+
+        let explain = repo.ripr(&["explain", gap, "--base", "HEAD~1"])?;
+        assert!(
+            explain.status.success() && text(&explain).contains(gap),
+            "{}",
+            text(&explain)
+        );
+        let (ready, repair) = repo.repair_text(&[gap])?;
+        assert!(
+            ready && repair.contains("edit one test file: tests/t.rs"),
+            "{repair}"
+        );
+        let receipt = repo.ripr(&[
+            "receipt",
+            "write",
+            "--gap",
+            gap,
+            "--verify-command",
+            "cargo test",
+            "--status",
+            "not_run",
+        ])?;
+        assert!(receipt.status.success(), "{}", text(&receipt));
+        let written: serde_json::Value =
+            serde_json::from_slice(&receipt.stdout).map_err(|e| e.to_string())?;
+        assert_eq!(written["canonical_gap_id"], gap);
+        let read = repo.ripr(&["receipt", "check", "--gap", gap])?;
+        assert!(
+            read.status.success() && text(&read).contains("structurally valid"),
+            "{}",
+            text(&read)
+        );
+    }
+    Ok(())
+}
