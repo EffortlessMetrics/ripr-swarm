@@ -272,13 +272,16 @@ Re-run the case's mutants against the stored subject before re-blessing with
 
 The Python adapter routes changed lines through `classify_change_full` and
 `classify_change_for_owner_with_value_origins` in `language/python/classify.rs`.
-The latter's exhaustive classification ladder returns `exposed`,
-`weakly_exposed`, `no_static_path` or `static_unknown`; its reach/observation
-and alignment refinements do not manufacture infection or propagation stages.
-There is no producer here for `reachable_unrevealed`, `infection_unknown` or
-`propagation_unknown`. Their zero-floor axes are explicit waivers, not positive
-coverage. The landed `python/unemitted_stage_unknown_tests.rs` supplies named
-rebind inputs that read `static_unknown`, together with an exposed live control.
+The latter's classification ladder returns `exposed`, `weakly_exposed`,
+`no_static_path` or `static_unknown`, and also `reachable_unrevealed` when every
+related test patches the changed owner (`owner_patched_by_every_test`) and
+`infection_unknown` for an unmodeled loop boundary behind a strong aligned
+oracle (`loop_boundary_unknown`). No current corpus row exercises either shape,
+so their zero-floor axes are explicit coverage waivers (produced but uncovered),
+not claims that no producer exists. There is no producer for
+`propagation_unknown`; its waiver is absence of a producer. The landed
+`python/unemitted_stage_unknown_tests.rs` supplies named rebind inputs that read
+`static_unknown`, together with an exposed live control.
 The corpus stage-axis test also rejects a pinned row that starts emitting a
 waived class; a future producer needs real runtime cases and a positive floor.
 
