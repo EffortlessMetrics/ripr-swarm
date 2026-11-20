@@ -444,7 +444,11 @@ collides with an owner whose directory shape it shares. An explicit
 package, so a nested root keeps a module named `main` or `tests`. A renamed import's target and a
 re-exporting module are placed in the same reading. A root outside `src/`
 still leaves its owners unplaced (crate placement needs `src/`, so it fails
-closed); a `#[path]` remap keeps the rule off as before.
+closed); a `#[path]` remap keeps the rule off as before. A package with
+`src/main.rs` and no `src/lib.rs` keeps the earlier reading too: its layout
+gives every `src/` module to the binary, and which root composes such a file
+is not established. Fixture: `fixtures/rust_custom_lib_path_shaped_call`
+(honesty corpus: the directory-shaped call does not read `exposed`).
 
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::an_owner_in_the_declared_root_file_is_named_at_the_crate_root`
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_module_below_the_declared_root_is_named_from_that_root`
@@ -454,6 +458,7 @@ closed); a `#[path]` remap keeps the rule off as before.
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_renamed_import_of_another_function_never_names_the_owner`
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_reexport_is_found_in_the_module_read_from_the_declared_root`
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_nested_root_keeps_a_module_named_like_another_target`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_binary_module_beside_a_custom_root_keeps_the_binary_path`
 
 ## Implementation Mapping
 

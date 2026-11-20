@@ -20616,6 +20616,30 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_custom_lib_path_shaped_call",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_custom_lib_path_shaped_call",
+      "vector": "a_directory_shaped_call_below_a_manifest_lib_path_root_names_no_module",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

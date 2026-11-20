@@ -317,3 +317,45 @@ fn a_nested_root_keeps_a_module_named_like_another_target() -> Result<(), String
     );
     Ok(())
 }
+
+#[test]
+fn a_binary_module_beside_a_custom_root_keeps_the_binary_path() -> Result<(), String> {
+    // `src/main.rs` mounts `core`; the library root `src/core/engine.rs`
+    // declares nothing. The binary's unit test spells the binary path, and
+    // a same-named rival module makes the call go through call identity
+    // (#14495 review).
+    let files = |call: &str| {
+        vec![
+            ("Cargo.toml", MANIFEST.to_string()),
+            ("src/core/engine.rs", String::new()),
+            (
+                "src/main.rs",
+                format!(
+                    "mod core;\n\nfn main() {{}}\n\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn discounts() {{\n        assert_eq!({call}(100), 100);\n        assert_eq!({call}(101), 91);\n    }}\n}}\n"
+                ),
+            ),
+            (
+                "src/core.rs",
+                "pub mod pricing;\npub mod legacy;\n".to_string(),
+            ),
+            ("src/core/pricing.rs", OWNER.to_string()),
+            ("src/core/legacy.rs", OWNER.to_string()),
+        ]
+    };
+    let valid = finding_in(
+        &files("crate::core::pricing::discount"),
+        ("src/core/pricing.rs", 2),
+    )?;
+    assert_exposed("binary path", &valid);
+    let shortened = finding_in(
+        &files("crate::pricing::discount"),
+        ("src/core/pricing.rs", 2),
+    )?;
+    assert_ne!(
+        shortened.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        shortened.evidence
+    );
+    Ok(())
+}

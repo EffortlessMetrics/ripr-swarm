@@ -1664,6 +1664,16 @@ fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>
 /// root's directory.
 fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
     let custom = index.member_crates.custom_lib_path_root_of(file)?;
+    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
+    // module to the binary, whose paths start at `src/main.rs`. Which root
+    // composes such a file is not established here, so keep the earlier
+    // reading (#14495 review).
+    if call_identity_shape(index, package_key(file).as_deref())
+        .layout
+        .main_only
+    {
+        return None;
+    }
     let normalized = super::related_tests::normalize_path(file);
     let root = super::related_tests::normalize_path(&custom.crate_root);
     if normalized == root {
