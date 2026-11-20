@@ -852,6 +852,12 @@ provably: unequal `bool`, `char`, byte or string values, integers both in
 element. Equal folds (`false` → `!true`) refuse. The sink carries the raw
 tail text. Whether a related test pins the returned value stays the owner
 pin's decision, so a bare call reads `reachable_unrevealed`.
+Unit tail statement block (#15459). An owner with no `->` return type whose
+tail is a block (plain, `unsafe`, `async`, `const` or labelled) with no tail
+expression, because its last item is a `;`-terminated statement, yields `()`
+and gets no `return_value` probe; its statements keep their own `side_effect`
+and `call_deletion` probes. A tail block that ends in a value expression, and
+any owner with a return type (`-> ()` included), keeps the tail probe.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
