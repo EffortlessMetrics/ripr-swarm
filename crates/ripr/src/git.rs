@@ -660,6 +660,32 @@ pub(crate) fn discovered_work_tree_toplevel(dir: &Path, timeout: Duration) -> Op
     std::fs::canonicalize(top.trim_end_matches(['\r', '\n'])).ok()
 }
 
+/// Whether Git ignores `path` (relative to the work tree `top`), as
+/// `git check-ignore` answers for an untracked directory such as a build
+/// output tree. `Some(true)` only on Git's positive answer (exit 0) and
+/// `Some(false)` only on its negative one (exit 1); every other outcome
+/// (no Git, a refusal, a deadline) is `None`. Inherited repository selectors
+/// are removed, as in [`discovered_work_tree_toplevel`].
+pub(crate) fn work_tree_path_ignored(top: &Path, path: &Path, timeout: Duration) -> Option<bool> {
+    let path = path.to_str()?;
+    let args = ["check-ignore", "-q", "--", path];
+    let (mut command, timeout) = git_command_within(top, &args, Some(timeout));
+    let timeout = timeout.unwrap_or(Duration::ZERO);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    let describe = format!("git ignore probe in {}", top.display());
+    let output =
+        collect_output_with_deadline_and_limit(command, timeout, 4 * 1024, &describe).ok()?;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
 /// What Git established about a directory that contains a `.git` entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkTreeRootProbe {

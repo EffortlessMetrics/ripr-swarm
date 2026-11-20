@@ -2649,8 +2649,8 @@ field; normalize across surfaces at this crosswalk:
 | Finding `probe.file` (this contract) | `./src/lib.rs` | `./`-prefixed for files under `--root`; files outside `--root` keep their portable spelling (`finding_location_text`, `crates/ripr/src/analysis/mod.rs`) |
 | Finding `related_tests[].file` (this contract) | `tests/pricing.rs` | repository-relative, no `./` (`output::path::display_path`) — deliberately different from `probe.file` within the same document |
 | Context Packet `probe.file` | `./src/lib.rs` | same `./`-prefixed finding location as Finding `probe.file` for files under `--root` (`ContextPacket::from_finding`; `display_path_text` only normalizes separators) |
-| SARIF `artifactLocation.uri` | `src/lib.rs` | `./` stripped, RFC 3986 percent-encoded (`crates/ripr/src/output/sarif.rs`) |
-| GitHub annotation `file=` | `src/lib.rs` | repository-relative, no `./` (`crates/ripr/src/output/path.rs`) |
+| SARIF `artifactLocation.uri` | `src/lib.rs` | relative to the Git checkout top level (code scanning's base), `./` stripped, RFC 3986 percent-encoded; a `--root` below the top level such as `crates/app` yields `crates/app/src/lib.rs`, whichever spelling names the root. Without a Git work tree the uri stays relative to `--root`. Inside a submodule the top level is the submodule's own, not the superproject's. For member roots `riprFingerprintV1` embeds the anchored path (`CheckoutAnchor` in `crates/ripr/src/output/path.rs`, `crates/ripr/src/output/sarif.rs`) |
+| GitHub annotation `file=` | `src/lib.rs` | relative to the Git checkout top level (what `GITHUB_WORKSPACE` resolves), no `./`; same member-root and no-work-tree rules as the SARIF uri (`CheckoutAnchor` in `crates/ripr/src/output/path.rs`) |
 | Finding/gap IDs (`probe:…`, `gap:…`) | `src_lib.rs` / `src/lib.rs` | path embedded in the content-addressed ID; IDs are identity, never path-join inputs |
 
 The evidence-first fields are additive in schema `0.2`:

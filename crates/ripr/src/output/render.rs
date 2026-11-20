@@ -10,6 +10,7 @@ use crate::app::{
     repo_inventory_with_progress,
 };
 use crate::config::RiprConfig;
+use crate::output::path::CheckoutAnchor;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -93,7 +94,13 @@ pub(crate) fn render_check_with_config_and_progress(
             )?;
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
-        OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        // GitHub resolves `file=` and code scanning resolves SARIF uris from
+        // the checkout top level, so both anchor paths there.
+        OutputFormat::Github => Ok(github::render_with_config_anchored(
+            output,
+            config,
+            &CheckoutAnchor::discover(&output.root),
+        )),
         OutputFormat::MissedTxt => Ok(super::missed_txt::render_with_config(output, config)),
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(
@@ -108,16 +115,24 @@ pub(crate) fn render_check_with_config_and_progress(
             // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
             let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif_with_budget(
+            Ok(sarif::render_findings_sarif_anchored(
                 output,
                 config,
                 &suppressions,
                 results_budget,
+                &CheckoutAnchor::discover(&output.root),
             ))
         }
         OutputFormat::SarifCompact => {
+            let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            sarif::render_findings_sarif_compact(output, config, &suppressions)
+            Ok(sarif::render_findings_sarif_compact_anchored(
+                output,
+                config,
+                &suppressions,
+                results_budget,
+                &CheckoutAnchor::discover(&output.root),
+            ))
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -304,6 +319,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     &report.evidence_limitations,
                     config,
                     results_budget,
+                    &CheckoutAnchor::discover(&output.root),
                 ))
             },
         ),
@@ -316,6 +332,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     report.limit_info.as_ref(),
                     &report.evidence_limitations,
                     config,
+                    &CheckoutAnchor::discover(&output.root),
                 )
             },
         ),
