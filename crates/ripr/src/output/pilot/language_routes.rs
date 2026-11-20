@@ -378,7 +378,7 @@ impl CheckBlocker {
         let shown = shell_arg(&root_path_display(&bound_root_path(root)));
         match self {
             CheckBlocker::NotWorkTree => format!(
-                "ripr check needs a Git work tree and this root is not one: run `git init` and commit the files, or check a saved patch with `ripr check --root {shown} --diff PATH`"
+                "ripr check needs a Git work tree and this root is not one: run `git -C {shown} init` and commit the files there, or check a saved patch with `ripr check --root {shown} --diff PATH`"
             ),
             CheckBlocker::GitMissing => format!(
                 "ripr check needs Git to read the change and Git was not found on PATH: install Git, or check a saved patch with `ripr check --root {shown} --diff PATH`"

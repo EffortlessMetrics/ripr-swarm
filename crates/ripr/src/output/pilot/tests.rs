@@ -5640,7 +5640,7 @@ fn check_blockers_withhold_the_refused_check_and_name_a_working_route() {
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
     for (blocker, expected) in [
-        (CheckBlocker::NotWorkTree, ["git init", "--diff PATH"]),
+        (CheckBlocker::NotWorkTree, ["git -C", "--diff PATH"]),
         (
             CheckBlocker::BareRepository,
             ["git worktree add", "--root <path>"],

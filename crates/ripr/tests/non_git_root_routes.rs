@@ -126,11 +126,19 @@ fn pilot_in_a_non_git_root_never_routes_back_to_a_refused_check() -> Result<(), 
     // The loop: any printed `ripr check --root ...` runs straight into the
     // refusal above.
     assert_no_refused_check(&check_commands(&out), &out);
-    assert!(out.contains("git init"), "{out}");
+    assert!(out.contains(" init`"), "{out}");
     assert!(out.contains("--diff PATH"), "{out}");
     // TypeScript is detected but not enabled by default: the screen must not
     // say enabling it is how to check it, since check still refuses here.
     assert!(!out.contains("to check it"), "{out}");
+    // A saved patch still reads only enabled languages, so the disabled
+    // state stays disclosed beside the blocker.
+    assert!(
+        out.contains("not enabled in ripr.toml [languages]"),
+        "{out}"
+    );
+    // `git init` is bound to the pilot root, not the caller's directory.
+    assert!(out.contains("git -C"), "{out}");
 
     // The written Markdown summary carries the same route.
     let markdown = std::fs::read_to_string(dir.0.join("target/ripr/pilot/pilot-summary.md"))
@@ -145,7 +153,7 @@ fn pilot_in_a_non_git_root_never_routes_back_to_a_refused_check() -> Result<(), 
         assert_eq!(route["route"], "needs_git_work_tree", "{route}");
         assert!(route["command"].is_null(), "{route}");
         let guidance = route["guidance"].as_str().unwrap_or_default();
-        assert!(guidance.contains("git init"), "{route}");
+        assert!(guidance.contains(" init`"), "{route}");
     }
     Ok(())
 }

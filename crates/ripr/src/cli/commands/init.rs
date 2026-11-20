@@ -845,7 +845,7 @@ fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String 
             "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
         ),
         InitNextStep::GitMissing => format!(
-            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `git init` if this directory is not a repository), or analyze a saved patch with `ripr check --diff PATH`."
+            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `git init` if this directory is not a repository), or analyze a saved patch with `{check} --diff PATH`."
         ),
     }
 }
@@ -1696,9 +1696,17 @@ mod tests {
 
         // #15297: with Git missing, `git init` cannot run either; the
         // advice is to install Git, and a saved patch still works.
-        let missing = init_next_step_line(InitNextStep::GitMissing, "ripr doctor", "ripr check");
+        let missing = init_next_step_line(
+            InitNextStep::GitMissing,
+            "ripr doctor --root repo",
+            "ripr check --root repo",
+        );
         assert!(missing.contains("install Git"), "{missing}");
-        assert!(missing.contains("--diff PATH"), "{missing}");
+        // The saved-patch route is bound to the configured root.
+        assert!(
+            missing.contains("`ripr check --root repo --diff PATH`"),
+            "{missing}"
+        );
         assert!(!missing.contains("run `git init` or"), "{missing}");
     }
 
