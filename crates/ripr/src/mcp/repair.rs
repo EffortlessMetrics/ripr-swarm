@@ -398,8 +398,8 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
-    if !command_routes.is_empty() {
-        limitations.push("command_routes show repository-relative paths (the host-local root is not projected); run them from the repository root".to_string());
+    if let Some(limitation) = route_projection_limitation(&command_routes) {
+        limitations.push(limitation.to_string());
     }
     if let Some(limitation) =
         crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
@@ -716,7 +716,8 @@ pub(super) fn durable_receipt_document(
 
 /// Rewrite every string in `value` that spells the host-local repository root
 /// into its root-relative form: `<root>/a/b` becomes `a/b`, a bare `<root>`
-/// becomes `.`, and any other embedded occurrence becomes `<repo-root>`.
+/// becomes `.`, and a bare root token before whitespace, end or punctuation
+/// becomes `.` (so `--root <root> check` stays runnable from the root).
 /// Both the spelling the server was given and its canonical form are matched,
 /// because the CLI records the canonical root in receipts and manifests.
 fn project_root_relative(value: &mut Value, root: &Path) {
@@ -799,34 +800,37 @@ fn project_root_text(text: &str, spelling: &str) -> String {
         let after_root = &tail[spelling.len()..];
         // A `file://` scheme or extra leading slashes sit before the root; they
         // are part of the same path token, not a preceding path component.
-        let slashes = out.len() - out.trim_end_matches('/').len();
         let token_len = out.trim_end_matches('/').len();
+        let slashes = out.len() - token_len;
         let token_start = &out[..token_len];
+        let lead_char = token_start.chars().next_back();
         let scheme = slashes >= 2 && token_start.ends_with("file:");
+        // `https:///root/x` keeps its scheme and slashes; only a bare leading
+        // `//root` or a `file://` prefix is dropped.
+        let keep_scheme_slashes = slashes >= 1 && !scheme && lead_char == Some(':');
         let leading = slashes >= 1
             && !scheme
-            && token_start
-                .chars()
-                .next_back()
-                .is_none_or(|c| !is_path_char(c));
-        let before = if scheme || leading {
-            token_start
-                .trim_end_matches("file:")
-                .chars()
-                .next_back()
-                .or(previous)
+            && !keep_scheme_slashes
+            && lead_char.is_none_or(|c| !is_path_char(c));
+        let before = if scheme {
+            token_start.trim_end_matches("file:").chars().next_back()
+        } else if leading || keep_scheme_slashes {
+            lead_char
         } else {
-            out.chars().next_back().or(previous)
-        };
+            out.chars().next_back()
+        }
+        .or(previous);
         let start_ok = before.is_none_or(|c| !is_path_char(c));
         let next = after_root.chars().next();
-        let sentence_dot = next == Some('.')
-            && after_root[1..]
+        // A run of dots (sentence end or ellipsis) is punctuation, not a name.
+        let trailing_dots = after_root.trim_start_matches('.');
+        let sentence_dots = next == Some('.')
+            && trailing_dots
                 .chars()
                 .next()
                 .is_none_or(|c| !is_path_char(c));
         if !start_ok
-            || next.is_some_and(|c| !matches!(c, '/' | '\\') && is_path_char(c) && !sentence_dot)
+            || next.is_some_and(|c| !matches!(c, '/' | '\\') && is_path_char(c) && !sentence_dots)
         {
             // Not a whole-root occurrence (sibling prefix or longer path).
             out.push_str(spelling);
@@ -834,18 +838,20 @@ fn project_root_text(text: &str, spelling: &str) -> String {
             rest = after_root;
             continue;
         }
-        if scheme || leading {
-            out.truncate(if scheme {
-                token_len - "file:".len()
-            } else {
-                token_len
-            });
+        if keep_scheme_slashes && spelling.starts_with('/') {
+            // The root's own leading slash completed the host-less `://`.
+            out.push('/');
+        }
+        if scheme {
+            out.truncate(token_len - "file:".len());
+        } else if leading {
+            out.truncate(token_len);
         }
         if next.is_some_and(|c| matches!(c, '/' | '\\')) {
             rest = &after_root[1..];
             previous = None;
-            // `<root>/` starts a relative path: drop it. A bare root before
-            // whitespace or punctuation (not a glob or name) stands for `.`.
+            // `<root>/` starts a relative path: drop it. With nothing, or only
+            // whitespace or punctuation, after it the root stands for `.`.
             if rest.is_empty()
                 || rest.starts_with(|c: char| {
                     c.is_whitespace() || matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`')
@@ -854,36 +860,53 @@ fn project_root_text(text: &str, spelling: &str) -> String {
                 out.push('.');
             }
         } else {
-            out.push_str("<repo-root>");
+            // A bare root token (followed by whitespace, end or punctuation)
+            // stands for the repository root itself, which is `.`.
+            out.push('.');
             rest = after_root;
-            previous = Some('>');
+            previous = Some('.');
         }
     }
     out.push_str(rest);
     out
 }
 
+fn project_root_string(text: &str, spellings: &[String]) -> String {
+    let mut text = text.to_string();
+    for spelling in spellings {
+        if text.contains(spelling.as_str()) {
+            text = project_root_text(&text, spelling);
+        }
+    }
+    text
+}
+
+/// Walk strings and object keys alike.
 fn project_root_relative_with(value: &mut Value, spellings: &[String]) {
     match value {
-        Value::String(text) => {
-            for spelling in spellings {
-                if text.contains(spelling.as_str()) {
-                    *text = project_root_text(text, spelling);
-                }
-            }
-        }
+        Value::String(text) => *text = project_root_string(text, spellings),
         Value::Array(items) => {
             for item in items {
                 project_root_relative_with(item, spellings);
             }
         }
         Value::Object(map) => {
-            for item in map.values_mut() {
-                project_root_relative_with(item, spellings);
+            let entries = std::mem::take(map);
+            for (key, mut item) in entries {
+                project_root_relative_with(&mut item, spellings);
+                map.insert(project_root_string(&key, spellings), item);
             }
         }
         _ => {}
     }
+}
+
+/// Command routes are rewritten with the root projected away, so they are only
+/// runnable from the repository root.
+fn route_projection_limitation(routes: &[Value]) -> Option<&'static str> {
+    (!routes.is_empty()).then_some(
+        "command_routes project the host-local root as `.` and repository-relative paths (the root path is not returned); run them from the repository root",
+    )
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
@@ -1528,6 +1551,33 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn root_projection_keeps_bare_root_arguments_runnable() {
+        assert_eq!(
+            projected("ripr check --root /w/repo check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(projected("see /w/repo...", &["/w/repo"]), "see ....");
+        assert_eq!(projected("see /w/repo… ", &["/w/repo"]), "see .… ");
+        assert_eq!(projected("https:///w/repo/x", &["/w/repo"]), "https:///x");
+    }
+
+    #[test]
+    fn root_projection_rewrites_object_keys() {
+        let spellings = root_spellings(&["/w/repo".to_string()]);
+        let mut value = json!({"/w/repo/a.json": {"/w/repo": "/w/repo/b"}});
+        project_root_relative_with(&mut value, &spellings);
+        assert_eq!(value, json!({"a.json": {".": "b"}}));
+    }
+
+    #[test]
+    fn route_limitation_present_only_with_routes() {
+        assert!(route_projection_limitation(&[]).is_none());
+        let routes = [json!({"argv": ["ripr"]})];
+        let text = route_projection_limitation(&routes).unwrap_or_default();
+        assert!(text.contains("repository root"), "{text}");
+    }
+
+    #[test]
     fn root_projection_handles_globs_urls_verbatim_and_lookalikes() {
         assert_eq!(projected("see /w/repo/*.rs", &["/w/repo"]), "see *.rs");
         assert_eq!(projected("file:///w/repo/a.json", &["/w/repo"]), "a.json");
@@ -1557,12 +1607,9 @@ pub(super) mod tests {
     fn root_projection_rewrites_prose_and_backslash_spellings() {
         assert_eq!(
             projected("failed at /w/repo: bad; see /w/repo/t.rs.", &["/w/repo"]),
-            "failed at <repo-root>: bad; see t.rs."
+            "failed at .: bad; see t.rs."
         );
-        assert_eq!(
-            projected("open /w/repo.", &["/w/repo"]),
-            "open <repo-root>."
-        );
+        assert_eq!(projected("open /w/repo.", &["/w/repo"]), "open ..");
         assert_eq!(
             projected("C:\\w\\repo\\a\\b.json", &["C:\\w\\repo"]),
             "a\\b.json"
@@ -3020,19 +3067,26 @@ pub(super) mod tests {
             .map_err(|failure| format!("receipt fixture projection: {}", failure.detail))?;
         assert_eq!(document["receipt"]["status"], "issued", "{}", case.label);
         // The on-disk receipt keeps host-absolute paths; the MCP projection
-        // is the same document with the repository root projected away.
+        // returns neither the given nor the canonical root spelling.
         let root_text = root.display().to_string();
+        let canonical_text = std::fs::canonicalize(root)
+            .map_err(|error| error.to_string())?
+            .display()
+            .to_string();
         assert!(
             receipt.to_string().contains(&root_text),
             "{} positive control: the on-disk receipt spells the root",
             case.label,
         );
-        let mut expected_document = receipt.clone();
-        project_root_relative(&mut expected_document, root);
         assert_eq!(
-            document["receipt"]["document"], expected_document,
-            "{}",
-            case.label
+            document["receipt"]["document"]["provenance"]["repo_root"], ".",
+            "{} embedded repo_root is projected",
+            case.label,
+        );
+        assert!(
+            !document.to_string().contains(&canonical_text),
+            "{} MCP receipt status leaked the canonical root",
+            case.label,
         );
         assert!(
             !document.to_string().contains(&root_text),
