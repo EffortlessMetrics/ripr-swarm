@@ -2469,6 +2469,21 @@ fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), Strin
     assert_sane(&control, "readable review-comments")?;
     assert_eq!(control.code, Some(0), "{}", control.stderr);
     assert!(root.join("target/control/comments.json").is_file());
+    let read_receipt = |path: &str| -> Result<serde_json::Value, String> {
+        let bytes = fs::read(root.join(path)).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    };
+    let clean = read_receipt("target/control/run-receipt.json")?;
+    assert_eq!(clean["status"], "complete");
+    let clean_limitations = clean["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        clean_limitations
+            .iter()
+            .all(|entry| entry["category"] != "language_scope_unsupported"),
+        "{clean}"
+    );
 
     let dir = root.join("src/unchanged");
     fs::DirBuilder::new()
@@ -2480,7 +2495,9 @@ fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), Strin
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
         Err(e) => return Err(format!("unexpected fixture error: {e}")),
     }
-    let refused = run("target/limited/comments.json")?;
+    let refused = run("target/limited/comments.json");
+    fs::remove_dir(&dir).map_err(|e| e.to_string())?;
+    let refused = refused?;
     assert_sane(&refused, "review-comments with unreadable directory")?;
     assert_eq!(refused.code, Some(2), "{}", refused.stderr);
     assert!(
@@ -2488,8 +2505,7 @@ fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), Strin
         "{}",
         refused.stderr
     );
-    let json = fs::read(root.join("target/limited/run-receipt.json")).map_err(|e| e.to_string())?;
-    let receipt: serde_json::Value = serde_json::from_slice(&json).map_err(|e| e.to_string())?;
+    let receipt = read_receipt("target/limited/run-receipt.json")?;
     assert_eq!(receipt["status"], "failed");
     let limitations = receipt["limitations"]
         .as_array()
