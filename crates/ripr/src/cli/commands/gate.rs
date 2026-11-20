@@ -98,6 +98,16 @@ fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
     ) {
         eprintln!("{warning}");
     }
+    for unavailable in output::gate::gate_decision_unavailable_inputs(&report) {
+        // "optional labels_json PATH is unavailable: why" names the field;
+        // say the flag the caller typed.
+        let rest = unavailable.strip_prefix("optional ").unwrap_or(unavailable);
+        let (field, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+        let flag = format!("--{}", field.replace('_', "-"));
+        eprintln!(
+            "ripr gate: {flag} {detail}; the decision was evaluated without it. Pass a readable file of the kind {flag} names, or drop the flag"
+        );
+    }
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;

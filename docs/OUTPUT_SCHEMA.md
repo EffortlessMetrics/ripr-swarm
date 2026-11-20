@@ -14032,7 +14032,10 @@ Field contract:
 - `status` - `no_suppressions` when the manifest is missing or empty,
   `healthy` when all parsed records have complete policy metadata, `warning`
   when valid records need review, or `config_error` when the manifest is
-  malformed.
+  malformed. An explicitly named `--manifest` that does not exist, or is
+  unreadable or malformed, is refused with exit `2` instead of reporting
+  `no_suppressions` (the report is still written first for a `config_error`);
+  only the absent default manifest reads as `no_suppressions` (#15254).
 - `summary.missing_owner` and `summary.missing_reason` - parser-level
   structural errors. Owner and reason remain required for every durable
   suppression.

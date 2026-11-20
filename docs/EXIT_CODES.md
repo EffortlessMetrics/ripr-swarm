@@ -190,6 +190,17 @@ reached the caller.
   `config_error` readiness report is still written first, so it replaces an
   earlier report at `--out` instead of leaving a stale one for a later step
   to read (#14311).
+  The same holds for any input file named explicitly on `reports
+  ts-limitations|ts-false-actionable`, `coverage-grip frontier`, `policy
+  operations|promote|preview-promote|waiver-aging|suppression-health`,
+  `annotations --comments`, `pr-summary --baseline`, `baseline diff`,
+  `zero status`, `first-action --pr-guidance` and `assistant-loop proof
+  --pr-guidance|--agent-packet|--before` that is missing, unreadable or (for
+  the baseline and zero-status JSON inputs) not valid JSON: the report is
+  written where the command writes one, then stderr names the flag, the path
+  and what to pass, and the command exits `2`. An absent default path stays
+  a quiet skip, and `gate evaluate|check` echoes unavailable optional inputs
+  on stderr without changing its exit code (#15254).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
