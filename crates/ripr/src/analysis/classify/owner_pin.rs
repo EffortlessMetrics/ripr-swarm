@@ -18898,6 +18898,16 @@ fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Optio
     Some(())
 }
 
+/// The scrutinee and pinned value of a plain literal `matches!` assertion
+/// (`assert!(matches!(owner(..), Ok(5)))`), read by the same admission the
+/// RIPR-SPEC-0197 pin uses, so the same-value invisibility check (#15414)
+/// reads exactly the `matches!` shapes the pin would credit.
+pub(in crate::analysis) fn literal_matches_assertion_operands(text: &str) -> Option<[String; 2]> {
+    matches_pin_condition(text)
+        .as_deref()
+        .and_then(literal_matches_operands)
+}
+
 /// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads
 /// from `text`: a plain `assert!(matches!(..))`, or the assertion twin of a
 /// terminal Err-return guard over a negated `matches!`. Guards are read through

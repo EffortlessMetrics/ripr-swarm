@@ -389,3 +389,101 @@ fn a_method_call_through_a_path_is_not_read_as_the_owner() -> Result<(), String>
     }
     Ok(())
 }
+
+const OK_FEE: &str = "pub fn fee(x: u32) -> Result<u32, String> {\n    Ok(x * 3)\n}\n";
+const ASYNC_OK_FEE: &str = "pub async fn fee(x: u32) -> Result<u32, String> {\n    Ok(x * 3)\n}\n";
+const OK_FEE_OLD: &str = "    Ok(x * 2)";
+
+fn same_value(finding: &Finding) -> bool {
+    finding
+        .ripr
+        .infect
+        .summary
+        .contains("evaluate to the same value")
+}
+
+#[test]
+fn an_ok_wrapped_owner_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    // #15414: `Ok(0 * 2)` and `Ok(0 * 3)` are both `Ok(0)`.
+    let findings = findings(
+        OK_FEE,
+        OK_FEE_OLD,
+        "#[test]\nfn zero() {\n    assert_eq!(invisible::fee(0), Ok(0));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_awaited_ok_wrapped_owner_at_an_agreeing_input_does_not_expose_the_change()
+-> Result<(), String> {
+    // #15414 acceptance shape 2: async owner, awaited path-qualified call.
+    let findings = findings(
+        ASYNC_OK_FEE,
+        OK_FEE_OLD,
+        "#[tokio::test]\nasync fn zero() {\n    assert_eq!(invisible::fee(0).await, Ok(0));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_literal_matches_pin_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    // #15414 acceptance shape 3: `matches!(fee(0), Ok(0))` holds on both versions.
+    let findings = findings(
+        OK_FEE,
+        OK_FEE_OLD,
+        "#[test]\nfn zero() {\n    assert!(matches!(invisible::fee(0), Ok(0)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_ok_wrapped_owner_at_a_separating_input_keeps_the_credit() -> Result<(), String> {
+    // Control: `Ok(4 * 3)` is `Ok(12)`, `Ok(4 * 2)` is `Ok(8)`.
+    let findings = findings(
+        OK_FEE,
+        OK_FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(fee(4), Ok(12));\n}\nuse invisible::fee;\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_literal_matches_pin_at_a_separating_input_is_not_read_as_invisible() -> Result<(), String> {
+    // Control: the matches! reading must fold the asserted input, not skip it.
+    let findings = findings(
+        OK_FEE,
+        OK_FEE_OLD,
+        "#[test]\nfn four() {\n    assert!(matches!(invisible::fee(4), Ok(12)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_constructor_is_not_read_as_the_same_value() -> Result<(), String> {
+    // Control: `Ok(x * 2)` -> `Err(x * 3)` carries the same payload at 0 in a
+    // different variant; peeling each wrapper alone would call them equal.
+    let lib = "pub fn fee(x: u32) -> Result<u32, u32> {\n    Err(x * 3)\n}\n";
+    let findings = findings(
+        lib,
+        OK_FEE_OLD,
+        "#[test]\nfn zero() {\n    assert_eq!(invisible::fee(0), Err(0));\n}\n",
+    )?;
+    for finding in &findings {
+        assert!(!same_value(finding), "{finding:?}");
+    }
+    Ok(())
+}
