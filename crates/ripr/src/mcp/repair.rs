@@ -668,7 +668,7 @@ pub(super) fn durable_receipt_document(
     {
         limitations.insert(0, limitation);
     }
-    json!({
+    let mut projected = json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
         "status": status,
@@ -696,7 +696,56 @@ pub(super) fn durable_receipt_document(
         "links": {
             "repair_attempt": format!("ripr://repair-attempt/{attempt_id}"),
         },
-    })
+    });
+    // The embedded CLI receipt keeps host-absolute paths on disk; the MCP
+    // projection never returns them (ADR 0022).
+    project_root_relative(&mut projected, root);
+    projected
+}
+
+/// Rewrite every string in `value` that spells the host-local repository root
+/// into its root-relative form: `<root>/a/b` becomes `a/b`, a bare `<root>`
+/// becomes `.`, and any other embedded occurrence becomes `<repo-root>`.
+fn project_root_relative(value: &mut Value, root: &Path) {
+    let spelled = root.display().to_string();
+    if spelled.is_empty() {
+        return;
+    }
+    let forward = spelled.replace('\\', "/");
+    project_root_relative_with(value, &[spelled, forward]);
+}
+
+fn project_root_relative_with(value: &mut Value, spellings: &[String]) {
+    match value {
+        Value::String(text) => {
+            for spelling in spellings {
+                if text == spelling {
+                    *text = ".".to_string();
+                    return;
+                }
+                for separator in ["/", "\\"] {
+                    let prefixed = format!("{spelling}{separator}");
+                    if text.contains(&prefixed) {
+                        *text = text.replace(&prefixed, "");
+                    }
+                }
+                if text.contains(spelling.as_str()) {
+                    *text = text.replace(spelling.as_str(), "<repo-root>");
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                project_root_relative_with(item, spellings);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                project_root_relative_with(item, spellings);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
@@ -2747,7 +2796,31 @@ pub(super) mod tests {
             .receipt_status_document(retained.repair_attempt_id.as_str(), Some(root), None)
             .map_err(|failure| format!("receipt fixture projection: {}", failure.detail))?;
         assert_eq!(document["receipt"]["status"], "issued", "{}", case.label);
-        assert_eq!(document["receipt"]["document"], receipt, "{}", case.label);
+        // The on-disk receipt keeps host-absolute paths; the MCP projection
+        // is the same document with the repository root projected away.
+        let root_text = root.display().to_string();
+        assert!(
+            receipt.to_string().contains(&root_text),
+            "{} positive control: the on-disk receipt spells the root",
+            case.label,
+        );
+        let mut expected_document = receipt.clone();
+        project_root_relative(&mut expected_document, root);
+        assert_eq!(
+            document["receipt"]["document"], expected_document,
+            "{}",
+            case.label
+        );
+        assert!(
+            !document.to_string().contains(&root_text),
+            "{} MCP receipt status leaked the host-local root: {document}",
+            case.label,
+        );
+        assert!(
+            document.to_string().contains("target/ripr/"),
+            "{} root-relative artifact paths remain",
+            case.label,
+        );
         assert_eq!(
             document["receipt"]["binding"]["sha256"], artifact.sha256,
             "{}",
