@@ -13822,7 +13822,6 @@ id = "RIPR-SPEC-0168"
 name = "Unsafe execution boundary probes"
 spec = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
 tests = [
-  "crates/ripr/tests/unsafe_context.rs",
   "crates/ripr/src/analysis/syntax/ra.rs::tests",
   "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::probe_walk_resolves_unchecked_assumption_through_use_bindings",
   "crates/ripr/src/analysis/probes/classify.rs::tests",
@@ -13831,7 +13830,6 @@ fixtures = [
   "fixtures/unsafe_boundary_probe",
 ]
 code = [
-  "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/probes/classify.rs",
   "crates/ripr/src/analysis/probes/family.rs",

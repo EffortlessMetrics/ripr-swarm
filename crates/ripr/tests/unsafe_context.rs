@@ -29,6 +29,8 @@ fn unsafe_context_keeps_the_edited_behavior_primary() -> Result<(), String> {
         ),
         ("returned.diff", &[returned]),
         ("inline.diff", &[inline]),
+        ("spacing.diff", &[inline]),
+        ("comment.diff", &[inline]),
         (
             "contract.diff",
             &[(10, "static_unknown", "unsafe fn score")],

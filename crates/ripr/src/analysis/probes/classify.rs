@@ -2,7 +2,9 @@ use super::super::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex};
 use super::family::family_for_probe_shape;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FileData;
-use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file};
+use crate::analysis::syntax::{
+    RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file, rust_nesting_refusal,
+};
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, ast};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -499,12 +501,36 @@ fn unsafe_boundary_for_line(
                     .source
                     .get(line_range.start..start)
                     .zip(removed)
-                    .is_some_and(|(prefix, old)| old.trim_start().starts_with(prefix.trim_start())))
+                    .is_some_and(|(prefix, old)| unchanged_unsafe_opener(prefix, old)))
     });
     Some(if in_body {
         UnsafeBoundary::Enclosing
     } else {
         UnsafeBoundary::EditedOpener
+    })
+}
+
+/// Compare through the body's opening brace, preserving token boundaries and
+/// literal contents while allowing whitespace and comments to change.
+fn unchanged_unsafe_opener(prefix: &str, old: &str) -> bool {
+    if old.trim_start().starts_with(prefix.trim_start()) {
+        return true;
+    }
+    if rust_nesting_refusal(old).is_some() || rust_nesting_refusal(prefix).is_some() {
+        return false;
+    }
+    fn tokens(text: &str) -> impl Iterator<Item = ra_ap_syntax::SyntaxToken> {
+        ast::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT)
+            .syntax_node()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+    }
+    let mut previous = tokens(old);
+    tokens(prefix).all(|expected| {
+        previous.next().is_some_and(|actual| {
+            expected.kind() == actual.kind() && expected.text() == actual.text()
+        })
     })
 }
 
