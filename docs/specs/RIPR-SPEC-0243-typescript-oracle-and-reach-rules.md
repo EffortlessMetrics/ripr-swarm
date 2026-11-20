@@ -2650,6 +2650,13 @@ keys); do not take the next number.
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  For a single literal message edit in a final `throw new Error(...)`, a
+  one-parameter function can also exclude the throw with a preceding
+  `if (b !== 0) return b;`. When every related call supplies a numeric
+  literal that takes that return, the finding is `reachable_unrevealed` with
+  infection `no`. The adapter test `isolated_throw_message_after_a_nonzero_return`
+  pairs this case with a zero input checking the message and a zero input
+  checking only that an error is thrown.
   The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
   `comments_before_if_do_not_shift_the_condition_text`,
   `mock_module_loaders_and_call_result_chains_are_unreadable`,

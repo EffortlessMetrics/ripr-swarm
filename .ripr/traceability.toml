@@ -20144,6 +20144,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::rule_10_node_assert_payloads_under_the_message_guard",
   "crates/ripr/src/analysis/language/typescript/tests/error_payload_tests.rs::rule4_ex13_class_payload_reads_broad_on_a_message_only_change",
   "crates/ripr/src/analysis/language/typescript/tests/error_payload_tests.rs::rule4_string_payload_credits_only_when_it_separates_the_messages",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::isolated_throw_message_after_a_nonzero_return",
   "crates/ripr/src/analysis/language/typescript/tests/ava_throws_message_tests.rs::an_ava_message_object_reads_as_an_exact_error",
   "crates/ripr/src/analysis/language/typescript/tests/ava_throws_message_tests.rs::an_ava_message_object_credits_only_when_it_separates_the_messages",
   "crates/ripr/src/analysis/language/typescript/tests/ava_throws_message_tests.rs::other_ava_error_expectations_stay_broad",

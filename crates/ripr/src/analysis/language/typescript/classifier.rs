@@ -8620,6 +8620,7 @@ pub(crate) fn classify_resolved_owner(
         && !fan_in_limited_unknown
         && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
+        single_line_replacement: context.single_line_replacement,
         all_tests,
         line,
         probe_shape: &probe_shape,
@@ -9396,6 +9397,7 @@ struct TsLadderVerdict {
 
 /// What the post-ladder rules read besides the verdict.
 struct TsPostLadderContext<'a> {
+    single_line_replacement: bool,
     /// Every parsed test, so a file-level reader can blank its test bodies.
     all_tests: &'a [TypeScriptTest],
     /// The changed line's number in the owner's file.
@@ -9743,8 +9745,29 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
     if context.candidates.is_empty() {
         return None;
     }
-    let conditions =
-        enclosing_conditions(source, owner.start_line, context.line, context.line_text)?;
+    let enclosing = enclosing_conditions(source, owner.start_line, context.line, context.line_text);
+    let after_nonzero_return = enclosing.is_none();
+    let conditions = enclosing.or_else(|| {
+        let error = context.ladder.error_facts;
+        if !context.single_line_replacement
+            || !matches!(context.probe_shape.family, ProbeFamily::ErrorPath)
+            || !error.sole_throw_site
+            || !error.message_only
+            || error.old_message.is_none()
+            || error.new_message.is_none()
+        {
+            return None;
+        }
+        super::guard_entry_guard::isolated_throw_after_return(
+            source,
+            owner.start_line,
+            context.line,
+            context.line_text,
+            &owner.name,
+            &owner.params,
+        )
+        .map(|condition| vec![condition])
+    })?;
     // A destructured options parameter leaves `owner.params` empty (arity is
     // unknown); read the signature itself for it.
     let (params, defaults, options) = if owner.params.is_empty() {
@@ -9836,6 +9859,13 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 return None;
             }
             for arguments in owner_call_arguments(callback, name, &receivers) {
+                // An actual argument named `undefined` may also bind a local value.
+                // The early-return witness only admits a direct numeric literal.
+                if after_nonzero_return
+                    && !matches!(arguments.as_slice(), [arg] if signed_numeric_expected_value(arg).is_some())
+                {
+                    return None;
+                }
                 calls += 1;
                 let inputs = CallInputs {
                     owner_source: source,
