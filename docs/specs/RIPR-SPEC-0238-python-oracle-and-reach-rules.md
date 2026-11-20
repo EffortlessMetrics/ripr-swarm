@@ -1270,9 +1270,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     assertion that does not itself read `caplog` (`assert f(5) is False`,
     `== False`, or a bound `r = f(5)` then `assert r is False`) is not
     applicable to it and never credits it, however exact. Relational reads
-    and a caplog conjunct beside a strong pin stay applicable for the caplog
-    evaluation and its abstention; an exact compare of a captured-log alias
-    (`msgs == [...]`) is not read (#15250).
+    stay applicable for the caplog evaluation; an exact compare of a
+    captured-log alias (`msgs == [...]`) is not read. A result pin in the same
+    assertion as a `caplog` read (`f(5) is False and "x" not in caplog.text`),
+    or with `caplog` only in its failure message, is `static_unknown` with
+    `unsupported_syntax` rather than credited (#15250).
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or

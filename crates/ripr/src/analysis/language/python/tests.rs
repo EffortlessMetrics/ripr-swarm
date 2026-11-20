@@ -11123,6 +11123,35 @@ fn caplog_an_exact_return_pin_does_not_credit_a_message_only_log_edit() -> Resul
     Ok(())
 }
 
+// #15250 review: a strong result pin conjoined with a caplog read (or a
+// `caplog` mention only in the failure message) must not grade a
+// logging-only edit; the finding abstains.
+#[test]
+fn a_result_pin_beside_a_caplog_mention_abstains_on_a_message_only_log_edit() -> Result<(), String>
+{
+    for assertion in [
+        "assert check_balance(5) is False and \"deprecated warning\" not in caplog.text",
+        "assert check_balance(5) is False, \"see caplog\"",
+    ] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {assertion}\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn only_an_inert_logger_call_is_a_message_only_log_edit() {
     use super::caplog_text::is_message_only_log_call_edit as log_only;

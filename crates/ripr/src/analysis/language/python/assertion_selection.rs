@@ -129,28 +129,26 @@ impl PythonAssertionFocus {
     /// filter). Static-limit suppression reads the selection built on this
     /// filter, so a wrong-family strong assertion never hides a limit.
     pub(super) fn admits(&self, assertion: &PythonAssertion) -> bool {
-        // A value pin on the owner's result passes on both versions of a
-        // message-only logging edit. A relational read (`"x" in msgs` through a
-        // captured-log alias) stays applicable: it is weak, so it never credits
-        // on its own, and the caplog evaluation decides it.
-        // An assertion that also reads `caplog` (`f(5) is False and "x" in
-        // caplog.text`) stays applicable for the caplog evaluation and its
-        // limits. A pin on a bound result (`r = f(5)`, `assert r is False`) is
-        // withheld like a direct one; so is an exact compare of a captured-log
-        // alias (`msgs == [...]`), which the evaluation does not read.
+        // A result pin passes on both versions of a logging-only edit, direct
+        // (`f(5) is False`) or bound (`r = f(5)`, `assert r is False`), and so
+        // does an exact compare of a captured-log alias (`msgs == [...]`), which
+        // the caplog evaluation does not read. An assertion whose text also
+        // reads `caplog` stays applicable so the caplog evaluation and its
+        // limits see it; a result-pin gate beside that read abstains
+        // (`static_limits`, #15250).
         if self.message_only_log_call
             && !assertion.text.contains("caplog")
-            && matches!(
-                assertion.oracle_shape,
-                PythonOracleShape::ExactAssertion
-                    | PythonOracleShape::FieldAssertion
-                    | PythonOracleShape::StatusCodeAssertion
-                    | PythonOracleShape::ExceptionAssertion
-            )
+            && is_result_pin_shape(assertion.oracle_shape)
         {
             return false;
         }
         self.error_handler_line || shape_matches_family(assertion.oracle_shape, &self.family)
+    }
+
+    /// Whether this change only adds or rewrites a logging call, so a pin on
+    /// the owner's result cannot observe it (#15250).
+    pub(super) fn withholds_result_pins(&self) -> bool {
+        self.message_only_log_call
     }
 
     /// Sink relevance: 0 for a sibling-field observer, 1 otherwise.
@@ -209,6 +207,17 @@ fn changed_field(line_text: &str, old_line_text: Option<&str>) -> Option<PythonC
     }
     let (keys, values) = dict_changed_keys_and_values(old_line_text, line_text)?;
     Some(PythonChangedField::DictElements { keys, values })
+}
+
+/// The shapes that pin a value or a raise rather than read emitted output.
+pub(super) fn is_result_pin_shape(shape: PythonOracleShape) -> bool {
+    matches!(
+        shape,
+        PythonOracleShape::ExactAssertion
+            | PythonOracleShape::FieldAssertion
+            | PythonOracleShape::StatusCodeAssertion
+            | PythonOracleShape::ExceptionAssertion
+    )
 }
 
 /// Whether an assertion of `shape` can observe a change of `family`.
