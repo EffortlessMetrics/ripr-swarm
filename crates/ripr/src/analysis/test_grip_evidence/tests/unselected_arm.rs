@@ -95,6 +95,64 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
     Ok(())
 }
 
+const INLINE_PRICES: &str = "pub enum Size { Small, Medium, Large }
+pub fn price_cents(size: Size) -> u32 { match size { Size::Small => 300, Size::Medium => 450, _ => 500 } }
+";
+
+#[test]
+fn a_selecting_input_activates_its_exact_same_line_arm() -> Result<(), String> {
+    let with_comment = INLINE_PRICES
+        .replace("300,", "300 /* 🦀 => */,")
+        .replace("Size::Medium =>", "Size::Medium=>");
+    for (source, input, arm, value) in [
+        (INLINE_PRICES, "Small", "Size::Small", 300),
+        (with_comment.as_str(), "Medium", "Size::Medium", 450),
+        (INLINE_PRICES, "Large", "_ =>", 500),
+    ] {
+        let test = format!("    assert_eq!(price_cents(Size::{input}), {value});");
+        let (full, compact, _) = arm_evidence_in(source, &test, arm)?;
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, StageState::Yes, "{arm}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_same_line_earlier_arm_can_prevent_activation() -> Result<(), String> {
+    let test = "    assert_eq!(price_cents(Size::Small), 300);";
+    let guarded = INLINE_PRICES.replace("Size::Small =>", "Size::Small if true =>");
+    for (source, arm) in [
+        (INLINE_PRICES, "_ =>"),
+        (guarded.as_str(), "_ =>"),
+        (guarded.as_str(), "Size::Small if"),
+    ] {
+        let (full, compact, classes) = arm_evidence_in(source, test, arm)?;
+        assert_eq!(classes, [SeamGripClass::ActivationUnknown; 2], "{arm}");
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{arm}");
+            assert!(missing_values(evidence).is_empty(), "{arm}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_readable_same_line_sibling_is_named_when_the_input_selects_another() -> Result<(), String> {
+    let source = INLINE_PRICES.replace(" { match size { ", " {\n    match size {\n        ");
+    let (full, compact, classes) = arm_evidence_in(
+        &source,
+        "    assert_eq!(price_cents(Size::Small), 300);",
+        "Size::Medium",
+    )?;
+    assert_eq!(classes, [SeamGripClass::WeaklyGripped; 2]);
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Weak);
+        assert_eq!(missing_values(evidence), ["Size::Medium"]);
+    }
+    Ok(())
+}
+
 #[test]
 fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed_and_its_activation_unknown()
 -> Result<(), String> {

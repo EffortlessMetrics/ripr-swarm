@@ -11,6 +11,7 @@ use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
+use crate::analysis::seams::RepoSeam;
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
 use crate::value_origins::{
@@ -4591,9 +4592,8 @@ pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 /// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
 /// select other arms grips the arm as `ripr check` reads it, never strongly.
 /// The seam has no diff, so the arm is read as one whose pattern did not
-/// change: the probe is the owner's own source line at the seam. The index
-/// is read as complete. That holds for the workspace inventories `repair`,
-/// `agent brief` and repo exposure read. The check screen's in-file seam view
+/// change. The index is read as complete. That holds for the workspace
+/// inventories `repair`, `agent brief` and repo exposure read. The check screen's in-file seam view
 /// indexes only the finding's file and its related tests; there a rival
 /// outside the subset could go unseen, but that view only chooses which
 /// refusal to print (it never starts a repair), and `ripr repair` re-reads the
@@ -4601,13 +4601,12 @@ pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 /// function, a helper or unreadable use of the owner, a computed input), each
 /// leaving the arm unnamed.
 pub(in crate::analysis) fn repo_seam_unselected_arm(
-    file: &std::path::Path,
-    line: usize,
+    seam: &RepoSeam,
     owner: &FunctionSummary,
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
-    let probe = repo_seam_arm_probe(file, line, owner)?;
+    let probe = repo_seam_arm_probe(seam, owner, index)?;
     // The selector read is cheap and refuses most arms (a computed or
     // guarded arm, a non-parameter scrutinee) before the workspace lookups.
     super::arm_selection::ArmSelector::establish(&probe, owner)?;
@@ -4628,28 +4627,76 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
     (!imports_foreign).then_some(fact)
 }
 
-/// The probe a repo `match_arm` seam reads as: the owner's own source line
-/// at the seam, as an arm whose pattern did not change.
+/// Represent a repo seam as an unchanged arm. The parser's pattern start
+/// and arrow identity distinguish arms on the same line.
 fn repo_seam_arm_probe(
-    file: &std::path::Path,
-    line: usize,
+    seam: &RepoSeam,
     owner: &FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<Probe> {
-    let source_line = owner
-        .body
-        .lines()
-        .nth(line.checked_sub(owner.start_line)?)?
-        .trim()
-        .to_string();
+    let seam_pattern = seam.expression().strip_suffix("=>")?;
+    let file = seam.file();
+    let line = seam.display_line();
+    let relative = line.checked_sub(owner.start_line)?;
+    let owner_line = owner.body.lines().nth(relative)?;
+    let (expression, column) = match seam.span() {
+        Some(span) if span.start_line == line => {
+            let source = &index.files().get(file)?.source;
+            let arrow = seam.byte_offset();
+            let (before, after) = source.split_at_checked(arrow)?;
+            let prefix = before.rsplit('\n').next()?;
+            let rest = after.split('\n').next()?;
+            let source_line = source.get(arrow - prefix.len()..arrow + rest.len())?;
+            let (pattern, _) = source_line
+                .char_indices()
+                .nth(span.start_column.checked_sub(1)?)?;
+            let head = source_line.get(pattern..prefix.len() + 2)?;
+            if !head
+                .strip_suffix("=>")?
+                .split_whitespace()
+                .eq(seam_pattern.split_whitespace())
+            {
+                return None;
+            }
+            // Parser function text starts at the fn keyword. On its first
+            // line the file may also have visibility, attributes or another
+            // item. Subsequent lines start at the same byte in both texts.
+            let owner_start = if relative == 0 {
+                let mut matches = source_line.match_indices(owner_line);
+                let (start, _) = matches.next()?;
+                if matches.next().is_some() {
+                    return None;
+                }
+                start
+            } else {
+                0
+            };
+            let owner_prefix = source_line.get(owner_start..pattern)?;
+            if !owner_line.strip_prefix(owner_prefix)?.starts_with(head) {
+                return None;
+            }
+            let column = if owner_prefix.trim().is_empty() {
+                1
+            } else {
+                owner_prefix.chars().count() + 1
+            };
+            (head, column)
+        }
+        // A head split over several lines has no readable pattern on the
+        // arrow's line. Keep the legacy whole-line read for line-only seams.
+        Some(_) => return None,
+        None => (owner_line.trim(), 1),
+    };
+    let expression = expression.to_string();
     Some(Probe {
-        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
-        location: SourceLocation::new(file, line, 1),
+        id: ProbeId(format!("repo-seam-arm:{}:{line}:{column}", file.display())),
+        location: SourceLocation::new(file, line, column),
         owner: Some(owner.id.clone()),
         family: ProbeFamily::MatchArm,
         delta: DeltaKind::Control,
         before: None,
-        after: Some(source_line.clone()),
-        expression: source_line,
+        after: Some(expression.clone()),
+        expression,
         expected_sinks: Vec::new(),
         required_oracles: Vec::new(),
     })
@@ -4664,13 +4711,12 @@ fn repo_seam_arm_probe(
 /// cannot resolve reads `false`: the arm may run or not, and nothing shows
 /// which.
 pub(in crate::analysis) fn repo_seam_arm_selected(
-    file: &std::path::Path,
-    line: usize,
+    seam: &RepoSeam,
     owner: &FunctionSummary,
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    let Some(probe) = repo_seam_arm_probe(file, line, owner) else {
+    let Some(probe) = repo_seam_arm_probe(seam, owner, index) else {
         return false;
     };
     let Some(selector) = super::arm_selection::ArmSelector::establish(&probe, owner) else {
