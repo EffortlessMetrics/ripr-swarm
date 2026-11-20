@@ -3849,7 +3849,16 @@ commas and unsupported syntax. A constructor name never supplies an oracle.
 
 Registry authority is limited to serde_json 1.0.151, crates.io checksum
 `c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+and 1.0.154, checksum
+`e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6`,
 whose macro expansion has no enclosing-function exit for this literal grammar.
+Each version is accepted only with its own checksum. The 1.0.154 audit (#14116)
+found `src/macros.rs` byte-identical to 1.0.151; its other source changes
+(`-0` text parsing, `as_f32` finiteness, the `preserve_order` hasher and
+raw-value error positions) are outside the `json!` literal expansion. A new
+release is added by re-reading `src/macros.rs` at that version and extending
+`AUDITED_JSON_RELEASES`; persisted classifications key on the analyzer build
+identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
 package table. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
