@@ -8255,6 +8255,7 @@ tests = [
   "crates/ripr/src/app/receipt.rs::receipt_check_malformed_json_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_required_field_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_current_head_exits_nonzero",
+  "crates/ripr/src/app/receipt.rs::receipt_check_rejects_foreign_identity_fields",
   "crates/ripr/src/app/receipt.rs::receipt_check_invalid_current_head_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_invalid_status_in_file_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_no_path_no_gap_exits_nonzero",
@@ -10512,6 +10513,7 @@ tests = [
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::validates_complete_findings_and_zero_outcomes_without_count_inference",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::preserves_incomplete_and_unsupported_kinds",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::rejects_missing_envelope_and_declared_completeness_disagreement",
+  "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::accepts_differently_spelled_same_root_and_refuses_another_directory",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_preserves_incomplete_typed_outcome_and_digest",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_does_not_look_clean_without_producer_evidence",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_marks_malformed_or_stale_evidence_invalid",
@@ -11134,6 +11136,9 @@ tests = [
   "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::unborn_head_keeps_other_bases_refused",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::oversized_first_commit_refusal_names_the_hook_bypass_and_scoping",
 ]
 fixtures = []
 code = [
