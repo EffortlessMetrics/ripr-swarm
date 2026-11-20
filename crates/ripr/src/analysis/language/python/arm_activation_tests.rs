@@ -430,6 +430,7 @@ fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Res
     assert_eq!(classify_case(both, yes, other, &y)?.class, Exposed);
     for test in [
         "def test_kind():\n    assert kind(*get_args()) == True\n",
+        "def test_kind():\n    assert kind('y') == missing_expected\n",
         "def test_kind():\n    kind('y')\n    assert kind('yes') == True\n",
         "def test_kind():\n    assert kind('yes') == True, kind('y')\n",
         "def test_kind():\n    assert kind('yes') == True\n    assert kind('y') is not None\n",

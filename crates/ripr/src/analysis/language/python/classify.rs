@@ -1132,11 +1132,9 @@ fn classify_change_for_owner_inner<'a>(
     // statement on both sides. A pure deletion uses the existing base-side
     // source view, with the same symmetric arm-selection test.
     let pattern_line = |raw: &str| {
-        raw.contains('|')
-            && (raw.trim_start().starts_with("case")
-                || no_behavior.brackets.new_in
-                || no_behavior.brackets.old_in
-                || old_guard.is_some())
+        (raw.contains('|') && (raw.trim_start().starts_with("case") || old_guard.is_some()))
+            || ((no_behavior.brackets.new_in || no_behavior.brackets.old_in)
+                && owner_source.is_some_and(|source| source.contains("case")))
     };
     let pattern_edit = pattern_line(line_text) || old_line_text.is_some_and(pattern_line);
     let match_gap = if static_limit.is_none() && pattern_edit {

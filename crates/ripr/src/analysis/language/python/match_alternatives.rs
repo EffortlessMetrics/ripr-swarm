@@ -256,11 +256,25 @@ fn pinned_input(
         }
         _ => return None,
     };
-    let call = match (left, right) {
-        (Expr::Call(call), Expr::Name(_) | Expr::Constant(_))
-        | (Expr::Name(_) | Expr::Constant(_), Expr::Call(call)) => call,
+    let (call, expected) = match (left, right) {
+        (Expr::Call(call), expected) | (expected, Expr::Call(call)) => (call, expected),
         _ => return None,
     };
+    if let Expr::Name(name) = expected {
+        let name = name.id.as_str();
+        let assertion_start = source.as_ptr().addr() - test.body_text.as_ptr().addr();
+        if !test
+            .parametrize
+            .as_ref()
+            .is_some_and(|cases| cases.binds(name))
+            && super::test_local_literal::test_local_literal(test, name, assertion_start).is_none()
+            && super::test_local_literal::test_module_constant(test, name).is_none()
+        {
+            return None;
+        }
+    } else if literal(expected).is_none() {
+        return None;
+    }
     if !super::range_activation::valid_owner_call(owner, call) {
         return None;
     }

@@ -206,6 +206,27 @@ fn an_unpaired_match_alternative_line_requires_a_row_that_flips_arms() -> Result
             }
         }
     }
+    // The separator can stay on the previous line while one member is replaced.
+    let source = short.replace("'yes'", "'yes' |\n            't'");
+    let test = "from src.cart import kind\n\ndef test_kind():\n    assert kind('yes') == True\n";
+    let findings = analyze_with_test(
+        "match-or-replaced-member",
+        &source,
+        test,
+        &[5],
+        vec![line(5, 5, "            'y'")],
+    )?;
+    let [finding] = findings.as_slice() else {
+        return Err(format!("expected one replaced member: {findings:?}"));
+    };
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|m| m.value == "val == 'y'")
+    );
     Ok(())
 }
 
