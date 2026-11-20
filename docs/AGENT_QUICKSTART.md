@@ -74,7 +74,7 @@ Loop (max 3 rounds per gap):
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
-           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+           If it prints `next=ripr context ...`, follow that as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Pin what the changed code does now:
            ripr reads the changed code, so assert its values, not the pre-change ones. Use
            assert_eq! on exact values: every changed field, branch and boundary (below, equal,
@@ -118,7 +118,7 @@ tracked edits when any exist; pass `source: "committed"` or
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
-(11,884 bytes on the wire) at every session start. Register it only if your
+(12,075 bytes on the wire) at every session start. Register it only if your
 agent prefers tools. `ripr` must be on
 `PATH`.
 
@@ -156,7 +156,7 @@ For one finding, pick by what the consumer is:
 
 | Need | Command | Output |
 |---|---|---|
-| A model reading a few lines under a token budget | `ripr explain <id> --format agent` | compact lines with an explicit `done=` / `open=` / `stop=` terminal line and a `next=` context command |
+| A model reading a few lines under a token budget | `ripr explain <id> --format agent` | compact lines with an explicit `done=` / `open=` / `stop=` terminal line, `owner=` / `before=` lines, and a `next=` context command only when the packet holds more |
 | A person reading why it was flagged | `ripr explain <id>` | human explanation |
 | A tool or agent that needs fields (related tests, seams, evidence) | `ripr context --at <id>` | JSON packet (always JSON) |
 

@@ -185,9 +185,16 @@ cargo xtask check-packaged-readme
 cargo xtask check-generated-clean
 cargo xtask release-readiness --version 0.11.0   # the version you are cutting
 cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarball contents
 ```
+
+`ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
+`cargo publish -p ripr --dry-run` fails pre-publish until `ripr-contract` exists
+on crates.io. `cargo xtask publish-dry-run` is the canonical lockstep rehearsal
+(`cargo publish -p ripr-contract --dry-run`, vendored `ripr` packaging, and
+unlocked check against the packaged `ripr-contract`).
 
 For the #1609-qualified path, the existing corpus also accepts the complete
 `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
@@ -240,12 +247,21 @@ movement cannot promote the release claim by itself.
 
 ### Crate tarball contents
 
-The published source distribution carries what a build of `ripr` reads, the
-sample workspace (`examples/*/example.diff`, `examples/*/src/**`,
-`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`,
-which carries the package-qualified help evidence), and one integration
-target: `tests/cli_help_hierarchy.rs` with `tests/common/help_contract.rs`
-and `tests/common/help_workspace.rs`.
+The published source distribution carries what a build of `ripr` reads and
+the sample workspace (`examples/*/example.diff`, `examples/*/src/**`,
+`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`). It
+carries no development tests (#15216).
+
+The rendered-help harness (`tests/cli_help_hierarchy.rs` with
+`tests/common/help_contract.rs` and `tests/common/help_workspace.rs`) is a
+development test too. `cargo test -p ripr` runs it against the checkout
+binary. Qualification runs it against the release candidate itself: the
+qualified `release-negative-corpus` compiles the admitted commit's copy of the
+harness with `rustc --test`, binds `CARGO_BIN_EXE_ripr` to the executable
+installed from the qualified archive, and requires every declared case to be
+listed and pass (`candidate_harness/archive/help_contract.rs`). The result is
+recorded as `installed_help_contract` in the corpus report's qualification
+custody.
 
 Test-only sources are not packaged. crates.io rejects a `.crate` above its
 default 10 MiB (10,485,760 byte) upload limit unless its team has raised the
@@ -260,13 +276,52 @@ list in `crates/ripr/Cargo.toml` therefore leaves out:
   new production module with such a name must be added there, or the packaged
   crate does not compile (the publish rehearsal and the `package-install`
   check build the packaged crate and catch that);
-- every other file under `tests/`.
+- all of `tests/`.
 
-With that list the packaged crate measured 10,285,280 bytes on the current
-candidate (200,480 bytes, about 1.9%, under the limit; 1,002 files,
-47,848,218 bytes uncompressed, via `cargo xtask publish-dry-run`). That is
-inside the 10% warning band, so the durable fix is still a raised crates.io
-limit or a smaller `ripr` crate; #14071 tracks it.
+That list alone was not enough. Packaged straight from the checkout, the
+crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
+2026-11-19 (main `5b9c56a4`, over the limit), because about a third of the
+remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
+test adds to them (#14198).
+
+So `ripr` is packaged from a **publish stage**, never straight from the
+checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+clone of the workspace checked out at `HEAD` (the workspace members, the root
+files and `.cargo/`; uncommitted edits are not staged) and, in
+`crates/ripr/src` only, removes every inline module whose attributes include
+exactly `#[cfg(test)]`, with its attributes and doc comments
+(`xtask/src/publish_stage.rs`). A build without `cfg(test)` never compiles
+those modules, so the library, binary and feature builds are unchanged; the
+repository checkout keeps every test. The strip parses each file with the
+Rust parser before and after the edit and stops the rehearsal on any parse
+error or when nothing was stripped, and the rehearsal then compiles the
+packaged crate. Out-of-line `#[cfg(test)] mod name;` declarations stay; their
+files are left out by the `include` list above. The rehearsal fails when a
+packaged crate is over the limit. A passing rehearsal leaves the stage at
+`target/publish-stage`, and the real publish runs from there (see
+[Publish](#publish)).
+
+Because the stage is a Git checkout of `HEAD`, the packaged
+`.cargo_vcs_info.json` still names the source commit, marked `"dirty": true`
+by the strip. The stage also writes `crates/ripr/.ripr-publish-stage`, which
+holds that commit and is packaged. A dirty record whose commit equals the
+marker's is identified as that commit, clean, by `build.rs` (so
+`ripr --version` prints the plain commit) and by the `package-install`
+identity check; any other dirty record stays dirty
+(`crates/ripr/src/build_commit_record.rs`).
+
+The #1609-qualified producer (`release-negative-corpus` with the
+`--candidate-*` group, `candidate_harness/archive.rs`) does not use the stage
+yet: it packages `ripr` straight from the admitted source and requires every
+packaged entry to equal its committed blob, so it cannot qualify the published
+representation. It also cannot package the real `ripr` before `ripr-contract`
+is on crates.io. #15204 owns moving it onto the stage with an explicit
+committed-blob-or-exact-strip rule.
+
+From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
+bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471
+bytes, stripped from 616 files), via `cargo xtask publish-dry-run`. The
+stage differed from `HEAD` only by those 616 files and the marker.
 
 Neither `cargo package` nor `cargo publish --dry-run` applies the registry
 limit. The `package-upload-size` check of `cargo xtask release-readiness`
@@ -282,21 +337,21 @@ the installed binary or library API. Changing the list is a release-contract
 change that must be reviewed against `cargo package -p ripr --list`, the
 measured `.crate` size and this document.
 
-The published `cli_help_hierarchy` target must compile and run from the
-extracted package without repository-root documentation. It keeps the rendered
-help and synthetic-document cases; its shared helper is packaged under
-`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
-the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
-real Cargo archive and rejects removal of the shared test helper:
+The `cli_help_hierarchy` target is not published. It needs no
+repository-root documentation, so it compiles standalone from its three files.
+It keeps the rendered help and synthetic-document cases. Seven live
+repository-guide audits belong to the unpublished `xtask` target
+`ripr_public_guide_contract`. That target also checks that a real Cargo
+archive carries no `tests/`, compiles the help target standalone against the
+checkout candidate, and rejects removal of the shared test helper:
 
 ```bash
 cargo test -p ripr --test cli_help_hierarchy
 cargo test -p xtask --test ripr_public_guide_contract
 ```
 
-These focused checks establish the help target's package boundary. Other
-packaged test targets retain their own asset requirements and are not qualified
-by this check.
+Release qualification runs the same cases against the installed candidate (see
+above).
 
 The example paths are enumerated rather than globbed as `examples/**` on
 purpose. `ripr` runs against the sample workspace during tests and writes a
@@ -352,8 +407,9 @@ Before calling an install or release-path PR complete, verify the crate package,
 the local install path, the extension package, and the published server assets:
 
 ```bash
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke
 target/ripr/install-smoke/bin/ripr --version
 target/ripr/install-smoke/bin/ripr first-pr --help
@@ -389,30 +445,114 @@ manifest checksum matches the downloaded archive. The extracted server must run
 
 ## Name Gate
 
-Immediately before the first real publish:
+Immediately before the first real publish, verify crates.io ownership, name
+availability, and existing-version metadata for both `ripr-contract` and
+`ripr`:
 
 ```bash
+cargo search ripr-contract --limit 5
 cargo search ripr --limit 5
 ```
 
-Then check the crates.io API:
+Then check the crates.io API for both crates:
 
 ```bash
+curl -i https://crates.io/api/v1/crates/ripr-contract
 curl -i https://crates.io/api/v1/crates/ripr
 ```
 
-If `ripr` is taken, stop. Do not publish under a fallback name without a naming
-decision.
+If either `ripr-contract` or `ripr` is owned by an unexpected publisher, or if
+`ripr-contract` at the target version already exists with different bytes or
+metadata than the rehearsed receipt, stop. Do not publish under a fallback name
+without a naming decision, and do not try to overwrite an immutable version.
 
 ## Publish
 
+Both `cargo publish -p ripr-contract` and `cargo publish -p ripr` require the
+exact qualified ship packet (`cargo xtask release-readiness --version <version>`
+and `cargo xtask publish-dry-run` receipt recording both `.crate` filenames,
+versions, SHA-256 checksums, source commit, the retained stage's commit and
+strip counts, and the `verification` it passed) plus explicit per-channel
+authorization. The receipt is written last, after the stage is retained: a
+receipt exists only for a pair that passed the packaged check and a stage that
+was kept, so a failed rehearsal or a failed retention leaves none.
+
+Publish from the stage the rehearsal just packaged and measured, not from the
+checkout: the checkout's `ripr` package is over the crates.io upload limit
+(see [Crate tarball contents](#crate-tarball-contents)).
+
+Run the rehearsal immediately before publishing, on the release commit, and
+check that the kept stage is that commit
+(`git -C target/publish-stage rev-parse HEAD`): `cargo publish` packages the
+stage again rather than uploading the rehearsed `.crate`, so a stage left by
+an earlier rehearsal would publish that earlier commit. `--allow-dirty` is
+required because the strip modifies the checked-out `ripr` sources. The
+rehearsal verifies, after staging, after packaging, and again after retaining
+the stage, that the stage differs from `HEAD` only by the marker and by `.rs`
+files under `crates/ripr/src` that are exactly their `HEAD` content with
+inline test modules stripped, and fails otherwise. The receipt records a
+digest of that exact stripped path/content set, so a stripped file restored
+byte-for-byte to `HEAD` — which Git stops reporting as modified — is refused
+rather than accepted with its inline tests back.
+
+1. Publish `ripr-contract` first:
+
 ```bash
 cargo login
-cargo publish -p ripr
+cd target/publish-stage
+cargo publish --allow-dirty -p ripr-contract
 ```
 
-Cargo may time out while polling the registry index after upload. If that
-happens, check crates.io manually before retrying.
+2. Read back the exact public `ripr-contract` version, checksum, and metadata
+from crates.io under a bounded polling/timeout policy and verify the published
+checksum matches the repository root's `target/package/publish-receipt.json`
+and that the receipt's `verification` is `packaged-check-passed` before
+attempting `ripr`:
+
+```bash
+curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"
+```
+
+A transient index delay is not a product failure, but an unavailable or
+mismatched `ripr-contract` dependency is not permission to publish `ripr`
+around the edge.
+
+3. Prove the bytes about to be uploaded are the rehearsed ones, then publish
+   `ripr` against that exact `=<version>` dependency. `cargo publish` repacks
+   the stage, so the pre-upload check packages `ripr` again in registry mode
+   from the retained stage and refuses unless the fresh archive's SHA-256
+   equals the receipt's `ripr_sha256`:
+
+```bash
+cargo xtask publish-precheck
+cargo publish --allow-dirty -p ripr
+```
+
+4. Read back the public `ripr` checksum and compare it to the receipt's
+   `ripr_sha256`; a mismatch means the uploaded bytes are not the qualified
+   ones, so stop and follow partial-publication recovery. Then verify `ripr`
+   from public bytes in a clean environment without path or vendor
+   substitution (`cargo install ripr --version <version> --locked --root
+   target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown
+   in [Post-Publish](#post-publish)). The clean install is separate evidence:
+   it proves the published crate builds, not that its bytes match the receipt.
+
+### Partial-publication recovery
+
+- **Contract-only / `ripr` failed**: if `ripr-contract` is public and its
+  version/checksum matches the receipt, retain the exact `ripr-contract`
+  receipt, diagnose the `ripr` failure, and retry only the unchanged authorized
+  `ripr` package where registry policy permits.
+- **Mismatched existing `ripr-contract` bytes or metadata**: stop. Published
+  bytes for a crate version on crates.io are immutable. Select a new coordinated
+  version for both `ripr-contract` and `ripr`; never silently weaken `ripr`'s
+  `=<version>` dependency or auto-yank as recovery.
+- **Registry propagation timeout**: stop and re-check the sparse index and
+  crates.io API before attempting `ripr`.
+- **Cross-channel partial completion**: if `ripr` publishes to crates.io but a
+  later channel fails, preserve the successful Cargo publication as an immutable
+  fact and follow the cross-channel recovery/authorization record; do not treat
+  the release as atomic across registries.
 
 ## Post-Publish
 

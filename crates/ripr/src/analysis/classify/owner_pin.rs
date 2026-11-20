@@ -1623,7 +1623,7 @@ impl OwnerPinSyntax {
             let Some(parent) = index.files().get(&edge.parent) else {
                 return false;
             };
-            self.module_parent_assertions(&edge.parent, &parent.source)
+            self.module_parent_assertions(&edge.parent, &parent.source, index)
                 .admits_targeted_module_declaration(edge.line, &edge.declaration)
         })
     }
@@ -2225,7 +2225,7 @@ impl OwnerPinSyntax {
                 return Some(AssertionRefusal::LexicalFallback);
             };
             if !self
-                .module_parent_assertions(&edge.parent, &parent.source)
+                .module_parent_assertions(&edge.parent, &parent.source, index)
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
                 return Some(AssertionRefusal::ModuleDeclaration {
@@ -2244,10 +2244,23 @@ impl OwnerPinSyntax {
     }
 
     /// A module-parent file's declaration admissions, read once per run with
-    /// the plain trusted-macro list (see `module_parents`).
-    fn module_parent_assertions(&self, file: &PathBuf, source: &str) -> Arc<OwnerPinAssertions> {
-        self.module_parents
-            .get_or_build(file, || owner_pin_assertions(source, NON_RETURNING_MACROS))
+    /// the plain trusted-macro list (see `module_parents`) and the default
+    /// features of the parent's own package, so a declaration gate those
+    /// features settle on admits its module (#14116).
+    fn module_parent_assertions(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        index: &RustIndex,
+    ) -> Arc<OwnerPinAssertions> {
+        self.module_parents.get_or_build(file, || {
+            owner_pin_assertions_with_default_features(
+                source,
+                NON_RETURNING_MACROS,
+                false,
+                index.member_crates.default_test_features(file).as_ref(),
+            )
+        })
     }
 
     /// The gates every assertion of `test` shares, whatever its macro: a
@@ -5669,6 +5682,23 @@ pub(in crate::analysis) fn returned_closure_pin_required(
 }
 
 impl OwnerReturnPin {
+    /// #15345: the call text the closed owner subset evaluates. An admitted
+    /// associated `T::name(..)` call is read as the bare `name(..)` it
+    /// resolves to, so a value neither version computes is refused for an
+    /// associated owner as it is for a free function; a trailing `.unwrap()`
+    /// is dropped as before.
+    fn closed_call_text<'a>(&self, call: &'a str) -> &'a str {
+        let call = call.trim();
+        match &self.call {
+            PinCall::Associated { type_name } => call
+                .strip_prefix(type_name.as_str())
+                .and_then(|rest| rest.trim_start().strip_prefix("::"))
+                .map_or(call, str::trim_start),
+            _ => call,
+        }
+        .trim_end_matches(".unwrap()")
+    }
+
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
     /// short-circuit and adaptor paths require their own pinned-input gates.
@@ -6172,11 +6202,10 @@ impl OwnerReturnPin {
                     .map(Box::new)
                 });
         let call = pin_call(owner, index)?;
-        // #6617 keeps the associated-function pin to a return value: a
-        // `T::new()` whole-value field pin is a separate claim.
-        if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
-        {
+        // #15345: an associated constructor (`Cfg::new()`) pins its fields
+        // through the same `T::name(..)` call identity a return value uses
+        // (#6617, RIPR-SPEC-0172).
+        if other_definition_competes(owner, index, call.kind(), None) {
             return None;
         }
         Some(Self {
@@ -7352,7 +7381,7 @@ impl OwnerReturnPin {
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), expected)
         {
             return false;
         }
@@ -7392,7 +7421,7 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && let Some(pinned) = gate.pinned_field_text(expected)
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
+            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), &pinned)
         {
             return false;
         }

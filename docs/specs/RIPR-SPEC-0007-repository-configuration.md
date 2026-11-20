@@ -139,6 +139,29 @@ see skips ignored records inside a `target/ripr` tree, at the repository top
 or under a nested root: ripr's own output is not source, so it costs no walk
 of the cache and cannot fail a check through that probe's git calls.
 
+Doctor runs the same output containment guard without writing (#14114).
+When `ripr check` and `ripr pilot` would refuse the default output location,
+because `target` is a regular file or a link that dangles, loops or leaves the
+workspace, doctor fails an `output_location` check with the guard's reason,
+recommends no analysis command, including whole-repository pilot, and drops its
+`✓ Cache` line. `RIPR_CACHE_DIR` waives the check exactly as it waives the guard,
+and a usable output location adds no check. While any `!` check blocks, the
+verbose start-here block gives that recovery instead of packet refresh advice,
+as the compact screen already does.
+
+Without `--root`, doctor diagnoses the root `ripr check` would analyze from the
+invocation directory (#15304): the enclosing Cargo workspace, package,
+JavaScript or Python workspace, or Git top level. It uses the same shared
+resolver and stderr disclosure as check. Language detection, the `enabled`
+tip and `Root:` therefore describe the tree check analyzes, and a run from a
+Python subdirectory of a Rust workspace is not told to replace `rust` with
+`python`. `--root .` diagnoses the invocation directory alone. If that resolver
+fails, doctor says so on stderr and diagnoses the invocation directory.
+The tip's replacement list drops `rust` only when it is the built-in default and
+no Rust marker is found (#7648). A `rust` written in `[languages].enabled` is the
+user's selection and stays in the list; a `[languages]` table without `enabled`,
+or no `ripr.toml`, leaves the default.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
@@ -716,6 +739,17 @@ Cargo.toml exists;
 and doctor's selected --root is not rebound;
 and language detection remains a shallow root scan (the locator stays
 cargo-only).
+
+Given a root whose projects sit below the shallow marker scan (for example
+`backend/Cargo.toml` and `frontend/package.json` with no marker at the root
+or in `src/`) and a loaded `ripr.toml` whose `[languages] enabled` names
+languages,
+when ripr doctor runs with the human screen,
+then the detected-languages line says where the scan looked and names the
+languages the loaded ripr.toml enables, instead of "none detected" (#15195);
+and with no loaded ripr.toml the line still says "none detected";
+and any detected language keeps the ordinary detected-languages line;
+and the marker scan and doctor JSON output are unchanged.
 ```
 
 ### Literal artifact-root rule excludes no source sibling

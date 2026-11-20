@@ -923,7 +923,7 @@ raw `Read-only file system (os error 30)` names neither command's output flag.
 `check`, `doctor`, and `cache status` already tolerate that layout.
 
 Keep the OS error, keep exit 2, and append `; write elsewhere with --out PATH`
-or `--out-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
+or `--output-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
 that is already a file is a different failure and must not grow that hint.
 Both commands share `output::file_write::create_output_dir`; do not special-case
 one command's prefix or flag in the other.

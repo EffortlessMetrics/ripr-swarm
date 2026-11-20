@@ -44,6 +44,15 @@ The default contract is:
   write the error and accepted list to stderr, leave stdout empty, and create
   no files. A missing provider retains the missing-value refusal. Valid
   `github` and `gitlab` parsing, preview, and generated file contents remain unchanged.
+- `ripr init --ci github|gitlab` refuses a `--root` below its Git work-tree top
+  level (#15389): GitHub and GitLab read CI files only from the repository root,
+  and the generated commands analyze the checkout root. The refusal exits 2, applies
+  to `--dry-run` too, writes nothing (no `ripr.toml`, no CI file, neither in the
+  subdirectory nor at the top level), and names
+  `ripr init --ci <provider> --root <toplevel>` as the next step, or dropping
+  `--ci` to write only `ripr.toml`. A root outside Git, or one whose Git probe
+  fails, keeps the previous behaviour; without `--ci`, subdirectory roots are
+  unchanged.
 - With a lossless root, successful `ripr init --ci github` names the generated
   workflow and tells the adopter to review and commit it, then open or update
   a pull request and read the advisory job summary. Successful `ripr init --ci gitlab`
@@ -924,6 +933,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter`
 - `crates/ripr/src/cli/commands/init_agents.rs::tests::python_block_names_pytest_and_does_not_promise_guided_repair`
 - `crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_refuses_a_root_below_the_git_toplevel_and_writes_nothing`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_keeps_the_toplevel_root_and_subdir_without_ci`
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`

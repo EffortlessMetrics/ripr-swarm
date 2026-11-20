@@ -13,7 +13,7 @@ pub(crate) struct OutputDirFixture {
 }
 
 impl OutputDirFixture {
-    /// `--out` / `--out-dir` sits under a directory with no write bits.
+    /// `--out` / `--output-dir` sits under a directory with no write bits.
     #[cfg(unix)]
     pub(crate) fn unwritable(label: &str, child: &str) -> Result<Self, String> {
         let cleanup = temp_root(label)?;
@@ -30,7 +30,7 @@ impl OutputDirFixture {
         })
     }
 
-    /// `--out` / `--out-dir` is a missing directory under a writable parent.
+    /// `--out` / `--output-dir` is a missing directory under a writable parent.
     pub(crate) fn writable(label: &str, child: &str) -> Result<Self, String> {
         let cleanup = temp_root(label)?;
         let root = cleanup.join("repo");
@@ -45,7 +45,7 @@ impl OutputDirFixture {
         })
     }
 
-    /// `--out` / `--out-dir` names an existing regular file.
+    /// `--out` / `--output-dir` names an existing regular file.
     pub(crate) fn occupying_file(label: &str, child: &str) -> Result<Self, String> {
         let cleanup = temp_root(label)?;
         let root = cleanup.join("repo");

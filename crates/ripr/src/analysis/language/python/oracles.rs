@@ -649,8 +649,10 @@ fn assertion_from_assert(
 }
 
 /// `assert f(lit, ..)` and `assert not f(lit, ..)` with a bare callee name and
-/// only literal positional arguments. Whether the call pins a value is
-/// decided once the callee is resolved (`bool_oracle.rs`).
+/// only literal or plain-name positional arguments. Whether the call pins a
+/// value is decided once the callee is resolved (`bool_oracle.rs`); a name
+/// argument counts only once its test settles it as a parametrize argname
+/// (`bool_oracle::settle_parametrized_names`, #15310).
 fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonBareBoolCall> {
     match expr {
         Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
@@ -810,7 +812,12 @@ fn literal_bool_call(
     let Expr::Name(callee) = call.func.as_ref() else {
         return None;
     };
-    if !call.keywords.is_empty() || !call.args.iter().all(is_literal_argument) {
+    if !call.keywords.is_empty()
+        || !call
+            .args
+            .iter()
+            .all(|argument| is_literal_argument(argument) || matches!(argument, Expr::Name(_)))
+    {
         return None;
     }
     Some(super::PythonBareBoolCall {
@@ -828,6 +835,15 @@ fn literal_bool_call(
             })
             .collect(),
         negated,
+        name_arguments: call
+            .args
+            .iter()
+            .filter_map(|argument| match argument {
+                Expr::Name(name) => Some(name.id.to_string()),
+                _ => None,
+            })
+            .collect(),
+        names_settled: false,
     })
 }
 

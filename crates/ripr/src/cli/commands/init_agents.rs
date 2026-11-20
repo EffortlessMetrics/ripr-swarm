@@ -43,7 +43,7 @@ Loop (max 3 rounds per gap):
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
-           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+           If it prints `next=ripr context ...`, follow that as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Pin what the changed code does now:
            ripr reads the changed code, so assert its values, not the pre-change ones. Use
            assert_eq! on exact values: every changed field, branch and boundary (below, equal,
@@ -207,7 +207,7 @@ Loop (max 3 rounds per gap):
            An `open=`, `stop=` or `done=` line saying preview evidence is advisory is expected.
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` command as printed, then the
-           `ripr context ...` it names (JSON).
+           `ripr context ...` it names, if any (JSON).
 3. WRITE   One focused test next to the related test. Pin what the changed code does now
            (ripr reads the changed code, so assert its values, not the pre-change ones). Assert
            exact values: every changed field, branch and boundary (below, equal, above). {advice}

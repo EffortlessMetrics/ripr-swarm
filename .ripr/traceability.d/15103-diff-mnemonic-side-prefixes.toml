@@ -1,7 +1,8 @@
 # Registers the mnemonic side-prefix controls (#15103) under RIPR-SPEC-0147:
 # a patch file written under `diff.mnemonicPrefix` parses to the same changed
 # files as the default-prefix patch, and look-alike prefix-free paths keep
-# their reading.
+# their reading. A custom side prefix the reader does not recognize keeps the
+# absent-file limitation, with recovery naming the possible prefix cause.
 [[extend]]
 id = "RIPR-SPEC-0147"
 tests = [
@@ -11,4 +12,6 @@ tests = [
   "crates/ripr/src/analysis/diff/side_prefix.rs::tests::a_later_plain_section_keeps_its_real_directory",
   "crates/ripr/tests/diff_file_mnemonic_prefixes.rs::mnemonic_side_prefixes_read_like_the_default_prefixes",
   "crates/ripr/tests/diff_file_mnemonic_prefixes.rs::prefix_free_paths_under_a_mnemonic_letter_stay_real_paths",
+  "crates/ripr/tests/diff_file_mnemonic_prefixes.rs::unread_custom_prefix_names_the_prefix_cause",
+  "crates/ripr/src/analysis/workspace/discover.rs::tests::unread_side_prefix_echoes_only_a_short_plain_first_component",
 ]
