@@ -1,0 +1,1 @@
+.github/actions/pr-candidate-admission/candidate_admission.py|fetch(|4|ci/admission|#15217: the mechanical-relocation reader reads changed blobs at the merge base and exact head through the read-only `gh api` contents endpoint (bounded size, timeout and worker count); `fetch(` names that reader and its cache warmer, no other network client.

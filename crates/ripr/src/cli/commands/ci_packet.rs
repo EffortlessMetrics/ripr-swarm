@@ -76,6 +76,10 @@ pub(super) struct CiPacketOptions {
     /// `--step NAME`: run only these steps, each still under its condition,
     /// to reproduce one step's failure without the rest of the packet.
     pub(super) steps: Vec<String>,
+    /// `--quiet`: the flag twin of `RIPR_QUIET`. Each child step runs with
+    /// `RIPR_QUIET=1`, so their `ripr progress:` and `wrote <path>` lines
+    /// drop; step log groups, failures and the exit code are unchanged.
+    pub(super) quiet: bool,
 }
 
 /// String-error form for the family parsers and tests; the binary dispatches
@@ -107,6 +111,7 @@ pub(super) fn ci_packet_command(args: &[String]) -> Result<(), CommandError> {
         top_seam: None,
         failed: Vec::new(),
         gate_blocked: false,
+        quiet: options.quiet,
         recorded: None,
     };
     run.all_stages();
@@ -134,6 +139,7 @@ pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions
     let mut options = CiPacketOptions {
         root: PathBuf::from("."),
         steps: Vec::new(),
+        quiet: false,
     };
     let mut root_explicit = false;
     let mut i = 0usize;
@@ -150,6 +156,10 @@ pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions
             "--step" => options
                 .steps
                 .push(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--quiet" => {
+                options.quiet = true;
+                continue;
+            }
             other => return Err(unknown_argument(COMMAND, other)),
         }
         i += 1;
@@ -363,6 +373,8 @@ struct PacketRun {
     /// The gate evaluation ran and blocked (its child exited `3`). A blocked
     /// gate is a decision, not a could-not-complete failure (EXIT_CODES.md).
     gate_blocked: bool,
+    /// `--quiet`: run every child with `RIPR_QUIET=1`.
+    quiet: bool,
     /// Test seam: when set, child commands and the diff capture are recorded
     /// as command lines instead of run, so tests can hold each step's argv.
     recorded: Option<std::cell::RefCell<Vec<String>>>,
@@ -556,6 +568,9 @@ impl PacketRun {
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(Stdio::inherit());
+        if self.quiet {
+            command.env(crate::cli::progress::QUIET_ENV, "1");
+        }
         for (name, value) in env {
             command.env(name, value);
         }
@@ -2007,6 +2022,7 @@ pub(super) fn recorded_commands(root: &Path, settings: CiSettings) -> (Vec<Strin
         top_seam: None,
         failed: Vec::new(),
         gate_blocked: false,
+        quiet: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -2031,6 +2047,7 @@ pub(super) fn stage_table() -> Vec<(String, When, Role)> {
         top_seam: None,
         failed: Vec::new(),
         gate_blocked: false,
+        quiet: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -2142,6 +2159,7 @@ mod tests {
             Ok(CiPacketOptions {
                 root: PathBuf::from("."),
                 steps: Vec::new(),
+                quiet: false,
             })
         );
         assert_eq!(
@@ -2160,6 +2178,14 @@ mod tests {
                 "Capture pull request diff",
                 "Run RIPR PR guidance report"
             ]))
+        );
+        assert_eq!(
+            parse_ci_packet_options(&args(&["--quiet", "--root", "repo"])).map(|options| (
+                options.quiet,
+                options.root,
+                options.steps
+            )),
+            Ok((true, PathBuf::from("repo"), Vec::new()))
         );
         assert!(matches!(
             parse_ci_packet_options(&args(&["--base", "main"])),
@@ -2637,6 +2663,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.all_stages();
@@ -2687,6 +2714,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: None,
         };
         let result = run.agent_loop("seam-1");
@@ -2743,6 +2771,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         empty_run.all_stages();
@@ -2778,6 +2807,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         based_run.all_stages();
@@ -2832,6 +2862,7 @@ mod tests {
                 top_seam: None,
                 failed: Vec::new(),
                 gate_blocked: false,
+                quiet: false,
                 recorded: None,
             };
             if earlier_required_failure {
@@ -2929,6 +2960,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.stage("Required", When::Always, Role::Required, true, |_| {
@@ -2984,6 +3016,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         }
     }
@@ -3208,6 +3241,7 @@ mod tests {
             top_seam: None,
             failed: Vec::new(),
             gate_blocked: false,
+            quiet: false,
             recorded: None,
         };
         let result = run.capture_pull_request_diff();
