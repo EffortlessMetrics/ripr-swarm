@@ -1696,7 +1696,7 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
             "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.",
         )
     });
-    let matcher = why.and_then(|why| why.split_once("(...)`").map(|(name, rest)| (name, rest)));
+    let matcher = why.and_then(|why| why.split_once("(...)`"));
     Some(match matcher {
         Some((name, rest)) if rest.starts_with(" expects `undefined`") => format!(
             "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` expects `undefined`, which ripr does not read as a fixed expected value",
