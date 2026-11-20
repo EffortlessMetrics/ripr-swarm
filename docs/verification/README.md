@@ -40,6 +40,9 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/cli-refusal.schema.json`](../../schemas/ripr/cli-refusal.schema.json) | Minimal `cli_refusal` document for argv usage errors and selector misses under an explicit JSON request (#11584). |
 | [`schemas/ripr/diff.schema.json`](../../schemas/ripr/diff.schema.json) | `ripr diff --json` `ripr_diff` report: changed files, changed seams, completion state, and the full-repository-context limitation. |
 | [`schemas/ripr/diff-refusal.schema.json`](../../schemas/ripr/diff-refusal.schema.json) | The refusal envelope `ripr diff --json` writes with exit code 2 when it cannot produce a report. |
+| [`schemas/ripr/rerun-refusal.schema.json`](../../schemas/ripr/rerun-refusal.schema.json) | The refusal envelope `ripr rerun --json` writes with exit code 2 when it cannot produce a targeted rerun report. |
+| [`schemas/ripr/agent-brief-refusal.schema.json`](../../schemas/ripr/agent-brief-refusal.schema.json) | The refusal envelope `ripr agent brief --json` writes with exit code 2 when it cannot produce a brief. |
+| [`schemas/ripr/agent-packet-refusal.schema.json`](../../schemas/ripr/agent-packet-refusal.schema.json) | The refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet: exit code 3 for an unknown seam, exit code 2 otherwise. |
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
 | [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
