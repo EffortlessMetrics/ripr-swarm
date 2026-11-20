@@ -73,6 +73,14 @@ suite('Extension version and manifest alignment (#14647)', () => {
     assert.deepStrictEqual(activationMarkers, [...ANALYZABLE_PROJECT_MARKERS].sort());
   });
 
+  test('the manifest declares marker-only activation for both Deno configs (#15649)', () => {
+    const events = manifest().activationEvents;
+    assert.ok(events.includes('workspaceContains:deno.json'));
+    assert.ok(events.includes('workspaceContains:deno.jsonc'));
+    assert.ok(!events.includes('workspaceContains:package.json'));
+    assert.ok(!events.includes('workspaceContains:settings.jsonc'));
+  });
+
   test('@types/vscode matches the minimum VS Code the extension declares (#14647)', () => {
     const current = manifest();
     const engine = /^\^(\d+)\.(\d+)\.\d+$/.exec(current.engines.vscode);

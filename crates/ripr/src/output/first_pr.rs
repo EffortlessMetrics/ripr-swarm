@@ -3,7 +3,7 @@ use crate::agent::loop_commands::{
     PILOT_BEFORE_SNAPSHOT_ARTIFACT, check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::agent_status::pilot_select_command;
-use crate::config::{detect_python_project, detect_typescript_project};
+use crate::config::{TYPESCRIPT_PROJECT_MARKERS, detect_python_project, detect_typescript_project};
 use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
@@ -925,7 +925,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         }
         // `doctor` detects TypeScript or JavaScript from a `package.json` or
         // shallow source files, but the no-config rule above enables the
-        // adapter only from a `tsconfig.json`/`jsconfig.json` marker, or from a
+        // adapter from a supported project marker, detectable source, or a
         // `package.json` beside JavaScript or TypeScript source at the root or
         // in `src`/`test`/`tests` (`package.json` alone is deliberately not a
         // marker). The root is the right one in that case, so name the
@@ -946,11 +946,12 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             } else {
                 ("TypeScript", "tsconfig.json")
             };
+            let project_markers = TYPESCRIPT_PROJECT_MARKERS.join("` or `");
             return Some(Selection::blocked_with_reason(
                 "blocked_artifact",
                 "typescript_project_marker_missing",
                 format!(
-                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or a `package.json` with JavaScript or TypeScript files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `{project_markers}` at the root, or a `package.json` with JavaScript or TypeScript files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
                     options.root
                 ),
                 None,

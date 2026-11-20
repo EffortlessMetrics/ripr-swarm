@@ -163,14 +163,15 @@ when absent from explicit `enabled`. When `ripr.toml` is missing, a
 language-specific project detector may add a preview adapter for a recognized
 project root. Python project detection is the first such exception;
 TypeScript project detection follows it, selecting the TypeScript adapter
-from a root `tsconfig.json` or `jsconfig.json`, or from detectable
+from a root project marker in `TYPESCRIPT_PROJECT_MARKERS`
+(`crates/ripr-contract/src/config/typescript.rs`), or from detectable
 TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`; not generated names,
-`.d.ts` declarations or excluded directories) below root `src` or `tests`. The same
-test applies to each non-hidden, non-excluded directory one level below the root and to
-each child of `packages/`, `apps/`, `libs/` and `libraries/`; vendored and
-excluded trees never select it, nor do deeper ones; below the root, hidden
-directories are skipped too. `package.json` alone does not select it, nor
-do tooling config files such as `eslint.config.js`
+`.d.ts` declarations or excluded directories) below root `src` or `tests`.
+The same test applies to each non-hidden, non-excluded directory one level
+below the root and to each child of `packages/`, `apps/`, `libs/` and
+`libraries/`; vendored and excluded trees never select it, nor do deeper ones;
+below the root, hidden directories are skipped too. `package.json` alone and
+tooling config files such as `eslint.config.js` do not select it
 (a `jsconfig.json` does mark a JavaScript project). A package-led root does:
 a `package.json` with JavaScript or TypeScript source at the root or under
 `src/`, `test/` or `tests/`, whether or not a Python project marker is also
@@ -178,6 +179,10 @@ present (#11336). Beside a `Cargo.toml`, only the root and `src/` count, since
 Rust `tests/` hold integration tests and fixtures (#11418). A binary built without
 `lang-typescript` ignores the detector silently. A
 `--languages rust,typescript` CLI flag overrides config when needed.
+
+The VS Code extension uses `tsconfig.json`, `jsconfig.json`, `deno.json`, and
+`deno.jsonc` as workspace activation markers. See
+[editor activation](../EDITOR_EXTENSION.md#activation).
 
 An explicit `ripr.toml` is authoritative. For example, a Python-shaped
 repository with `[languages] enabled = ["rust"]` must keep Python preview

@@ -162,6 +162,29 @@ suite('Activation server start gate', () => {
     }
   });
 
+  for (const [marker, expectedStarts] of [
+    ['deno.json', 1],
+    ['deno.jsonc', 1],
+    ['package.json', 0],
+    ['settings.jsonc', 0],
+  ] as const) {
+    test(`activation with only ${marker} requests ${expectedStarts} server starts (#15649)`, async () => {
+      const root = tempWorkspaceDir('ripr-activation-json-');
+      const lines: string[] = [];
+      const output = { appendLine: (line: string) => { lines.push(line); } } as unknown as vscode.LogOutputChannel;
+      let starts = 0;
+      const controller = { start: async () => { starts += 1; } };
+      try {
+        fs.writeFileSync(path.join(root, marker), '{}\n');
+        await startServerOnActivationIfAnalyzable(controller, output, [workspaceFolder(root)]);
+        assert.strictEqual(starts, expectedStarts);
+        assert.strictEqual(lines.some((line) => line.includes('staying idle')), expectedStarts === 0);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    });
+  }
+
   test('activation start runs when a folder has Cargo.toml', async () => {
     const root = tempWorkspaceDir('ripr-activation-rust-');
     const output = { appendLine: () => undefined } as unknown as vscode.LogOutputChannel;

@@ -130,8 +130,8 @@ export const PYTHON_PROJECT_MARKERS = [
 
 const RUST_OR_RIPR_PROJECT_MARKERS = ['Cargo.toml', 'ripr.toml'] as const;
 
-/** Matches the README: tsconfig/jsconfig enable TypeScript; package.json alone does not. */
-export const TYPESCRIPT_PROJECT_MARKERS = ['tsconfig.json', 'jsconfig.json'] as const;
+/** TypeScript project markers; package.json alone does not qualify. */
+export const TYPESCRIPT_PROJECT_MARKERS = ['tsconfig.json', 'jsconfig.json', 'deno.json', 'deno.jsonc'] as const;
 
 /** Every root marker `workspaceHasAnalyzableProject` accepts; `activationEvents` lists the same set (#14647). */
 export const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [

@@ -52,6 +52,8 @@
     "workspaceContains:noxfile.py",
     "workspaceContains:tsconfig.json",
     "workspaceContains:jsconfig.json",
+    "workspaceContains:deno.json",
+    "workspaceContains:deno.jsonc",
     "onCommand:ripr.restartServer",
     "onCommand:ripr.refreshDiagnostics",
     "onCommand:ripr.showStatus",

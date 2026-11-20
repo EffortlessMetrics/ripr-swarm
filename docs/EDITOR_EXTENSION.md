@@ -94,9 +94,9 @@ The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
 when one of its commands runs, or when a workspace folder root holds a project
 marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
 (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
-`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
-list and the markers the extension checks before starting analysis are the
-same set.
+`tox.ini`, `noxfile.py`), or a TypeScript marker (`tsconfig.json`,
+`jsconfig.json`, `deno.json`, `deno.jsonc`). The activation list and the
+markers the extension checks before starting analysis are the same set.
 
 When `ripr.server.version` is empty, the expected server version is the
 extension's own version from its manifest.
