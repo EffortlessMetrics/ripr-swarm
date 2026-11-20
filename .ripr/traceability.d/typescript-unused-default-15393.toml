@@ -9,6 +9,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_describe_titled_with_the_owner_name_is_not_a_caller",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_barrel_import_under_the_owner_name_is_followed",
+  "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::code_after_an_import_and_a_namespace_import_keep_the_verdict",
   "fixtures/typescript_vitest_unused_default_parameter",
 ]
 code = [

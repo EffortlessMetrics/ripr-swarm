@@ -2673,19 +2673,34 @@ keys); do not take the next number.
   production-path positive and negative.
 - #15393: an edit that changes only one default parameter value of the owner
   (on a one-line signature or its own parameter line) is not observed when
-  every call of every direct related test passes a value at that position
-  that cannot be `undefined` (a literal, object, array, function, template or
-  `new` expression), the owner's own module calls it only that way, and no
-  other workspace file names the owner outside a pure re-export. It reads
-  `reachable_unrevealed` with infection `no` (`default_not_applied`),
-  naming the parameter and the observed calls. An omitted argument,
-  `undefined`, an identifier or spread argument, a non-direct relation,
-  another caller, or a truncated workspace scan keeps the verdict.
-  `tests/unused_default_tests.rs` pins the reader
+  every call of every direct, aliased or barrel-followed related test passes
+  a value at that position that cannot be `undefined` (a literal, object,
+  array, function, template or whole `new` expression, under any trailing
+  `as T`, `satisfies T` or `!` cast). Every owner call elsewhere in a related
+  test file, and in the owner's own module (its own body included), must fill
+  the position the same way, and no other workspace file may name the owner
+  outside a pure re-export. It reads `reachable_unrevealed` with infection
+  `no` (`default_not_applied`), naming the parameter and the observed calls.
+  The verdict stands on: an omitted argument; `undefined`, an identifier or a
+  spread argument; a relation through a wrapper or entry; another caller; a
+  default export or renaming re-export; an import that renames a binding or
+  has code after it on its line; a namespace import in another file; a
+  loader or computed key; and a truncated scan or a skipped symlink.
+  Scope limit: the scan reads the TypeScript adapter's handwritten workspace
+  files, so callers in pruned build directories, generated or minified files,
+  non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
+  are not seen. `tests/unused_default_tests.rs` pins the reader
   (`only_a_lone_default_value_edit_is_located`,
   `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
   production path (`a_default_every_call_fills_is_not_exposed`,
-  `a_call_that_may_use_the_default_keeps_the_verdict`).
+  `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
+  `a_describe_titled_with_the_owner_name_is_not_a_caller`,
+  `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,
+  `a_barrel_import_under_the_owner_name_is_followed`,
+  `code_after_an_import_and_a_namespace_import_keep_the_verdict`); the
+  honesty corpus case `typescript_vitest_unused_default_parameter` rejects
+  promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with

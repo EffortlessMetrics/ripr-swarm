@@ -398,3 +398,34 @@ fn a_barrel_import_under_the_owner_name_is_followed() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Code after an import on its line, and another module's namespace import,
+/// can reach the owner where the scan does not look: both keep the verdict.
+#[test]
+fn code_after_an_import_and_a_namespace_import_keep_the_verdict() -> Result<(), String> {
+    let same_line = "import { it, expect } from 'vitest';\nimport { pick } from '../src/def'; const extra = pick('y');\n\nit('joins', () => {\n  expect(pick('x', { level: 'B' })).toBe('xB');\n});\n";
+    let filled = pick_test("pick('x', { level: 'B' })", "'xB'");
+    let registry = "import * as h from './def';\nexport const run = (name: string) => (h as any)[name]('y');\n";
+    for (label, files) in [
+        (
+            "default-import-tail",
+            vec![("tests/def.test.ts", same_line)],
+        ),
+        (
+            "default-namespace-registry",
+            vec![
+                ("tests/def.test.ts", filled.as_str()),
+                ("src/registry.ts", registry),
+            ],
+        ),
+    ] {
+        let finding = finding_at(label, PICK, 3, PICK_OLD, PICK_NEW, &files)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}

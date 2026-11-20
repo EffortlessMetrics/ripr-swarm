@@ -9693,7 +9693,8 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     // that names the owner (outside a pure `export { .. } from` re-export)
     // could be a caller this reader does not resolve.
     let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
-    if scan.truncated {
+    // A truncated scan or a skipped symlink may hide a caller.
+    if scan.truncated || scan.skipped_links > 0 {
         return None;
     }
     let is_reexport = |line: &str| {
@@ -9767,6 +9768,14 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             }
             continue;
         }
+        // A namespace object can reach the owner under a computed key, and a
+        // re-export that renames the owner hides its callers.
+        if text.lines().any(|line| {
+            let line = line.trim_start();
+            (line.starts_with("import") || line.starts_with("export")) && line.contains("* as ")
+        }) {
+            return None;
+        }
         // A re-export that renames the owner hides its callers.
         if text.lines().any(|line| {
             is_reexport(line) && word_occurrences(line, &owner.name) > 0 && line.contains(" as ")
@@ -9802,12 +9811,18 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
 /// renames a binding (`as`, which also covers `* as ns`) or never closes:
 /// a renamed owner has callers this text scan cannot name.
 fn static_import_lines(text: &str) -> Option<Vec<usize>> {
+    // Statement starts are read on masked text, so `import` inside a
+    // comment or a template never opens one.
+    let masked_text = ts_mask_literals_and_comments(text);
+    if masked_text.lines().count() != text.lines().count() {
+        return None;
+    }
     let mut lines = Vec::new();
     let mut statement: Option<String> = None;
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
+    for (index, (line, masked_line)) in text.lines().zip(masked_text.lines()).enumerate() {
         let starts = statement.is_none()
-            && trimmed
+            && masked_line
+                .trim_start()
                 .strip_prefix("import")
                 .is_some_and(|rest| rest.starts_with([' ', '{', '*']));
         if statement.is_none() && !starts {
@@ -9816,19 +9831,23 @@ fn static_import_lines(text: &str) -> Option<Vec<usize>> {
         lines.push(index + 1);
         let mut gathered = statement.take().unwrap_or_default();
         gathered.push(' ');
-        gathered.push_str(trimmed);
-        let masked = ts_mask_literals_and_comments(&gathered);
-        let closed = masked.contains(" from ")
-            || masked.contains("}from")
-            || gathered
-                .trim_end()
-                .trim_end_matches(';')
-                .ends_with(['\'', '"']);
-        if !closed {
+        gathered.push_str(masked_line.trim());
+        let specifier_here = masked_line.contains(" from ")
+            || masked_line.contains("}from")
+            || masked_line.trim_start().starts_with("from ")
+            || (starts && !masked_line.contains('{') && !masked_line.contains(" as "));
+        if !specifier_here {
             statement = Some(gathered);
             continue;
         }
-        if word_occurrences(&masked, "as") > 0 {
+        // The statement must end on this line at its specifier: code after
+        // it would be blanked with the import.
+        let trimmed = line.trim_end();
+        let tail = trimmed.strip_suffix(';').unwrap_or(trimmed);
+        if !tail.ends_with(['\'', '"']) {
+            return None;
+        }
+        if word_occurrences(&gathered, "as") > 0 {
             return None;
         }
     }
