@@ -2487,7 +2487,7 @@ fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), Strin
 
     let dir = root.join("src/unchanged");
     fs::DirBuilder::new()
-        .mode(0)
+        .mode(0o000)
         .create(&dir)
         .map_err(|e| e.to_string())?;
     match fs::read_dir(&dir) {
