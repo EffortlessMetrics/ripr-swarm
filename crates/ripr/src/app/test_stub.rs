@@ -468,18 +468,7 @@ fn withheld_ambiguity(reason: &str) -> StubRouteDecision {
 /// What `ripr agent stub --seam-id <id>` does for one seam. This is the resolution `resolve_test_stub` runs for a seam
 /// ID (`resolution_for` over the classified inventory), not a second
 /// validator, so a command printed on `Ok` is a command that succeeds.
-fn seam_stub_refusal(
-    root: &Path,
-    config: &RiprConfig,
-    classified: &[ClassifiedSeam],
-    seam_id: &str,
-) -> SeamStubOutcome {
-    let Some(entry) = classified
-        .iter()
-        .find(|entry| entry.seam.id().as_str() == seam_id)
-    else {
-        return SeamStubOutcome::Missing;
-    };
+fn seam_stub_outcome(root: &Path, config: &RiprConfig, entry: &ClassifiedSeam) -> SeamStubOutcome {
     let source = match read_owner_source(root, &entry.seam) {
         Ok(source) => source,
         Err(error) => return SeamStubOutcome::Refused(format!("{error:?}")),
@@ -585,20 +574,18 @@ impl AmbiguousLine {
         self.candidates.len() <= AMBIGUOUS_VALIDATION_LIMIT
     }
 
-    fn decide(
-        self,
-        root: &Path,
-        config: &RiprConfig,
-        classified: Option<&[ClassifiedSeam]>,
-    ) -> StubRouteDecision {
-        let Some(classified) = classified.filter(|_| self.eligible()) else {
+    fn decide(self, validated: Option<&BTreeMap<String, SeamStubOutcome>>) -> StubRouteDecision {
+        let Some(validated) = validated.filter(|_| self.eligible()) else {
             return withheld_ambiguity(&self.reason);
         };
         let outcomes = self
             .candidates
             .into_iter()
             .map(|id| {
-                let outcome = seam_stub_refusal(root, config, classified, &id);
+                let outcome = validated
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(SeamStubOutcome::Missing);
                 (id, outcome)
             })
             .collect();
@@ -638,9 +625,21 @@ fn finish_stub_routes(
     }
     let by_file: BTreeMap<_, _> = choices
         .into_iter()
-        .map(|(file, ids)| {
-            let inventory = classify(file.as_deref(), &ids).ok();
-            (file, inventory)
+        .filter_map(|(file, ids)| {
+            let inventory = classify(file.as_deref(), &ids).ok()?;
+            // Upper layers need only these compact verdicts. Drop the complete
+            // classified payload before preparing another file and resolve each
+            // repeated ID once, preserving the first inventory match.
+            let mut outcomes = BTreeMap::new();
+            for entry in inventory {
+                let id = entry.seam.id().as_str();
+                if ids.contains(id) {
+                    outcomes
+                        .entry(id.to_owned())
+                        .or_insert_with(|| seam_stub_outcome(root, config, &entry));
+                }
+            }
+            Some((file, outcomes))
         })
         .collect();
     plans
@@ -649,8 +648,8 @@ fn finish_stub_routes(
             let decision = match plan.decision {
                 PendingStubDecision::Known(decision) => decision,
                 PendingStubDecision::Ambiguous(line) => {
-                    let classified = by_file.get(&line.file).and_then(Option::as_deref);
-                    line.decide(root, config, classified)
+                    let validated = by_file.get(&line.file);
+                    line.decide(validated)
                 }
             };
             if plan.hidden
@@ -2039,19 +2038,17 @@ mod tests {
         seam_index: &mut Option<analysis::FileSeamIndex>,
     ) -> StubRouteDecision {
         let line = ambiguous_line(root, config, file, expression, reason, seam_ids, seam_index);
-        let classified = line
-            .eligible()
-            .then(|| {
-                classify_stub_choices(
-                    root,
-                    config,
-                    line.file.as_deref(),
-                    &line.candidates.iter().cloned().collect(),
-                )
-                .ok()
-            })
-            .flatten();
-        line.decide(root, config, classified.as_deref())
+        let plan = PendingStubRoute {
+            finding_id: String::new(),
+            hidden: false,
+            decision: PendingStubDecision::Ambiguous(line),
+        };
+        finish_stub_routes(root, config, vec![plan], |file, ids| {
+            classify_stub_choices(root, config, file, ids)
+        })
+        .pop()
+        .map(|route| route.decision)
+        .unwrap_or_else(|| withheld_ambiguity("missing test route"))
     }
 
     use super::*;
