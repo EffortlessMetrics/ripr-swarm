@@ -1569,6 +1569,11 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
 /// `NoStaticPath` hints do.
 const NO_CALLING_TEST_HINT: &str = "no test is seen calling this change";
 const UNESTABLISHED_REACH_HINT: &str = "test reach to this change is not established";
+/// #15336: an `unrevealed` finding whose reach stage is weak sits under the
+/// summary's "reached but not noticed" bucket, so a bare "not established"
+/// contradicts it. Say what the weak reach is instead: a link by shared file
+/// or name, with no test confirmed to reach the change.
+const UNREVEALED_WEAK_REACH_HINT: &str = "no test is confirmed to reach this change; related tests are linked only by a shared file or name";
 
 /// Whether the reach stage is callee-only evidence: every related test
 /// exercises the seam's converted callee and none invokes the changed
@@ -1645,6 +1650,10 @@ fn classification_hint(
         return Some(
             if callee_only {
                 NO_CALLING_TEST_HINT
+            } else if *class == ExposureClass::ReachableUnrevealed
+                && ripr.reach.state == StageState::Weak
+            {
+                UNREVEALED_WEAK_REACH_HINT
             } else {
                 UNESTABLISHED_REACH_HINT
             }
@@ -1995,11 +2004,12 @@ mod classification_hint_tests {
             ExposureClass::ReachableUnrevealed,
         ] {
             let hint = classification_hint(&class, &evidence);
-            assert_eq!(
-                hint.as_deref(),
-                Some("test reach to this change is not established"),
-                "{class:?}"
-            );
+            let expected = if class == ExposureClass::ReachableUnrevealed {
+                super::UNREVEALED_WEAK_REACH_HINT
+            } else {
+                "test reach to this change is not established"
+            };
+            assert_eq!(hint.as_deref(), Some(expected), "{class:?}");
             assert!(
                 hint.as_deref()
                     .is_none_or(|hint| !hint.contains("reaches this change")),

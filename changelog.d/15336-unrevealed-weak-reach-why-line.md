@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check`: for an unrevealed finding whose only link to a test is a shared file or name, the `Why unrevealed` line now says no test is confirmed to reach the change and that related tests are linked only by a shared file or name. It used to say "test reach to this change is not established" under a summary that counted the finding as "reached but not noticed" (#15336). Severity, class and counts are unchanged.

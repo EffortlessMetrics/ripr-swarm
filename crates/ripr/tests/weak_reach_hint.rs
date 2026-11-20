@@ -25,7 +25,7 @@ fn producer_evidence_and_public_renderers_agree_about_reach() -> Result<(), Stri
             "weak",
             "reachable_unrevealed",
             "weak_token_substring",
-            "Why unrevealed: test reach to this change is not established",
+            "Why unrevealed: no test is confirmed to reach this change; related tests are linked only by a shared file or name",
         ),
         (
             "owner_return_pin_pointer_glob_shadow",
@@ -129,10 +129,12 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
         finding.ripr.reveal.observe.summary = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)".into();
         finding.evidence.push("assertion not credited: `assert_eq!` in render_is_empty at src/lib.rs:29: an earlier guard spares the value the assertion expects".into());
         let human = render_check(&output, &OutputFormat::Human)?;
-        assert!(
-            human.contains("Why unrevealed: test reach to this change is not established"),
-            "{state:?}: {human}"
-        );
+        let expected = if state == StageState::Weak {
+            "Why unrevealed: no test is confirmed to reach this change; related tests are linked only by a shared file or name"
+        } else {
+            "Why unrevealed: test reach to this change is not established"
+        };
+        assert!(human.contains(expected), "{state:?}: {human}");
     }
     let mut reaching = original.clone();
     let finding = &mut reaching.findings[0];
@@ -144,5 +146,42 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
         human.contains("Why unrevealed: a related test asserts here"),
         "{human}"
     );
+    Ok(())
+}
+
+/// #15336: the summary bucket "reached but not noticed" and the `Why` line of
+/// the same finding must not disagree. With weak reach the `Why` line names the
+/// shared file/name link instead of the bare "not established"; a genuinely
+/// reached unrevealed finding keeps the reaching-test wording.
+#[test]
+fn unrevealed_weak_reach_why_line_does_not_contradict_summary() -> Result<(), String> {
+    let original = check_fixture("rust_trait_impl_shadow")?;
+    assert_eq!(original.findings.len(), 1);
+    assert_eq!(
+        original.findings[0].class.as_str(),
+        "reachable_unrevealed",
+        "fixture subject"
+    );
+    let human = render_check(&original, &OutputFormat::Human)?;
+    assert!(human.contains("1 reached but not noticed"), "{human}");
+    assert!(
+        human.contains("no test is confirmed to reach this change"),
+        "{human}"
+    );
+    assert!(
+        !human.contains("Why unrevealed: test reach to this change is not established"),
+        "{human}"
+    );
+
+    // Negative control: reach is established, so the old class wording stays.
+    let mut reached = original.clone();
+    reached.findings[0].ripr.reach =
+        StageEvidence::new(StageState::Yes, Confidence::Medium, "owner reached");
+    let human = render_check(&reached, &OutputFormat::Human)?;
+    assert!(
+        !human.contains("no test is confirmed to reach this change"),
+        "{human}"
+    );
+    assert!(human.contains("Why unrevealed: a related test"), "{human}");
     Ok(())
 }
