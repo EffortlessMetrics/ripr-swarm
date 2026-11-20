@@ -3199,6 +3199,7 @@ impl RustAdapter {
             dependency_adjacency
                 .as_ref()
                 .map(|adjacency| classify::DependencyEdgeContext {
+                    test_host_manifests: Default::default(),
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
@@ -3718,6 +3719,9 @@ impl RustAdapter {
                         &probe.family,
                         &probe.expression,
                     );
+                }
+                if let Some(edges) = &dependency_edges {
+                    edges.disclose_dependent_test_host(&mut finding, &changed.path);
                 }
                 push_retained_finding(&mut findings, finding);
             }
