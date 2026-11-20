@@ -79,6 +79,7 @@ fn validate_config(root: &Path) -> Result<String, String> {
                 Some(path) => format!("✓ ripr.toml valid ({})", human_path(path)),
                 None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
             };
+            validate_declared_paths(root, &config)?;
             Ok(match validate_suppressions_manifest(root, &config)? {
                 Some(manifest_line) => format!("{config_line}\n{manifest_line}"),
                 None => config_line,
@@ -102,6 +103,62 @@ fn validate_config(root: &Path) -> Result<String, String> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// #15495: exact-path keys name one repository file each. A path that is
+/// not a file under the root is a typo or a moved file, and every consumer
+/// would otherwise treat the setting as off without a word. Every missing
+/// entry is listed so one run reports all of them.
+fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), String> {
+    let analysis = config.analysis();
+    let languages = config.languages();
+    let mut declared: Vec<(String, String)> = Vec::new();
+    for target in analysis.production_like_targets() {
+        declared.push((
+            "analysis.production_like_targets".to_string(),
+            target.to_string_lossy().into_owned(),
+        ));
+    }
+    for (index, harness) in analysis.test_harnesses().iter().enumerate() {
+        declared.push((
+            format!("analysis.test_harnesses[{index}].target"),
+            harness.target.to_string_lossy().into_owned(),
+        ));
+    }
+    for (key, files) in [
+        (
+            "languages.rust.handwritten_files",
+            &languages.rust.handwritten_files,
+        ),
+        (
+            "languages.python.handwritten_files",
+            &languages.python.handwritten_files,
+        ),
+        (
+            "languages.typescript.handwritten_files",
+            &languages.typescript.handwritten_files,
+        ),
+    ] {
+        for file in files {
+            declared.push((key.to_string(), file.clone()));
+        }
+    }
+    let missing: Vec<String> = declared
+        .into_iter()
+        .filter(|(_, path)| !root.join(path).is_file())
+        .map(|(key, path)| format!("- {key}: `{path}`"))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "ripr.toml names {} path{} that {} not a file under {}:\n{}\nCreate the file, fix the path, or remove the entry.",
+        missing.len(),
+        if missing.len() == 1 { "" } else { "s" },
+        if missing.len() == 1 { "is" } else { "are" },
+        human_path(root),
+        missing.join("\n")
+    ))
 }
 
 /// #15308: the suppressions manifest the config selects is part of the
@@ -515,3 +572,7 @@ path = ".ripr/suppressions\u0000.toml"
 #[cfg(test)]
 #[path = "config/suppressions_manifest_tests.rs"]
 mod suppressions_manifest_tests;
+
+#[cfg(test)]
+#[path = "config/declared_paths_tests.rs"]
+mod declared_paths_tests;
