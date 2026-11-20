@@ -2462,7 +2462,13 @@ pub(super) fn unresolved_loop_list_boundary(
         {
             let indent = indentation(definition);
             initial.trim() == format!("{right} = {}[0]", parameter.name)
-                && loop_line.trim() == format!("for {left} in {}[1:]:", parameter.name)
+                // `for x in xs:` also visits `xs[0]` first; comparing it with
+                // itself either keeps `best` or rebinds it to the same object.
+                && [
+                    format!("for {left} in {}[1:]:", parameter.name),
+                    format!("for {left} in {}:", parameter.name),
+                ]
+                .contains(&loop_line.trim().to_string())
                 && condition.trim() == line_text.trim()
                 && update.trim() == format!("{right} = {left}")
                 && result.trim() == format!("return {right}")
