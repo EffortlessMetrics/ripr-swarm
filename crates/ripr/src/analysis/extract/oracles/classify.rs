@@ -109,13 +109,16 @@ pub(crate) fn assertion_reads_placeholder(
     if placeholders.is_empty() && !super::placeholder_scope::mentions_placeholder(assertion) {
         return false;
     }
-    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| {
-        let offset = super::arguments::custom_assertion_call_offset(assertion).unwrap_or(0);
-        assertion[offset..].to_string()
-    });
-    if ["let", "|", "match", "for"]
-        .iter()
-        .any(|marker| operand_text.contains(marker))
+    let Some(operand_text) = assertion_oracle_text(assertion) else {
+        // Unknown helpers retain their whole-expression read, including the
+        // receiver of a method such as `expected.assert_eq(actual)`.
+        return text_reads_placeholder(assertion, placeholders);
+    };
+    let introduces_scope = operand_text.contains('|')
+        || operand_text
+            .split(|ch: char| ch != '_' && !ch.is_alphanumeric())
+            .any(|word| matches!(word, "let" | "match" | "for"));
+    if introduces_scope
         && let Some(open) = operand_text.find('(')
         && let Some(operands) = super::arguments::delimited_contents_at(&operand_text, open)
         && let Some(read) = super::placeholder_scope::scoped_operand_read(&operands, placeholders)
