@@ -377,11 +377,13 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
 /// the CLI's words (`agent card seam_id <id> <reason>`) minus the root-bound
 /// remedy command, which this root-relative adapter words as a repository
 /// command instead (#10718).
-fn policy_omitted_failure(seam_id: &str, reason: &str) -> AttemptFailure {
+fn policy_omitted_failure(seam_id: &str, reason: &str, item_exposed: bool) -> AttemptFailure {
     // The default policy omits `strongly_gripped` seams because the existing
     // tests already pin the change: a closed gap, not a configuration problem.
     // The typed code stays `policy_omitted` (pinned); only the words change.
-    if reason.contains("strongly_gripped") {
+    // Closed only when the ITEM's own finding is `exposed`: a weaker finding
+    // bound to a strongly gripped seam is still open (typed check on the item).
+    if item_exposed && reason.contains("strongly_gripped") {
         return AttemptFailure::new(
             AgentCardRefusalKind::PolicyOmitted.as_str(),
             format!(
@@ -431,7 +433,13 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 .and_then(|entry| {
                     policy.omission_reason_for_class(entry.class, Some(entry.seam.file()))
                 })
-                .map_or_else(unbound, |reason| policy_omitted_failure(&seam_id, &reason))
+                .map_or_else(unbound, |reason| {
+                    policy_omitted_failure(
+                        &seam_id,
+                        &reason,
+                        item.class() == crate::domain::ExposureClass::Exposed.as_str(),
+                    )
+                })
         }
         RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
             AgentCardRefusalKind::SeamNotFound,
@@ -568,7 +576,11 @@ impl WorkspaceSession {
         if let Some(reason) = AgentBriefPolicy::from_config(&producers.config)
             .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         {
-            return Err(policy_omitted_failure(entry.seam.id().as_str(), &reason));
+            return Err(policy_omitted_failure(
+                entry.seam.id().as_str(),
+                &reason,
+                item.class() == crate::domain::ExposureClass::Exposed.as_str(),
+            ));
         }
         // The bind-time join is re-verified against the committed findings on
         // every read by re-running the shared bind rule itself: the retained
@@ -798,6 +810,7 @@ mod tests {
         let gripped = policy_omitted_failure(
             "seam-a",
             "is configured off for strongly_gripped seams and is not included in agent results",
+            true,
         );
         assert_eq!(gripped.code, "policy_omitted");
         assert!(
@@ -814,6 +827,7 @@ mod tests {
         let weak = policy_omitted_failure(
             "seam-a",
             "is configured off for weakly_gripped seams and is not included in agent results",
+            true,
         );
         assert_eq!(weak.code, "policy_omitted");
         assert!(!weak.detail.contains("already gripped"), "{}", weak.detail);

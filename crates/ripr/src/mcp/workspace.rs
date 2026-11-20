@@ -1388,6 +1388,14 @@ impl WorkspaceSession {
         // label must not say "findings below" over an empty list.
         if snapshot.outcome.kind == AnalysisOutcomeKind::CompleteWithFindings
             && scope.exposed_omitted > 0
+            // Fail closed: an overflowed budget omits items this list cannot
+            // see, and a narrowed list says nothing about the rest.
+            && selection.omitted.is_empty()
+            && snapshot.items.len() == selection.selected.len()
+            && scope.filter.file.is_none()
+            && scope.filter.language.is_none()
+            && scope.filter.repair_ready.is_none()
+            && scope.filter.class.is_none()
             && snapshot
                 .items
                 .iter()
@@ -3763,7 +3771,10 @@ mod tests {
     /// below"; one open (non-exposed) item keeps the original label.
     #[test]
     fn closed_gap_list_label_says_no_test_gap_found() -> Result<(), String> {
-        let label = |all_exposed: bool| -> Result<Value, String> {
+        let list = |all_exposed: bool,
+                    budget_omission: bool,
+                    filter: GapListFilter|
+         -> Result<Value, String> {
             let mut session = session_with_findings(2)?;
             let snapshot = session
                 .last_good
@@ -3777,16 +3788,26 @@ mod tests {
                         Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
                 }
             }
+            if budget_omission {
+                snapshot
+                    .selection
+                    .omitted
+                    .push(crate::lsp::diagnostic_budget::OmittedDiagnosticItem {
+                    canonical_id: "gap:test:budget-omitted".to_string(),
+                    reason:
+                        crate::lsp::diagnostic_budget::OmittedDiagnosticReason::DocumentItemLimit,
+                });
+            }
             session
                 .list_gaps(
                     None,
                     GapListWindow::default(),
-                    &GapListFilter::default(),
+                    &filter,
                     crate::mcp::MAX_RESPONSE_BYTES,
                 )
                 .map_err(|failure| failure.detail)
         };
-        let closed = label(true)?;
+        let closed = list(true, false, GapListFilter::default())?;
         assert_eq!(closed["items"], json!([]), "{closed}");
         assert_eq!(closed["exposed_omitted"], json!(2), "{closed}");
         assert!(
@@ -3795,10 +3816,40 @@ mod tests {
                 .is_some_and(|label| label.starts_with("no test gap found")),
             "{closed}"
         );
+        let keeps_label =
+            |document: &Value| document["outcome"]["label"] == json!("findings below");
         // Negative control: one open item keeps the typed outcome's label.
-        let open = label(false)?;
+        let open = list(false, false, GapListFilter::default())?;
         assert_eq!(open["exposed_omitted"], json!(1), "{open}");
-        assert_eq!(open["outcome"]["label"], json!("findings below"), "{open}");
+        assert!(keeps_label(&open), "{open}");
+        // Budget-omitted items are unseen and may be open: never an all-clear.
+        let overflow = list(true, true, GapListFilter::default())?;
+        assert_eq!(overflow["exposed_omitted"], json!(2), "{overflow}");
+        assert!(keeps_label(&overflow), "{overflow}");
+        // A narrowed list says nothing about the rest of the snapshot.
+        let by_file = list(
+            true,
+            false,
+            GapListFilter {
+                file: Some("src/module0.rs".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(by_file["exposed_omitted"], json!(1), "{by_file}");
+        assert!(keeps_label(&by_file), "{by_file}");
+        let by_ready = list(
+            true,
+            false,
+            GapListFilter {
+                repair_ready: Some(true),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_ready["exposed_omitted"].as_u64().is_some_and(|n| n > 0),
+            "{by_ready}"
+        );
+        assert!(keeps_label(&by_ready), "{by_ready}");
         Ok(())
     }
 
