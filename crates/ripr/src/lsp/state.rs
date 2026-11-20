@@ -1693,6 +1693,11 @@ pub(super) enum DocumentStalenessReason {
     /// failed, or not recorded by a committed snapshot) is not part of the
     /// reason; renderers that name one must observe it (#11452).
     NoAnalyzedSavedContent,
+    /// The buffer equals the recorded saved content, but that saved content
+    /// is not what the committed snapshot analyzed (#15316): the file was
+    /// saved, or rewritten on disk and reloaded, after the last analysis.
+    /// Saving again cannot help; the next analysis of the saved file can.
+    SavedContentNotYetAnalyzed,
 }
 
 impl DocumentStalenessReason {
@@ -1704,6 +1709,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => "invalid_incremental_change",
             Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
+            Self::SavedContentNotYetAnalyzed => "saved_content_not_yet_analyzed",
         }
     }
 
@@ -1719,6 +1725,9 @@ impl DocumentStalenessReason {
                 "this editor buffer was not tracked because the open-document limit was reached"
             }
             Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
+            Self::SavedContentNotYetAnalyzed => {
+                "the saved file changed since ripr last analyzed it"
+            }
         }
     }
 
@@ -1859,6 +1868,28 @@ pub(super) enum QuarantineTransition {
     Unchanged,
 }
 
+impl QuarantineTransition {
+    /// The net edge of two edges applied back to back to one document before
+    /// any publish (#15316): an external rewrite registers its buffer change
+    /// and the implied save as one lifecycle step, so the client receives
+    /// one marker for that version instead of one per edge.
+    pub(super) fn then(self, later: Self) -> Self {
+        match (self, later) {
+            // Entered and left again before anything was published: the
+            // client never saw the episode. Unreachable from `did_change`:
+            // its fold runs only for a divergent buffer, and a save never
+            // moves the analyzed identity, so the save cannot exit.
+            (Self::Entered, Self::Exited { .. }) => Self::Unchanged,
+            (_, Self::Exited { was_disclosed }) => Self::Exited { was_disclosed },
+            (Self::Entered, _) | (_, Self::Entered) => Self::Entered,
+            (Self::Exited { was_disclosed }, Self::Unchanged) => Self::Exited { was_disclosed },
+            (Self::Exited { .. }, Self::ReasonChanged) => Self::Entered,
+            (Self::ReasonChanged, _) | (_, Self::ReasonChanged) => Self::ReasonChanged,
+            (Self::Unchanged, Self::Unchanged) => Self::Unchanged,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DocumentState {
     pub(super) uri: Uri,
@@ -1888,6 +1919,13 @@ pub(super) struct DocumentState {
     /// `buffer_authority_unknown` is set; it selects the disclosed reason and
     /// never relaxes the fail-closed quarantine.
     pub(super) store_limit_refused: bool,
+    /// True from a save that adopted a saved digest until the next committed
+    /// analysis records an identity for this document (#15316). Only then
+    /// does a buffer equal to `saved_digest` mean "saved after the last
+    /// analysis": a digest seeded at open, or one an external rewrite made
+    /// stale, says nothing about which side is newer, so it keeps the
+    /// fail-closed divergent-buffer reason and its save route.
+    pub(super) saved_after_analysis: bool,
     pub(super) quarantine: Option<DocumentQuarantine>,
 }
 
@@ -1909,6 +1947,7 @@ impl DocumentState {
             analyzed_input_identity: None,
             buffer_authority_unknown: false,
             store_limit_refused: false,
+            saved_after_analysis: false,
             quarantine: None,
         }
     }
@@ -1943,7 +1982,15 @@ impl DocumentState {
         match analyzed {
             None => Some(DocumentStalenessReason::NoAnalyzedSavedContent),
             Some(analyzed) if *analyzed != self.buffer_digest() => {
-                Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+                // Hashing twice on the divergent branch only; a clean
+                // buffer still costs one digest.
+                if self.saved_after_analysis
+                    && self.saved_digest.as_deref() == Some(self.buffer_digest().as_str())
+                {
+                    Some(DocumentStalenessReason::SavedContentNotYetAnalyzed)
+                } else {
+                    Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+                }
             }
             Some(_) => None,
         }
@@ -2646,6 +2693,7 @@ impl DocumentStore {
             return false;
         }
         state.analyzed_saved_digest = Some(committed_digest.to_string());
+        state.saved_after_analysis = false;
         state.analyzed_input_identity = input_identity;
         state.refresh_quarantine();
         state.quarantine.is_none()
@@ -2844,6 +2892,7 @@ impl DocumentStore {
         }
         if let Some(digest) = saved_digest {
             state.saved_digest = Some(digest);
+            state.saved_after_analysis = true;
         }
         if let Some(text) = text {
             state.text = text;
@@ -2908,6 +2957,7 @@ impl DocumentStore {
         self.documents.for_each_mut(|uri, state| {
             if let Some(digest) = analyzed.get(uri) {
                 state.analyzed_saved_digest = digest.clone();
+                state.saved_after_analysis = false;
             }
             state.analyzed_input_identity = input_identity.clone();
             match state.refresh_quarantine() {
@@ -2960,6 +3010,7 @@ impl DocumentStore {
             analyzed_input_identity: None,
             buffer_authority_unknown: true,
             store_limit_refused: true,
+            saved_after_analysis: false,
             quarantine: None,
         };
         state.refresh_quarantine();
@@ -3075,6 +3126,7 @@ mod tests {
             analyzed_input_identity: Some("input:test".to_string()),
             buffer_authority_unknown: false,
             store_limit_refused: false,
+            saved_after_analysis: false,
             quarantine: None,
         }
     }
@@ -3185,6 +3237,72 @@ mod tests {
             return Err("withdrawal must disclose exactly once per episode".to_string());
         }
         Ok(())
+    }
+
+    /// #15316: a buffer equal to the recorded saved content that the
+    /// snapshot did not analyze is not a divergent unsaved buffer; saving
+    /// again cannot restore it.
+    #[test]
+    fn saved_but_unanalyzed_buffer_names_the_saved_content_reason() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut state = clean_document_state(&uri, "fn analyzed() {}");
+        state.text = "fn reverted() {}".to_string();
+        if state.refresh_quarantine() != QuarantineTransition::Entered {
+            return Err("a diverging buffer must enter quarantine".to_string());
+        }
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err("an unsaved buffer keeps the divergent-buffer reason".to_string());
+        }
+        // A digest seeded without a save (at open, or made stale by an
+        // external rewrite) says nothing about which side is newer: the
+        // divergent-buffer reason and its save route stay.
+        state.saved_digest = Some(digest_of("fn reverted() {}"));
+        state.refresh_quarantine();
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err("an unsaved digest must keep the divergent-buffer reason".to_string());
+        }
+        state.saved_after_analysis = true;
+        state.refresh_quarantine();
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::SavedContentNotYetAnalyzed)
+        {
+            return Err(format!(
+                "a saved, unanalyzed buffer must name the saved-content reason: {:?}",
+                state.quarantine
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quarantine_transitions_fold_into_one_net_edge() {
+        use QuarantineTransition::{Entered, Exited, ReasonChanged, Unchanged};
+        let exited = Exited {
+            was_disclosed: true,
+        };
+        assert_eq!(Entered.then(Unchanged), Entered);
+        assert_eq!(Entered.then(ReasonChanged), Entered);
+        assert_eq!(Unchanged.then(Entered), Entered);
+        assert_eq!(Unchanged.then(Unchanged), Unchanged);
+        assert_eq!(Unchanged.then(ReasonChanged), ReasonChanged);
+        assert_eq!(ReasonChanged.then(Unchanged), ReasonChanged);
+        assert_eq!(Entered.then(exited), Unchanged);
+        assert_eq!(Unchanged.then(exited), exited);
+        assert_eq!(exited.then(Unchanged), exited);
+        assert_eq!(exited.then(ReasonChanged), Entered);
     }
 
     #[test]
