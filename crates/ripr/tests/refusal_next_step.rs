@@ -598,6 +598,7 @@ struct ModuleFile {
 struct ModuleChildren {
     ordinary: Vec<ModuleFile>,
     test: Vec<ModuleFile>,
+    test_dirs: Vec<PathBuf>,
 }
 
 fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren {
@@ -625,6 +626,9 @@ fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren 
                 by_path: true,
             });
         } else {
+            if test_only {
+                children.test_dirs.push(target.clone());
+            }
             for path in [target.with_extension("rs"), target.join("mod.rs")] {
                 dest.push(ModuleFile {
                     path,
@@ -638,11 +642,11 @@ fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren 
 
 /// Walk physical module paths, keeping the loading mode until their children
 /// have been visited. A file may be imported in both modes.
-fn reachable_files(
+fn reachable_modules(
     roots: &[ModuleFile],
     modules: &BTreeMap<ModuleFile, ModuleChildren>,
     with_tests: bool,
-) -> BTreeSet<PathBuf> {
+) -> BTreeSet<ModuleFile> {
     let mut seen = BTreeSet::new();
     let mut todo = roots.to_vec();
     while let Some(file) = todo.pop() {
@@ -655,7 +659,7 @@ fn reachable_files(
             }
         }
     }
-    seen.into_iter().map(|file| file.path).collect()
+    seen
 }
 
 fn fragment_name(relative: &str) -> String {
@@ -694,8 +698,7 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
             found.push((path, relative, keys));
         }
     }
-    // Include standalone sources as roots. Only a file reached through a
-    // test edge and absent from the production walk is excluded.
+    // Include standalone sources when identifying the declared module trees.
     let named: BTreeSet<_> = modules
         .values()
         .flat_map(|children| {
@@ -718,11 +721,27 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
         path: src.join(name),
         by_path: false,
     }));
-    let all = reachable_files(&roots, &modules, true);
-    let production = reachable_files(&roots, &modules, false);
+    let all = reachable_modules(&roots, &modules, true);
+    // A conventionally declared test-only module owns its directory, including
+    // fixture files without a mod declaration. A literal #[path] owns just the
+    // file it names. Production declarations may still reach either location.
+    let test_dirs: BTreeSet<_> = all
+        .iter()
+        .filter_map(|file| modules.get(file))
+        .flat_map(|children| children.test_dirs.iter().map(PathBuf::as_path))
+        .collect();
+    let in_test_dir = |path: &Path| path.ancestors().any(|dir| test_dirs.contains(dir));
+    roots.retain(|root| !in_test_dir(&root.path));
+    let production: BTreeSet<_> = reachable_modules(&roots, &modules, false)
+        .into_iter()
+        .map(|file| file.path)
+        .collect();
+    let declared: BTreeSet<_> = all.into_iter().map(|file| file.path).collect();
     Ok(found
         .into_iter()
-        .filter(|(path, _, _)| !all.contains(*path) || production.contains(*path))
+        .filter(|(path, _, _)| {
+            production.contains(*path) || (!declared.contains(*path) && !in_test_dir(path))
+        })
         .map(|(_, relative, keys)| (relative, keys))
         .collect())
 }
@@ -1154,6 +1173,10 @@ fn scan_excludes_nested_test_rows_and_keeps_production_rows()
 -> Result<(), Box<dyn std::error::Error>> {
     let keys = scan_module_fixture(&[
         ("lib.rs", "mod rows; mod nested { #[cfg(test)] mod rows; }"),
+        (
+            "nested/rows/fixture.rs",
+            r#"fn f() { Err("test fixture row is missing"); }"#,
+        ),
         ("rows.rs", r#"fn f() { Err("production row is missing"); }"#),
         (
             "nested/rows.rs",
