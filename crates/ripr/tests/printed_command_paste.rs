@@ -960,6 +960,19 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     std::fs::remove_file(&pilot_report)
                         .map_err(|err| format!("remove pilot report: {err}"))?;
                 }
+                // `review-comments --root` writes its default guidance under
+                // the root (#15378), so an earlier pass's cards would make the
+                // later cold flow warm; drop them like the pilot report.
+                for cards in [
+                    "target/ripr/review/comments.json",
+                    "target/ripr/review/comments.md",
+                ] {
+                    let cards = fixture.root.join(cards);
+                    if cards.exists() {
+                        std::fs::remove_file(&cards)
+                            .map_err(|err| format!("remove review cards: {err}"))?;
+                    }
+                }
             }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
             // The warm route: the pilot report is accepted (first-pr only
