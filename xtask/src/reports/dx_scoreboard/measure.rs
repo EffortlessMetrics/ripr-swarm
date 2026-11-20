@@ -1193,6 +1193,10 @@ fn measure_ci(binary: &Path, scratch: &Path) -> Vec<Sample> {
     let root = scratch.join("ci-init");
     let result = (|| -> Result<(usize, bool), String> {
         write_tiny_crate(&root)?;
+        // `init --ci` refuses a root below a Git top level (#15389), and the
+        // scratch dir lives under this checkout's `target/`, so the fixture is
+        // its own repository, as a real adopter's checkout root would be.
+        git(Some(&root), &["init", "-q"])?;
         let args = vec![
             "init".to_string(),
             "--root".to_string(),

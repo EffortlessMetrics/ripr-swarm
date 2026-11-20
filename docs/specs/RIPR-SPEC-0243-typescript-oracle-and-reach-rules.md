@@ -36,6 +36,7 @@ Linked issues:
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #14241 (class exported as default by a later statement)
 - #14088 (class imported by a named `require()`; re-declared `var` import)
+- #15092 (class as a CommonJS module's whole export)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -126,6 +127,18 @@ are numbered in reading order; rules 9 to 11 were added later. Every other state
 normative.
 
 ### Verdict ladder
+
+For #12951, a whole-file single-line replacement of one decimal safe-integer
+return in a straight-line switch can keep the weak-oracle verdict when one
+related direct Vitest test selects that unique literal-string case and its
+direct `toBeLessThan` assertion passes for both values. The function module,
+switch arms, imports, test registration, call and assertion must satisfy the
+bounded AST witness; a changed case label, a competing related test, a
+shadowed binding, a failing or distinguishing threshold, or an unresolved
+selector keeps the existing conservative verdict. This exception does not
+populate a positive infection stage: the generic TypeScript preview infection
+stage remains unknown. Repair readiness remains subject to the shared packet
+validator and the available package and runner evidence.
 
 `classifier.rs` decides the class in this order; the first match wins:
 
@@ -1477,6 +1490,27 @@ require(...)`, `k.triple`) is a property of the function, not the owner.
 The gate text keeps strings, templates and regex literals visible beside the
 two masks, so a string spelling `module.exports = x` refuses the file (fail
 closed). Known limits: a default binding of a function export (`const { default: f } = require(...)`, and an ES `import f from` of the same module, which the adapter cannot tell apart) is refused rather than credited; overload-style repeated `function name` declarations and any `require.resolve` use refuse the file.
+
+Amended 2026-11-18 (#15092): `module.exports = Name;` of one top-level class
+declaration makes the class the module's whole export in the same way. A
+literal whole-module `require` (`const`, `let` or `var`, any local name) of
+the owner module then binds the class, so `new Local()` constructs it and its
+instance methods and constructor relate through the receiver (rule 5's
+receiver reading). The class is read as the whole export only when the file
+gate above holds and the name provably still holds the class: exactly one
+file-level declaration of the name, no write to it anywhere in the file, and
+no named export beside it (`module.exports.Name = ...`, `exports.Name = ...`,
+any `exports.` or `exports[` spelling) and no property added to the class
+binding (`Name.Name = Name`, `Name['x'] = ...`, `Object.assign(Name, ...)`,
+`Object.defineProperty(Name, ...)`), which a named `require` would read. A
+class exported both ways keeps its named-`require` reading. A named `require` of a whole-export class
+(`const { Name } = require(...)`) reads a property the class does not have and
+is not related. A default-named binding (`const { default: Name } =
+require(...)`, ES `import Name from` of the CommonJS module) is refused as for
+a function export, and a `require()` of an ES default class stays a namespace
+object. A `let`/`var` local the test file writes again, a re-declared `var`,
+and a binding of the local in a `describe` body, a hook or the test body
+(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**

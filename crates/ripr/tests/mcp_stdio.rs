@@ -4748,6 +4748,95 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
     Ok(())
 }
 
+/// #14186: a method the pinned SDK can type but this server does not serve
+/// used to answer `-32601` with only the bare method name as its message,
+/// while a method the SDK cannot type said `Method not found: <method>`.
+/// Both groups share the conventional wording, in an `initialize` session and
+/// for the discovery-session `ping`, and the session keeps serving.
+#[test]
+fn sdk_typed_unserved_methods_say_method_not_found() -> Result<(), String> {
+    let root = workspace_root()?;
+    let unserved: [(&str, Value); 6] = [
+        ("prompts/get", json!({"name": "any"})),
+        ("logging/setLevel", json!({"level": "debug"})),
+        (
+            "resources/subscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        (
+            "resources/unsubscribe",
+            json!({"uri": "ripr://workspace/status"}),
+        ),
+        ("tasks/get", json!({"taskId": "any"})),
+        // The control: a method the SDK cannot type already used the wording.
+        ("nope/never", json!({})),
+    ];
+    let mut script = line(json!({
+        "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "unserved-method-control", "version": "1"}}
+    }))?;
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?);
+    for (method, params) in &unserved {
+        script.extend(line(json!({
+            "jsonrpc": "2.0", "id": method, "method": method, "params": params
+        }))?);
+    }
+    script.extend(line(
+        json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}),
+    )?);
+    let responses = response_lines(&run_mcp(&root, &[&script])?)?;
+    if responses.len() != unserved.len() + 2 {
+        return Err(format!(
+            "expected one reply per request, got {}: {responses:?}",
+            responses.len()
+        ));
+    }
+    for (index, (method, _params)) in unserved.iter().enumerate() {
+        let reply = &responses[index + 1];
+        if reply.get("id") != Some(&json!(method))
+            || reply.pointer("/error/code") != Some(&json!(-32601))
+            || reply.pointer("/error/message")
+                != Some(&json!(format!("Method not found: {method}")))
+        {
+            return Err(format!(
+                "unserved `{method}` must answer -32601 `Method not found: {method}`: {reply}"
+            ));
+        }
+    }
+    if responses[unserved.len() + 1] != json!({"jsonrpc": "2.0", "id": "alive", "result": {}}) {
+        return Err(format!(
+            "session did not recover after unserved methods: {responses:?}"
+        ));
+    }
+
+    // A `server/discover` session does not serve `ping`: the same wording.
+    let mut discovery = line(json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": {"_meta": current_meta()}
+    }))?;
+    for (id, method) in [("tools", "tools/list"), ("ping", "ping")] {
+        discovery.extend(line(json!({
+            "jsonrpc": "2.0", "id": id, "method": method,
+            "params": {"_meta": current_meta()}
+        }))?);
+    }
+    let responses = response_lines(&run_mcp(&root, &[&discovery])?)?;
+    if responses.len() != 3
+        || responses[0].get("result").is_none()
+        || responses[1].get("result").is_none()
+        || responses[2].pointer("/error/code") != Some(&json!(-32601))
+        || responses[2].pointer("/error/message") != Some(&json!("Method not found: ping"))
+    {
+        return Err(format!(
+            "discovery-session ping must answer -32601 `Method not found: ping`: {responses:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// Send one `tools/call` whose `arguments` object is raw JSON text, so number
 /// literals such as `18446744073709551616` and `1e30` reach the server exactly
 /// as a client could write them. A `serde_json::Value` cannot hold

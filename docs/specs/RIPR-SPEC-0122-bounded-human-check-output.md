@@ -190,6 +190,13 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+The block ends with one blank line. A trailing `Note:` after it (an empty
+range caveat, a working-tree or preview-language disclosure) opens directly
+after that blank line, so exactly one blank line separates them; a report
+with no trailing note keeps its final blank line (#14318).
+`--format human-full` follows the same rule: its last finding block ends
+with one blank line, and a trailing `Note:` opens directly after it.
+
 Hidden finding locations use the same shared location renderer as selected
 and full findings: paths under the analysis root carry `./` and a
 workspace-relative path. Outside-root paths, parent-traversal remainders and
@@ -222,12 +229,15 @@ Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
 print as one row that names the members' lines, the count, the owner and the
 kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
-when there are at most three runs, so a row never names a line that no member
-is on; more runs print the covering span with the distinct line count
-(`1078-1241 (31 distinct lines)`) (#14682). For example:
+when there are at most three runs, so such a row never names a line that no
+member is on. More runs print the covering span with the count of distinct
+member lines inside it, not the span length (`1078-1241 (5 distinct lines)`
+means 5 member lines somewhere in the 164-line span); that fallback row can
+name lines between members that no member is on (#14682). The fallback shape is
+pinned end to end by `fixtures/hidden_row_span_fallback`. For example:
 
 ```text
-- src/lib.rs:1078-1241 (31 distinct lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (5 distinct lines) (weak, lower-priority candidate); 7 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -543,9 +553,14 @@ of the same self type, beside the owner's impl in the same module, that takes
 no `self`, has no type or const generics, is not `async`, `unsafe` or
 cfg-gated, and returns `Self` or the type. No receiver is built when the
 target test module declares or imports another item of the type's name,
-including a module, a glob import or an import in a nested module; only
-`use super::Type;` and `use super::*;` outside a nested module are known to
-name the owner.
+including a module or `extern crate`, or holds any glob import other than
+`use super::*;`, an import of that name or a glob inside a nested module, an
+item-position macro call (including `include!`), or a macro definition that
+mentions the name (a macro call inside a function body, such as `assert!`,
+does not count); only `use super::Type;` and `use super::*;` outside a nested
+module are known to name the owner. The check is syntactic: a statement macro
+defined outside the test module, or an attribute macro, that emits an item of
+the type's name inside the scope is not seen.
 In order:
 
 1. the first call in the target test module to such a constructor whose
@@ -710,7 +725,9 @@ cannot donate shared content. Existing evidence-window disclosures stay local.
 When a visible finding contains multiline literal content, the CLI keeps the
 complete unshared layout so source text and whitespace cannot collide with
 catalogue/reference structure. Without CLI navigation, the public library preserves the previous complete
-per-finding report bytes, including repeated evidence and guidance.
+per-finding report bytes, including repeated evidence and guidance; only the
+blank line before a trailing `Note:` follows the one-blank-line rule above
+(#14318).
 
 When `ripr check` renders `human-full` itself, each rendered finding ends with
 a `Drill in:` block holding the same `ripr explain` / `ripr context --at`
@@ -735,7 +752,12 @@ finding whose repair packet is blocked by an unresolved expected value or a
 moved assertion selection, which says ripr has no complete repair packet for the
 finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
-its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
+its file to bind it to and sends the reader to the Next step above; a finding
+whose changed line holds several same-kind seams, none more specific than the
+others (one per comparison in `a < b && c == d`), says the changed line holds
+N spots, names up to three of them (`and N more` beyond that), says ripr will not
+pick one, and sends the reader to the Next step above, instead of claiming no
+spot could be tied to the line (#15157); several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
 producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete

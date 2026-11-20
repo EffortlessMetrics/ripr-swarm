@@ -778,6 +778,17 @@ fn mark_commonjs_default_binding(
         }
         return;
     };
+    if let Some(class_name) = target
+        && super::commonjs_default_class::mark_whole_export_class(
+            program,
+            class_name,
+            &code,
+            &division_code,
+            owners,
+        )
+    {
+        return;
+    }
     let Some(name) = declared else {
         return;
     };
@@ -3334,7 +3345,7 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 /// assignment targets, `++`/`--`, `for (x of ...)` heads, and an identifier
 /// under a TypeScript wrapper (`(x as T) = v`). Member writes (`x.p = v`) do
 /// not rebind `x` and are not counted.
-fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+pub(super) fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     #[derive(Default)]
     struct Writes {
         names: std::collections::HashSet<String>,

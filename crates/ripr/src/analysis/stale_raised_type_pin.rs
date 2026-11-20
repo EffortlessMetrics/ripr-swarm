@@ -32,6 +32,7 @@ pub(crate) struct StaleRaisedTypePin {
 
 impl StaleRaisedTypePin {
     /// The finding evidence line for this fact.
+    #[cfg(any(test, feature = "lang-python"))]
     pub(crate) fn evidence_line(&self) -> String {
         format!(
             "{STALE_RAISED_TYPE_PIN_PREFIX}`{}{PINS_OLD}{}{NOW_RAISES}{}` ({})",

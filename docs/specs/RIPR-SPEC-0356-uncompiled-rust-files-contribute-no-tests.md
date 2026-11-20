@@ -28,6 +28,8 @@ Linked issues:
   `autolib`/`autobins`/... `= false`, and an example's default `test = false`)
 - #15079 (`required-features` met only through another workspace member's
   dependency on the package)
+- #15262 (a bench's default `test = false`: plain `cargo test` never builds
+  or runs it)
 
 Linked PRs:
 
@@ -151,7 +153,7 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    `<dir>`; an unmounted `mod.rs` layout keeps the skip), or any ancestry
    file, the holder
    included, is listed by cargo metadata as a live or unmodeled target
-   (`[[test]] path`, `build`, an example), so a `[[test]]` rooted at an
+   (`[[test]] path`, `build`, a `test = true` example or bench), so a `[[test]]` rooted at an
    intermediate module keeps the leaf's tests; or when
    the walk cannot finish (an unreadable file, more than 20,000 entries).
    So the verdict does not change with `--mode`.
@@ -162,8 +164,8 @@ credit. An integration test under `tests/` is its own `test` target, so it
 keeps its credit while the library's unit tests are withheld. A module that a
 tested target also compiles (a `src/main.rs` declaring the library's module)
 keeps its tests. Unavailable metadata, a root cargo does not list (outside
-the auto-discovery rule below), and a `bench` or build-script root never
-establish a skip.
+the auto-discovery rule below), and a build-script root never establish a
+skip; a `bench` root follows the #15262 rule below.
 
 #14972 extends rule 2 to two more shapes, through the same metadata owner:
 
@@ -196,6 +198,16 @@ for it. Examples: a `#[path = "../../a/src/main.rs"]` in another member, and
 `tests/it.rs` (the index records no edge for an `include!` inside a module
 body). The exemption for skipped `lib` and `bin` roots is unchanged from
 #14962.
+
+#15262 models a `bench` target like an `example`. Metadata reports a bench's
+default `test = false`, and plain `cargo test` does not build the bench at
+all, so its `#[test]` functions never run there; `cargo bench` and `cargo
+test --benches` are other commands. An `[[bench]] test = true` (with its
+`required-features` met) `Runs` and keeps the credit. A `[[bench]]` table or
+a holder or root under `benches/` spends rule 3's probe, and a skipped bench
+root, like a skipped example root, stays under rule 5's name-or-stem test, so
+`mod load { include!("../benches/load.rs"); }` in `tests/it.rs` keeps the
+bench's tests.
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.

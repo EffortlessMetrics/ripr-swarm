@@ -59,5 +59,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast probe:labels.py:python_preview:c4a51c9b
   ripr context --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast --at probe:labels.py:python_preview:c4a51c9b
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -303,35 +303,37 @@ enum InventoryLookup<T> {
 /// (#14962).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum CrateRootTestRun {
-    /// A `lib`-family, `bin`, `example` or `test` target that `cargo test`
-    /// builds and runs as a libtest binary: metadata `test` is true and its
-    /// `required-features` hold under cargo defaults (`[[example]] test =
-    /// true` runs the example's tests, #14972).
+    /// A `lib`-family, `bin`, `example`, `bench` or `test` target that
+    /// `cargo test` builds and runs as a libtest binary: metadata `test` is
+    /// true and its `required-features` hold under cargo defaults
+    /// (`[[example]] test = true` runs the example's tests, #14972, and
+    /// `[[bench]] test = true` the bench's, #15262).
     Runs,
-    /// A `lib`-family, `bin` or `example` target that `cargo test` does not
-    /// run as a libtest binary: metadata `test` is false (`[lib] test =
-    /// false`, `[[bin]] test = false`, an example's default `test = false`,
-    /// #14972) or its `required-features` are unmet under cargo defaults.
-    /// `cargo test` still builds such an example as a plain executable, so
-    /// its `#[test]` functions compile but never run.
+    /// A `lib`-family, `bin`, `example` or `bench` target that `cargo test`
+    /// does not run as a libtest binary: metadata `test` is false (`[lib]
+    /// test = false`, `[[bin]] test = false`, an example's or a bench's
+    /// default `test = false`, #14972, #15262) or its `required-features`
+    /// are unmet under cargo defaults. `cargo test` still builds such an
+    /// example as a plain executable and does not build such a bench at
+    /// all, so their `#[test]` functions never run.
     Skipped,
-    /// A [`Skipped`](Self::Skipped) target of kind `example` (#14972
-    /// review). Its skip is the same, but a running target can mount an
-    /// example root (`mod m { include!("../examples/demo.rs"); }`) where no
-    /// indexed edge shows it, so the skip pass puts the root under the
-    /// workspace mount scan.
-    SkippedExample,
+    /// A [`Skipped`](Self::Skipped) target of kind `example` or `bench`
+    /// (#14972 review, #15262). Its skip is the same, but a running target
+    /// can mount such a root (`mod m { include!("../examples/demo.rs"); }`)
+    /// where no indexed edge shows it, so the skip pass puts the root under
+    /// the workspace mount scan.
+    SkippedStandalone,
     /// Any other owner: a skipped `test` target, whose skip the existing
     /// `cargo_test_collection_skipped` query and the #8016 file drop own
-    /// (#7265, #7266), and every `bench` or `custom-build` target, whose
-    /// unit-test story is not modeled here. It never establishes a skip.
+    /// (#7265, #7266), and every `custom-build` target, which runs no
+    /// tests. It never establishes a skip.
     Unmodeled,
 }
 
 impl CrateRootTestRun {
     /// Both skipped forms: `cargo test` runs no unit test from the root.
     fn is_skipped(self) -> bool {
-        matches!(self, Self::Skipped | Self::SkippedExample)
+        matches!(self, Self::Skipped | Self::SkippedStandalone)
     }
 }
 
@@ -500,12 +502,12 @@ impl ManifestInventory {
 
     /// True only when cargo metadata lists `crate_root` as the `src_path`
     /// of at least one target and `cargo test` runs none of them (#14962):
-    /// every owner is a `lib`-family or `bin` target with metadata
-    /// `test = false` or unmet default-feature `required-features`. The
-    /// libtest unit tests that root's module tree compiles then never run
-    /// (`[lib] test = false` prints `running 0 tests`). Unavailable
-    /// metadata, a path cargo does not list, and any `example`, `bench`
-    /// or `custom-build` owner are not an established skip, and neither is
+    /// every owner is a `lib`-family, `bin`, `example` or `bench` target
+    /// with metadata `test = false` or unmet default-feature
+    /// `required-features`. The libtest unit tests that root's module tree
+    /// compiles then never run (`[lib] test = false` prints `running 0
+    /// tests`). Unavailable metadata, a path cargo does not list, and any
+    /// `custom-build` owner are not an established skip, and neither is
     /// a skipped `[[test]]` owner: `cargo_test_collection_skipped` owns it.
     pub(crate) fn crate_root_unit_tests_skipped(
         &mut self,
@@ -527,7 +529,7 @@ impl ManifestInventory {
 
     /// True when cargo metadata lists `path` as the `src_path` of a target
     /// that is not an established skip (#14962 review): a live or unmodeled
-    /// target (a `[[test]] path`, a `build` script, a bench, a `test = true`
+    /// target (a `[[test]] path`, a `build` script, a `test = true` bench or
     /// example) may compile the file's tests. Unavailable metadata is
     /// doubt; a path cargo does not list is no target.
     pub(crate) fn crate_root_may_run(&mut self, workspace_root: &Path, path: &Path) -> bool {
@@ -542,11 +544,12 @@ impl ManifestInventory {
     }
 
     /// True when cargo metadata lists `crate_root` as the `src_path` of a
-    /// skipped `example` target (#14972 review). The skip pass then asks the
-    /// workspace mount scan about the root, as it does for an undiscovered
-    /// one: an example is no target another crate builds, so a running
-    /// target that names the file may compile its tests.
-    pub(crate) fn crate_root_skipped_example(
+    /// skipped `example` or `bench` target (#14972 review, #15262). The skip
+    /// pass then asks the workspace mount scan about the root, as it does
+    /// for an undiscovered one: an example or bench is no target another
+    /// crate builds, so a running target that names the file may compile
+    /// its tests.
+    pub(crate) fn crate_root_skipped_example_or_bench(
         &mut self,
         workspace_root: &Path,
         crate_root: &Path,
@@ -557,7 +560,7 @@ impl ManifestInventory {
             })
             .1
         {
-            InventoryLookup::Present(runs) => runs.contains(&CrateRootTestRun::SkippedExample),
+            InventoryLookup::Present(runs) => runs.contains(&CrateRootTestRun::SkippedStandalone),
             InventoryLookup::Unavailable | InventoryLookup::Missing => false,
         }
     }
@@ -1305,20 +1308,30 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
 }
 
 /// The crate-root unit-test run state of one metadata target (#14962).
-/// `cargo test` builds a `lib`-family, `bin`, `example` or `test` target as
+/// `cargo test` builds a `lib`-family, `bin`, `example`, `bench` or `test` target as
 /// a libtest binary exactly when its effective `test` flag holds, so a live
-/// one of those kinds `Runs`. Only `lib`-family, `bin` and `example` targets
-/// establish a skip: a skipped `test` target already has its owner (#7265,
-/// #8016). An example defaults to `test = false`, and plain `cargo test`
-/// then builds it without its tests (#14972); `cargo test --examples` is an
-/// explicit opt-in, as `cargo test --lib` is for a `test = false` library.
-/// Benches keep their `cargo bench` story and a build script runs no tests,
-/// so those kinds never establish a skip.
+/// one of those kinds `Runs`. Only `lib`-family, `bin`, `example` and `bench`
+/// targets establish a skip: a skipped `test` target already has its owner
+/// (#7265, #8016). An example defaults to `test = false`, and plain `cargo
+/// test` then builds it without its tests (#14972); `cargo test --examples`
+/// is an explicit opt-in, as `cargo test --lib` is for a `test = false`
+/// library. A bench defaults to `test = false` too, and plain `cargo test`
+/// does not build it, so its `#[test]` functions never run there (#15262);
+/// `cargo bench` and `cargo test --benches` are other commands. A build
+/// script runs no tests, so that kind never establishes a skip.
 fn crate_root_test_run(kinds: &[&str], test_enabled: bool) -> CrateRootTestRun {
     let unit = |kind: &&str| {
         matches!(
             *kind,
-            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" | "bin" | "example"
+            "lib"
+                | "rlib"
+                | "dylib"
+                | "cdylib"
+                | "staticlib"
+                | "proc-macro"
+                | "bin"
+                | "example"
+                | "bench"
         )
     };
     let runs_when_enabled = |kind: &&str| unit(kind) || *kind == "test";
@@ -1327,8 +1340,11 @@ fn crate_root_test_run(kinds: &[&str], test_enabled: bool) -> CrateRootTestRun {
     } else if test_enabled {
         CrateRootTestRun::Runs
     } else if kinds.iter().all(unit) {
-        if kinds.contains(&"example") {
-            CrateRootTestRun::SkippedExample
+        if kinds
+            .iter()
+            .any(|kind| matches!(*kind, "example" | "bench"))
+        {
+            CrateRootTestRun::SkippedStandalone
         } else {
             CrateRootTestRun::Skipped
         }
@@ -2231,8 +2247,9 @@ mod harness_verdict {
     }
 
     /// #14962: `[lib] test = false` and `[[bin]] test = false` skip the
-    /// crate root's unit tests; the default, a root a live `[[test]]` also
-    /// names, and an example root (unmodeled) do not establish a skip.
+    /// crate root's unit tests; the default and a root a live `[[test]]`
+    /// also names do not establish a skip. An example's and a bench's
+    /// default `test = false` skip theirs (#14972, #15262).
     #[test]
     fn crate_root_unit_test_skip_follows_metadata_test_flags() -> Result<(), String> {
         let dir = unique_workspace("crate-root-test-false");
@@ -2240,6 +2257,7 @@ mod harness_verdict {
         write_file(&dir, "pkg/src/lib.rs", "")?;
         write_file(&dir, "pkg/src/main.rs", "fn main() {}\n")?;
         write_file(&dir, "pkg/examples/demo.rs", "fn main() {}\n")?;
+        write_file(&dir, "pkg/benches/load.rs", "fn main() {}\n")?;
         let package = "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n";
         let skipped = |relative: &str| {
             ManifestInventory::default().crate_root_unit_tests_skipped(&dir, Path::new(relative))
@@ -2253,11 +2271,20 @@ mod harness_verdict {
             "#14972: an example's default test = false skips its unit tests"
         );
         let skipped_example = |relative: &str| {
-            ManifestInventory::default().crate_root_skipped_example(&dir, Path::new(relative))
+            ManifestInventory::default()
+                .crate_root_skipped_example_or_bench(&dir, Path::new(relative))
         };
         assert!(
             skipped_example("pkg/examples/demo.rs"),
             "#14972 review: a skipped example root goes under the mount scan"
+        );
+        assert!(
+            skipped("pkg/benches/load.rs"),
+            "#15262: a bench's default test = false skips its unit tests"
+        );
+        assert!(
+            skipped_example("pkg/benches/load.rs"),
+            "#15262: a skipped bench root goes under the mount scan"
         );
         assert!(
             !skipped("pkg/src/missing.rs"),
@@ -2307,12 +2334,20 @@ mod harness_verdict {
 [[example]]
 name = 'demo'
 test = true
+
+[[bench]]
+name = 'load'
+test = true
 "
             ),
         )?;
         assert!(
             !skipped("pkg/examples/demo.rs"),
             "a `test = true` example runs its tests"
+        );
+        assert!(
+            !skipped("pkg/benches/load.rs"),
+            "#15262: a `test = true` bench runs its tests"
         );
         let undiscovered = |relative: &str, package_dir: &str| {
             ManifestInventory::default().crate_root_undiscovered(

@@ -516,6 +516,83 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn producer_exit_reads_as_interrupt_only_from_a_raised_flag_or_awaited_sigint()
+    -> Result<(), String> {
+        let run = |script: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", script])
+                .status()
+                .map_err(|e| e.to_string())
+        };
+        let clean = run("exit 0")?;
+        let failed = run("exit 1")?;
+        let sigint = run("kill -INT $$")?;
+        assert!(!exited_by_sigint(&clean), "fixture: {clean:?}");
+        assert!(!exited_by_sigint(&failed), "fixture: {failed:?}");
+        assert!(exited_by_sigint(&sigint), "fixture: {sigint:?}");
+        let no_wait = Duration::from_millis(0);
+
+        // A flag raised before the producer exits decides it, whatever the status.
+        let raised = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        for status in [&clean, &failed] {
+            assert!(
+                with_token(&raised, || cli_interrupted_after_exit_within(
+                    status, no_wait
+                )),
+                "{status:?}"
+            );
+        }
+
+        // An ordinary failure under a flag that never rises is not an interrupt.
+        let lowered = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(!with_token(&lowered, || cli_interrupted_after_exit_within(
+            &failed, no_wait
+        )));
+
+        // A SIGINT death with no captured token has no flag to read.
+        assert!(!cli_interrupted_after_exit_within(&sigint, no_wait));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_publication_hands_stdout_to_the_native_flag() -> Result<(), String> {
+        let native = Arc::new(AtomicBool::new(false));
+        let cli = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            native.clone(),
+        );
+        with_token(&cli, begin_cli_publication)?;
+        assert!(native.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn budget_token_keeps_caller_process_groups_and_reports_its_budget() {
+        let started = Instant::now();
+        let clock: AnalysisClock = Arc::new(move || started);
+        let budgeted =
+            AnalysisCancellationToken::with_budget(started, Duration::from_secs(1), clock);
+        with_token(&budgeted, || assert!(!owns_process_groups()));
+        assert_eq!(
+            format!("{budgeted:?}"),
+            "AnalysisCancellationToken { reason: None, has_budget: true }"
+        );
+        assert_eq!(
+            format!("{:?}", AnalysisCancellationToken::new()),
+            "AnalysisCancellationToken { reason: None, has_budget: false }"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn server_group_authority_follows_captured_token_only() -> Result<(), String> {
         assert!(!owns_process_groups());
         let flag = Arc::new(AtomicBool::new(false));
@@ -859,5 +936,149 @@ mod tests {
             with_token(&token, checkpoint).err().as_deref(),
             Some("analysis cancelled: DeadlineExceeded")
         );
+    }
+
+    fn fixed_clock(at: Instant) -> AnalysisClock {
+        Arc::new(move || at)
+    }
+
+    #[test]
+    fn a_worker_error_keeps_its_own_wording() {
+        assert_eq!(
+            WorkerError::Aborted(AnalysisCancellation {
+                kind: AnalysisAbortKind::Superseded
+            })
+            .into_message(),
+            "analysis cancelled: Superseded"
+        );
+        assert_eq!(
+            WorkerError::Failed("parse failed".to_string()).into_message(),
+            "parse failed"
+        );
+    }
+
+    #[test]
+    fn token_debug_shows_the_reason_and_whether_a_budget_exists() {
+        let token = AnalysisCancellationToken::new();
+        assert_eq!(
+            format!("{token:?}"),
+            "AnalysisCancellationToken { reason: None, has_budget: false }"
+        );
+        token.cancel(AnalysisAbortKind::Cancelled);
+        let started = Instant::now();
+        let budgeted = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            fixed_clock(started),
+        );
+        assert_eq!(
+            format!("{token:?}"),
+            "AnalysisCancellationToken { reason: Some(Cancelled), has_budget: false }"
+        );
+        assert_eq!(
+            format!("{budgeted:?}"),
+            "AnalysisCancellationToken { reason: None, has_budget: true }"
+        );
+    }
+
+    #[test]
+    fn the_free_queries_read_only_the_installed_token() {
+        assert_eq!(remaining_budget(), None);
+        assert_eq!(current_abort_kind(), None);
+        let started = Instant::now();
+        let budgeted = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(500),
+            fixed_clock(started + Duration::from_millis(200)),
+        );
+        assert_eq!(
+            with_token(&budgeted, remaining_budget),
+            Some(Duration::from_millis(300))
+        );
+        let superseded = AnalysisCancellationToken::new();
+        superseded.cancel(AnalysisAbortKind::Superseded);
+        assert_eq!(
+            with_token(&superseded, current_abort_kind),
+            Some(AnalysisAbortKind::Superseded)
+        );
+        assert_eq!(
+            with_token(&AnalysisCancellationToken::new(), current_abort_kind),
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_rendered_cancellation_prefix_reads_as_a_cancellation() {
+        let rendered = AnalysisCancellation {
+            kind: AnalysisAbortKind::DeadlineExceeded,
+        }
+        .to_string();
+        assert!(is_cancellation_error(&rendered), "{rendered}");
+        assert!(!is_cancellation_error(
+            "wrapped: analysis cancelled: Cancelled"
+        ));
+        assert!(!is_cancellation_error("parse failed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_cli_interrupt_flag_is_read_only_through_the_installed_token() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let token = AnalysisCancellationToken::with_interrupt_flags(
+            flag.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(!cli_interrupted());
+        assert!(!with_token(&token, cli_interrupted));
+        flag.store(true, Ordering::SeqCst);
+        assert!(with_token(&token, cli_interrupted));
+        assert!(!cli_interrupted());
+        assert!(!with_token(
+            &AnalysisCancellationToken::new(),
+            cli_interrupted
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_130_counts_as_a_sigint_death_and_other_exits_do_not() {
+        use std::os::unix::process::ExitStatusExt;
+        // A normal exit's wait status carries the code in the high byte.
+        let exit = |code: i32| std::process::ExitStatus::from_raw(code << 8);
+        assert_eq!(exit(130).code(), Some(130), "fixture is a normal exit");
+        assert!(exited_by_sigint(&exit(130)));
+        assert!(!exited_by_sigint(&exit(0)));
+        assert!(!exited_by_sigint(&exit(1)));
+        assert!(!exited_by_sigint(&exit(2)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_hands_off_to_native_interruption_and_reports_an_earlier_interrupt()
+    -> Result<(), String> {
+        // No token: nothing to hand off.
+        begin_cli_publication()?;
+
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let native = Arc::new(AtomicBool::new(false));
+        let token =
+            AnalysisCancellationToken::with_interrupt_flags(interrupted.clone(), native.clone());
+        with_token(&token, begin_cli_publication)?;
+        assert!(native.load(Ordering::SeqCst));
+
+        let interrupted = Arc::new(AtomicBool::new(true));
+        let native = Arc::new(AtomicBool::new(false));
+        let token = AnalysisCancellationToken::with_interrupt_flags(interrupted, native.clone());
+        assert_eq!(
+            with_token(&token, begin_cli_publication),
+            Err("analysis cancelled: Cancelled".to_string())
+        );
+        assert!(native.load(Ordering::SeqCst));
+
+        // A server token owns no native publication, so it hands off nothing.
+        let server =
+            AnalysisCancellationToken::with_server_interrupt(Arc::new(AtomicBool::new(true)));
+        with_token(&server, begin_cli_publication)?;
+        Ok(())
     }
 }

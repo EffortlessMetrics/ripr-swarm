@@ -90,5 +90,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_multi_value_field_change_sibling/input --diff <cwd>/fixtures/ts_multi_value_field_change_sibling/diff.patch --mode fast probe:src_config.ts:typescript_preview:10b44c74
   ripr context --root <cwd>/fixtures/ts_multi_value_field_change_sibling/input --diff <cwd>/fixtures/ts_multi_value_field_change_sibling/diff.patch --mode fast --at probe:src_config.ts:typescript_preview:10b44c74
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

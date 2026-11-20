@@ -1,5 +1,6 @@
 //! Tests for crediting a bare boolean assertion on a `bool` owner (#9542).
 
+mod parametrized_names;
 mod patch_scope_controls;
 
 use super::owners_tests::{extract_owners, extract_tests};

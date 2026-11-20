@@ -2708,13 +2708,30 @@ fn analyze_related_assertions(
         } else {
             Vec::new()
         };
+        // #14968: an unconditional literal-only assertion (`assert!(true)`
+        // as a top-level statement) reads nothing, so it is never credited.
+        // It still counts toward the single-assertion fallback (below), except
+        // for an assertion or observer that reads the owner's result, so it
+        // neither hands that fallback to an unrelated sibling nor lowers a
+        // reading of the owner the test has without it.
+        let literal_only = test
+            .assertions
+            .iter()
+            .filter(|assertion| {
+                super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
+            .count();
         let assertions: Vec<_> = test
             .assertions
             .iter()
+            .filter(|assertion| {
+                !super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+            })
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
             .chain(claims_candidates.iter())
             .collect();
-        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
+        let refused_here = assertions.len()
+            != test.assertions.len().saturating_sub(literal_only) + claims_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -2726,8 +2743,15 @@ fn analyze_related_assertions(
                 oracle_strength: OracleStrength::None,
                 relation_reason,
                 relation_confidence,
+                // A dropped literal in a test whose relation cannot credit an
+                // oracle (a proximity-only test beside one that reaches the
+                // owner) keeps the `no_call_path` row its assertion had.
                 miss: Some(if refused_here {
                     RelatedTestMiss::AssertionNotCredited
+                } else if literal_only > 0 && !credits_oracle {
+                    RelatedTestMiss::NoCallPath
+                } else if literal_only > 0 {
+                    RelatedTestMiss::AssertionNotObserving
                 } else {
                     RelatedTestMiss::NoAssertion
                 }),
@@ -2781,10 +2805,25 @@ fn analyze_related_assertions(
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
-        // for an otherwise unrelated surviving oracle.
-        let assertion_count = test.assertions.len();
+        // for an otherwise unrelated surviving oracle. A dropped unconditional
+        // literal-only assertion (#14968) still counts, so it never hands the
+        // fallback to an unrelated sibling assertion; only an assertion or
+        // observer that reads the owner's result (`assert!(g(2).is_err())`,
+        // `g(2).unwrap_err()`, or a read of `let r = g(2)`) gets the count the
+        // test has without the literal.
+        let full_assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            let assertion_count = if literal_only > 0
+                && super::literal_assertion::reads_owner_result(
+                    &test.body,
+                    assertion,
+                    match_context.owner_callee,
+                ) {
+                full_assertion_count.saturating_sub(literal_only)
+            } else {
+                full_assertion_count
+            };
             // #11552: per assertion, because the same proximity test may hold
             // one assertion on the owner's enum and another on a different
             // function's result of the same enum.
@@ -9377,8 +9416,10 @@ mod tests {
         );
         let other = test_with_assertions(
             "while_some_is_untested",
+            // A value read: a literal-only assertion would match nothing
+            // (#14968) and leave no oracle row to pack.
             vec![oracle(
-                "assert_eq!(1, 1);",
+                "assert_eq!(it.next(), None);",
                 OracleKind::Unknown,
                 OracleStrength::Unknown,
             )],
