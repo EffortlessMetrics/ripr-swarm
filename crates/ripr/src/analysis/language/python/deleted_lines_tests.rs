@@ -1884,3 +1884,37 @@ fn a_deleted_membership_member_line_needs_a_row_on_the_member() -> Result<(), St
     }
     Ok(())
 }
+
+/// #15632: deleting two adjacent member lines (`"y",` and `"on",`) arrives
+/// as one removed line plus a fragment. Rows that pass both removed members
+/// keep `exposed`; a row on only one of them does not.
+#[test]
+fn deleting_two_adjacent_membership_member_lines_needs_a_row_on_each() -> Result<(), String> {
+    let source = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n    ):\n        return True\n    return False\n";
+    for (label, cases, expected) in [
+        (
+            "membership-run-missed",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-run-hit",
+            "\"yes\", \"y\", \"on\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            source,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\","), line(6, 5, "        \"on\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted members: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}

@@ -223,11 +223,13 @@ pub(super) fn python_membership_deleted_gap(
             text,
         })
         .collect();
-    // The old members without the removed line's elements, in order.
-    let mut expected = old.members.clone();
-    for member in &removed {
-        let index = expected.iter().position(|kept| kept.same(member))?;
-        expected.remove(index);
+    // The removed line's elements must be old members; a deletion run may
+    // remove further adjacent member lines with it.
+    if removed
+        .iter()
+        .any(|member| !old.members.iter().any(|kept| kept.same(member)))
+    {
+        return None;
     }
     let mut candidates: Vec<Site> = sites_on_line(new_source, new_line)
         .into_iter()
@@ -240,12 +242,7 @@ pub(super) fn python_membership_deleted_gap(
         .filter(|site| {
             site.subject == old.subject
                 && site.negated == old.negated
-                && site.members.len() == expected.len()
-                && site
-                    .members
-                    .iter()
-                    .zip(&expected)
-                    .all(|(left, right)| left.same(right))
+                && drops_one_run_with(&old.members, &site.members, &removed)
         })
         .collect();
     candidates.sort_by_key(|site| site.display);
@@ -266,6 +263,32 @@ pub(super) fn python_membership_deleted_gap(
             "static evidence cannot locate the comparison after the deleted member line",
         )),
     }
+}
+
+/// Whether `new` is `old` with one contiguous run of members deleted, and
+/// that run holds the removed line's members in order (a deletion of
+/// adjacent member lines arrives as one removed line plus fragments).
+fn drops_one_run_with(old: &[Member], new: &[Member], removed: &[Member]) -> bool {
+    let Some(dropped) = old.len().checked_sub(new.len()) else {
+        return false;
+    };
+    if dropped < removed.len() || removed.is_empty() {
+        return false;
+    }
+    (0..=new.len()).any(|split| {
+        let (head, tail) = new.split_at(split);
+        let Some(run) = old.get(split..split + dropped) else {
+            return false;
+        };
+        let same = |left: &[Member], right: &[Member]| {
+            left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a.same(b))
+        };
+        same(head, old.get(..split).unwrap_or_default())
+            && same(tail, old.get(split + dropped..).unwrap_or_default())
+            && run
+                .windows(removed.len())
+                .any(|window| same(window, removed))
+    })
 }
 
 /// The verdict for one paired old/new comparison whose members differ.
