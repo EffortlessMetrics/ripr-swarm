@@ -51,8 +51,8 @@ use std::sync::Arc;
 /// Largest configuration file this pass reads; a bigger one is unevaluated.
 const MAX_CONFIG_BYTES: u64 = 1 << 20;
 
-const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
-const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
+pub(super) const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
+pub(super) const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
 const UNEVALUATED_CONFIG: &str = "pytest.collection(unevaluated config)";
 const PYTHON_FILES: &str = "pytest.collection(python_files)";
 const PYTHON_CLASSES: &str = "pytest.collection(python_classes)";

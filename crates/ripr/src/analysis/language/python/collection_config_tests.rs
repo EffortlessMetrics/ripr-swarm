@@ -2,7 +2,7 @@
 //! conftest `collect_ignore`, and the pytest options that select files,
 //! classes and functions. Anything the pass cannot evaluate withholds credit.
 
-use super::collection_config::apply_collection_config;
+use super::collection_config::{COLLECT_IGNORE, apply_collection_config};
 use super::source_facts::extract_source_facts;
 use super::test_activation::activation_control;
 use super::*;
@@ -271,6 +271,16 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
             "conditional-hook",
             "if SLOW:\n    def pytest_ignore_collect(collection_path):\n        return True\n",
         ),
+        ("name-in-guard", "if collect_ignore:\n    pass\n"),
+        (
+            "branch-remove",
+            "collect_ignore = ['x.py']\nif SLOW:\n    collect_ignore.remove('x.py')\n",
+        ),
+        ("branch-del", "if SLOW:\n    del collect_ignore[:]\n"),
+        (
+            "nested-computed",
+            "if SLOW:\n    if FAST:\n        collect_ignore = [name for name in NAMES]\n",
+        ),
         ("class-set", "collect_ignore_glob = ['[a-z]*.py']\n"),
         ("parent", "collect_ignore = ['../x.py']\n"),
         (
@@ -312,6 +322,40 @@ fn guarded_collect_ignore_withholds_only_the_paths_it_could_ignore() -> Result<(
         {
             return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
         }
+    }
+    Ok(())
+}
+
+/// Every branch of an `elif` chain adds to the union, and a branch that
+/// resets the list does not drop entries another path keeps; a later
+/// top-level assignment runs on every path and replaces them (#15631).
+#[test]
+fn guarded_collect_ignore_keeps_the_union_across_branches() -> Result<(), String> {
+    let chain = "collect_ignore = ['test_other.py']\nif A:\n    collect_ignore.append('test_a.py')\nelif B:\n    collect_ignore.append('test_b.py')\nelse:\n    collect_ignore = []\n";
+    let files = [
+        ("tests/conftest.py", chain),
+        ("tests/test_calc.py", TEST_BODY),
+        ("tests/test_other.py", TEST_BODY),
+        ("tests/test_a.py", TEST_BODY),
+        ("tests/test_b.py", TEST_BODY),
+    ];
+    assert_credited("chain-other-file", &files)?;
+    for ignored in ["tests/test_other.py", "tests/test_a.py", "tests/test_b.py"] {
+        let got = controls_of("chain-ignored", &files, ignored)?;
+        if !got.iter().any(|name| name == COLLECT_IGNORE) {
+            return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
+        }
+    }
+    let replaced = "if A:\n    collect_ignore = ['test_other.py']\ncollect_ignore = []\n";
+    let files = [
+        ("tests/conftest.py", replaced),
+        ("tests/test_other.py", TEST_BODY),
+    ];
+    let got = controls_of("top-level-replace", &files, "tests/test_other.py")?;
+    if !got.is_empty() {
+        return Err(format!(
+            "top-level-replace: expected no control, got {got:?}"
+        ));
     }
     Ok(())
 }
