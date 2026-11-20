@@ -1,7 +1,6 @@
 <!-- section: Fixed -->
-- The VS Code extension's managed server download now honors VS Code
-  `http.proxy`, `HTTPS_PROXY`/`https_proxy` and `NO_PROXY`/`no_proxy`
-  (`http://` proxies with optional basic auth, redirects included; credentials
-  are never logged). Unsupported proxy schemes fail closed naming
-  `ripr.server.path`, and the network-failure hint now names the proxy
-  settings (#15317).
+- The VS Code extension's network-failure hint for the managed server download
+  no longer says "check the proxy" with nothing to configure. It names VS Code's
+  proxy support (`http.proxy`, `HTTPS_PROXY`, the system proxy, unless
+  `http.proxySupport` is off), and the README and provisioning docs describe how
+  the download is proxied (#15317).

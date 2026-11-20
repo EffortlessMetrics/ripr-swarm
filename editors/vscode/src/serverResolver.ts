@@ -432,14 +432,15 @@ export function missingServerRemedy(autoDownload: boolean): string {
  */
 export const NETWORK_FAILURE_REMEDY =
   'The download host could not be reached; check the network connection, then retry. ' +
-  'Behind a proxy, set VS Code http.proxy or HTTPS_PROXY (an http:// proxy; NO_PROXY is honored). ' +
+  'Behind a proxy, VS Code routes this download through http.proxy, HTTPS_PROXY or the system proxy ' +
+  'unless http.proxySupport is off. ' +
   'To work offline, set ripr.server.path to a ripr binary already on this machine ' +
   '(ripr.server.downloadBaseUrl for a mirror).';
 
 // Node socket and resolver error codes for a request that got no HTTP
 // answer, plus this extension's own fetch-timeout and dropped-body messages.
 const NETWORK_FAILURE_PATTERN =
-  /\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN)\b|socket hang up|Timed out while fetching|Proxy tunnel failed|closed before completion/i;
+  /\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN)\b|socket hang up|Timed out while fetching|closed before completion/i;
 
 /**
  * Recovery sentence for a resolution failure. Cargo install is only honest

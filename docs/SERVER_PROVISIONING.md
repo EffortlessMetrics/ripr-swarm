@@ -54,15 +54,14 @@ baseline.
 
 ## Proxies
 
-The managed download uses `http.proxy`, then `HTTPS_PROXY`/`https_proxy`,
-honoring `NO_PROXY`/`no_proxy` (#15317). It tunnels with an HTTP `CONNECT` to
-an `http://` proxy (optional basic auth in the URL, redacted from all output)
-and verifies TLS to the real host through the tunnel. Other proxy schemes
-fail closed with the `ripr.server.path` / PATH workaround.
-`NO_PROXY` CIDR entries are not supported and fall back to the proxy; a bare IP
-entry matches only that exact address. `HTTP_PROXY` / `http_proxy` and VS Code
-`http.proxyAuthorization` are not read (the download is always https), and an
-uppercase variable wins over its lowercase twin.
+The managed download is a plain Node `https.get` with no custom agent, so the
+VS Code extension host's proxy support applies to it (#15317). With
+`http.proxySupport` at its default, VS Code resolves the proxy from
+`http.proxy`, then `HTTPS_PROXY`/`HTTP_PROXY`, then the system proxy settings,
+honors `http.noProxy` / `NO_PROXY`, and answers proxy authentication. With
+`http.proxySupport: off` the download goes direct. Where no proxy route
+works, set `ripr.server.path` to a `ripr` binary already on the machine, or
+`ripr.server.downloadBaseUrl` to a reachable mirror.
 
 ## Downloaded Server Cache
 
