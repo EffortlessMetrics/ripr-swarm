@@ -1415,3 +1415,12 @@ surface = "ci"
 classification = "test"
 reason = "#14500: native-fact fixtures exercise the production observer and actual tracker shell, including current-attempt, source identity and late recovery races; the existing sentinel Rust test runs these bounded controls on Linux."
 covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+
+[[allow]]
+glob = "tools/python/installed-wheel-identity/*.py"
+kind = "installed_wheel_identity"
+owner = "release-engineering"
+surface = "ci"
+classification = "test"
+reason = "The package smoke runs this stdlib verifier with the pip environment's interpreter and binds its executable to the archived target before launch (#4624)."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-workflows"]

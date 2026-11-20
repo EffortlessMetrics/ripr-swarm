@@ -46,6 +46,11 @@ jobs:
       - name: Wrap every target's payload as a wheel and a native npm package
         run: cargo xtask release-server-archive --packages-from "${{ runner.temp }}/archive-artifacts" --out-dir "${{ runner.temp }}/packages"
 
+      - name: Stage the installed-wheel verifier
+        run: |
+          python3 -m unittest discover -s tools/python/installed-wheel-identity
+          cp tools/python/installed-wheel-identity/verify_installed_wheel.py "${{ runner.temp }}/packages/"
+
       - name: Pack the npm launcher
         run: npm pack --ignore-scripts --pack-destination "${{ runner.temp }}/packages/npm" ./packaging/npm/launcher
 
@@ -115,55 +120,20 @@ jobs:
           python -m venv "$RUNNER_TEMP/venv"
           bindir="$RUNNER_TEMP/venv/bin"; [ -d "$bindir" ] || bindir="$RUNNER_TEMP/venv/Scripts"
           "$bindir/python" -m pip install --no-index --pre --find-links "$packages/wheels" --report "$RUNNER_TEMP/pip-report.json" ripr-rs
-          chosen=$("$bindir/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["install"][0]["download_info"]["url"])' "$RUNNER_TEMP/pip-report.json")
-          echo "pip chose $chosen"
-          case "$chosen" in *"-py3-none-$WHEEL_TAG.whl") ;; *) echo "::error::pip chose $chosen, not the $WHEEL_TAG wheel"; exit 1 ;; esac
-          # Compare the installed executable with this target's qualified archive before executing it.
-          "$bindir/python" - <<'PY'
-          import hashlib, json, os, sysconfig
-          from pathlib import Path
-
-          root = Path(os.environ["RUNNER_TEMP"])
-          identities = list((root / "qualified-payload").rglob("payload-identity.json"))
-          if len(identities) != 1:
-              raise SystemExit(f"expected one qualified payload identity, found {len(identities)}")
-          identity = json.loads(identities[0].read_bytes())
-          target = os.environ["TARGET"]
-          version = os.environ["VERSION"].removeprefix("v")
-          executable = "ripr.exe" if target == "x86_64-pc-windows-msvc" else "ripr"
-          if (identity["kind"], identity["schema_version"], identity["source"]["commit_sha"],
-              identity["target"], identity["version"], identity["executable"]) != (
-              "ripr_final_native_payload", 1, os.environ["CANDIDATE_SHA"], target, version, executable):
-              raise SystemExit(f"qualified payload identity does not match requested {target} {version}")
-          rows = [row for row in identity["files"] if row["role"] == "executable"]
-          if len(rows) != 1 or rows[0]["path"] != executable:
-              raise SystemExit(f"expected one qualified {executable} for {target}")
-          installed = Path(sysconfig.get_path("scripts")) / executable
-          if installed.is_symlink() or not installed.is_file():
-              raise SystemExit(f"missing regular pip-installed executable at {installed}")
-          with installed.open("rb") as binary:
-              actual = hashlib.file_digest(binary, "sha256").hexdigest()
-          if actual != rows[0]["sha256"]:
-              raise SystemExit(f"{target} pip-installed {executable} SHA-256 {actual}, expected {rows[0]['sha256']}")
-          package, = json.loads((root / "pip-report.json").read_bytes())["install"]
-          receipt = dict(kind="ripr_installed_wheel_identity", schema_version=1,
-                         source=identity["source"], target=target, version=version, executable=executable,
-                         executable_sha256=actual, wheel_sha256=package["download_info"]["archive_info"]["hashes"]["sha256"])
-          (root / "installed-wheel-identity.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-          PY
+          wheel_bin=$("$bindir/python" "$packages/verify_installed_wheel.py")
           mkdir "$RUNNER_TEMP/npm-project" && cd "$RUNNER_TEMP/npm-project" && npm init -y > /dev/null
           npm install --offline --ignore-scripts --no-audit --no-fund --cache "$RUNNER_TEMP/npm-cache" \
             "$packages"/npm/effortlessmetrics-ripr-[0-9]*.tgz "$packages"/npm/effortlessmetrics-"$NPM_PACKAGE"-[0-9]*.tgz
           npm_bin="$RUNNER_TEMP/npm-project/node_modules/.bin"
           cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
-          for ripr in "$bindir/ripr" "$npm_bin/ripr"; do
+          for ripr in "$wheel_bin" "$npm_bin/ripr"; do
             actual=$("$ripr" --version | tr -d '\r')
             echo "$ripr: $actual"
             if [ "$actual" != "$expected" ]; then echo "::error::$ripr reported '$actual', expected '$expected'"; exit 1; fi
             "$ripr" doctor
           done
           if [ -n "$MACOS_MIN" ]; then
-            minos=$(otool -l "$bindir/ripr" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' | awk '$1 == "minos" || $1 == "version" { print $2; exit }' || true)
+            minos=$(otool -l "$wheel_bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' | awk '$1 == "minos" || $1 == "version" { print $2; exit }' || true)
             echo "Mach-O minimum macOS $minos; wheel tag claims $MACOS_MIN"
             if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$MACOS_MIN" | sort -V | tail -n 1)" != "$MACOS_MIN" ]; then
               echo "::error::binary needs macOS $minos, above the $WHEEL_TAG claim"; exit 1
