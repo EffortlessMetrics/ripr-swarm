@@ -131,7 +131,13 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.suggested_test_file);
             message.push_str("`; verify `");
             message.push_str(&card.verify_command);
-            message.push_str("` (preview advisory).");
+            if let Some(cwd) = &card.verify_cwd {
+                message.push_str("` from `");
+                message.push_str(cwd);
+                message.push_str("/` (preview advisory).");
+            } else {
+                message.push_str("` (preview advisory).");
+            }
         } else if let Some(no_action) = python_no_action_annotation(finding) {
             message.push_str(&no_action);
         }

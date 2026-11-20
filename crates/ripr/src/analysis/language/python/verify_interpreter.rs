@@ -18,19 +18,98 @@
 //!   Python has pytest, and a probe would make reports host-dependent;
 //!   `ripr doctor` checks the PATH interpreter instead.
 //!
+//! - A test file under a nested Python project (a directory below the root
+//!   that holds `pyproject.toml`, `setup.cfg`, `setup.py`, `pytest.ini` or
+//!   `tox.ini` and owns the test file, #15302) is verified from that
+//!   directory: the command carries the test path and the venv interpreter
+//!   relative to it, and `suggested_verify_cwd: <dir>` names the directory
+//!   relative to the root. Run from the root, pytest cannot import the
+//!   project's own package. A root-level project carries no cwd line.
+//!
 //! Detection reads directory listings and `pyvenv.cfg` only. It never runs
 //! the interpreter or any code from the checkout.
 
 use crate::analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
 use crate::domain::{Finding, LanguageId};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Component, Path};
 
 const SUGGESTED: &str = "suggested_verify_command: ";
 const CONFIDENCE: &str = "suggested_verify_command_confidence: ";
 const PER_TEST: &str = "test_verify_command: ";
 const PATH_PYTEST: &str = "python -m pytest ";
+const TEST_FILE: &str = "suggested_test_file: ";
+const TEST_NODE: &str = "suggested_test_node_id: ";
 /// Evidence line naming the static pytest fact behind a venv route.
 pub(super) const VENV_PYTEST: &str = "suggested_verify_venv_pytest: ";
+/// Evidence line naming the root-relative directory a nested project's verify
+/// command runs from. Absent when the command runs from the root.
+pub(crate) const VERIFY_CWD: &str = "suggested_verify_cwd: ";
+/// Files that mark a directory as a Python project (pytest rootdir) root.
+const PROJECT_MARKERS: [&str; 5] = [
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+    "pytest.ini",
+    "tox.ini",
+];
+
+/// The nearest directory strictly below `root` that holds a Python project
+/// marker and contains `test_file`, as a root-relative POSIX path. `None` when
+/// the owning project is the root (or no marker exists), so the command stays
+/// root-relative exactly as before.
+fn nested_project_dir(root: &Path, test_file: &str) -> Option<String> {
+    let path = Path::new(test_file);
+    let parts: Vec<&str> = path
+        .components()
+        .map(|component| match component {
+            Component::Normal(part) => part.to_str(),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let dirs = parts.split_last()?.1;
+    (1..=dirs.len()).rev().find_map(|depth| {
+        let dir = dirs[..depth].join("/");
+        let marked = PROJECT_MARKERS
+            .iter()
+            .any(|marker| root.join(&dir).join(marker).is_file());
+        marked.then_some(dir)
+    })
+}
+
+/// Rewrite the Python findings of one analysis root: choose each finding's
+/// project directory, then the interpreter and confidence from that
+/// directory's static facts.
+pub(super) fn apply_at(root: &Path, findings: &mut [Finding]) {
+    let mut decisions: BTreeMap<Option<String>, PytestVerifyInterpreter> = BTreeMap::new();
+    for finding in findings
+        .iter_mut()
+        .filter(|finding| finding.language == Some(LanguageId::Python))
+    {
+        let dir = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(TEST_FILE))
+            .and_then(|file| nested_project_dir(root, file));
+        let decision = decisions.entry(dir.clone()).or_insert_with(|| match &dir {
+            Some(dir) => PytestVerifyInterpreter::at(&root.join(dir)),
+            None => PytestVerifyInterpreter::at(root),
+        });
+        decision.rewrite_evidence_in(dir.as_deref(), &mut finding.evidence);
+    }
+}
+
+/// `selector` (a shell-quoted `path::node` token) with the leading `dir/`
+/// removed from its path, or `None` when the path is not under `dir`.
+fn strip_dir_from_selector(selector: &str, dir: &str) -> Option<String> {
+    for quote in ["", "'", "\""] {
+        let prefix = format!("{quote}{dir}/");
+        if let Some(rest) = selector.strip_prefix(&prefix) {
+            return Some(format!("{quote}{rest}"));
+        }
+    }
+    None
+}
 
 /// The route decision for one analysis root.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +120,7 @@ pub(super) struct PytestVerifyInterpreter {
 }
 
 impl PytestVerifyInterpreter {
-    pub(super) fn at(root: &Path) -> Self {
+    fn at(root: &Path) -> Self {
         Self::from_facts(project_venv_python(root), project_venv_pytest(root))
     }
 
@@ -77,14 +156,15 @@ impl PytestVerifyInterpreter {
         }
     }
 
-    /// Rewrite the PATH pytest commands of Python findings in place.
-    pub(super) fn apply(&self, findings: &mut [Finding]) {
-        for finding in findings
-            .iter_mut()
-            .filter(|finding| finding.language == Some(LanguageId::Python))
-        {
-            self.rewrite_evidence(&mut finding.evidence);
+    /// [`Self::rewrite_evidence`] for a finding whose test file is owned by
+    /// the nested project `dir` (root-relative): the commands first become
+    /// relative to `dir` and the cwd line names it. Idempotent: a finding that
+    /// already names its cwd keeps its commands.
+    fn rewrite_evidence_in(&self, dir: Option<&str>, evidence: &mut Vec<String>) {
+        if let Some(dir) = dir {
+            relativize_to_project(dir, evidence);
         }
+        self.rewrite_evidence(evidence);
     }
 
     /// Rewrite one Python finding's evidence lines. Idempotent: an
@@ -125,6 +205,60 @@ impl PytestVerifyInterpreter {
             .map_or(evidence.len(), |at| at + 1);
         evidence.insert(at, format!("{VENV_PYTEST}{}", self.pytest_fact()));
     }
+}
+
+/// Move the PATH pytest commands of `evidence` into the project `dir` and name
+/// it. A finding without a pytest suggestion, or one already carrying a cwd,
+/// is left alone.
+fn relativize_to_project(dir: &str, evidence: &mut Vec<String>) {
+    if evidence.iter().any(|line| line.starts_with(VERIFY_CWD)) {
+        return;
+    }
+    let value = |prefix: &str| {
+        evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(prefix))
+            .map(str::to_string)
+    };
+    let Some(suggested) = value(SUGGESTED).filter(|c| c.starts_with(PATH_PYTEST)) else {
+        return;
+    };
+    let relative_suggested = {
+        let exact = value(TEST_FILE)
+            .zip(value(TEST_NODE))
+            .and_then(|(file, node)| {
+                let name = node.strip_prefix(&file)?.strip_prefix("::")?.to_string();
+                let rel = file.strip_prefix(dir)?.strip_prefix('/')?.to_string();
+                crate::domain::python_pytest_verify_display(&rel, &name, cfg!(windows))
+            });
+        match exact {
+            Some(command) => command,
+            None => {
+                let selector = suggested.strip_prefix(PATH_PYTEST).unwrap_or_default();
+                match strip_dir_from_selector(selector, dir) {
+                    Some(rest) => format!("{PATH_PYTEST}{rest}"),
+                    None => return,
+                }
+            }
+        }
+    };
+    for line in evidence.iter_mut() {
+        if let Some(command) = line.strip_prefix(SUGGESTED) {
+            if command == suggested {
+                *line = format!("{SUGGESTED}{relative_suggested}");
+            }
+        } else if let Some(command) = line.strip_prefix(PER_TEST)
+            && let Some(selector) = command.strip_prefix(PATH_PYTEST)
+            && let Some(rest) = strip_dir_from_selector(selector, dir)
+        {
+            *line = format!("{PER_TEST}{PATH_PYTEST}{rest}");
+        }
+    }
+    let at = evidence
+        .iter()
+        .position(|line| line.starts_with(CONFIDENCE))
+        .map_or(evidence.len(), |at| at + 1);
+    evidence.insert(at, format!("{VERIFY_CWD}{dir}"));
 }
 
 #[cfg(test)]

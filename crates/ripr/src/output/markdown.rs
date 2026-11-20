@@ -503,13 +503,21 @@ pub(crate) fn command_context_directory(
     }
 }
 
-/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+/// Resolve a ledger `typescript_package_root` (or a Python record's
+/// `verify_cwd`, #15302) to a directory under `workspace_root`.
 fn confined_typescript_package_directory(
     workspace_root: &std::path::Path,
     record: &serde_json::Value,
 ) -> Option<std::path::PathBuf> {
     use std::path::Component;
-    let rel = typescript_package_root_from_gap_record(record)?;
+    let rel = typescript_package_root_from_gap_record(record).or_else(|| {
+        record
+            .get("verify_cwd")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })?;
     if rel == "." {
         return None;
     }

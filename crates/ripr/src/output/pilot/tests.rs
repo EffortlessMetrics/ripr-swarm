@@ -139,6 +139,7 @@ fn python_repair_card() -> PythonRepairCard {
         ),
         verify_command:
             "pytest tests/test_pricing.py::test_calculate_discount_above_threshold".to_string(),
+        verify_cwd: None,
         verify_command_confidence: "high".to_string(),
         receipt_command: None,
         receipt_status: "unavailable_until_python_gap_ledger".to_string(),
