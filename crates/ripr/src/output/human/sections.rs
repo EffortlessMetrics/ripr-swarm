@@ -696,7 +696,7 @@ fn condition_only_note(
         return None;
     }
     Some(format!(
-        "          (condition only; its block changed too, so before is the whole old line; open {}:{} to read the new line)\n",
+        "          (condition only; the line also changed outside it, so before is the whole old line; open {}:{} to read the new line)\n",
         crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ))

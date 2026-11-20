@@ -8605,7 +8605,7 @@ mod tests {
         assert!(rendered.contains("  after:  total > 200\n"));
         assert!(
             rendered.contains(
-                "(condition only; its block changed too, so before is the whole old line; open "
+                "(condition only; the line also changed outside it, so before is the whole old line; open "
             ),
             "a condition-only after row over a whole old line must say so; got:\n{rendered}"
         );
