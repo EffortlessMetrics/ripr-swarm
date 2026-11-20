@@ -262,6 +262,16 @@ unreadable or invalid manifest, a non-string, absolute, root-escaping or
 unresolvable `main`, a symlink, or a join that escaped the root keeps the
 lexical module (fail-closed). The alias branch is unchanged.
 
+Own-package build entry (#15342): when a relative directory import names the
+importer's own package and its JavaScript `main` names unindexed build output,
+the adapter can attribute the import to the manifest's single `source` or a
+unique indexed `src/` counterpart with the same build stem. Both the source
+and manifest must be tracked. A competing module or root export, an ambiguous
+source, and a source owned by a nested package withhold the relation. An
+uncredited name-matched import reports the unread build entry. An explicit
+file import retains its file identity. This is static source attribution. The
+bundle's contents and the test runner's loaded code remain unverified.
+
 Build-output amendment (#4551): with a known workspace root, a relative
 import whose in-root join lies under the root `tsconfig.json`'s own
 `compilerOptions.outDir`, and for which nothing (file, directory or symlink)

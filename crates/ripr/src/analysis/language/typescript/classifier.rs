@@ -7737,6 +7737,7 @@ pub(crate) fn classify_resolved_owner(
                 all_tests,
                 |test| credited_test_files.contains(&test.file),
                 root,
+                alias_map,
             )
         } else {
             Vec::new()
@@ -8984,6 +8985,12 @@ pub(crate) fn classify_resolved_owner(
             candidate.relation.as_str(),
             candidate.test.name
         ));
+        if candidate.relation == TypeScriptRelationKind::PackageBuildSource {
+            evidence.push(format!(
+                "test `{}` calls the package through its build entry. The manifest links that entry to this source, but the loaded bundle is unverified",
+                candidate.test.name
+            ));
+        }
         evidence.push(format!(
             "related_test_uncertain: {} ({})",
             candidate.relation.as_str(),

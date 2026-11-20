@@ -2033,9 +2033,10 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
-        .candidates(owner, all_tests)
-        .into_iter()
+    let indexed = relation_index.candidates(owner, all_tests);
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = indexed
+        .iter()
+        .copied()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -2080,6 +2081,20 @@ pub(crate) fn related_test_candidates<'a>(
             })
             .collect();
     }
+    if candidates.is_empty()
+        && let (Some(map), Some(scope)) = (alias_map, &package_scope)
+        && let Some(package) = &scope.owner_package
+        && let Some(source) = map.build_source_in(package)
+        && normalized_path_eq(&owner.file, source)
+    {
+        candidates = indexed
+            .into_iter()
+            .filter_map(|test| {
+                build_entry_call(test, owner, reexport_index, map, scope.workspace_root)
+                    .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
+            })
+            .collect();
+    }
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
@@ -2093,6 +2108,52 @@ pub(crate) fn related_test_candidates<'a>(
     }
     sort_related_candidates(&mut candidates);
     candidates
+}
+
+/// Only the source relationship is known. Reuse the direct-call binding guards
+/// on a view of the import; never expose the redirect to the oracle, barrel or
+/// module-entry graph as an ordinary runtime module identity.
+fn build_entry_call(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexports: &ReExportIndex,
+    map: &TsAliasMap,
+    root: &Path,
+) -> Option<TypeScriptRelationKind> {
+    if !test.mocks_in_file.is_empty() {
+        return None;
+    }
+    for (index, import) in test.imports_in_file.iter().enumerate() {
+        if import.namespace || !is_relative_specifier(&import.source) {
+            continue;
+        }
+        let Some(base) = relative_import_base(&test.file, &import.source) else {
+            continue;
+        };
+        let module = normalized_path(&base);
+        let Some(source) = map
+            .own_build_entry(&test.file, &module)
+            .and_then(|entry| entry.source.as_deref())
+        else {
+            continue;
+        };
+        if !normalized_path_eq(&owner.file, source) || file_module_exists(root, &module) {
+            continue;
+        }
+        let mut view = test.clone();
+        view.imports_in_file[index].source = relative_module_specifier(&test.file, source);
+        if matches!(
+            owner_call_relation(&view, owner, reexports, Some(map), Some(root)),
+            Some(
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+            )
+        ) {
+            return Some(TypeScriptRelationKind::PackageBuildSource);
+        }
+    }
+    None
 }
 
 pub(crate) fn sort_related_candidates(candidates: &mut [TypeScriptRelatedCandidate<'_>]) {
@@ -4878,6 +4939,9 @@ pub(crate) fn owner_path_disposition(
     if let Some(view) = test.reach_view() {
         return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
     }
+    if relation == TypeScriptRelationKind::PackageBuildSource {
+        return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }
@@ -4929,7 +4993,9 @@ fn ts_relation_to_domain(
         // rename is syntactically explicit and the call is to the local alias —
         // same certainty as DirectOwnerCall.
         TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ImportedOwnerCall => RelationReason::ImportPathAffinity,
+        TypeScriptRelationKind::ImportedOwnerCall | TypeScriptRelationKind::PackageBuildSource => {
+            RelationReason::ImportPathAffinity
+        }
         TypeScriptRelationKind::ModuleValueReference => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
@@ -4958,7 +5024,8 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
-        | TypeScriptRelationKind::TestName => RelationConfidence::Low,
+        | TypeScriptRelationKind::TestName
+        | TypeScriptRelationKind::PackageBuildSource => RelationConfidence::Low,
     };
     (Some(reason), Some(confidence))
 }
@@ -5471,9 +5538,18 @@ fn normalized_relative_import_module_uncached(
             && !escaped_root
             && !absolute
             && module == joined
-            && let Some(resolved) = resolve_directory_module(root, &module)
         {
-            return Some(resolved);
+            if alias_map
+                .and_then(|map| map.own_build_entry(test_file, &module))
+                .is_some()
+                && !file_module_exists(root, &module)
+            {
+                // A declared source is not the loaded build artifact.
+                return None;
+            }
+            if let Some(resolved) = resolve_directory_module(root, &module) {
+                return Some(resolved);
+            }
         }
         // A relative import of `tsc` build output whose target does not
         // exist maps back to its TypeScript source through the root
@@ -5876,7 +5952,7 @@ fn index_module(root: &Path, module: &str) -> Option<String> {
 
 /// Whether `<module>.<ext>` exists as a regular file for a supported
 /// extension.
-fn file_module_exists(root: &Path, module: &str) -> bool {
+pub(super) fn file_module_exists(root: &Path, module: &str) -> bool {
     !module.is_empty()
         && DIRECTORY_MODULE_EXTENSIONS
             .iter()
