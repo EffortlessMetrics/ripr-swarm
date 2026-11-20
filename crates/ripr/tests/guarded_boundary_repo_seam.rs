@@ -719,6 +719,14 @@ fn statement_predicates_require_a_boundary_row_that_holds_every_guard() -> Resul
             "let free = order_cents >= FREE_OVER_CENTS && !express;\n    free",
             true,
         ),
+        (
+            "let free =\n        order_cents >= FREE_OVER_CENTS\n        && !express;\n    free",
+            true,
+        ),
+        (
+            "return\n        order_cents >= FREE_OVER_CENTS\n        && !express;",
+            true,
+        ),
         ("return order_cents >= FREE_OVER_CENTS && !express;", true),
         (
             "let free = order_cents >= FREE_OVER_CENTS\n        && !express;\n    free",
@@ -740,10 +748,16 @@ fn statement_predicates_require_a_boundary_row_that_holds_every_guard() -> Resul
         let source = format!(
             "pub const FREE_OVER_CENTS: u32 = 5000;\nfn ready() -> bool {{ true }}\npub fn shipping_cost(order_cents: u32, express: bool) -> bool {{\n    {predicate}\n}}\n"
         );
-        let head = predicate.lines().next().ok_or("empty predicate fixture")?;
+        let (offset, head) = predicate
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(">="))
+            .ok_or("fixture has no comparison")?;
+        let line = 4 + offset;
+        let indent = if offset == 0 { "    " } else { "" };
         let old = head.replace(">=", ">");
         let patch = format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4 +4 @@\n-    {old}\n+    {head}\n"
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line} +{line} @@\n-{indent}{old}\n+{indent}{head}\n"
         );
         for express in [true, false] {
             let observed = !express;
@@ -780,7 +794,7 @@ fn statement_predicates_require_a_boundary_row_that_holds_every_guard() -> Resul
                 .iter()
                 .filter(|finding| {
                     finding.probe.family == ProbeFamily::Predicate
-                        && finding.probe.location.line == 4
+                        && finding.probe.location.line == line
                 })
                 .collect();
             let [finding] = findings.as_slice() else {

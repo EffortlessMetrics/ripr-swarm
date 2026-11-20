@@ -2421,7 +2421,12 @@ pub(in crate::analysis) fn guarded_boundary_row_reaches(
 ) -> bool {
     !parameter_may_be_rebound(owner, parameter, line)
         && owner_source.is_none_or(|source| {
-            changed_line_is_first_decision(owner.start_line, source, line, false)
+            let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+            let head = line
+                .checked_sub(owner.start_line)
+                .and_then(|offset| preceding_predicate_prefix(&masked, offset))
+                .map_or(line, |(offset, _)| owner.start_line + offset);
+            changed_line_is_first_decision(owner.start_line, source, head, false)
         })
 }
 
@@ -3103,9 +3108,7 @@ impl GuardedComparison {
         let value = visible_operand(&boundary, constant.as_ref())?;
         // An earlier branch or early return may take a row away from the
         // changed line; a rebound parameter is not the caller's value.
-        if parameter_may_be_rebound(owner, &parameter, probe.location.line)
-            || !first_decision_is_clear(owner, owner_source, probe, false)
-        {
+        if !guarded_boundary_row_reaches(owner, owner_source, &parameter, probe.location.line) {
             return None;
         }
         Some((parameter, boundary, value))
@@ -3293,10 +3296,13 @@ fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<St
     }
     let mut lines = masked.lines().skip(offset);
     let head = lines.next()?.trim();
-    let statement = simple_let_initializer(head).is_some() || head.starts_with("return ");
+    let prefix = preceding_predicate_prefix(&masked, offset).map_or(head, |(_, text)| text);
+    let statement = simple_let_initializer(prefix).is_some()
+        || prefix == "return"
+        || prefix.starts_with("return ");
     let condition = ["if ", "} else if ", "else if ", "while "]
         .iter()
-        .any(|prefix| head.starts_with(prefix));
+        .any(|keyword| prefix.starts_with(keyword) || prefix == keyword.trim_end());
     let terminator = if statement { ';' } else { '{' };
     if !(condition || statement) || head.contains(terminator) {
         return None;
@@ -3316,6 +3322,20 @@ fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<St
         }
     }
     None
+}
+
+/// A keyword or binding on its own line introduces the following expression.
+fn preceding_predicate_prefix(masked: &str, offset: usize) -> Option<(usize, &str)> {
+    let (index, text) = masked
+        .lines()
+        .take(offset)
+        .enumerate()
+        .filter(|(_, text)| !text.trim().is_empty())
+        .last()?;
+    let text = text.trim();
+    (matches!(text, "return" | "if" | "while" | "else if" | "} else if")
+        || (text.ends_with('=') && simple_let_initializer(text) == Some("")))
+    .then_some((index, text))
 }
 
 fn simple_let_initializer(statement: &str) -> Option<&str> {
