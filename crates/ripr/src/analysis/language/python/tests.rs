@@ -8927,7 +8927,7 @@ fn multi_line_def_header_span_skips_string_literals() {
     assert_eq!(span(&empty, 1), Some((1, 4)));
     let prefixed = format!("def f(\n    sep=r\"(\",\n    tag=b'#[',\n) -> int:  # note\n{body}");
     assert_eq!(span(&prefixed, 1), Some((1, 4)));
-    let triple = format!("def f(\n    doc=\"\"\"a (\n    b:\"\"\",\n):\n{body}");
+    let triple = format!("def f(\n    doc=\"\"\"a (\n    b: \"\"\",\n):\n{body}");
     assert_eq!(span(&triple, 1), Some((1, 4)));
     // A one-quote string left open at the end of a line is not followed.
     let open = format!("def f(\n    sep=\"(\\\n\",\n):\n{body}");
