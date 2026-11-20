@@ -11,10 +11,11 @@ fn sha(text: &str) -> bool {
 }
 
 /// Qualification's base comes from the already verified admission output, and
-/// must be the tested integration commit's first parent. Legacy PR/queue
-/// runs instead take the first parent of a merge checkout read from Git
-/// objects (the event payload base can be stale once the base branch moves);
-/// this does not claim an admission receipt.
+/// must be the tested integration commit's first parent. Legacy runs instead
+/// take HEAD's first parent read from Git objects (the event payload base can
+/// be stale once the base branch moves): a pull_request run must be on the
+/// two-parent merge checkout, and a merge_group run on the single-parent
+/// queue squash. This does not claim an admission receipt.
 fn choose_base(
     profile: &str,
     event: &str,
@@ -28,10 +29,12 @@ fn choose_base(
         "qualification" => Err(
             "honesty digest: admitted base missing, malformed, or not HEAD's first parent".into(),
         ),
+        // A pull_request checkout is GitHub's two-parent merge ref; a
+        // merge_group head is a single-parent squash on the queue base.
         "legacy"
-            if matches!(event, "pull_request" | "merge_group")
-                && merge_checkout
-                && sha(first_parent) =>
+            if sha(first_parent)
+                && ((event == "pull_request" && merge_checkout)
+                    || (event == "merge_group" && !merge_checkout)) =>
         {
             Ok(first_parent.into())
         }
@@ -230,7 +233,11 @@ mod tests {
             )
         );
         assert_eq!(
-            choose_base("legacy", "merge_group", "", false, &a, &a)
+            choose_base("legacy", "merge_group", "", false, &a, &a).ok(),
+            Some(a.clone())
+        );
+        assert_eq!(
+            choose_base("legacy", "merge_group", "", true, &a, &a)
                 .err()
                 .as_deref(),
             Some(
@@ -247,7 +254,7 @@ mod tests {
             Some(a.clone())
         );
         assert_eq!(
-            choose_base("legacy", "merge_group", "", true, "not-a-sha", "")
+            choose_base("legacy", "merge_group", "", false, "not-a-sha", "")
                 .err()
                 .as_deref(),
             Some(
