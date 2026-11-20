@@ -2222,12 +2222,18 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
             return Err(format!("fixture package carries {}", path.display()));
         }
     }
-    let installed = archive.install(&owned)?;
+    let mut installed = archive.install(&owned)?;
+    // Freeze the candidate as the qualified corpus does before binding its
+    // path into the compiled harness.
+    let slot = owned.join(format!("candidate-witness{}", std::env::consts::EXE_SUFFIX));
+    installed.freeze_into(&slot)?;
+    let frozen = fs::read(&slot).map_err(|error| error.to_string())?;
     let receipt = installed.run_help_contract(&owned.join("help-contract"))?;
     if receipt["cases_declared"] != 2
         || receipt["cases_listed"] != 2
         || receipt["cases_passed"] != 2
-        || receipt["executable"].as_str() != installed.binary().to_str()
+        || receipt["executable"].as_str() != slot.to_str()
+        || receipt["executable_sha256"].as_str() != Some(sha256_hex(&frozen).as_str())
         || receipt["harness_sources"].as_array().map(Vec::len) != Some(3)
     {
         return Err(format!("unexpected help contract receipt: {receipt}"));
@@ -2237,6 +2243,33 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
         installed.run_help_contract(&owned.join("help-contract")),
         "create owned help harness root",
     )?;
+    // A different binary of the same version and length in the frozen slot
+    // still runs, but the contract refuses it before compiling a harness.
+    let marker = b"fixture source A";
+    let at = frozen
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .ok_or("frozen fixture binary lacks its output marker")?;
+    let mut substitute = frozen.clone();
+    *substitute
+        .get_mut(at + marker.len() - 1)
+        .ok_or("frozen fixture marker out of range")? = b'B';
+    fs::write(&slot, &substitute).map_err(|error| error.to_string())?;
+    let substituted_root = owned.join("help-contract-substituted");
+    let refusal = installed.run_help_contract(&substituted_root);
+    if substituted_root.exists()
+        || !refusal
+            .as_ref()
+            .is_err_and(|error| error.contains("frozen executable"))
+    {
+        return Err(format!(
+            "a substituted frozen binary was not refused before compile: {refusal:?}"
+        ));
+    }
+    // The frozen snapshot includes file metadata, so restoring the original
+    // bytes does not restore custody: the witness stays refused.
+    fs::write(&slot, &frozen).map_err(|error| error.to_string())?;
+    require_refusal(installed.revalidate(), "frozen executable snapshot changed")?;
     fixture.guard.finish()?;
 
     // Without the harness in the admitted commit, qualification refuses.
