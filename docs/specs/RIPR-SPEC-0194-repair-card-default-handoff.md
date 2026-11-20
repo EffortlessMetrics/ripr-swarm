@@ -256,6 +256,11 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
 
 ## Test Mapping
 
+- `oversized_card_expression_needs_the_exact_current_packet` challenges the
+  detail reference with escaped text, a sibling row and a stale packet.
+  `long_literal_gap_round_trips_through_explain_repair_and_receipt` checks
+  the human repair handoff and the exact source in its packet.
+
 - `crates/ripr/src/app/repair_card_handoff.rs` unit tests cover the pure
   assembly over producer-owned facts: the nine-family projection with the
   packet route, the closed-gate omission of the next action, the default

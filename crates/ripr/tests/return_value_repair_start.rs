@@ -1764,6 +1764,18 @@ fn long_literal_gap_round_trips_through_explain_repair_and_receipt() -> Result<(
             ready && repair.contains("edit one test file: tests/t.rs"),
             "{repair}"
         );
+        if literal.len() == 30_000 {
+            assert!(repair.contains("See changed_expression in the canonical packet"));
+            let packet: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(repo.0.join("target/ripr/workflow/agent-packet.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(
+                packet["packets"][0]["changed_expression"],
+                format!(r#"x * 2 + "{literal}".len()"#)
+            );
+        }
         let receipt = repo.ripr(&[
             "receipt",
             "write",

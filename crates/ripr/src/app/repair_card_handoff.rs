@@ -685,6 +685,7 @@ fn card_expression_summary(
     if wire_bytes > budget.max_inline_detail_bytes
         && sources.iter().any(|source| {
             source.family == RepairCardDetailFamily::CanonicalPacket
+                && source.state == RepairCardDetailState::Current
                 && packet_for_seam(&source.content, seam_id)
                     .and_then(|packet| packet["changed_expression"].as_str())
                     == Some(expression)
@@ -2617,6 +2618,35 @@ mod tests {
         if route != expected {
             return Err(format!("expected `{expected}`, got `{route}`"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_card_expression_needs_the_exact_current_packet() -> Result<(), String> {
+        let budget = RepairCardBudget::default();
+        // Escapes exceed the JSON wire budget even though the source fits.
+        let expression = "\\".repeat(budget.max_inline_detail_bytes / 2);
+        let mut source = RepairCardDetailSource::current(
+            RepairCardDetailFamily::CanonicalPacket,
+            "ripr agent packet --seam-id selected --json",
+            serde_json::json!({"packets": [
+                {"seam_id": "sibling", "changed_expression": expression},
+                {"seam_id": "selected", "changed_expression": "other"}
+            ]}),
+        );
+        let summary = |source: &RepairCardDetailSource| {
+            card_expression_summary(
+                &expression,
+                "selected",
+                std::slice::from_ref(source),
+                &budget,
+            )
+        };
+        assert_eq!(summary(&source)?, expression);
+        source.content["packets"][1]["changed_expression"] = serde_json::json!(expression);
+        assert!(summary(&source)?.contains("canonical packet"));
+        source.state = RepairCardDetailState::Stale;
+        assert_eq!(summary(&source)?, expression);
         Ok(())
     }
 

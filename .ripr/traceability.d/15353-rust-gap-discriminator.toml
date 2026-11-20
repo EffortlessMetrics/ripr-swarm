@@ -8,5 +8,6 @@ tests = [
 [[extend]]
 id = "RIPR-SPEC-0194"
 tests = [
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::oversized_card_expression_needs_the_exact_current_packet",
   "crates/ripr/tests/return_value_repair_start.rs::long_literal_gap_round_trips_through_explain_repair_and_receipt",
 ]
