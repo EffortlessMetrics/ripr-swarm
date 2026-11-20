@@ -189,3 +189,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (17)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

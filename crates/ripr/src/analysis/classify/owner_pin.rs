@@ -4339,6 +4339,16 @@ impl AssertionRefusal {
         )
     }
 
+    /// The construct an assertion sits in that may keep it from running
+    /// (`a \`for\` loop, which may run zero times`), when that is the
+    /// refusal (#15337). Any other refusal names no construct.
+    pub(in crate::analysis) fn conditional_construct(&self) -> Option<&'static str> {
+        match self {
+            Self::Syntax(AssertionContextRefusal::ConditionalPath(construct)) => Some(construct),
+            _ => None,
+        }
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         // Evidence text is host-independent: use the stable slash spelling

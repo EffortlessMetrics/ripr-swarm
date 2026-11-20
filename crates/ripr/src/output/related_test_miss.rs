@@ -89,10 +89,16 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
             "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
-        RelatedTestMiss::AssertionInert => {
-            "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
-                .to_string()
-        }
+        // #15337: the Rust producer names the construct the assertion sits
+        // in when every refusal of the row agrees on it.
+        RelatedTestMiss::AssertionInert => match &test.miss_support {
+            Some(support) => format!(
+                "assertion inert: this test's assertion is inside {}",
+                one_line(&support.value)
+            ),
+            None => "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+                .to_string(),
+        },
         RelatedTestMiss::AssertionAdmissionUnproven => {
             "assertion admission unproven: ripr could not establish that this assertion counts here"
                 .to_string()
@@ -821,6 +827,36 @@ mod tests {
 
     fn reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
         related_test_miss_reason(test, family)
+    }
+
+    #[test]
+    fn an_inert_row_names_its_construct_only_from_its_own_support() {
+        let family = ProbeFamily::ReturnValue;
+        assert_eq!(
+            reason(
+                &row_named(
+                    "loops",
+                    RelatedTestMiss::AssertionInert,
+                    Some(support("a `for` loop, which may run zero times")),
+                ),
+                &family,
+            )
+            .as_deref(),
+            Some(
+                "assertion inert: this test's assertion is inside a `for` loop, which may run zero times"
+            )
+        );
+        // Without row-owned support the generic sentence stays.
+        assert_eq!(
+            reason(
+                &row_named("loops", RelatedTestMiss::AssertionInert, None),
+                &family
+            )
+            .as_deref(),
+            Some(
+                "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+            )
+        );
     }
 
     #[test]

@@ -718,7 +718,9 @@ pub struct RelatedTest {
     #[serde(default, skip_serializing_if = "RelatedTestRole::is_contributing")]
     pub role: RelatedTestRole,
     /// The one typed fact the producer established for **this row** that
-    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564).
+    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564), or
+    /// the conditional construct every refusal of an `assertion_inert` row
+    /// names (#15337).
     /// `None` when the producer could not establish row ownership; renderers
     /// then use generic wording and never borrow a finding-wide
     /// `missing_discriminators` entry. Evidence only: no decision reads it

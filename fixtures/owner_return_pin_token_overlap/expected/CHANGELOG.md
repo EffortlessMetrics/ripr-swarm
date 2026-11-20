@@ -439,3 +439,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_token_overlap (35)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_token_overlap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
