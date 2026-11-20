@@ -5153,6 +5153,11 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
 
+`ripr context --format json-compact` removes insignificant JSON whitespace
+from the existing packet or structured refusal. The default and `--json` keep
+their existing presentation. Field values, source identity and exit codes do
+not change; selector misses remain prose-only errors.
+
 Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
 the selector guidance and retry command on stderr, and stdout empty unless JSON
 was explicitly requested (then the minimal `cli_refusal` document, #11584). When the
