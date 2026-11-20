@@ -959,13 +959,15 @@ fn stub_body(
             signature,
             owner_trait,
             signature.return_type.as_deref().unwrap_or_default(),
+            source,
         ),
     ) {
-        let rendered = if spec.is_empty() {
-            format!("{subject}.to_string()")
-        } else {
-            format!("format!(\"{{{subject}{spec}}}\")")
-        };
+        // `std::format!` behind a block-scoped `extern crate std;` compiles
+        // in a `#![no_std]` crate's test too, and the format string reaches
+        // the trait impl even when an inherent `fn to_string(&self)` would
+        // shadow `ToString::to_string`.
+        let rendered = format!("std::format!(\"{{{subject}{spec}}}\")");
+        lines.insert(0, "extern crate std;".to_string());
         let label = format!(
             "ripr: write the exact text `{rendered}` should produce{}",
             discriminator_hint(seam, &[subject.to_string()])
@@ -1027,16 +1029,25 @@ fn stub_body(
         }
         arguments.push(argument);
     }
-    // The inputs the test chooses, named in the fill-in guidance.
+    // The inputs the test chooses, named in the fill-in guidance. A `&mut`
+    // parameter is an output the call writes into, not a chosen input; a
+    // `&mut self` receiver is still built by the test, so it stays.
     let input_names: Vec<String> = receiver
         .map(str::to_string)
         .into_iter()
-        .chain(signature.params.iter().enumerate().map(|(index, param)| {
-            param
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("arg{}", index + 1))
-        }))
+        .chain(
+            signature
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, param)| strip_mut_reference(&param.ty).is_none())
+                .map(|(index, param)| {
+                    param
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("arg{}", index + 1))
+                }),
+        )
         .collect();
 
     let call = match (&qualified_self, receiver, self_type) {
@@ -1947,11 +1958,14 @@ fn discriminator_hint(seam: &RepoSeam, inputs: &[String]) -> String {
 
 /// The format spec (`""` for `Display`, `":?"` for `Debug`, ...) when the
 /// owner is the `fmt` method of a `std::fmt` formatting trait: `&self`, one
-/// `&mut Formatter` parameter, returning `fmt::Result`.
+/// `&mut Formatter` parameter, returning `fmt::Result`. A bare trait name
+/// (`impl Display for T`) counts only when the file neither declares a trait
+/// of that name nor imports it from outside `std::fmt`/`core::fmt`.
 fn format_trait_spec(
     signature: &OwnerSignature,
     owner_trait: Option<&str>,
     return_type: &str,
+    source: &str,
 ) -> Option<&'static str> {
     if signature.name != "fmt" || signature.receiver != Some(OwnerReceiver::Ref) {
         return None;
@@ -1974,7 +1988,7 @@ fn format_trait_spec(
         .iter()
         .find_map(|prefix| trait_path.strip_prefix(prefix))
         .unwrap_or(trait_path);
-    Some(match trait_name {
+    let spec = match trait_name {
         "Display" => "",
         "Debug" => ":?",
         "LowerHex" => ":x",
@@ -1983,8 +1997,70 @@ fn format_trait_spec(
         "Binary" => ":b",
         "LowerExp" => ":e",
         "UpperExp" => ":E",
+        "Pointer" => ":p",
         _ => return None,
-    })
+    };
+    if trait_name == trait_path && !bare_name_is_std_fmt_trait(source, trait_name) {
+        return None;
+    }
+    Some(spec)
+}
+
+/// Whether a bare `name` in an impl header can be the `std::fmt` trait: the
+/// file declares no `trait name` and imports `name` (directly or renamed)
+/// only from `std::fmt`, `core::fmt`, `alloc::fmt` or a local `fmt` path.
+/// A file that does not parse cleanly fails closed.
+fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let root = parse.tree();
+    let declares = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Trait::cast)
+        .any(|declared| declared.name().is_some_and(|n| n.text() == name));
+    if declares {
+        return false;
+    }
+    root.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+        .filter(|tree| {
+            let bound = match tree.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .map(|segment| segment.syntax().text().to_string())
+                    .unwrap_or_default(),
+            };
+            bound == name
+        })
+        .all(|tree| {
+            // The full imported path, from the outermost tree inward.
+            let mut segments: Vec<String> = tree
+                .syntax()
+                .ancestors()
+                .filter_map(ast::UseTree::cast)
+                .filter_map(|ancestor| ancestor.path())
+                .map(|path| path.syntax().text().to_string())
+                .collect();
+            segments.reverse();
+            let full: String = segments
+                .join("::")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let full = full.trim_start_matches("::");
+            ["std::fmt::", "core::fmt::", "alloc::fmt::", "fmt::"]
+                .iter()
+                .any(|prefix| {
+                    full.strip_prefix(prefix)
+                        .is_some_and(|rest| !rest.contains("::"))
+                })
+        })
 }
 
 fn name_suffix(kind: SeamKind) -> &'static str {

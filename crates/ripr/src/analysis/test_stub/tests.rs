@@ -1202,7 +1202,7 @@ impl std::fmt::Display for Meter {
     // observed by formatting the value (see the format-trait tests below).
     assert!(
         stub.text
-            .contains("assert_eq!(subject.to_string(), expected);"),
+            .contains("assert_eq!(std::format!(\"{subject}\"), expected);"),
         "{}",
         stub.text
     );
@@ -1234,6 +1234,11 @@ impl fmt::LowerHex for Code {
         write!(f, \"{:x}\", self.0 * 2)
     }
 }
+impl fmt::Pointer for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"{:#x}\", self.0 as usize)
+    }
+}
 pub trait Render { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result; }
 impl Render for Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1255,9 +1260,10 @@ mod tests {
 fn format_trait_fmt_owner_stub_formats_the_value_instead_of_building_a_formatter()
 -> Result<(), String> {
     for (needle, rendered) in [
-        ("write!(f, \"${}", "subject.to_string()"),
-        ("self.0 + 1", "format!(\"{subject:?}\")"),
-        ("self.0 * 2", "format!(\"{subject:x}\")"),
+        ("write!(f, \"${}", "std::format!(\"{subject}\")"),
+        ("self.0 + 1", "std::format!(\"{subject:?}\")"),
+        ("self.0 * 2", "std::format!(\"{subject:x}\")"),
+        ("self.0 as usize", "std::format!(\"{subject:p}\")"),
     ] {
         let seam = seam_at(
             "src/lib.rs",
@@ -1281,6 +1287,11 @@ fn format_trait_fmt_owner_stub_formats_the_value_instead_of_building_a_formatter
         );
         assert!(!stub.text.contains("Formatter"), "{needle}: {}", stub.text);
         assert!(!stub.text.contains("::fmt("), "{needle}: {}", stub.text);
+        assert!(
+            stub.text.contains("extern crate std;"),
+            "{needle}: {}",
+            stub.text
+        );
     }
     // A `fmt` method of a trait that is not a `std::fmt` formatting trait
     // keeps the direct call; formatting the value would not reach it.
@@ -1299,6 +1310,149 @@ fn format_trait_fmt_owner_stub_formats_the_value_instead_of_building_a_formatter
         stub.text
     );
     assert!(!stub.text.contains("to_string()"), "{}", stub.text);
+    Ok(())
+}
+
+#[test]
+fn format_trait_stub_compiles_shape_in_no_std_and_past_a_shadowing_to_string() -> Result<(), String>
+{
+    // A `#![no_std]` crate has no `ToString` or `format!` in scope; the stub
+    // names `std` itself. An inherent `fn to_string(&self)` would shadow
+    // `ToString::to_string` and never reach the changed `fmt`.
+    let source = "#![no_std]
+use core::fmt;
+pub struct Unit(pub u8);
+impl Unit { pub fn to_string(&self) -> u8 { self.0 } }
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"u{}\", self.0 + 7)
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self.0 + 7",
+        SeamKind::ReturnValue,
+        return_value("self.0 + 7"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    let lines: Vec<&str> = stub.text.lines().map(str::trim).collect();
+    let body_start = lines
+        .iter()
+        .position(|line| line.starts_with("fn "))
+        .ok_or("test fn")?;
+    assert_eq!(
+        lines.get(body_start + 1),
+        Some(&"extern crate std;"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("assert_eq!(std::format!(\"{subject}\"), expected);"),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains(".to_string()"), "{}", stub.text);
+    Ok(())
+}
+
+#[test]
+fn a_bare_user_trait_named_display_keeps_the_direct_call() -> Result<(), String> {
+    for source in [
+        // Imported from a non-fmt module.
+        "mod mine { pub trait Display { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result; } }
+use mine::Display;
+pub struct Own(pub u8);
+impl Display for Own {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, \"{}\", self.0 + 9)
+    }
+}
+",
+        // Declared in the file.
+        "pub trait Display { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result; }
+pub struct Own(pub u8);
+impl Display for Own {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, \"{}\", self.0 + 9)
+    }
+}
+",
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            source,
+            "self.0 + 9",
+            SeamKind::ReturnValue,
+            return_value("self.0 + 9"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+        assert!(
+            stub.text.contains("<Own as Display>::fmt(&subject, &mut f)"),
+            "{}",
+            stub.text
+        );
+        assert!(!stub.text.contains("std::format!"), "{}", stub.text);
+    }
+    // A bare `Display` imported from `std::fmt` is the formatting trait.
+    let source = "use std::fmt::{self, Display};
+pub struct Own(pub u8);
+impl Display for Own {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"{}\", self.0 + 9)
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self.0 + 9",
+        SeamKind::ReturnValue,
+        return_value("self.0 + 9"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("assert_eq!(std::format!(\"{subject}\"), expected);"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn return_value_guidance_leaves_mut_output_targets_out_of_the_chosen_inputs() -> Result<(), String>
+{
+    let source = "pub struct Seed(pub u8);
+impl Seed {
+    pub fn fill(&self, out: &mut Vec<u8>, step: u8) -> u8 { out.clear(); self.0 + step }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self.0 + step",
+        SeamKind::ReturnValue,
+        return_value("self.0 + step"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    let expected = "ripr: write the value `fill` should return for `subject` and `step` (the changed code is `self.0 + step`)";
+    assert!(
+        stub.fill_ins.iter().any(|fill| fill == expected),
+        "{:?}",
+        stub.fill_ins
+    );
+    assert!(
+        !stub
+            .fill_ins
+            .iter()
+            .any(|fill| fill.contains("`out`") && fill.contains("should return")),
+        "{:?}",
+        stub.fill_ins
+    );
     Ok(())
 }
 
