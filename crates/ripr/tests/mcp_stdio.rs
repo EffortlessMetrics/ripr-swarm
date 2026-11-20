@@ -4206,10 +4206,12 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
         .find(|item| {
             item.pointer("/file")
                 .and_then(Value::as_str)
-                .is_some_and(|file| file.ends_with("src/lib.rs"))
+                // Exact: the served file is the plain workspace-relative path,
+                // never `./src/lib.rs` (#15645).
+                .is_some_and(|file| file == "src/lib.rs")
         })
         .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
-        .ok_or_else(|| format!("B4 list_gaps has no src/lib.rs item: {list}"))?
+        .ok_or_else(|| format!("B4 list_gaps has no exact src/lib.rs item: {list}"))?
         .to_string();
 
     let card_reply = session.call_tool(

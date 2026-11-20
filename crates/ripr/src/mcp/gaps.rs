@@ -3334,7 +3334,16 @@ mod tests {
             "src/lib.rs"
         );
         let outside = std::env::temp_dir().join("ripr-gap-path-elsewhere/lib.rs");
-        assert!(served_finding_file(&root, &outside).contains("ripr-gap-path-elsewhere"));
+        assert_eq!(
+            served_finding_file(&root, &outside),
+            outside.to_string_lossy().replace('\\', "/"),
+            "an out-of-root file keeps its exact stable spelling"
+        );
+        assert_eq!(
+            served_finding_file(&root, Path::new("../x")),
+            "../x",
+            "a parent-relative file keeps its spelling"
+        );
     }
 
     #[test]

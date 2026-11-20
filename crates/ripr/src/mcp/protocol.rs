@@ -2747,7 +2747,7 @@ mod tests {
             "item": {
                 "canonical_id": "gap:rust:src/lib.rs:shipping_cents:predicate_boundary",
                 "class": "weakly_exposed",
-                "location": {"file": "./src/lib.rs", "line": 5, "column": 1},
+                "location": {"file": "src/lib.rs", "line": 5, "column": 1},
                 "causal_attribution": {"owner": "shipping_cents"},
                 "changed_behavior": {
                     "before": "order_cents > FREE_SHIPPING_CENTS",
@@ -2804,7 +2804,7 @@ mod tests {
         let document = brief_gap_document();
         let text = brief_text_of(document.clone())?;
         let expected = [
-            "ripr gap: weakly_exposed ./src/lib.rs:5 owner=shipping_cents. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with RIPR_MCP_TEXT_CONTENT=full for the full JSON here.",
+            "ripr gap: weakly_exposed src/lib.rs:5 owner=shipping_cents. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with RIPR_MCP_TEXT_CONTENT=full for the full JSON here.",
             "canonical_id: gap:rust:src/lib.rs:shipping_cents:predicate_boundary; snapshot_id: snapshot-123",
             "changed: order_cents > FREE_SHIPPING_CENTS -> order_cents >= FREE_SHIPPING_CENTS; probe: predicate",
             "missing: order_cents == FREE_SHIPPING_CENTS (No related test call uses order_cents equal to FREE_SHIPPING_CENTS; target FREE_SHIPPING_CENTS value: 5_000)",
