@@ -2,6 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0049"
 tests = [
+  "editors/vscode/test/suite/download_proxy.test.ts::NO_PROXY IPv6 entries match the URL parser spelling of the same address only",
   "editors/vscode/test/suite/download_proxy.test.ts::http.proxy wins over HTTPS_PROXY, which wins over https_proxy",
   "editors/vscode/test/suite/download_proxy.test.ts::NO_PROXY exempts hosts, suffixes, ports and wildcards, and only those",
   "editors/vscode/test/suite/download_proxy.test.ts::basic auth is carried but never rendered; unsupported schemes fail closed naming the workaround",

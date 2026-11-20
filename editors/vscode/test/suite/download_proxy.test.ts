@@ -36,6 +36,16 @@ suite('VS Code download proxy support (#15317)', () => {
     assert.deepStrictEqual(resolveProxy(TARGET, { env: {} }), { kind: 'direct' });
   });
 
+  test('NO_PROXY IPv6 entries match the URL parser spelling of the same address only', () => {
+    const env = { HTTPS_PROXY: 'http://corp-proxy:3128' };
+    const direct = (url: string, noProxy: string) =>
+      resolveProxy(url, { env: { ...env, NO_PROXY: noProxy } }).kind === 'direct';
+    assert.ok(direct('https://[2001:db8:0:0::1]/m.json', '2001:db8:0:0::1'));
+    assert.ok(direct('https://[::ffff:192.0.2.1]/m.json', '::ffff:192.0.2.1'));
+    assert.ok(direct('https://[2001:db8::1]:8443/m.json', '[2001:db8:0::1]:8443'));
+    assert.ok(!direct('https://[2001:db8::2]/m.json', '2001:db8:0:0::1'));
+  });
+
   test('NO_PROXY exempts hosts, suffixes, ports and wildcards, and only those', () => {
     assert.ok(noProxyMatches('github.com', 'github.com', 443));
     assert.ok(noProxyMatches('.github.com', 'api.github.com', 443));

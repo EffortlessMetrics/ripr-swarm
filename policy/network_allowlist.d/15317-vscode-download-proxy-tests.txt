@@ -1,0 +1,1 @@
+editors/vscode/test/suite/download_proxy.test.ts|https.get|1|lsp/editor-test|#15317: one https.get to a 127.0.0.1 port through a local in-process CONNECT proxy proves a synchronous TLS setup error settles the request. Loopback only; no external network.

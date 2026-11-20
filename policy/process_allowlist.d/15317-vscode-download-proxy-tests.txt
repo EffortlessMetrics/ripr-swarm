@@ -1,0 +1,2 @@
+editors/vscode/test/suite/download_proxy.test.ts|child_process|1|lsp/editor-test|#15317: the proxy suite's one child_process import generates throwaway localhost TLS fixture certificates with openssl in os.tmpdir(). Test module only; no shell, network, or repository mutation.
+editors/vscode/test/suite/download_proxy.test.ts|cp.execFile|2|lsp/editor-test|#15317: two bounded openssl execFileSync calls create the trusted and rogue self-signed fixture certificates for the CONNECT-tunnel TLS tests. No shell expansion; test module only.

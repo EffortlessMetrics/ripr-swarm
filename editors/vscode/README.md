@@ -75,7 +75,7 @@ can be downloaded.
 
 The managed server download honors VS Code `http.proxy`, then the
 `HTTPS_PROXY` / `https_proxy` environment variables, and skips hosts listed in
-`NO_PROXY` / `no_proxy` (loopback is always direct). Redirects follow the same
+`NO_PROXY` / `no_proxy` (`localhost`, `127.0.0.1` and `::1` are always direct). Redirects follow the same
 rule. Only `http://host:port` proxies are supported, with optional
 `http://user:password@host:port` basic auth; credentials are sent only to the
 proxy and never logged. A `socks://` or `https://` proxy fails the download

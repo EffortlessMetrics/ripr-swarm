@@ -67,7 +67,7 @@ export function noProxyMatches(noProxy: string | undefined, host: string, port: 
   if (!noProxy) {
     return false;
   }
-  const target = host.toLowerCase().replace(/^\[|\]$/g, '');
+  const target = canonicalIp(host.toLowerCase().replace(/^\[|\]$/g, ''));
   for (const raw of noProxy.split(/[,\s]+/)) {
     let entry = raw.trim().toLowerCase();
     if (entry.length === 0) {
@@ -89,7 +89,7 @@ export function noProxyMatches(noProxy: string | undefined, host: string, port: 
     // An IP literal matches only the whole address, never a label suffix
     // (`0.1` must not exempt `10.0.0.1`); CIDR ranges are not supported.
     if (net.isIP(target) !== 0) {
-      if (target === entry) {
+      if (target === canonicalIp(entry)) {
         return true;
       }
       continue;
@@ -105,6 +105,23 @@ export function noProxyMatches(noProxy: string | undefined, host: string, port: 
     }
   }
   return false;
+}
+
+/**
+ * The WHATWG URL spelling of an IPv6 literal (`2001:db8:0:0::1` becomes
+ * `2001:db8::1`, `::ffff:192.0.2.1` becomes `::ffff:c000:201`), so a
+ * `NO_PROXY` entry matches the hostname the URL parser produced. Any other
+ * text is returned unchanged.
+ */
+function canonicalIp(text: string): string {
+  if (net.isIPv6(text)) {
+    try {
+      return new URL(`http://[${text}]/`).hostname.replace(/^\[|\]$/g, '');
+    } catch {
+      return text;
+    }
+  }
+  return text;
 }
 
 /**
