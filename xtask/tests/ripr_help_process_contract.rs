@@ -24,7 +24,10 @@ fn nested_cargo_uses_exact_packed_config_without_unpacked_side_effects() -> Resu
     assert_eq!(ordinary.get_args().len(), 0);
     for part in ["1", "2"] {
         let config = configs.join(format!("packed-partition-{part}.toml"));
-        assert!(ripr_help::cargo_for(root, Some(OsStr::new(part))).is_err());
+        let error = ripr_help::cargo_for(root, Some(OsStr::new(part)))
+            .err()
+            .ok_or("missing partition config was accepted")?;
+        assert!(error.starts_with(&format!("packed Cargo config {}: ", config.display())));
         std::fs::write(&config, "[env]\n").map_err(|error| error.to_string())?;
         let command = ripr_help::cargo_for(root, Some(OsStr::new(part)))?;
         assert_eq!(
@@ -33,15 +36,27 @@ fn nested_cargo_uses_exact_packed_config_without_unpacked_side_effects() -> Resu
         );
     }
     for malformed in ["", "3", "../unrelated"] {
-        assert!(ripr_help::cargo_for(root, Some(OsStr::new(malformed))).is_err());
+        let error = ripr_help::cargo_for(root, Some(OsStr::new(malformed)))
+            .err()
+            .ok_or("malformed partition was accepted")?;
+        assert_eq!(error, "RIPR_PACKED_TEST_PARTITION must be 1 or 2");
     }
     #[cfg(unix)]
     {
         let config = configs.join("packed-partition-1.toml");
         std::fs::remove_file(&config).map_err(|error| error.to_string())?;
-        std::os::unix::fs::symlink(configs.join("packed-partition-2.toml"), config)
+        std::os::unix::fs::symlink(configs.join("packed-partition-2.toml"), &config)
             .map_err(|error| error.to_string())?;
-        assert!(ripr_help::cargo_for(root, Some(OsStr::new("1"))).is_err());
+        let error = ripr_help::cargo_for(root, Some(OsStr::new("1")))
+            .err()
+            .ok_or("symlinked partition config was accepted")?;
+        assert_eq!(
+            error,
+            format!(
+                "packed Cargo config is not a regular file: {}",
+                config.display()
+            )
+        );
     }
     Ok(())
 }
