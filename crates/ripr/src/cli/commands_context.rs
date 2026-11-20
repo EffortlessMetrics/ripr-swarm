@@ -48,7 +48,13 @@ pub(super) fn analysis_outcome_exit_result(
 }
 
 fn root_metadata_refusal(root: &Path, command_name: &str, error: &std::io::Error) -> String {
-    if error.kind() == std::io::ErrorKind::NotFound {
+    // NotFound and NotADirectory (ENOTDIR: a file-typed parent such as
+    // `file.txt/sub`) both prove the root is not an existing directory, so
+    // they keep the plain wording; any other kind names the io error.
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    ) {
         return format!(
             "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
@@ -140,9 +146,9 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
         )),
-        // Metadata failed. NotFound proves absence, so the existing wording
-        // stands; any other kind (a file-typed parent, permissions, a
-        // transient sharing violation) does not prove the path is a
+        // Metadata failed. NotFound and NotADirectory prove the root is not a
+        // directory, so the existing wording stands; any other kind
+        // (permissions, a transient sharing violation) does not prove the path is a
         // non-directory, so the refusal names the actual io error.
         Err(error) => Err(root_metadata_refusal(root, command_name, &error)),
     }
@@ -368,7 +374,18 @@ mod tests {
 
         let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
         let message = root_metadata_refusal(root, "check", &missing);
-        assert!(message.contains("is not a directory; pass the directory"), "{message}");
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+
+        let file_parent = std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a dir");
+        let message = root_metadata_refusal(root, "check", &file_parent);
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+        assert!(!message.contains("could not be inspected"), "{message}");
     }
 
     struct Guard(std::path::PathBuf);
