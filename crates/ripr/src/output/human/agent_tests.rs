@@ -1244,6 +1244,33 @@ fn check_formats_and_capped_packet_select_the_same_observer() {
     assert_eq!(json["findings"][0]["oracle_strength"], "weak");
 }
 
+/// A capped packet still exposes the proximity row for navigation while its
+/// public JSON renderer states that the row cannot identify an observer.
+#[test]
+fn rendered_packet_preserves_proximity_only_disclosure() -> Result<(), String> {
+    use crate::domain::RelationReason;
+    let mut finding = weak_gap("probe:proximity", 12);
+    finding.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+    let packet_text = crate::output::json::render_context_packet(
+        &finding,
+        1,
+        &RiprConfig::default(),
+        std::path::Path::new("."),
+    );
+    let packet: serde_json::Value =
+        serde_json::from_str(&packet_text).map_err(|err| err.to_string())?;
+    assert_eq!(packet["related_tests"][0]["name"], "discount_runs");
+    let reasons = packet["missing"]
+        .as_array()
+        .ok_or("expected missing evidence")?;
+    assert!(reasons.iter().any(|reason| {
+        reason
+            .as_str()
+            .is_some_and(|text| text.contains("no established test path"))
+    }));
+    Ok(())
+}
+
 /// #14338: an `error_path` and a `return_value` probe on one changed line
 /// with the same class, expression, missing value, test and stages print as
 /// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any

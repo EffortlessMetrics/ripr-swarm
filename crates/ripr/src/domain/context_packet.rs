@@ -82,8 +82,23 @@ impl ContextPacket {
         stop_reasons: Vec<String>,
         root: &std::path::Path,
     ) -> Self {
+        Self::from_finding_with_missing(
+            finding,
+            max_related_tests,
+            stop_reasons,
+            root,
+            finding.missing.clone(),
+        )
+    }
+
+    pub(crate) fn from_finding_with_missing(
+        finding: &Finding,
+        max_related_tests: usize,
+        stop_reasons: Vec<String>,
+        root: &std::path::Path,
+        mut missing: Vec<String>,
+    ) -> Self {
         let headline = finding.headline_related_test();
-        let mut missing = finding.missing.clone();
         if headline.is_none() && !finding.related_tests.is_empty() {
             missing.push(finding.missing_related_test_headline());
         }
