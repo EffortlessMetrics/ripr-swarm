@@ -8815,6 +8815,13 @@ fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no(
     let reach = &finding.ripr.reach;
     assert_eq!(reach.state, StageState::Unknown, "{}", reach.summary);
     assert!(!reach.summary.contains("0 related"), "{}", reach.summary);
+    // The limit abstains; the summary must not assert that a test reaches the owner.
+    assert!(
+        reach.summary.contains("may be reached"),
+        "{}",
+        reach.summary
+    );
+    assert!(!reach.summary.contains(" is reached"), "{}", reach.summary);
 
     // Negative control: an ordinary unexercised function keeps `reach no`.
     let finding = classify_change(owner_file, 7, "    return x + 1", &owners, &tests)

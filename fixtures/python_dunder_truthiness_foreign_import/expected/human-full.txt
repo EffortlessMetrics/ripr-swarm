@@ -37,7 +37,7 @@ Static exposure
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
-  - reach unknown: `__bool__` is reached through a dunder method Python invokes by syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established
+  - reach unknown: `__bool__` may be reached through a dunder method Python invokes by syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established
   - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
   - propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim
   - observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)
