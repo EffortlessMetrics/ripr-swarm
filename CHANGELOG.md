@@ -7901,8 +7901,8 @@ entries below are the complete record.
 - Judged-panel packets: a packet authority kernel, typed loader and semantic
   validator, replay over retained inventory, one-to-one adjudicator identity,
   case-anchor binding, integral metric rendering, replay digest validation,
-  feedback staging and for the Python judged PR panel, clearing an inherited
-  build-directory override and binding intermediates against Cargo configuration
+  feedback staging, and for the Python judged PR panel a cleared inherited
+  build-directory override and intermediates bound against Cargo configuration
   (#3266, #3555, #3669, #3673, #3682, #3686, #3691, #3677, #3694, #3680, #3696,
   #5039, #5038, #5045).
 - Eval sweep and repair trust: typed accepted-manifest and receipt validation, a
@@ -7933,7 +7933,10 @@ entries below are the complete record.
   #8198, #8082, #4871, #3596, #14513, #3274, #3275, #13485, #3615, #3462,
   #8858).
 - Actions perimeter: auxiliary PR, review and comment Actions and duplicate
-  main-push builds were retired, main/master product replay was dropped,
+  main-push builds were retired (the protected caller and cache-writer
+  bootstrap dependencies stay until the coordinated queue cutover, and the
+  main-health sentinel until its incident-probe redesign lands), main/master
+  product replay was dropped,
   advisory UB review runs only on explicit same-repository `full-ci` requests
   and its reporter builds without xtask's product and parser dependencies, and
   dependency security checks take paired immutable manual inputs bound to the
@@ -7950,7 +7953,8 @@ entries below are the complete record.
   moved to `output::agent_card` under an architecture ratchet that bars
   application code from importing `crate::cli`, the shared schema validator
   enforces schema-valued additional properties and recursive boolean schemas,
-  `cargo policy check-user-text --tree` shares the xtask matcher, and Part A of
+  `cargo policy check-user-text --tree` shares the xtask matcher (hosted
+  activation waits for the trusted base to contain it), and Part A of
   the policy extraction moved the lint-policy gate and CI ledger into
   `xtask/src/policy_root.rs` to prepare a policy-only build. Spec-age and
   spec-maintenance helpers were reworked, cache report/GC is confined to
@@ -7975,7 +7979,8 @@ entries below are the complete record.
   no debuginfo, coverage pre-builds spawned binaries before llvm-cov, and the
   Windows advisory lane builds tests per step and admits the file-policy report
   as evidence. Unix-only imports and constants are gated, the Windows check-pr
-  driver stays outside build output timed-out process groups are confirmed gone,
+  driver stays outside replaceable build output, timed-out process groups are
+  confirmed gone,
   scale-cliff failures report as failed, a warn report status fails the command,
   first-run writes scoreboard rows and resolves a relative `--ripr` path,
   PR-evidence diagnostics keep actionable child failures and the Windows
