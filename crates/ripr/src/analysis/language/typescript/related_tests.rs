@@ -4994,7 +4994,9 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 /// A JSX element `<Name ...>` / `<Name/>` rendered in a `.tsx`/`.jsx` test is
 /// the call of a React component (#15295). Only a capitalized bare tag counts
 /// (`<div>` is an intrinsic element and `<Ns.Item>` a member tag), and a `<`
-/// that follows an identifier, `>` or `)` is a type argument or comparison.
+/// that follows an identifier or `)` is a type argument or comparison. A `<`
+/// right after `>` opens a nested or arrow-returned element
+/// (`<Wrapper><Name/></Wrapper>`, `() =><Name/>`), so it counts.
 /// The render proves reach only; assertion strength is judged separately.
 pub(crate) fn contains_jsx_element_name(test_file: &Path, body_text: &str, name: &str) -> bool {
     let is_jsx_file = test_file
@@ -5012,8 +5014,8 @@ pub(crate) fn contains_jsx_element_name(test_file: &Path, body_text: &str, name:
             .next()
             .is_some_and(|ch| ch.is_whitespace() || ch == '/' || ch == '>');
         let before = body_text[..idx].chars().next_back();
-        let opens_element = before
-            .is_none_or(|ch| !(is_javascript_identifier_char(ch) || matches!(ch, '>' | ')' | '<')));
+        let opens_element =
+            before.is_none_or(|ch| !(is_javascript_identifier_char(ch) || matches!(ch, ')' | '<')));
         tag_ends
             && opens_element
             && !line_prefix_looks_like_comment_or_string(body_text, idx)

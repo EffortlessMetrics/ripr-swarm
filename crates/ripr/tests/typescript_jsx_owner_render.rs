@@ -1,7 +1,8 @@
 //! CLI regression for #15295: a JSX render `<Owner .../>` in a `.tsx` test is
 //! a call of the component, so it reaches the changed owner. The render alone
-//! never credits oracle strength, a same-named component from another module
-//! is not the owner, and an unrendered owner stays unreached.
+//! never credits oracle strength (nor does an unrelated assertion beside it), a
+//! same-named component from another module is not the owner, a render nested
+//! inside another element still reaches, and an unrendered owner stays unreached.
 
 #![cfg(feature = "lang-typescript")]
 
@@ -18,7 +19,10 @@ struct WorkspaceGuard {
 
 impl Drop for WorkspaceGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        // Keep the workspace of a failing test for inspection.
+        if !std::thread::panicking() {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 }
 
@@ -163,6 +167,55 @@ fn an_unrendered_owner_is_not_reached() -> Result<(), String> {
     assert!(
         next.contains("render the component"),
         "a heuristic-only component link advises a render: {next}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_render_nested_directly_inside_another_element_is_reached() -> Result<(), String> {
+    let body = RENDERED.replace(
+        "render(<Badge count={120} max={99} />)",
+        "render(<main><Badge count={120} max={99} /></main>)",
+    );
+    assert!(
+        body.contains("<main><Badge "),
+        "fixture must nest the render"
+    );
+    let guard = workspace(&body)?;
+    let finding = finding(&guard.root)?;
+    let rows = finding
+        .get("related_tests")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rows.iter()
+            .any(|row| row.to_string().contains("import_path_affinity")),
+        "a nested render is still an owner call: {finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_render_with_an_unrelated_exact_assertion_is_not_exposed() -> Result<(), String> {
+    let body = "import React from 'react';\nimport { render } from '@testing-library/react';\nimport { it, expect } from 'vitest';\nimport { Badge } from './Badge';\nit('renders', () => { render(<Badge count={120} max={99} />); expect(1 + 1).toBe(2); });\n";
+    let guard = workspace(body)?;
+    let finding = finding(&guard.root)?;
+    let rows = finding
+        .get("related_tests")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        rows.iter()
+            .any(|row| row.to_string().contains("import_path_affinity")),
+        "the render must reach the owner for this case to test strength: {finding}"
+    );
+    let class = finding.get("classification").and_then(|v| v.as_str());
+    assert_ne!(
+        class,
+        Some("exposed"),
+        "an assertion unrelated to the render is not a discriminator: {finding}"
     );
     Ok(())
 }
