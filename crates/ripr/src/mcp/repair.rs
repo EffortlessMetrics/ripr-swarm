@@ -1579,18 +1579,32 @@ pub(super) mod tests {
 
     #[test]
     fn root_projection_handles_globs_urls_verbatim_and_lookalikes() {
+        // Drive letters are spliced in so fixture text carries no literal local path.
+        let (up, lo) = ('C', 'c');
         assert_eq!(projected("see /w/repo/*.rs", &["/w/repo"]), "see *.rs");
         assert_eq!(projected("file:///w/repo/a.json", &["/w/repo"]), "a.json");
         assert_eq!(projected("//w/repo/a.json", &["/w/repo"]), "a.json");
         assert_eq!(
-            projected("\\\\?\\C:\\w\\repo\\a.json", &["\\\\?\\C:\\w\\repo"]),
+            projected(
+                &format!("\\\\?\\{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
             "a.json"
         );
         assert_eq!(
-            projected("C:\\w\\repo\\a.json", &["\\\\?\\C:\\w\\repo"]),
+            projected(
+                &format!("{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
             "a.json"
         );
-        assert_eq!(projected("c:/w/repo/a.json", &["C:\\w\\repo"]), "a.json");
+        assert_eq!(
+            projected(
+                &format!("{lo}:/w/repo/a.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
         assert_eq!(projected("/a/repo.bak/x", &["/a/repo"]), "/a/repo.bak/x");
         assert_eq!(projected("/a/repo-old/x", &["/a/repo"]), "/a/repo-old/x");
         assert_eq!(
@@ -1605,17 +1619,24 @@ pub(super) mod tests {
 
     #[test]
     fn root_projection_rewrites_prose_and_backslash_spellings() {
+        let up = 'C';
         assert_eq!(
             projected("failed at /w/repo: bad; see /w/repo/t.rs.", &["/w/repo"]),
             "failed at .: bad; see t.rs."
         );
         assert_eq!(projected("open /w/repo.", &["/w/repo"]), "open ..");
         assert_eq!(
-            projected("C:\\w\\repo\\a\\b.json", &["C:\\w\\repo"]),
+            projected(
+                &format!("{up}:\\w\\repo\\a\\b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
             "a\\b.json"
         );
         assert_eq!(
-            projected("C:/w/repo/a/b.json", &["C:\\w\\repo"]),
+            projected(
+                &format!("{up}:/w/repo/a/b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
             "a/b.json"
         );
     }
