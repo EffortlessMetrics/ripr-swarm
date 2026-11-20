@@ -432,10 +432,10 @@ fn normalize(path: &str) -> String {
 
 fn attribute_text(attr: &ast::Attr) -> String {
     attr.syntax()
-        .text()
-        .to_string()
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| token.text().to_owned())
         .collect::<String>()
         // An inner attribute (`#![cfg(..)]`) applies to its enclosing
         // module and reads the same way as an outer one.
@@ -590,6 +590,21 @@ mod tests {
                 ("src/inline/nested.rs", ""),
             ]),
         )
+    }
+
+    #[test]
+    fn commented_cfg_test_still_refuses_packaged_test_module() -> Result<(), String> {
+        let error = refusal(
+            "ripr-contract",
+            &[
+                ("src/lib.rs", "#[cfg(/* ordinary gate */ test)] mod hidden;"),
+                ("src/hidden.rs", ""),
+            ],
+        )?;
+        if !error.contains("src/hidden.rs (module compiled only in test or kani builds)") {
+            return Err(format!("expected test-only module refusal, got {error}"));
+        }
+        Ok(())
     }
 
     #[test]
