@@ -75,11 +75,17 @@ places, and every other file keeps placement. For a test in a mounted file,
 placement counts as unavailable in the trigger below, so its receiver reads
 this limitation rather than a gap. Anything the reading cannot
 bound keeps placement unavailable workspace-wide: a symbolic link anywhere in
-the member, an unreadable or non-UTF-8 file, more than 8192 files or 64 MiB of
-source, a member with no `.rs` file, a manifest target outside the member, an
+the member, a file that is not a regular file (a FIFO or device named `.rs`, a
+directory named as a target), an unreadable or non-UTF-8 file, more than 8192
+distinct files in the closure read (listed `.rs` files, manifest targets,
+includes, in-member `#[path]` modules and mounts) or 64 MiB of source, a member
+`Cargo.toml` over 1 MiB, a member with no `.rs` file, a manifest target outside the member (its path is
+joined exactly as Cargo spells it, surrounding whitespace included), an
 inner `#![path]`, a raw-identifier `r#path`, a `cfg_attr` that may introduce a
 `path`, a `#[path]` on a nested module, and any shape that breaks a rule
-above.
+above. Each read is bounded before it happens: a file is opened only when it is
+a regular file and at most the remaining byte budget plus one byte is read, so
+an oversized or growing file is refused without being loaded.
 
 Ready mode indexes every member and is unchanged.
 

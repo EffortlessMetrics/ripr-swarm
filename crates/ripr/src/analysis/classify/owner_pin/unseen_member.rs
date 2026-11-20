@@ -15,8 +15,9 @@
 //! from placement while every other file keeps it.
 //!
 //! Anything this reading cannot bound answers `None`, which switches
-//! placement off for the whole workspace as before: a symlink, an
-//! unreadable or non-UTF-8 file, a member past the file or byte budget, a
+//! placement off for the whole workspace as before: a symlink, a file that
+//! is not a regular file, an unreadable or non-UTF-8 file, a member whose
+//! read closure passes the file or byte budget (charged before each read), a
 //! manifest target outside the member, a non-literal or nested `#[path]`,
 //! `#![path]`, `r#path` or a `cfg_attr`-introduced path, an `include!` that
 //! is not one literal or that leaves the member, and a mounted file that
@@ -39,6 +40,10 @@ const MEMBER_FILES: usize = 8192;
 /// fails closed. Large enough for a generated or test-heavy automation crate,
 /// small enough that the read stays a bounded part of one run.
 const MEMBER_BYTES: usize = 64 * 1024 * 1024;
+
+/// The largest member `Cargo.toml` read; a larger or non-regular manifest
+/// fails closed.
+const MANIFEST_BYTES: usize = 1024 * 1024;
 
 /// The indexed files, relative to the workspace root, that some unindexed
 /// member may compile into a crate ripr does not see. Empty when no member
@@ -87,8 +92,13 @@ pub(super) fn unseen_member_mounts(index: &RustIndex) -> Option<BTreeSet<PathBuf
 /// mounts through a top-level literal `#[path]`, or `None` when its sources
 /// cannot be bounded.
 fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
+    member_mounts_within(member_dir, MEMBER_FILES)
+}
+
+/// [`member_mounts`] with `file_cap` as the most distinct files it may read.
+fn member_mounts_within(member_dir: &Path, file_cap: usize) -> Option<BTreeSet<PathBuf>> {
     let roots = manifest_targets(member_dir)?;
-    let mut pending = member_sources(member_dir)?;
+    let mut pending = member_sources(member_dir, file_cap)?;
     // A declared root that is not `.rs` was not listed; read it too.
     pending.extend(roots);
     if pending.is_empty() {
@@ -104,6 +114,12 @@ fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
         if !seen.insert(path.clone()) {
             continue;
         }
+        // The file cap covers the distinct closure read here (listed files,
+        // manifest roots, includes, in-member modules and mounts), not only
+        // the initial `.rs` walk.
+        if seen.len() + mounted.len() > file_cap {
+            return None;
+        }
         let source = read_bounded(&path, &mut bytes_read)?;
         let reading = file_reading(&path, &source, member_dir)?;
         if reading.resolves_paths {
@@ -116,6 +132,12 @@ fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
         // So is an in-member `#[path]` module whose file is not `.rs`.
         pending.extend(reading.modules);
         for target in reading.mounted {
+            if seen.contains(&target) || mounted.contains(&target) {
+                continue;
+            }
+            if seen.len() + mounted.len() >= file_cap {
+                return None;
+            }
             let source = read_bounded(&target, &mut bytes_read)?;
             // A mounted file's own `mod name;`, `#[path]` or `include!`
             // resolves beside it, outside the member, into files this
@@ -140,11 +162,13 @@ fn member_mounts(member_dir: &Path) -> Option<BTreeSet<PathBuf>> {
 /// `None` for an escaping target, a non-string path, or an unreadable or
 /// unparsable manifest. A target that does not exist compiles nothing.
 fn manifest_targets(member_dir: &Path) -> Option<Vec<PathBuf>> {
-    let manifest = match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
-        Ok(manifest) => manifest,
+    let manifest_path = member_dir.join("Cargo.toml");
+    match std::fs::symlink_metadata(&manifest_path) {
+        Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
         Err(_) => return None,
-    };
+    }
+    let manifest = String::from_utf8(read_regular(&manifest_path, MANIFEST_BYTES)?).ok()?;
     let value = toml::from_str::<toml::Value>(&manifest).ok()?;
     let mut declared = Vec::new();
     for key in ["lib", "bin", "test", "bench", "example"] {
@@ -172,7 +196,8 @@ fn manifest_targets(member_dir: &Path) -> Option<Vec<PathBuf>> {
     }
     let mut targets = Vec::new();
     for path in declared {
-        match member_dir.join(path.trim()).canonicalize() {
+        // Cargo joins the declared path verbatim, whitespace included.
+        match member_dir.join(&path).canonicalize() {
             Ok(target) if target.starts_with(member_dir) => targets.push(target),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             _ => return None,
@@ -182,8 +207,9 @@ fn manifest_targets(member_dir: &Path) -> Option<Vec<PathBuf>> {
 }
 
 /// Every `.rs` file under `member_dir`, skipping the member's own `target/`.
-/// `None` for a symlink, an unlistable directory, or past [`MEMBER_FILES`].
-fn member_sources(member_dir: &Path) -> Option<Vec<PathBuf>> {
+/// `None` for a symlink, an unlistable directory, a `.rs` entry that is not a
+/// regular file, or past [`MEMBER_FILES`].
+fn member_sources(member_dir: &Path, file_cap: usize) -> Option<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut directories = vec![member_dir.to_path_buf()];
     while let Some(directory) = directories.pop() {
@@ -199,8 +225,11 @@ fn member_sources(member_dir: &Path) -> Option<Vec<PathBuf>> {
                     directories.push(path);
                 }
             } else if path.extension().is_some_and(|extension| extension == "rs") {
+                if !kind.is_file() {
+                    return None;
+                }
                 files.push(path);
-                if files.len() > MEMBER_FILES {
+                if files.len() > file_cap {
                     return None;
                 }
             }
@@ -209,14 +238,35 @@ fn member_sources(member_dir: &Path) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-/// The UTF-8 text of `path`, counted against the member's byte budget.
+/// The UTF-8 text of the regular file at `path`, counted against the
+/// member's byte budget before it is read: at most the remaining budget plus
+/// one byte is ever read or allocated, so a file past the budget (or one that
+/// grows while it is read) fails closed without being loaded. A symlink, a
+/// directory, a FIFO, a device or any other non-regular file is refused.
 fn read_bounded(path: &Path, bytes_read: &mut usize) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    *bytes_read = bytes_read.checked_add(bytes.len())?;
-    if *bytes_read > MEMBER_BYTES {
+    let remaining = MEMBER_BYTES.checked_sub(*bytes_read)?;
+    let bytes = read_regular(path, remaining)?;
+    *bytes_read += bytes.len();
+    String::from_utf8(bytes).ok()
+}
+
+/// The bytes of the regular file at `path` when it holds at most `limit`
+/// bytes. Reads at most `limit + 1` bytes, so an oversized or growing file is
+/// refused without being loaded; a non-regular file is refused before open.
+fn read_regular(path: &Path, limit: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    if !std::fs::symlink_metadata(path).ok()?.file_type().is_file() {
         return None;
     }
-    String::from_utf8(bytes).ok()
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(limit).ok()?.checked_add(1)?)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= limit).then_some(bytes)
 }
 
 /// What one member file compiles beyond itself.
@@ -327,4 +377,157 @@ fn include_literal<'a>(source: &'a str, masked: &str, after: usize) -> Option<&'
     let tail = masked.get(end + 1..)?.trim_start();
     let tail = tail.strip_prefix(',').map_or(tail, str::trim_start);
     tail.starts_with(close).then_some(literal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(name: &str) -> Result<PathBuf, String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-unseen-member-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        dir.canonicalize().map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn reads_refuse_non_regular_and_oversized_files_before_loading_them() -> Result<(), String> {
+        let dir = member("read")?;
+        let result = (|| -> Result<(), String> {
+            let file = dir.join("src/lib.rs");
+            std::fs::write(&file, "pub fn a() {}\n").map_err(|e| e.to_string())?;
+            let len = "pub fn a() {}\n".len();
+            assert_eq!(read_regular(&file, len).map(|b| b.len()), Some(len));
+            assert_eq!(
+                read_regular(&file, len - 1),
+                None,
+                "one byte over the limit"
+            );
+            assert_eq!(
+                read_regular(&dir.join("src"), usize::MAX - 1),
+                None,
+                "a directory"
+            );
+            // The member budget is charged before the read: with fewer bytes
+            // left than the file holds, it is refused and nothing is charged.
+            let mut spent = MEMBER_BYTES - (len - 1);
+            assert_eq!(read_bounded(&file, &mut spent), None);
+            assert_eq!(spent, MEMBER_BYTES - (len - 1));
+            let mut spent = MEMBER_BYTES - len;
+            assert!(read_bounded(&file, &mut spent).is_some());
+            assert_eq!(spent, MEMBER_BYTES);
+            #[cfg(unix)]
+            {
+                let link = dir.join("src/link.rs");
+                std::os::unix::fs::symlink(&file, &link).map_err(|e| e.to_string())?;
+                assert_eq!(read_regular(&link, usize::MAX - 1), None, "a symlink");
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_non_regular_rs_entry_refuses_the_member_walk() -> Result<(), String> {
+        let dir = member("fifo")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(dir.join("src/lib.rs"), "pub fn a() {}\n").map_err(|e| e.to_string())?;
+            assert_eq!(member_sources(&dir, 8).map(|files| files.len()), Some(1));
+            nix::unistd::mkfifo(&dir.join("src/pipe.rs"), nix::sys::stat::Mode::S_IRWXU)
+                .map_err(|e| e.to_string())?;
+            assert_eq!(member_sources(&dir, 8), None, "a FIFO named .rs");
+            assert_eq!(member_mounts_within(&dir, 8), None);
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
+    fn the_file_cap_counts_the_whole_source_closure() -> Result<(), String> {
+        let dir = member("closure")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(
+                dir.join("src/lib.rs"),
+                "mod other;\ninclude!(\"part.in\");\n",
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("src/other.rs"), "pub fn b() {}\n")
+                .map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("src/part.in"), "pub fn c() {}\n")
+                .map_err(|e| e.to_string())?;
+            // Two `.rs` files fit a cap of two; the included `part.in` makes
+            // the closure three files.
+            assert_eq!(member_sources(&dir, 2).map(|files| files.len()), Some(2));
+            assert_eq!(member_mounts_within(&dir, 2), None, "closure past the cap");
+            assert_eq!(member_mounts_within(&dir, 3), Some(BTreeSet::new()));
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_whitespace_bearing_declared_root_is_read_as_cargo_spells_it() -> Result<(), String> {
+        let dir = member("spaced-root")?;
+        let outside = dir.with_file_name(format!(
+            "ripr-unseen-member-spaced-outside-{}.rs",
+            std::process::id()
+        ));
+        let result = (|| -> Result<(), String> {
+            std::fs::write(&outside, "pub fn o() {}\n").map_err(|e| e.to_string())?;
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                "[package]\nname = \"m\"\nversion = \"0.0.0\"\n[lib]\npath = \"src/root.in \"\n",
+            )
+            .map_err(|e| e.to_string())?;
+            let mount = format!(
+                "#[path = \"../../{}\"]\nmod outside;\n",
+                outside.file_name().and_then(|n| n.to_str()).ok_or("name")?
+            );
+            // Only the exact spelling, trailing space included, exists.
+            std::fs::write(dir.join("src/root.in "), mount).map_err(|e| e.to_string())?;
+            assert!(!dir.join("src/root.in").exists());
+            let target = outside.canonicalize().map_err(|e| e.to_string())?;
+            assert_eq!(
+                member_mounts_within(&dir, 8),
+                Some(BTreeSet::from([target])),
+                "the declared root's mount is seen"
+            );
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&outside);
+        result
+    }
+
+    #[test]
+    fn an_oversized_or_non_regular_manifest_refuses() -> Result<(), String> {
+        let dir = member("manifest")?;
+        let result = (|| -> Result<(), String> {
+            assert_eq!(manifest_targets(&dir), Some(Vec::new()), "no manifest");
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                "[package]\nname = \"m\"\nversion = \"0.0.0\"\n",
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(manifest_targets(&dir), Some(Vec::new()));
+            let padded = format!(
+                "[package]\nname = \"m\"\nversion = \"0.0.0\"\n#{}\n",
+                "x".repeat(MANIFEST_BYTES)
+            );
+            std::fs::write(dir.join("Cargo.toml"), padded).map_err(|e| e.to_string())?;
+            assert_eq!(manifest_targets(&dir), None, "manifest past its cap");
+            std::fs::remove_file(dir.join("Cargo.toml")).map_err(|e| e.to_string())?;
+            std::fs::create_dir(dir.join("Cargo.toml")).map_err(|e| e.to_string())?;
+            assert_eq!(manifest_targets(&dir), None, "a directory named Cargo.toml");
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
 }
