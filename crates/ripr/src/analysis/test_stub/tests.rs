@@ -1198,18 +1198,163 @@ impl std::fmt::Display for Meter {
         boundary(""),
     )?;
     let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
+    // A `Formatter` cannot be built by a test, so a `Display::fmt` owner is
+    // observed by formatting the value (see the format-trait tests below).
     assert!(
         stub.text
-            .contains("let actual = <Meter as std::fmt::Display>::fmt(&subject, &mut f);"),
+            .contains("assert_eq!(subject.to_string(), expected);"),
         "{}",
         stub.text
     );
+    assert!(!stub.text.contains("Formatter"), "{}", stub.text);
+    Ok(())
+}
+
+fn return_value(description: &str) -> RequiredDiscriminator {
+    RequiredDiscriminator::ReturnValue {
+        description: description.to_string(),
+    }
+}
+
+const MONEY: &str = "use std::fmt;
+pub struct Money { pub cents: i64 }
+impl fmt::Display for Money {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, \"${}.{:03}\", self.cents / 100, self.cents % 100)
+    }
+}
+pub struct Code(pub u8);
+impl fmt::Debug for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"Code#{}\", self.0 + 1)
+    }
+}
+impl fmt::LowerHex for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"{:x}\", self.0 * 2)
+    }
+}
+pub trait Render { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result; }
+impl Render for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, \"render{}\", self.0 - 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn money_renders() {
+        assert!(!Money { cents: 150 }.to_string().is_empty());
+    }
+}
+";
+
+#[test]
+fn format_trait_fmt_owner_stub_formats_the_value_instead_of_building_a_formatter()
+-> Result<(), String> {
+    for (needle, rendered) in [
+        ("write!(f, \"${}", "subject.to_string()"),
+        ("self.0 + 1", "format!(\"{subject:?}\")"),
+        ("self.0 * 2", "format!(\"{subject:x}\")"),
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            MONEY,
+            needle,
+            SeamKind::ReturnValue,
+            return_value(needle),
+        )?;
+        let stub = rust_test_stub(&seam, None, MONEY, None).map_err(|r| r.reason().to_string())?;
+        assert!(
+            stub.text
+                .contains(&format!("assert_eq!({rendered}, expected);")),
+            "{needle}: {}",
+            stub.text
+        );
+        assert!(
+            stub.text
+                .contains("let expected: &str = todo!(\"ripr: write the exact text `"),
+            "{needle}: {}",
+            stub.text
+        );
+        assert!(!stub.text.contains("Formatter"), "{needle}: {}", stub.text);
+        assert!(!stub.text.contains("::fmt("), "{needle}: {}", stub.text);
+    }
+    // A `fmt` method of a trait that is not a `std::fmt` formatting trait
+    // keeps the direct call; formatting the value would not reach it.
+    let seam = seam_at(
+        "src/lib.rs",
+        MONEY,
+        "self.0 - 1",
+        SeamKind::ReturnValue,
+        return_value("self.0 - 1"),
+    )?;
+    let stub = rust_test_stub(&seam, None, MONEY, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text
-            .contains("let mut f: std::fmt::Formatter<'_> = todo!("),
+            .contains("<Code as Render>::fmt(&subject, &mut f)"),
         "{}",
         stub.text
     );
+    assert!(!stub.text.contains("to_string()"), "{}", stub.text);
+    Ok(())
+}
+
+const TOTALS: &str = "pub struct Cart { pub items: Vec<i64>, pub limit: i64 }
+impl Cart {
+    pub fn over_limit(&self) -> bool { self.items.iter().sum::<i64>() >= self.limit }
+    pub fn scaled(&self, total: i64, rate: i64) -> i64 { total * rate + self.limit }
+}
+pub fn threshold() -> i64 { 43 }
+pub fn share(total: i64) -> i64 { total / 3 }
+pub fn mix(total: i64, rate: i64) -> i64 { total * rate / 100 }
+";
+
+#[test]
+fn return_value_guidance_reads_as_a_sentence_for_receivers_params_and_no_params()
+-> Result<(), String> {
+    for (needle, owner, inputs) in [
+        ("43", "threshold", ""),
+        ("total / 3", "share", " for `total`"),
+        ("total * rate / 100", "mix", " for `total` and `rate`"),
+        (
+            "self.items.iter().sum::<i64>() >= self.limit",
+            "over_limit",
+            " for `subject`",
+        ),
+        (
+            "total * rate + self.limit",
+            "scaled",
+            " for `subject`, `total` and `rate`",
+        ),
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            TOTALS,
+            needle,
+            SeamKind::ReturnValue,
+            return_value(needle),
+        )?;
+        let stub = rust_test_stub(&seam, None, TOTALS, None).map_err(|r| r.reason().to_string())?;
+        let expected = format!(
+            "ripr: write the value `{owner}` should return{inputs} (the changed code is `{needle}`)"
+        );
+        assert!(
+            stub.fill_ins.contains(&expected),
+            "{needle}: {:?}",
+            stub.fill_ins
+        );
+        assert!(
+            !stub
+                .fill_ins
+                .iter()
+                .any(|fill| fill.contains("should return when")),
+            "{needle}: {:?}",
+            stub.fill_ins
+        );
+    }
     Ok(())
 }
 

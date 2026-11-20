@@ -949,6 +949,41 @@ fn stub_body(
         (None, _) => None,
     };
 
+    // A `fmt` method of `Display`, `Debug` or another `std::fmt` trait takes
+    // a `&mut Formatter`, which a test cannot build on stable Rust and whose
+    // written text it cannot read back. The text leaves through formatting
+    // the value, so the stub formats `subject` and compares the string.
+    if let (Some(subject), Some(spec)) = (
+        receiver,
+        format_trait_spec(
+            signature,
+            owner_trait,
+            signature.return_type.as_deref().unwrap_or_default(),
+        ),
+    ) {
+        let rendered = if spec.is_empty() {
+            format!("{subject}.to_string()")
+        } else {
+            format!("format!(\"{{{subject}{spec}}}\")")
+        };
+        let label = format!(
+            "ripr: write the exact text `{rendered}` should produce{}",
+            discriminator_hint(seam, &[subject.to_string()])
+        );
+        lines.push(format!(
+            "let expected: &str = todo!(\"{}\");",
+            escape(&label)
+        ));
+        lines.push(format!("assert_eq!({rendered}, expected);"));
+        fill_ins.push(label);
+        return Ok(StubBody {
+            lines,
+            fill_ins,
+            derived_inputs,
+            receiver_setup,
+        });
+    }
+
     let mut arguments = Vec::new();
     for (index, param) in signature.params.iter().enumerate() {
         let binding = param
@@ -992,6 +1027,17 @@ fn stub_body(
         }
         arguments.push(argument);
     }
+    // The inputs the test chooses, named in the fill-in guidance.
+    let input_names: Vec<String> = receiver
+        .map(str::to_string)
+        .into_iter()
+        .chain(signature.params.iter().enumerate().map(|(index, param)| {
+            param
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("arg{}", index + 1))
+        }))
+        .collect();
 
     let call = match (&qualified_self, receiver, self_type) {
         (Some(qualified), receiver, _) => {
@@ -1066,7 +1112,7 @@ fn stub_body(
         // path: assert the whole value the developer writes.
         None => {
             let hint = if derived_inputs.is_empty() {
-                discriminator_hint(seam)
+                discriminator_hint(seam, &input_names)
             } else {
                 format!(" for {}", derived_inputs.join(", "))
             };
@@ -1125,7 +1171,7 @@ fn stub_body(
             targets.push((binding, ty));
         }
         let hint = if derived_inputs.is_empty() {
-            discriminator_hint(seam)
+            discriminator_hint(seam, &input_names)
         } else {
             format!(" for {}", derived_inputs.join(", "))
         };
@@ -1861,16 +1907,33 @@ fn relational_boundary(seam: &RepoSeam) -> Option<String> {
     })
 }
 
-fn discriminator_hint(seam: &RepoSeam) -> String {
+/// The tail of a "write the value `owner` should return" fill-in. A boundary
+/// names the condition that tells the change apart (`when total == 100`). A
+/// changed return value only names the changed code, so the tail names the
+/// inputs the test chooses and quotes the change after them: "should return
+/// when 43" or "should return when self.items.sum() >= self.limit" does not
+/// read as a sentence and suggests a condition the change does not state.
+fn discriminator_hint(seam: &RepoSeam, inputs: &[String]) -> String {
     match seam.required_discriminator() {
-        RequiredDiscriminator::BoundaryValue { description }
-        | RequiredDiscriminator::ReturnValue { description }
-            if !description.trim().is_empty() =>
-        {
+        RequiredDiscriminator::BoundaryValue { description } if !description.trim().is_empty() => {
             match relational_boundary(seam) {
                 Some(boundary) => format!(" when {boundary}"),
                 None => format!(" when {}", one_line(description)),
             }
+        }
+        RequiredDiscriminator::ReturnValue { description } if !description.trim().is_empty() => {
+            let inputs = match inputs {
+                [] => String::new(),
+                [only] => format!(" for `{only}`"),
+                [rest @ .., last] => format!(
+                    " for {} and `{last}`",
+                    rest.iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{inputs} (the changed code is `{}`)", one_line(description))
         }
         RequiredDiscriminator::MatchArmTaken { arm } if !arm.trim().is_empty() => {
             format!(" when the `{}` arm runs", one_line(arm))
@@ -1880,6 +1943,48 @@ fn discriminator_hint(seam: &RepoSeam) -> String {
         }
         _ => format!(" for these inputs (`{}`)", one_line(seam.expression())),
     }
+}
+
+/// The format spec (`""` for `Display`, `":?"` for `Debug`, ...) when the
+/// owner is the `fmt` method of a `std::fmt` formatting trait: `&self`, one
+/// `&mut Formatter` parameter, returning `fmt::Result`.
+fn format_trait_spec(
+    signature: &OwnerSignature,
+    owner_trait: Option<&str>,
+    return_type: &str,
+) -> Option<&'static str> {
+    if signature.name != "fmt" || signature.receiver != Some(OwnerReceiver::Ref) {
+        return None;
+    }
+    let [param] = signature.params.as_slice() else {
+        return None;
+    };
+    let formatter = strip_generic_arguments(strip_mut_reference(&param.ty)?);
+    if !matches!(
+        formatter,
+        "Formatter" | "fmt::Formatter" | "std::fmt::Formatter" | "core::fmt::Formatter"
+    ) || !matches!(
+        return_type.trim(),
+        "Result" | "fmt::Result" | "std::fmt::Result" | "core::fmt::Result"
+    ) {
+        return None;
+    }
+    let trait_path = strip_generic_arguments(owner_trait?);
+    let trait_name = ["std::fmt::", "core::fmt::", "fmt::"]
+        .iter()
+        .find_map(|prefix| trait_path.strip_prefix(prefix))
+        .unwrap_or(trait_path);
+    Some(match trait_name {
+        "Display" => "",
+        "Debug" => ":?",
+        "LowerHex" => ":x",
+        "UpperHex" => ":X",
+        "Octal" => ":o",
+        "Binary" => ":b",
+        "LowerExp" => ":e",
+        "UpperExp" => ":E",
+        _ => return None,
+    })
 }
 
 fn name_suffix(kind: SeamKind) -> &'static str {

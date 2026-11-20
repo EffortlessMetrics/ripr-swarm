@@ -411,8 +411,8 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // `impl Into<String>` / `impl AsRef<str>` parameters are declared
         // with the concrete `String` / `&str` the argument accepts (#8361).
         ("n > 15", Expect::StopsAtRiprTodo),
-        // A trait method with a `&self` receiver is called through
-        // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
+        // A `Display::fmt` owner is observed by formatting the value
+        // (`subject.to_string()`): a test cannot build a `Formatter`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
     ]
     .map(|(needle, expect)| (FIXTURE, needle, expect));
