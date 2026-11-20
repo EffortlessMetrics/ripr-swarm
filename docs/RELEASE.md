@@ -34,23 +34,29 @@ and packaging reference; the runbook owns exact pins, J/K expected-head guards,
 receipts, invalidation, publication authorization, and cleanup.
 
 For the 0.11.0 release train, and as the standard two-repository pattern for
-future releases, use this authority sequence:
+future releases, use the `#2379` **public → swarm → public** authority sequence
+(see also [the 0.11.0 cut checklist](releases/0.11.0-cut-checklist.md#02-phase-vocabulary)):
 
 ```text
-develop in ripr-swarm
-→ select exact ripr-swarm/main at the transaction boundary
-→ create an immutable swarm pin and hold ripr/main
-→ qualify that exact swarm head
-→ preflight the exact source/swarm pair
-→ construct and prove one ordered two-parent source join
-→ merge source with source parent 1 and swarm parent 2
-→ establish metadata and build source artifacts
-→ produce the immutable ship packet
-→ explicitly authorize publication
-→ publish and verify each channel
-→ ancestry-preserving source-to-swarm back-sync
-→ re-baseline the next release and resume swarm development
+admit and perform inbound public → swarm integration (ripr#1627 → ripr#1768/#1769/#1770; reconciled by ripr#1762)
+→ finish selected pre-cut product work in ripr-swarm (#2766, #3920, #3921, platform/quality owners)
+→ freeze the combined product cut (#5114/#5391) and finish pre-pin evidence (#3807 → #2766/#2768)
+→ create an immutable swarm pin (#1609) and qualify that exact swarm candidate (#2769)
+→ admit qualification and return to public via guarded source join (ripr#1771 → ripr#1772/#1773)
+→ establish final source metadata/artifacts and produce the immutable ship packet (ripr#1466/#1467 → #1578/#1468/#1469)
+→ run public RC and independent verification/stable decision (ripr#1632–#1637)
+→ explicitly authorize stable channels (ripr#1470), publish, and independently verify each channel (ripr#1479–#1481)
+→ ancestry-preserving post-release source-to-swarm back-sync K (#3419 → #3313)
+→ re-baseline the next release and resume rolling swarm development (#3420)
 ```
+
+Inbound public-history integration (`ripr#1627` → `ripr#1768`/`#1769`/`#1770`,
+reconciled by `ripr#1762`) precedes final swarm convergence, freeze,
+denominator, and pin; the guarded return to public (`ripr#1771` →
+`ripr#1772`/`#1773`) follows swarm qualification (`#2769`). The older sequence
+that postponed the entire source sync until after the swarm cut is historical.
+Reordering the runbook does not invent transport authority, waive a protected
+check, select an RC ordinal, or authorize publication.
 
 The selected swarm head includes all history reachable from that exact commit.
 Do not squash, rebase, cherry-pick, or reconstruct a tree-equivalent source

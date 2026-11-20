@@ -7,6 +7,37 @@ This document is the canonical lifecycle from the release boundary through
 reopened swarm development. It sequences existing verifier contracts; it does
 not replace their semantics or make publication implicit.
 
+## Canonical `#2379` public → swarm → public order
+
+For `0.11.0`, `#2379` establishes the **public → swarm → public** release order
+(detailed per-stage ownership lives in
+[the 0.11.0 cut checklist](releases/0.11.0-cut-checklist.md#02-phase-vocabulary)):
+
+1. **Inbound public → swarm integration** (`ripr#1627` →
+   `ripr#1768`/`#1769`/`#1770`, reconciled by `ripr#1762`): admit an executable
+   history-preserving route, preserve public `P` in `ripr-swarm`, and land
+   integration repairs before final swarm convergence. The older sequence that
+   postponed the entire source sync until after the swarm cut is historical.
+2. **Pre-cut product convergence, freeze, audit/denominator, pin, and
+   qualification** in `ripr-swarm` (sections 1–3 below): finish selected
+   product work (`#2766`), freeze the combined cut (`#5114`/`#5391`), complete
+   pre-pin evidence (`#3807` → `#2766`/`#2768`), push the immutable swarm pin
+   (`#1609`), and qualify that exact candidate (`#2769`).
+3. **Qualification admission and guarded public return** (section 4 below):
+   `ripr#1771` admits the exact qualification and `ripr#1772`/`#1773` construct
+   and merge the guarded return to `EffortlessMetrics/ripr`.
+4. **Final source release tail and ship packet** (sections 5–6 below):
+   `ripr#1466`/`#1467` → `#1578`/`#1468`/`#1469` establish the integrated
+   source artifacts and immutable ship-or-hold packet.
+5. **Public RC and stable publication** (section 6 below):
+   `ripr#1632`–`#1637` govern the exact authorized GitHub-only RC, independent
+   verification/cohort, and `stable_ready_same_candidate` decision; separate
+   per-channel `#1470` authorization governs stable publication
+   (`ripr#1479`/`#1480`) and independent public verification (`ripr#1481`).
+6. **Post-release back-sync `K` and rolling restoration** (sections 7–8 below):
+   `#3419` → `#3313` → `#3420` run only after terminal `#1481` public
+   verification.
+
 ## Authority and command labels
 
 `EffortlessMetrics/ripr-swarm` is development authority and preserves every
@@ -155,6 +186,13 @@ restated here only as pointers; their semantics stay with their owners:
   ([CI](CI.md#main-health-sentinel)).
 
 ## 1. Reset truth and pre-cut queue observations
+
+Confirm that inbound public → swarm integration (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, reconciled by `ripr#1762`) has already landed in
+`ripr-swarm` before finalizing the pre-cut denominator and advancing to
+section 2 (`W` / `#1609`). If public `P` advances before the guarded return in
+section 4, import the new public head into `ripr-swarm`, review the effects,
+and renew affected proof before pinning or returning.
 
 Use fresh checkouts. Ordinary source-repository development PRs are drift:
 redirect them to swarm or classify them as release/security work before the
