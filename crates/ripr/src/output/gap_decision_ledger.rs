@@ -5639,7 +5639,9 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
+        // #15691: python_match_or_missing_alternative asserts the owner result
+        // but misses "y", so its weak finding adds one direct-aligned repair card.
+        if (direct, no_strong, orthogonal, family_selection) != (24, 37, 49, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
