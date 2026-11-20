@@ -2065,11 +2065,12 @@ fn read_optional_manifest_for_report(
     root: &Path,
     manifest: &Path,
 ) -> Option<Result<String, String>> {
-    let read_path = if manifest.is_absolute() {
-        manifest.to_path_buf()
-    } else {
-        root.join(manifest)
-    };
+    if !manifest.is_absolute() {
+        // The default manifest is checkout content: share the contained,
+        // regular-file read the other suppressions loaders use (#15546).
+        return crate::output::suppressions::read_root_manifest(root, manifest).transpose();
+    }
+    let read_path = manifest.to_path_buf();
     match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,

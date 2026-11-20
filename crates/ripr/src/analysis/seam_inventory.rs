@@ -4121,8 +4121,11 @@ fn store_corpus_fingerprint_mapping(
     }
 }
 
+/// Identity input only (hashed, never echoed). Regular files under the
+/// metadata TOML cap, so a checkout's FIFO or `/dev/zero` link at a config
+/// path cannot block or exhaust the workspace scan (#15546).
 fn read_optional(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+    crate::bounded_input::read_metadata_toml(path).ok()
 }
 
 /// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
