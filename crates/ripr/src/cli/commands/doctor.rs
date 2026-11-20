@@ -815,9 +815,19 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if let Some(line) = join_compact("Toolchains", &toolchains) {
         lines.push(line);
     }
+    // #15195: name the languages a loaded ripr.toml enables when the
+    // shallow root scan finds none, so a monorepo whose projects sit deeper
+    // is not told "none detected" while `check` analyzes them.
+    let configured = match (config, environment.facts.config_defaults.as_ref()) {
+        (Ok(config), Some(defaults)) if defaults.source_path.is_some() => {
+            config.languages().enabled().to_vec()
+        }
+        _ => Vec::new(),
+    };
     lines.extend(detected_languages_lines(
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
+        &configured,
     ));
     lines.extend(perl_not_enabled_line(
         &environment.facts.detected_languages,
@@ -1566,12 +1576,27 @@ fn language_runtime_probes_for_detected(
 ///
 /// Renders the same typed entries the JSON document serializes, so the two
 /// surfaces cannot disagree about what was found.
+///
+/// `configured` holds the languages a loaded `ripr.toml` enables (#15195).
+/// The marker scan stays shallow on purpose (#7506), so when it finds
+/// nothing while the config enables languages, the line says where it looked and names the configured languages instead of the bare
+/// "none detected" that reads as "ripr will analyze nothing here".
 fn detected_languages_lines(
     detected: &[output::doctor::DoctorDetectedLanguage],
     unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
+    configured: &[LanguageId],
 ) -> Vec<String> {
     let mut lines = Vec::new();
-    if detected.is_empty() {
+    if detected.is_empty() && !configured.is_empty() {
+        let names: Vec<&str> = configured
+            .iter()
+            .map(|language| language.as_str())
+            .collect();
+        lines.push(format!(
+            "- Detected languages: no markers at the root, in src/ or one directory down; {CONFIG_FILE_NAME} enables {}",
+            names.join(", ")
+        ));
+    } else if detected.is_empty() {
         lines.push("- Detected languages: none detected".to_string());
     } else {
         let entries: Vec<String> = detected
@@ -7120,6 +7145,7 @@ mod tests {
         let lines = detected_languages_lines(
             &[detected_entry(LanguageId::Rust, true)],
             &[unanalyzed_entry("Go", 2)],
+            &[],
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
@@ -7130,11 +7156,32 @@ mod tests {
             lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
             "{lines:?}"
         );
-        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)]);
+        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)], &[]);
         assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
+        // #15195: a loaded config that enables languages the shallow scan
+        // missed is named instead of "none detected"; detected languages
+        // keep the ordinary line whatever the config says.
+        let configured =
+            detected_languages_lines(&[], &[], &[LanguageId::Rust, LanguageId::TypeScript]);
+        assert_eq!(configured.len(), 1, "{configured:?}");
+        assert!(
+            configured[0].ends_with("ripr.toml enables rust, typescript"),
+            "{configured:?}"
+        );
+        assert!(!configured[0].contains("none detected"), "{configured:?}");
+        let found = detected_languages_lines(
+            &[detected_entry(LanguageId::Rust, true)],
+            &[],
+            &[LanguageId::Rust, LanguageId::TypeScript],
+        );
+        assert!(
+            found[0].starts_with("- Detected languages: rust"),
+            "{found:?}"
+        );
+        assert!(!found[0].contains("enables"), "{found:?}");
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(
-            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[]).len(),
+            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[], &[]).len(),
             1
         );
         // An adapter that was not compiled into this binary says so on the
@@ -7142,7 +7189,7 @@ mod tests {
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
         let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
-        let first = &detected_languages_lines(&unavailable, &[])[0];
+        let first = &detected_languages_lines(&unavailable, &[], &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
             assert!(!first.contains("[adapter not compiled]"), "{first}");

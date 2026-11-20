@@ -190,11 +190,15 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // sibling subcommand's flag), but "did you mean the thing you just typed?"
     // is nonsense from any source, so it is excluded structurally rather than
     // left to depend on the scoping tables staying correct.
+    //
+    // A help-only modifier is no answer either: `ripr check --al` once
+    // suggested `--all`, which check then rejects without `--help` (#15201).
+    // The help pointer already names the working `--help --all` spelling.
     closest(
         arg,
         known_flags(command, help_text)
             .into_iter()
-            .filter(|flag| *flag != arg),
+            .filter(|flag| *flag != arg && !HELP_ONLY_FLAGS.contains(flag)),
     )
     .map(str::to_string)
 }
@@ -483,6 +487,23 @@ mod tests {
         assert_eq!(
             message,
             "unknown check argument \"--totally-unrelated-flag\". Run `ripr check --help --all`."
+        );
+    }
+
+    /// #15201: `--all` only widens `--help`, and check rejects it alone, so a
+    /// near miss on it must not be answered with it. The pointer already
+    /// names the `--help --all` spelling that works.
+    #[test]
+    fn unknown_argument_never_suggests_a_help_only_modifier() {
+        let message = unknown_argument("check", "--al");
+        assert_eq!(
+            message,
+            "unknown check argument \"--al\". Run `ripr check --help --all`."
+        );
+        // Ordinary near misses on check keep their suggestion.
+        assert!(
+            unknown_argument("check", "--quite").contains("Did you mean `--quiet`?"),
+            "--quite"
         );
     }
 
