@@ -59,6 +59,8 @@ honoring `NO_PROXY`/`no_proxy` (#15317). It tunnels with an HTTP `CONNECT` to
 an `http://` proxy (optional basic auth in the URL, redacted from all output)
 and verifies TLS to the real host through the tunnel. Other proxy schemes
 fail closed with the `ripr.server.path` / PATH workaround.
+`NO_PROXY` CIDR entries are not supported and fall back to the proxy; a bare IP
+entry matches only that exact address.
 
 ## Downloaded Server Cache
 

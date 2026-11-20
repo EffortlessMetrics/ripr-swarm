@@ -10,6 +10,11 @@ tests = [
   "editors/vscode/test/suite/download_proxy.test.ts::NO_PROXY sends the request direct without touching the proxy",
   "editors/vscode/test/suite/download_proxy.test.ts::a refused CONNECT fails closed with a redacted network-class message and never goes direct",
   "editors/vscode/test/suite/download_proxy.test.ts::an unsupported proxy scheme fails closed before any connection",
+  "editors/vscode/test/suite/download_proxy.test.ts::a raw percent sign in proxy credentials is unsupported, not a throw, and leaks nothing",
+  "editors/vscode/test/suite/download_proxy.test.ts::a bare IP NO_PROXY entry matches the whole address only; an empty NO_PROXY does not hide no_proxy",
+  "editors/vscode/test/suite/download_proxy.test.ts::a synchronous TLS setup failure reaches the request as an error and does not hang",
+  "editors/vscode/test/suite/download_proxy.test.ts::the origin never sees Proxy-Authorization, and an untrusted origin cert fails closed through the tunnel",
+  "editors/vscode/test/suite/download_proxy.test.ts::a hostname that is not in the origin certificate SAN fails closed through the tunnel",
 ]
 code = [
   "editors/vscode/src/downloadProxy.ts",
