@@ -157,7 +157,9 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      a non-string `state`, `confidence` or `summary`) is a violation rather than
      an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
-     regenerable subject fails (#12144).
+     regenerable subject fails (#12144). A committed capture selected for
+     regeneration must carry `source_subject.corpus.cache_schema_version` so
+     the gate can decide whether to judge its summaries (#14765).
      Every committed report under `reports/` that carries
      `source_subject.corpus.cache_schema_version` must record the analyzer's
      current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
