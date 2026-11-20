@@ -1148,6 +1148,9 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- `id=` identifies the finding for inspection with the original check scope.
+  A Rust `probe:…:static_unknown:…` ID can identify a test-side gap without
+  identifying a repair seam. Follow its scoped `ripr explain` route.
 - A run refused before analysis (unresolvable base, invalid `ripr.toml`,
   unusable root) replaces this whole record with the short refusal record
   described under the `ripr check` refusal documents below, whose header reads
