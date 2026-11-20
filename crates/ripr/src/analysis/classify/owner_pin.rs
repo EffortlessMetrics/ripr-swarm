@@ -4482,6 +4482,9 @@ impl AssertionRefusal {
                         MacroBindingKind::MacroBody(macro_name) => format!(
                             "the body of `{macro_name}!` at {place} defines or imports `{name}`, so its expansion may rebind it"
                         ),
+                        MacroBindingKind::WrapperRedefinition(wrapper) => format!(
+                            "{place} defines its own `{wrapper}!`, which may replace the audited one for calls in its scope and paste their arguments where they can bring in a different `{name}!`"
+                        ),
                         MacroBindingKind::BodyBindsAny {
                             macro_name,
                             binding,
@@ -4630,6 +4633,7 @@ fn field_site_blocks(site: &MacroBindingSite) -> bool {
                 | MacroBindingKind::MacroArgument(_)
                 | MacroBindingKind::MacroBody(_)
                 | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::WrapperRedefinition(_)
                 | MacroBindingKind::ArgumentAttribute { .. }
         )
 }

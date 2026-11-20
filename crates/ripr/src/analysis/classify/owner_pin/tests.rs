@@ -14169,6 +14169,104 @@ fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
     )
 }
 
+/// #14116: an audited pass-through wrapper (`proptest!` through the audited
+/// prelude glob or its qualified path) pastes its arguments only into
+/// generated function bodies, so a trusted name its arguments mention is
+/// confined to the call's own text and no longer refuses a test elsewhere.
+/// Every other spelling, version, argument shape and local redefinition keeps
+/// the workspace-wide site.
+#[test]
+fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result<(), String> {
+    let proptest = "proptest = \"1\"\n";
+    let audited = lock_of(&[("proptest", "1.12.0", REGISTRY)]);
+    let at = |label: &str, lock: &str, sibling: &str| {
+        prelude_refusal(
+            &format!("pass-through-{label}"),
+            proptest,
+            Some(lock),
+            sibling,
+        )
+    };
+    let body = "#[test]\n    fn p(v in prop::collection::vec(0u8..3, 1..4)) {\n        prop_assert!(!v.is_empty());\n        assert_eq!(v.len(), v.len());\n    }";
+    let bare = format!("proptest! {{\n    {body}\n}}\n");
+    let glob = "use proptest::prelude::*;\n";
+    // Fixture premise: the qualified call mentions `assert_eq`, which
+    // refuses without the audited lock.
+    let qualified = format!("proptest::proptest! {{\n    {body}\n}}\n");
+    assert!(prelude_rebound(at(
+        "premise",
+        &lock_of(&[("proptest", "1.11.0", REGISTRY)]),
+        &qualified
+    )?));
+    for (label, sibling) in [
+        ("bare", format!("{glob}{bare}")),
+        (
+            "qualified",
+            format!("proptest::proptest! {{\n    {body}\n}}\n"),
+        ),
+        (
+            "external",
+            format!("::proptest::proptest! {{\n    {body}\n}}\n"),
+        ),
+        (
+            "no-op-redefinition",
+            format!(
+                "macro_rules! proptest {{ ($($t:tt)*) => {{}} }}\nproptest::proptest! {{\n    {body}\n}}\n"
+            ),
+        ),
+        ("container-glob", format!("{glob}use super::*;\n{bare}")),
+    ] {
+        assert_eq!(at(label, &audited, &sibling)?, None, "{sibling}");
+    }
+    for (label, sibling) in [
+        ("no-glob", bare.clone()),
+        (
+            "definition-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ macro_rules! assert_eq {{ () => {{}} }} }} }}\n"
+            ),
+        ),
+        (
+            "module-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ mod m {{ pub use other::assert_eq; }} }} }}\n"
+            ),
+        ),
+        (
+            "nested-wrapper",
+            format!("{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ define!(assert_eq); }} }}\n"),
+        ),
+        (
+            "plain-import",
+            format!("use other::prop_assert;\n{glob}{bare}"),
+        ),
+        (
+            "local-redefinition",
+            format!("{glob}macro_rules! prop_assert {{ ($($t:tt)*) => {{ $($t)* }} }}\n{bare}"),
+        ),
+        ("inline-module", format!("{glob}mod inner {{\n{bare}}}\n")),
+        (
+            "block-glob",
+            format!("{glob}fn f() {{\n    use other::*;\n    {bare}}}\n"),
+        ),
+        ("item-macro", format!("{glob}make_imports!();\n{bare}")),
+        (
+            "pasting-redefinition",
+            "macro_rules! proptest { ($($t:tt)*) => { $($t)* } }\n".to_string(),
+        ),
+        (
+            "other-wrapper",
+            format!("other::proptest! {{\n    {body}\n}}\n"),
+        ),
+    ] {
+        assert!(
+            prelude_rebound(at(label, &audited, &sibling)?),
+            "{label}: {sibling}"
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
 /// only when the lockfile locks the crate exactly once, from the registry, at
 /// an audited version. Every other lock state keeps the pre-#11703 refusal.
