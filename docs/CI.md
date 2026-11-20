@@ -1309,7 +1309,7 @@ expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
 When the PR's base has advanced, this gate builds the fresh merge in a temporary
-worktree. Cargo gives its workspace packages a distinct artifact identity, reuses
+worktree under the job scratch directory. Cargo gives its workspace packages a distinct artifact identity, reuses
 registry dependencies, and writes the fresh executables under that worktree.
 The original admitted checkout and its binaries remain available for capability,
 verdict and PR evidence checks. The gate writes its golden reports and wildcard

@@ -509,9 +509,9 @@ jobs:
             echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
             exit 0
           fi
-          fresh_tree="$(mktemp -d "$RUNNER_TEMP/ripr-goldens.XXXXXXXX")"
-          git worktree add --detach "$fresh_tree" "$fresh_base"
+          fresh_tree="$(mktemp -d "${TMPDIR:-$RUNNER_TEMP}/ripr-goldens.XXXXXXXX")"
           echo "worktree=$fresh_tree" >> "$GITHUB_OUTPUT"
+          git worktree add --detach "$fresh_tree" "$fresh_base"
           git -C "$fresh_tree" -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
           mkdir -p "$fresh_tree/target" "$GITHUB_WORKSPACE/target/ripr"
           # Goldens and calibration publish the actual outputs at the usual report paths.
@@ -548,7 +548,11 @@ jobs:
           FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
           ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
         run: |
-          git worktree remove --force "$FRESH_TREE"
+          if git worktree list --porcelain | grep -Fx "worktree $FRESH_TREE" >/dev/null; then
+            git worktree remove --force "$FRESH_TREE"
+          elif [ -d "$FRESH_TREE" ]; then
+            rmdir "$FRESH_TREE"
+          fi
           test "$(git rev-parse HEAD)" = "$ORIG_HEAD"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:

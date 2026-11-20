@@ -451,6 +451,8 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
         return Ok(());
     }
     let root = work.parent().ok_or("test checkout needs a parent")?;
+    let scratch = root.join("leased-scratch");
+    fs::create_dir(&scratch).map_err(|e| e.to_string())?;
     let orig_head = git(&work, &["rev-parse", "HEAD"])?;
     let pr_head = git(&work, &["rev-parse", "HEAD^2"])?;
     let output = root.join("step-output");
@@ -462,6 +464,7 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
         &[
             ("BASE_REF", "main"),
             ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
+            ("TMPDIR", scratch.to_str().ok_or("non-UTF-8 scratch")?),
             ("GITHUB_WORKSPACE", workspace),
             ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
         ],
@@ -475,6 +478,9 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
         .find_map(|line| line.strip_prefix("worktree="))
         .ok_or("missing fresh worktree")?;
     let fresh_dir = Path::new(fresh);
+    if fresh_dir.parent() != Some(scratch.as_path()) {
+        return Err("fresh worktree escaped the configured scratch volume".into());
+    }
     if !outputs
         .lines()
         .any(|line| line == format!("orig_head={orig_head}"))
@@ -591,4 +597,81 @@ fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), 
         return Err("restored producer read the fresh source".into());
     }
     fs::remove_dir_all(root).map_err(|e| e.to_string())
+}
+
+#[test]
+fn fresh_goldens_cleanup_owns_failed_worktree_add_before_and_after_registration()
+-> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let prep = step_run_block("id: goldens_fresh_merge")?;
+    let cleanup = step_run_block("id: goldens_cleanup")?;
+    for registered in [false, true] {
+        let (work, _) = admitted_merge(&format!("goldens-failed-add-{registered}"), |w| {
+            commit_file(w, "other.txt", "new base\n", "advance base")
+        })?;
+        if !merge_tree_supported(&work) {
+            return Ok(());
+        }
+        let root = work.parent().ok_or("fixture needs a parent")?;
+        let orig = git(&work, &["rev-parse", "HEAD"])?;
+        let output = root.join("outputs");
+        if registered {
+            let hook = work.join(".git/hooks/post-checkout");
+            fs::write(&hook, "#!/bin/sh\nexit 7\n").map_err(|e| e.to_string())?;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
+        } else {
+            fs::write(work.join(".git/worktrees"), "cannot register here")
+                .map_err(|e| e.to_string())?;
+        }
+        let failed = run_bash(
+            &work,
+            &prep,
+            &[
+                ("BASE_REF", "main"),
+                ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
+                (
+                    "GITHUB_WORKSPACE",
+                    work.to_str().ok_or("non-UTF-8 workspace")?,
+                ),
+                ("TMPDIR", ""),
+                ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
+            ],
+        )?;
+        let ownership = fs::read_to_string(&output).map_err(|e| e.to_string())?;
+        let path = ownership
+            .lines()
+            .find_map(|line| line.strip_prefix("worktree="))
+            .ok_or("failed setup lost the allocated path")?;
+        let listing = git(&work, &["worktree", "list", "--porcelain"])?;
+        if failed.status.success()
+            || listing
+                .lines()
+                .any(|line| line == format!("worktree {path}"))
+                != registered
+            || Path::new(path).parent() != Some(root)
+        {
+            return Err(format!(
+                "wrong partial setup (registered={registered}): {listing}"
+            ));
+        }
+        let removed = run_bash(
+            &work,
+            &cleanup,
+            &[("FRESH_TREE", path), ("ORIG_HEAD", &orig)],
+        )?;
+        if !removed.status.success()
+            || Path::new(path).exists()
+            || git(&work, &["worktree", "list", "--porcelain"])?
+                .lines()
+                .any(|line| line == format!("worktree {path}"))
+        {
+            return Err(format!(
+                "cleanup failed for partial checkout {path}: {}",
+                String::from_utf8_lossy(&removed.stderr)
+            ));
+        }
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
