@@ -2058,10 +2058,28 @@ When a side has no bracket evidence (the file does not lex, or there is no
 rebuilt old file), a string-to-string edit keeps the no-op reading. Comment and
 blank lines inside brackets stay no-ops.
 
+Any other changed non-blank line inside the bracket span of a multi-line
+`raise E(` takes the raise's error-path family too (#15246): a non-literal
+argument (an f-string, `"msg" % x`, a name), an argument line that closes the
+call and so does not lex on its own (`f"msg {x}")`), a nested container line,
+a `) from exc` line, or an argument replaced by a comment. Other statements'
+non-literal continuation lines are still classified alone. The joined
+statement goes through the ordinary shape rules, so a raise whose joined text
+holds ` if ... else ` still reads as a predicate. The `match=` message pin
+still reads only a plain literal on its own line, so a literal that closes the
+call (`"msg")`) is not pinned.
+
 Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `tests.rs::a_changed_message_argument_with_a_trailing_comma_is_an_error_path`,
 `tests.rs::a_changed_message_argument_with_a_trailing_comment_is_an_error_path`,
 `tests.rs::a_bracketed_raise_message_is_not_credited_to_a_return_assertion`,
+`tests.rs::an_f_string_raise_argument_on_a_continuation_line_is_an_error_path_not_exposed`,
+`tests.rs::an_f_string_raise_argument_stays_weak_under_a_bare_pytest_raises`,
+`tests.rs::an_f_string_raise_argument_matches_the_one_line_verdict_under_a_match_pin`,
+`tests.rs::a_non_literal_percent_raise_argument_on_a_continuation_line_is_not_exposed`,
+`tests.rs::an_f_string_raise_argument_that_closes_the_call_is_an_error_path_not_exposed`,
+`tests.rs::a_raise_argument_replaced_by_a_comment_is_an_error_path_not_exposed`,
+`tests.rs::a_non_raise_continuation_argument_keeps_its_own_shape`,
 `tests.rs::an_unlexable_file_keeps_a_changed_bare_string_quiet`,
 `deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and
 `deleted_lines_tests.rs::changed_string_argument_inside_brackets_gets_a_finding`.
