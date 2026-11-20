@@ -1,0 +1,3 @@
+[languages.rust]
+# This hand-written integration test exercises the generated review workflow.
+handwritten_files = ["crates/ripr/tests/generated_review_workflow.rs"]
