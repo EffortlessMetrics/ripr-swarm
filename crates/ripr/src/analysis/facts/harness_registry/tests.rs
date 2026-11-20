@@ -117,40 +117,55 @@ fn check_registered_terminal_matcher_guard_twins(
     helper_callback: bool,
     multiline: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let callback = if helper_callback { "helper" } else { "inline" };
+    let layout = if multiline {
+        "multiline"
+    } else {
+        "single_line"
+    };
     for (pattern, kind, strength) in [
         ("2", OracleKind::ExactValue, OracleStrength::Strong),
         ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
     ] {
-        for (statement, inline_sibling_line) in [
+        for (form, statement, inline_sibling_line) in [
             (
+                "guard",
                 format!("if !matches!(value, {pattern}) {{ return Err(\"bad\".into()); }}"),
                 7,
             ),
-            (format!("assert!(matches!(value, {pattern}));"), 7),
+            ("assert", format!("assert!(matches!(value, {pattern}));"), 7),
             (
+                "guard",
                 format!("if !matches!(\nvalue,\n{pattern}\n) {{\nreturn Err(\"bad\".into());\n}}"),
                 12,
             ),
-            (format!("assert!(matches!(\nvalue,\n{pattern}\n));"), 10),
+            (
+                "assert",
+                format!("assert!(matches!(\nvalue,\n{pattern}\n));"),
+                10,
+            ),
         ] {
             if statement.contains('\n') != multiline {
                 continue;
             }
-            let root = temp_dir("terminal-matcher-twin")?;
+            let trial = format!("{callback}_{layout}_{form}_{pattern}");
+            let root = temp_dir(&trial)?;
             let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
-            let source = registered_matcher_control_source(&statement, helper_callback);
+            let source = named_matcher_control_source(&trial, &statement, helper_callback);
             write_workspace(&root, &[("tests/matcher.rs", &source)])?;
             declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
             let files = [PathBuf::from("tests/matcher.rs")];
             let registrations = [custom_target_registration("tests/matcher.rs")];
             let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
             let [subject] = index.harness_subjects.as_slice() else {
-                return Err(
-                    "terminal matcher control must contain exactly one named subject".into(),
-                );
+                return Err(format!(
+                    "expected one trial named {trial}; subjects: {:?}; limitations: {:?}",
+                    index.harness_subjects, index.harness_limitations
+                )
+                .into());
             };
             assert_eq!(subject.registration_id, "mimic-suite");
-            assert_eq!(subject.name, "observes_score");
+            assert_eq!(subject.name, trial);
             assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
             assert!(subject.start_line > 0 && subject.end_line >= subject.start_line);
             let tests = index.tests();
