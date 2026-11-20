@@ -30,6 +30,7 @@ use ra_ap_syntax::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod dependent_test_hosts;
 mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
@@ -71,6 +72,8 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// admit needs; every other admit keeps the whole-workspace
     /// precondition.
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+    /// Packages hosting indexed tests, populated on the first unresolved finding.
+    pub(in crate::analysis) test_host_manifests: std::sync::OnceLock<BTreeSet<String>>,
     /// The scan root, for reading a manifest's package and library name.
     pub(in crate::analysis) root: &'a std::path::Path,
 }
@@ -13033,6 +13036,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     ) -> DependencyEdgeContext<'a> {
         static NONE_UNINDEXED: BTreeSet<String> = BTreeSet::new();
         DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency,
             manifest_dir_prefixes,
             index,
@@ -15311,6 +15315,7 @@ fn crate_c_score_test() {
             2
         );
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,
@@ -16180,6 +16185,7 @@ fn crate_c_score_test() {
             .map(|manifest| (*manifest).to_string())
             .collect();
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,

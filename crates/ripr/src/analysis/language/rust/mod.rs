@@ -2030,6 +2030,13 @@ fn apply_rust_no_static_path_limit(
         // #11719: last, so no traced or structural witness is displaced.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
+    } else if finding.related_tests.is_empty()
+        && let Some(host) =
+            dependency_edges.and_then(|edges| edges.dependent_test_host(&probe.location.file))
+    {
+        finding.evidence.push(format!(
+            "The directly dependent package at `{host}` hosts indexed tests. Whether those tests reach this owner is unresolved."
+        ));
     }
 }
 
@@ -3175,6 +3182,7 @@ impl RustAdapter {
             dependency_adjacency
                 .as_ref()
                 .map(|adjacency| classify::DependencyEdgeContext {
+                    test_host_manifests: Default::default(),
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,

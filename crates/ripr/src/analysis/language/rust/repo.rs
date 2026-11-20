@@ -142,6 +142,7 @@ impl RustAdapter {
         );
         let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,

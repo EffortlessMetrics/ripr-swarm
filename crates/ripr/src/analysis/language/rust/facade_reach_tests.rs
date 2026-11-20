@@ -681,3 +681,41 @@ fn doctest_of_another_module_that_calls_the_owner_stays_related() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn dependent_test_host_hint_yields_to_the_facade_witness() -> Result<(), String> {
+    let mut setup = Setup::new("dependent-test-host");
+    setup.facade_lib = "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = inner::bump_counter;\n";
+    setup.facade_test = "use facade::*;\n\n#[test]\nfn payload() {\n    let mut buf = Vec::new();\n    WRITE(&mut buf, 7);\n    assert_eq!(buf, [7]);\n}\n";
+    let finding = finding_for(&setup)?;
+    assert_unlimited_no_path(&finding);
+    assert!(finding.related_tests.is_empty());
+    assert!(finding.canonical_gap.is_some());
+    let hint = "The directly dependent package at `facade/Cargo.toml` hosts indexed tests.";
+    assert!(finding.evidence.iter().any(|line| line.starts_with(hint)));
+
+    setup.facade_lib = "pub use inner::*;\npub const WRITE: fn(&mut Vec<u8>, u8) -> usize = inner::bump_counter;\n";
+    let finding = finding_for(&setup)?;
+    assert_limited(&finding);
+    assert!(finding.related_tests.is_empty());
+    assert!(finding.canonical_gap.is_none());
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved)
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("`payload`") && line.contains("`pub use` names `inner`"))
+    );
+    assert!(!finding.evidence.iter().any(|line| line.starts_with(hint)));
+
+    setup.facade_deps = "";
+    setup.facade_lib = "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = |buf, byte| { buf.push(byte); buf.len() };\n";
+    let finding = finding_for(&setup)?;
+    assert_unlimited_no_path(&finding);
+    assert!(!finding.evidence.iter().any(|line| line.starts_with(hint)));
+    Ok(())
+}
