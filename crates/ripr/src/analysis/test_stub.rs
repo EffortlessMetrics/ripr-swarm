@@ -26,7 +26,7 @@ use super::repair_route::{
 use super::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use super::syntax::fn_signature::{
     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, field_init_is_returned,
-    identifier_offsets, owner_signature_at, single_comparison,
+    identifier_offsets, owner_signature_at, single_comparison, single_logical,
 };
 use super::syntax::{
     GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute,
@@ -925,8 +925,18 @@ fn stub_body(
         boundary.extend(arm.inputs);
         arm_state = arm.state;
     }
-    let state_note = (!arm_state.is_empty())
-        .then(|| format!("; for this arm, set it so {}", arm_state.join(" and ")));
+    // #15281: a boundary over receiver state (`self.len >= MAX`) is only
+    // discriminated when the receiver sits on it; a constructed default
+    // (`len == 0`) passes under both comparisons.
+    let state_note = if arm_state.is_empty() {
+        receiver_boundary_state(seam, signature, subject)
+            .map(|state| format!("; for this case, set it so {state}"))
+    } else {
+        Some(format!(
+            "; for this arm, set it so {}",
+            arm_state.join(" and ")
+        ))
+    };
 
     // #11402: the pushed-into buffer starts empty, so the contents check
     // below reads exactly what this one call pushed.
@@ -1026,7 +1036,8 @@ fn stub_body(
                 }
                 None => {
                     lines.push(format!(
-                        "{keyword} {subject}: {self_type} = todo!(\"{label}\");"
+                        "{keyword} {subject}: {self_type} = todo!(\"{}\");",
+                        escape(&label)
                     ));
                     fill_ins.push(label);
                 }
@@ -1894,7 +1905,7 @@ fn input_hint(seam: &RepoSeam, binding: &str) -> String {
         RequiredDiscriminator::BoundaryValue { description }
             if description.contains(binding) && !description.trim().is_empty() =>
         {
-            match relational_boundary(seam) {
+            match relational_boundary(seam).or_else(|| logical_split(seam)) {
                 Some(boundary) => format!(" so that {boundary}"),
                 None => format!(" so that {}", one_line(description)),
             }
@@ -2001,13 +2012,70 @@ fn relational_boundary(seam: &RepoSeam) -> Option<String> {
     })
 }
 
+/// #15281: the receiver state a relational boundary over `self` needs,
+/// respelled on the stub's receiver binding (`subject.len == MAX`). `None`
+/// when the comparison does not read the receiver, or when it also reads a
+/// parameter: that parameter's own fill-in (`choose n so that self.tokens ==
+/// n`) already reaches the boundary without changing the receiver.
+fn receiver_boundary_state(
+    seam: &RepoSeam,
+    signature: &OwnerSignature,
+    subject: &str,
+) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let comparison = single_comparison(seam.expression())?;
+    if !matches!(comparison.op.as_str(), "<" | "<=" | ">" | ">=") {
+        return None;
+    }
+    let state = format!(
+        "{} == {}",
+        one_line(comparison.lhs.trim()),
+        one_line(comparison.rhs.trim())
+    );
+    let reads_parameter = signature
+        .params
+        .iter()
+        .filter_map(|param| param.name.as_deref())
+        .any(|name| mentions_word(&state, name));
+    if reads_parameter {
+        return None;
+    }
+    mentions_word(&state, "self").then(|| format!("`{}`", replace_word(&state, "self", subject)))
+}
+
+/// `word` occurs in `text` as a whole identifier (the boundary rule of
+/// [`replace_word`]).
+fn mentions_word(text: &str, word: &str) -> bool {
+    !word.is_empty() && replace_word(text, word, "") != text
+}
+
+/// #15281: the input condition that tells `a && b` from `a || b`. The two
+/// agree when both operands are true or both are false, so inputs that
+/// merely satisfy the changed predicate (`in_stock || paid` with both true)
+/// pass under either; the discriminating inputs make exactly one true.
+fn logical_split(seam: &RepoSeam) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let logical = single_logical(seam.expression())?;
+    let neighbor = if logical.op == "&&" { "||" } else { "&&" };
+    Some(format!(
+        "exactly one of `{}` and `{}` is true (where `{}` and `{neighbor}` differ)",
+        one_line(logical.lhs.trim()),
+        one_line(logical.rhs.trim()),
+        logical.op
+    ))
+}
+
 fn discriminator_hint(seam: &RepoSeam) -> String {
     match seam.required_discriminator() {
         RequiredDiscriminator::BoundaryValue { description }
         | RequiredDiscriminator::ReturnValue { description }
             if !description.trim().is_empty() =>
         {
-            match relational_boundary(seam) {
+            match relational_boundary(seam).or_else(|| logical_split(seam)) {
                 Some(boundary) => format!(" when {boundary}"),
                 None => format!(" when {}", one_line(description)),
             }
