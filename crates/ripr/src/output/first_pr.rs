@@ -9157,9 +9157,12 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
         };
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
         assert!(
             error.contains(&format!(
-                "--out-dir {out} is an existing file, but --out-dir names the directory"
+                "--out-dir {shown} is an existing file, but --out-dir names the directory"
             )),
             "a file occupying the output directory names the flag and the fix: {error}"
         );
