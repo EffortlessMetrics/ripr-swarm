@@ -34756,34 +34756,31 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [first, second] = diagnostics.as_slice() else {
+    // The only changed line is the marker's anchor, so its row folds into
+    // the marker: one Hint for the range (#15315).
+    let [marker] = diagnostics.as_slice() else {
         return Err(format!(
-            "actionable: one marker and one line row expected: {diagnostics:?}"
+            "actionable: one marker with its line row folded in expected: {diagnostics:?}"
         ));
     };
-    let kind_of = |diagnostic: &Diagnostic| {
-        diagnostic
+    let kind = marker
+        .data
+        .as_ref()
+        .and_then(|data| data.get("kind"))
+        .and_then(|kind| kind.as_str());
+    if !is_marker(marker)
+        || kind != Some("preview_findings_withheld")
+        || marker.severity != Some(DiagnosticSeverity::HINT)
+        || !marker.message.contains("This line: ")
+        || !marker.message.ends_with("not an actionable gap")
+        || marker
             .data
             .as_ref()
-            .and_then(|data| data.get("kind"))
-            .and_then(|kind| kind.as_str())
-            .map(str::to_string)
-    };
-    let (marker, row) = if kind_of(first).as_deref() == Some("preview_finding_withheld") {
-        (second, first)
-    } else {
-        (first, second)
-    };
-    if !is_marker(row)
-        || kind_of(row).as_deref() != Some("preview_finding_withheld")
-        || row.severity != Some(DiagnosticSeverity::HINT)
-        || !row.message.ends_with("not an actionable gap")
+            .and_then(|data| data.get("line"))
+            .is_none()
     {
-        return Err(format!("actionable: line row must be passive: {row:?}"));
-    }
-    if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
         return Err(format!(
-            "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
+            "actionable: the lone diagnostic must be the passive folded Hint marker: {marker:?}"
         ));
     }
     if !actionable.snapshot.is_consistent() {

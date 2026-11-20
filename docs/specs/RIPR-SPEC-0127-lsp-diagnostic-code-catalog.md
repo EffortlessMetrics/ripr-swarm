@@ -101,7 +101,11 @@ constructor that is the single source of truth for that family:
   (`data.kind` `preview_finding_withheld`, message `... not an actionable
   gap`) that names the static class and the owner or changed expression.
   Rows are one per distinct line (findings on the same line aggregate into
-  one row naming their count and classes), and markers plus rows together never
+  one row naming their count and classes). The marker is anchored on the
+  file's first withheld finding, so the row for that line would share its
+  range; it is folded into the marker instead (#15315): one Hint per range,
+  whose text appends `This line: ...` and whose `data.line` carries the row's
+  class, classes and count, and the folded row spends no cap slot. Markers plus rows together never
   exceed the 50 cap (markers are reserved first; rows beyond the remaining cap
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
