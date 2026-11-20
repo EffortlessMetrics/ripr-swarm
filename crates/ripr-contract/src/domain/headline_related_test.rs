@@ -98,25 +98,27 @@ impl Finding {
         )
     }
 
-    /// An explicit observer must resolve to one retained test at its start line.
+    /// Resolve a producer-supplied location to one retained test. An ambiguous
+    /// location, an examined-only row or a contradictory miss cannot confirm it.
+    fn observer_at(&self, reference: &str) -> Option<&RelatedTest> {
+        let (file, line) = reference.rsplit_once(':')?;
+        let line = line.parse::<usize>().ok()?;
+        let mut rows = self.related_tests.iter().filter(|row| {
+            row.line == line && row.file.to_string_lossy().replace('\\', "/") == file
+        });
+        let row = rows.next()?;
+        (rows.next().is_none()
+            && row.is_contributing()
+            && row.miss.is_none()
+            && row.headline_has_path(self))
+        .then_some(row)
+    }
+
     pub(super) fn headline_observers(&self) -> Vec<&RelatedTest> {
         self.evidence
             .iter()
-            .filter_map(|entry| {
-                let (file, line) = entry
-                    .strip_prefix("related_test_observer: ")?
-                    .rsplit_once(':')?;
-                let line = line.parse::<usize>().ok()?;
-                let mut rows = self.related_tests.iter().filter(|row| {
-                    row.line == line && row.file.to_string_lossy().replace('\\', "/") == file
-                });
-                let row = rows.next()?;
-                (rows.next().is_none()
-                    && row.is_contributing()
-                    && row.miss.is_none()
-                    && row.headline_has_path(self))
-                .then_some(row)
-            })
+            .filter_map(|line| line.strip_prefix("related_test_observer: "))
+            .filter_map(|reference| self.observer_at(reference))
             .collect()
     }
 
