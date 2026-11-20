@@ -4566,6 +4566,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_value_helper_test_beside_a_same_module_caller_test_then_both_rows_stay",
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_value_helper_test_beside_a_cross_module_caller_test_then_the_reading_stays_weak",
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_local_import_of_a_rival_owner_then_the_module_import_does_not_mask_it",
+  "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_parameter_shadowing_the_module_alias_then_the_test_stays_unrelated",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_literal_format_spec_text_then_a_call_shaped_mention_stays_hidden",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_nested_triple_quoted_literal_in_a_field_then_its_text_stays_hidden",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_comment_or_same_delimiter_literal_in_a_field_then_the_rest_stays_hidden",

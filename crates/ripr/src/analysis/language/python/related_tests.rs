@@ -1034,7 +1034,13 @@ fn related_test_relation_scan(
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        if route.is_some() {
+            return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        }
+        // A value helper resolves its own module's imports (#15350), so the
+        // test's binding of the name to another module does not decide it.
+        return value_helper_calls_owner(test, owner)
+            .then_some(PythonRelationKind::HelperOwnerCall);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -1105,10 +1111,10 @@ fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.value_helpers.iter().any(|helper| {
         let mut view = test.clone();
         view.body_text.clone_from(&helper.body_text);
-        // A helper-local import shadows the module's import of the same name.
-        view.imports
-            .retain(|import| !helper.imports.iter().any(|own| own.alias == import.alias));
-        view.imports.extend(helper.imports.iter().cloned());
+        // The helper resolves names in its own module: the module's imports
+        // with its own imports over them, never the calling test's local
+        // imports.
+        view.imports.clone_from(&helper.imports);
         // A parameter or local that rebinds the owner's name (or an alias the
         // view imports it as) is not the owner.
         let rebinds_owner = helper.local_names.iter().any(|local| {
@@ -1121,7 +1127,10 @@ fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
             return false;
         }
         view.assertions.clear();
-        view.fixtures.clear();
+        // The helper's parameters stand where a test's fixtures do, so a
+        // parameter that shadows a module alias (`def run(core, n):
+        // return core.total(n)`) is read as rebinding it.
+        view.fixtures.clone_from(&helper.local_names);
         view.fixture_defs.clear();
         view.value_helpers.clear();
         !bare_name_bound_to_other_module(&view, owner)

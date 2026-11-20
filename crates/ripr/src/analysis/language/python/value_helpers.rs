@@ -33,7 +33,7 @@
 //! never reads `owner(` in the helper as the owner when the helper binds that
 //! name itself (`def run(total): return total(1)`).
 
-use super::owners_tests::collect_imports_from_statements;
+use super::owners_tests::test_imports;
 use super::related_tests::{contains_call_name, text_binds_name};
 use super::source_utils::text_for_range;
 use super::{PythonImport, PythonTest};
@@ -41,8 +41,11 @@ use rustpython_parser::ast::{Expr, Ranged, Stmt, StmtFunctionDef};
 use rustpython_parser::text_size::TextRange;
 use std::path::Path;
 
-/// One provable value helper: its name, its body as written and the imports
-/// its own body makes (a function-local `from M import owner`).
+/// One provable value helper: its name, its body as written and the names
+/// its body resolves through imports: the module's imports, each replaced by
+/// a helper-local import of the same alias (`from M import owner` inside the
+/// helper). A test's own imports never reach the helper, which resolves its
+/// globals in its defining module.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonValueHelper {
     pub(super) name: String,
@@ -57,12 +60,13 @@ pub(super) fn attach_value_helpers(
     file: &Path,
     source: &str,
     module: &[Stmt],
+    module_imports: &[PythonImport],
     tests: &mut [PythonTest],
 ) {
     if tests.is_empty() {
         return;
     }
-    let helpers = collect_value_helpers(file, source, module);
+    let helpers = collect_value_helpers(file, source, module, module_imports);
     if helpers.is_empty() {
         return;
     }
@@ -79,7 +83,12 @@ pub(super) fn attach_value_helpers(
     }
 }
 
-fn collect_value_helpers(file: &Path, source: &str, module: &[Stmt]) -> Vec<PythonValueHelper> {
+fn collect_value_helpers(
+    file: &Path,
+    source: &str,
+    module: &[Stmt],
+    module_imports: &[PythonImport],
+) -> Vec<PythonValueHelper> {
     module
         .iter()
         .filter_map(|stmt| match stmt {
@@ -114,7 +123,7 @@ fn collect_value_helpers(file: &Path, source: &str, module: &[Stmt]) -> Vec<Pyth
         .map(|(function, body_text)| PythonValueHelper {
             name: function.name.to_string(),
             body_text,
-            imports: collect_imports_from_statements(file, &function.body),
+            imports: test_imports(file, module_imports, &function.body),
             local_names: local_names(function),
         })
         .collect()

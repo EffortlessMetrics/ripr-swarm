@@ -500,15 +500,19 @@ its decorators build a command that runs the body; an `async def` caller is
 allowed (#4568, #9226).
 A test is also related with the weak `helper_owner_call` relation when its
 body bare-calls a same-file value helper whose own body calls the owner by the
-direct-call rules, read with the test's imports plus the helper's own, where a
-helper-local import replaces the module's import of the same name
+direct-call rules, read with the helper's module imports, where a
+helper-local import replaces the module's import of the same name and a
+test-local import never applies, and with the helper's parameters standing
+where a test's fixtures do
 (`def parse(text): from pkg import parse_lines; return parse_lines(text)`,
 #15350). The helper must be a module-level, undecorated, synchronous `def` not
 named `test*`, the only binding of its name in the file, with a straight-line
 body (imports, assignments and expression statements) ending in
 `return <value>`, and no `yield`, `lambda` or `:=` spelled anywhere in its
 body. A helper whose parameter or assignment target rebinds the owner's name,
-or the alias the owner is imported as, does not relate; a test that binds the
+or the alias the owner or its module is imported as, does not relate. A
+test whose own import binds the owner's name to another workspace module still
+relates through a helper that imports the owner itself; a test that binds the
 helper's name itself (a fixture parameter or a local) does not reach it. The relation carries no
 oracle, so such a test turns a `no_static_path` reading weak, never `exposed`.
 Such a test does not hide the rows of tests that reach the owner through a

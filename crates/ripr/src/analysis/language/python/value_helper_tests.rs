@@ -140,6 +140,54 @@ fn given_a_helper_local_import_of_a_rival_owner_then_the_module_import_does_not_
         ),
         None
     );
+    // The inverse: the module binds the rival, the helper imports the owner.
+    assert_eq!(
+        relation(
+            "from pkg.other import total\n\n\ndef run(n):\n    from pkg.core import total\n    return total(n)\n\n\ndef test_x():\n    assert run(1) == 11\n"
+        ),
+        Some(PythonRelationKind::HelperOwnerCall)
+    );
+    // A test-local import never reaches the helper, which resolves `t` in
+    // its own module: here the rival.
+    assert_eq!(
+        relation(
+            "from pkg.other import total as t\n\n\ndef run(n):\n    return t(n)\n\n\ndef test_x():\n    from pkg.core import total as t\n    assert run(1) == 11\n"
+        ),
+        None
+    );
+    // And here the owner, whatever the test binds `t` to.
+    assert_eq!(
+        relation(
+            "from pkg.core import total as t\n\n\ndef run(n):\n    return t(n)\n\n\ndef test_x():\n    from pkg.other import total as t\n    assert run(1) == 11\n"
+        ),
+        Some(PythonRelationKind::HelperOwnerCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_helper_parameter_shadowing_the_module_alias_then_the_test_stays_unrelated()
+-> Result<(), String> {
+    // Control: the module alias reaches the owner.
+    let related = finding_for(
+        "import pkg.core as core\n\n\ndef run(n):\n    return core.total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
+    )?;
+    assert_eq!(
+        related.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        related.evidence
+    );
+    // The parameter `core` is whatever the test passes, not the module.
+    let shadowed = finding_for(
+        "import pkg.core as core\n\n\ndef run(core, n):\n    return core.total(n)\n\n\ndef test_total():\n    assert run(object(), 1) == 11\n",
+    )?;
+    assert_eq!(
+        shadowed.class,
+        ExposureClass::NoStaticPath,
+        "{:?}",
+        shadowed.evidence
+    );
     Ok(())
 }
 
