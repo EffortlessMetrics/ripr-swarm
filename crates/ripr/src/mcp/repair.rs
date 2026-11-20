@@ -889,8 +889,7 @@ impl WorkspaceSession {
                 None => {
                     // An item with no bound seam is checked over its own file
                     // and its fix-site file (normalized like the digests).
-                    let item_file =
-                        super::repair_card::normalize_item_path(Path::new(&item.file));
+                    let item_file = super::repair_card::normalize_item_path(Path::new(&item.file));
                     let mut paths = vec![item_file.clone()];
                     if !fix_file.is_empty() {
                         paths.push(std::path::PathBuf::from(&fix_file));
@@ -2225,8 +2224,9 @@ pub(super) mod tests {
             ("src\\lib.rs", ".\\tests\\checkout.rs"),
         ] {
             let mut session = build(item_file, fix_file, &both)?;
-            prepare(&mut session)
-                .map_err(|failure| format!("{item_file}: control must prepare: {}", failure.detail))?;
+            prepare(&mut session).map_err(|failure| {
+                format!("{item_file}: control must prepare: {}", failure.detail)
+            })?;
             let original = std::fs::read(&test_file).map_err(|e| e.to_string())?;
             std::fs::write(&test_file, b"fn changed() {}\n").map_err(|e| e.to_string())?;
             let result = prepare(&mut session);
@@ -2256,7 +2256,9 @@ pub(super) mod tests {
         let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
         let notes = packet["limitations"].to_string();
         if !notes.contains("source custody is not checked for `app/pricing.py`") {
-            return Err(format!("non-Rust item must disclose unchecked custody: {notes}"));
+            return Err(format!(
+                "non-Rust item must disclose unchecked custody: {notes}"
+            ));
         }
         // A fix-site file with no captured digest is disclosed too.
         let mut session = build("src/lib.rs", "tests/new_test.rs", &both[..1])?;
