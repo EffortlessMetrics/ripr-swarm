@@ -641,6 +641,22 @@ fn single_element_container_observers_compare_the_actual_boolean_payload() -> Re
             r#"assert_eq!(vec![over(10)].contains(&true), true); assert_eq!(Some(over(10)).unwrap_or(true), true);"#,
             "exposed",
         ),
+        (
+            r#"assert_eq!([over(10)].first(),Some(&true)); assert_eq!([over(10)].first(),None);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)),true); assert_eq!(Some(over(10)).eq(&None),true);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!([over(10)].first(),Some(&true)); assert_ne!(None,[over(10)].first());"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)),true); assert_eq!(Some(over(10)).eq(&None),false);"#,
+            "exposed",
+        ),
     ] {
         let finding = predicate_finding(body)?;
         let class = finding.get("classification").and_then(Value::as_str);

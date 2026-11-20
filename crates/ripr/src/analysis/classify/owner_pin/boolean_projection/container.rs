@@ -36,6 +36,10 @@ pub(super) fn comparison(
     if uses_some && !standard_variant_in_scope("Some", test, assertion, index, syntax) {
         return None;
     }
+    let standard_none = |expr: &ast::Expr| {
+        expr.syntax().text() == "None"
+            && standard_variant_in_scope("None", test, assertion, index, syntax)
+    };
     let (call, expectation) = match (method_name.text(), arguments.as_slice()) {
         ("unwrap_or", [fallback]) => {
             bool_literal(fallback)?;
@@ -46,8 +50,11 @@ pub(super) fn comparison(
                 return None;
             }
             let option = shared_reference(expected_option.clone())?;
-            let peer = bool_literal(&some_argument(option)?)?;
             let result = bool_literal(&operand(expected)?)?;
+            if standard_none(&option) {
+                return always(some_argument(receiver)?, !result);
+            }
+            let peer = bool_literal(&some_argument(option)?)?;
             (some_argument(receiver)?, peer == result)
         }
         ("first", []) => {
@@ -65,7 +72,11 @@ pub(super) fn comparison(
             if elements.next().is_some() {
                 return None;
             }
-            let expected = shared_reference(some_argument(operand(expected)?)?)?;
+            let expected = operand(expected)?;
+            if standard_none(&expected) {
+                return always(call, false);
+            }
+            let expected = shared_reference(some_argument(expected)?)?;
             (call, bool_literal(&expected)?)
         }
         ("contains", [needle]) => {
@@ -100,6 +111,17 @@ pub(super) fn comparison(
         call.syntax().text().to_string(),
         expectation,
     ))
+}
+
+fn always(call: ast::Expr, verdict: bool) -> Option<ComparedCall> {
+    let ast::Expr::CallExpr(call) = call else {
+        return None;
+    };
+    Some(ComparedCall {
+        call: call.syntax().text().to_string(),
+        when_false: verdict,
+        when_true: verdict,
+    })
 }
 
 fn some_argument(expr: ast::Expr) -> Option<ast::Expr> {
