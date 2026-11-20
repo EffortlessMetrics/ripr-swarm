@@ -10362,8 +10362,9 @@ index 0000000..1111111 100644
                 && limitation
                     .recovery
                     .detail
-                    .contains("widen the analyzed partition")),
-            "the partial scope must be disclosed as a limitation"
+                    .contains("narrow the diff with a PATH argument")),
+            "the partial scope must be disclosed as a limitation; an over-guard whole diff \
+             leads with narrowing"
         );
         Ok(())
     }

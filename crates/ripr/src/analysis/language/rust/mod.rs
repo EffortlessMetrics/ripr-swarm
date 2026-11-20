@@ -860,11 +860,12 @@ impl PartialDiffScope {
     /// first, then the CLI-shaped "re-run" tail. See
     /// [`Self::budget_raise_instruction`] for the budget assignment itself.
     pub(crate) fn widen_instruction(&self) -> String {
-        if let Some((total, limit)) = self.unreachable_whole_diff() {
+        if let Some((total, limit, env)) = self.unreachable_whole_diff() {
             return format!(
                 "narrow the diff with a PATH argument or a nearer `--base` (the whole diff is \
-                 {total} changed lines, over the {limit}-line analysis limit, so raising a \
-                 budget cannot complete the run), then re-run"
+                 {total} changed lines, over the {limit}-line analysis limit, so raising only \
+                 the partial budget cannot complete the run; on a runner with more memory, \
+                 raising {env} first is the other route), then re-run"
             );
         }
         format!("{}, then re-run", self.budget_raise_instruction())
@@ -876,21 +877,22 @@ impl PartialDiffScope {
     /// N" would only walk toward a run that never completes. `None` when the
     /// whole diff can be granted, when an over-limit file already carries its
     /// own limit-raise route, or when no language limit is recorded.
-    fn unreachable_whole_diff(&self) -> Option<(usize, usize)> {
+    fn unreachable_whole_diff(&self) -> Option<(usize, usize, &'static str)> {
         if self.whole_diff_budgets.is_some() || !self.over_limit_files.is_empty() {
             return None;
         }
         let total = self
             .selected_changed_lines
             .saturating_add(self.uninspected_changed_lines_lower_bound);
-        let limit = self
+        let (env, limit) = self
             .line_budget_limits
             .iter()
-            .map(|(_, limit)| *limit)
-            .min()?;
+            .min_by_key(|(_, limit)| *limit)
+            .copied()?;
         // Raising an analysis limit is the documented route while the diff
-        // stays within reach of the built-in guard; past it, narrowing is.
-        (total > limit && total > DIFF_CHANGED_RUST_LINE_LIMIT).then_some((total, limit))
+        // stays within reach of the built-in guard; past it, narrowing leads
+        // and the limit raise stays named for larger runners.
+        (total > limit && total > DIFF_CHANGED_RUST_LINE_LIMIT).then_some((total, limit, env))
     }
 
     /// The lead-in each surface puts before [`Self::widen_instruction`]:
@@ -8431,8 +8433,9 @@ fn absent_delimiter_boundary_returns_head() {
         assert_eq!(
             narrow.widen_instruction(),
             "narrow the diff with a PATH argument or a nearer `--base` (the whole diff is 4500 \
-             changed lines, over the 4499-line analysis limit, so raising a budget cannot \
-             complete the run), then re-run"
+             changed lines, over the 4499-line analysis limit, so raising only the partial \
+             budget cannot complete the run; on a runner with more memory, raising \
+             RIPR_MAX_DIFF_CHANGED_RUST_LINES first is the other route), then re-run"
         );
         assert_eq!(narrow.widen_lead(true), "To get a complete result, ");
         // Control: the same diff under a limit that can hold it keeps the

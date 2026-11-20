@@ -5640,7 +5640,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/topic"),
+            repair.contains("--base origin/topic`"),
             "the repair must name the resolvable remote-tracking ref, got: {repair}"
         );
         let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
@@ -5780,7 +5780,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/upstream/topic"),
+            repair.contains("--base upstream/topic`"),
             "the repair must name the one existing tracking ref, got: {repair}"
         );
 
@@ -5813,7 +5813,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/feature/topic"),
+            repair.contains("--base origin/feature/topic`"),
             "a slashed branch must probe remote-tracking forms, got: {repair}"
         );
 
