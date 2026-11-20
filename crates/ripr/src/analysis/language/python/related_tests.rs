@@ -2301,10 +2301,13 @@ pub(super) fn owner_result_locals(
         let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
         let mut value_start = start + eq + 1 + (value.len() - value.trim_start().len());
         let mut value = value.trim_start();
-        if awaited
-            && let Some(rest) = value.strip_prefix("await")
-            && rest.starts_with([' ', '\t', '('])
-        {
+        if awaited {
+            let Some(rest) = value
+                .strip_prefix("await")
+                .filter(|rest| rest.starts_with([' ', '\t', '(']))
+            else {
+                continue;
+            };
             value_start += value.len() - rest.trim_start().len();
             value = rest.trim_start();
         }

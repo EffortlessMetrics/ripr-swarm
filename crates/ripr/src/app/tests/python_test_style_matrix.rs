@@ -333,6 +333,8 @@ fn parenthesized_owner_calls_bind_only_the_whole_result() -> Result<(), String> 
             "await(discount(200))",
             true,
         ),
+        (ASYNC_CALC, "", "(discount(200))", false),
+        (CALC, "", "((discount(200)))", true),
         (CALC, "", "(discount(200),)", false),
         (CALC, "", "(discount(200) or 190)", false),
         (
