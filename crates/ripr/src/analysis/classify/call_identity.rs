@@ -542,14 +542,18 @@ fn scan_call_identity_shapes(
 
 impl CallIdentityMemos {
     /// #15277: the memoized workspace verdict of the `.into()` reading.
-    pub(super) fn into_workspace_clear(&self, compute: impl FnOnce() -> bool) -> bool {
+    pub(super) fn conversion_workspace_clear(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.into_workspace_clear.get_or_init(compute)
     }
 
     /// #15277: the memoized file-level verdict of the `.into()` reading for
     /// the `From` owner `owner_id` (recomputed, not cached, if the lock is
     /// poisoned).
-    pub(super) fn into_owner_clear(&self, owner_id: &str, compute: impl FnOnce() -> bool) -> bool {
+    pub(super) fn conversion_owner_clear(
+        &self,
+        owner_id: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
         if let Ok(cache) = self.into_owner_clear.lock()
             && let Some(&found) = cache.get(owner_id)
         {

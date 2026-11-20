@@ -182,9 +182,9 @@ pub(super) fn test_converts_into_owner(
     // Both verdicts depend on the indexed sources alone, so they are read
     // once per run, not once per (probe, test).
     let memos = &index.call_identity_memos;
-    memos.into_owner_clear(&owner.id.0, || {
+    memos.conversion_owner_clear(&owner.id.0, || {
         owner_file_is_clear(source, owner, into, index)
-    }) && memos.into_workspace_clear(|| {
+    }) && memos.conversion_workspace_clear(|| {
         !workspace_may_answer_into(index)
             && crate::analysis::classify::element_field_pin::field_workspace_is_closed(index)
     })
