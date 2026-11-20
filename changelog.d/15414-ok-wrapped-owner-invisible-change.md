@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust function that returns `Ok(..)`, `Some(..)` or `Err(..)` around its changed value, such as `Ok(x * 2)` changed to `Ok(x * 3)`, no longer reads `exposed` from a test whose asserted input gives the same value before and after, whether the test uses `assert_eq!(fee(0), Ok(0))`, `fee(0).await` or `assert!(matches!(fee(0), Ok(0)))`. It now reads `weakly_exposed` with "the asserted inputs evaluate to the same value", like a plain integer return ([#15414](https://github.com/EffortlessMetrics/ripr-swarm/issues/15414)).

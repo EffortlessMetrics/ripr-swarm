@@ -35,7 +35,8 @@ use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::run_memo::{self, Product};
 use ra_ap_syntax::{
-    AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasName, ast::RangeItem,
+    AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasGenericParams,
+    ast::HasName, ast::RangeItem,
 };
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -463,11 +464,17 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         return None;
     }
     let baseline = current.replacen(after, before, 1);
+    // An owner whose whole body is one shared constructor around the changed
+    // payload (`Ok(x * 2)` to `Ok(x * 3)`) returns equal values exactly when
+    // the payloads are equal, so the equality reading folds the payloads
+    // (#15414). Relational assertions keep the unpeeled bodies.
+    let (current_value, baseline_value) = shared_constructor_payloads(current, &baseline)
+        .unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
-    if !versions_differ_on_small_inputs(current, &baseline) {
+    if !versions_differ_on_small_inputs(&current_value, &baseline_value) {
         return None;
     }
     // A related test that never names the owner exercises it through no call
@@ -518,7 +525,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         }
         let resolved: Vec<Vec<ResolvedOperand>> = equality_assertions
             .iter()
-            .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
+            .map(|oracle| invisibility_operands(&oracle.text, test.body.as_str()))
             .collect();
         // A `let` read by several assertions is one call in the body, so each
         // binding's initializer counts once however many assertions use it.
@@ -567,8 +574,8 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 values.push(value);
             }
             match (
-                fold_function_text(current, &values),
-                fold_function_text(&baseline, &values),
+                fold_function_text(&current_value, &values),
+                fold_function_text(&baseline_value, &values),
             ) {
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
@@ -1113,6 +1120,16 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
             .map(Vec::from)
             .unwrap_or_default(),
     };
+    resolve_operands(operands, oracle_text, test_body)
+}
+
+/// Each operand with a bare identifier replaced by the one `let` initializer
+/// that binds it in `test_body` (see [`assertion_operands`]).
+fn resolve_operands(
+    operands: Vec<String>,
+    oracle_text: &str,
+    test_body: &str,
+) -> Vec<ResolvedOperand> {
     operands
         .into_iter()
         .map(|operand| {
@@ -1129,6 +1146,110 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
             }
         })
         .collect()
+}
+
+/// [`assertion_operands`], plus the scrutinee and pinned value of a literal
+/// `matches!` assertion (#15414). Invisibility only: `matches!(owner(0),
+/// Ok(0))` passes on both versions when the owner folds to the same value
+/// there, so reading it can only withhold credit; the credit-granting callers
+/// of [`assertion_operands`] keep their equality-only reading.
+fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand> {
+    let operands = assertion_operands(oracle_text, test_body);
+    if !operands.is_empty() {
+        return operands;
+    }
+    crate::analysis::classify::literal_matches_assertion_operands(oracle_text)
+        .map(|pair| resolve_operands(Vec::from(pair), oracle_text, test_body))
+        .unwrap_or_default()
+}
+
+/// The body texts with one shared one-argument constructor (`Ok`, `Some` or
+/// `Err`) peeled off when each owner body is exactly that constructor around
+/// its tail payload and nothing else, rebuilt as a function of the same
+/// parameters returning the payload. Equal payloads give equal values, and
+/// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
+/// statement, generic or receiver refuses, so a peeled fold can only say two
+/// values are equal when the real ones are (#15414). The rebuilt function
+/// returns the payload's declared type, so the fold keeps its width guard.
+fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
+    let (current_constructor, current_payload) = constructor_payload_function(current)?;
+    let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
+    (current_constructor == baseline_constructor).then_some((current_payload, baseline_payload))
+}
+
+/// One function text's constructor name and its payload-returning rewrite;
+/// see [`shared_constructor_payloads`].
+fn constructor_payload_function(body: &str) -> Option<(String, String)> {
+    let parse = parse_clean_source_file(body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.generic_param_list().is_some() {
+        return None;
+    }
+    let param_list = function.param_list()?;
+    if param_list.self_param().is_some() {
+        return None;
+    }
+    let block = function.body()?;
+    let statements = block.stmt_list()?;
+    if statements.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(call) = statements.tail_expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    let constructor = callee.syntax().text().to_string();
+    if !matches!(constructor.as_str(), "Ok" | "Some" | "Err") {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let (Some(payload), None) = (arguments.next(), arguments.next()) else {
+        return None;
+    };
+    let name = function.name()?;
+    // Keep the payload's declared type so the fold still refuses a result
+    // outside that integer width; a missing or other return type keeps exact
+    // arithmetic as before.
+    let payload_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .and_then(|ty| match ty {
+            ast::Type::PathType(path) => path.path()?.segment(),
+            _ => None,
+        })
+        .and_then(|segment| {
+            let wrapper = segment.name_ref()?.text().to_string();
+            // `Ok` carries `T` and `Err` carries `E` of `Result<T, E>`;
+            // `Some` carries `T` of `Option<T>`.
+            let position = match (wrapper.as_str(), constructor.as_str()) {
+                ("Result", "Ok") | ("Option", "Some") => 0,
+                ("Result", "Err") => 1,
+                _ => return None,
+            };
+            match segment.generic_arg_list()?.generic_args().nth(position)? {
+                ast::GenericArg::TypeArg(arg) => Some(arg.ty()?.syntax().text().to_string()),
+                _ => None,
+            }
+        });
+    let return_type = payload_type
+        .map(|ty| format!(" -> {ty}"))
+        .unwrap_or_default();
+    Some((
+        constructor,
+        format!(
+            "fn {}{}{} {{\n    {}\n}}\n",
+            name.text(),
+            param_list.syntax().text(),
+            return_type,
+            payload.syntax().text()
+        ),
+    ))
 }
 
 /// A compared operand after `let` resolution; `binding` names the `let` it
