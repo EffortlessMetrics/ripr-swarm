@@ -362,6 +362,7 @@ mod bool_oracle;
 mod boundary;
 mod call_chain;
 mod caplog_text;
+mod class_attr_pin;
 mod classify;
 mod coarse_projection;
 mod conditional_defs;

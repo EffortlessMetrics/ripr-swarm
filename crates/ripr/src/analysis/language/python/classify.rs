@@ -12,6 +12,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::class_attr_pin;
 use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
@@ -1310,6 +1311,22 @@ fn classify_change_for_owner_inner<'a>(
             })
         })
         .flatten();
+    // Class-attribute text gate (#15294): a changed class-body string constant
+    // is exposed only when a related assertion carries a literal that the old
+    // text accepts and the new text rejects. Other shapes fail open.
+    let class_attr_gap = static_limit
+        .is_none()
+        .then(|| {
+            class_attr_pin::python_class_attr_pin_gap(
+                line_text,
+                old_line_text,
+                owner,
+                owner_source,
+                line,
+                &related_candidates,
+            )
+        })
+        .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
     // recorded as advisory evidence only; it never changes the class here. The
     // gap-bound repair closure reads it (RIPR-SPEC-0310).
@@ -1329,6 +1346,7 @@ fn classify_change_for_owner_inner<'a>(
         Vec::new()
     };
     let mut message_pin_downgraded = false;
+    let mut class_attr_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
     // The same gate evaluates simple integer arithmetic per row so a 20xx
@@ -1596,6 +1614,7 @@ fn classify_change_for_owner_inner<'a>(
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && message_pin_gap.is_none()
+        && class_attr_gap.is_none()
         && unvaried_table.is_none()
         && band_gap.is_none()
     {
@@ -1694,6 +1713,23 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![message],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = class_attr_gap.as_ref()
+    {
+        // A strong oracle reaches the class, but no related assertion carries
+        // a literal that tells the old attribute text from the new (#15294).
+        class_attr_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.",
+                owner.name, gap.reason,
+            )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -2014,6 +2050,18 @@ fn classify_change_for_owner_inner<'a>(
             // input would need to satisfy, with the reason listing the values
             // the strong related calls actually bind.
             guarded_arm_gap
+                .as_ref()
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
+                })
+                .into_iter()
+                .collect()
+        } else if class_attr_downgraded {
+            class_attr_gap
                 .as_ref()
                 .map(|gap| {
                     MissingDiscriminatorFact::equality_spelled(
