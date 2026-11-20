@@ -1501,8 +1501,7 @@ mod tests {
     /// carry a different `severity` value under a user override; full-packet
     /// parity is only claimed when the effective configurations match.
     #[test]
-    fn finding_location_keeps_each_surface_spelling_under_default_config()
-    -> Result<(), String> {
+    fn finding_location_keeps_each_surface_spelling_under_default_config() -> Result<(), String> {
         // check-local-context forbids drive-letter path literals; assemble
         // the verbatim root from parts (the `//?/` text lives in the owner's
         // own unit tests).
