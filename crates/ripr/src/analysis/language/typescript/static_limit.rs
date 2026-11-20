@@ -1043,10 +1043,13 @@ fn dynamic_assertion_why(matcher: &str, expected_text: Option<&str>) -> String {
     }
 }
 
-/// True when `text` is an object or array literal with a bare identifier
-/// member value (not a key, string, number, or `true`/`false`/`null`/
-/// `undefined`). A conservative scan: any doubt reads as false, which keeps
-/// the generic wording.
+/// True when `text` is an object or array literal with a member value that is
+/// a bare identifier on its own (`{ a: x }`, `[x, 1]`, shorthand `{ x }`,
+/// spread `...x`), not a key, string, number, keyword literal (`true`,
+/// `false`, `null`, `undefined`, `NaN`, `Infinity`), call, member access,
+/// `new` expression or asymmetric matcher such as `expect.any(String)`. A
+/// conservative scan: any doubt reads as false, which keeps the generic
+/// wording.
 fn container_holds_identifier(text: &str) -> bool {
     if !(text.starts_with('{') && text.ends_with('}')
         || text.starts_with('[') && text.ends_with(']'))
@@ -1078,15 +1081,24 @@ fn container_holds_identifier(text: &str) -> bool {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            let preceded_by_digit = start > 0 && chars[start - 1].is_ascii_digit();
+            let mut k = start;
+            while k > 0 && chars[k - 1].is_whitespace() {
+                k -= 1;
+            }
+            let before = k.checked_sub(1).and_then(|at| chars.get(at)).copied();
+            let after_spread = k >= 3 && chars[k - 3..k].iter().all(|ch| *ch == '.');
+            let value_start = matches!(before, Some(':' | '[' | ',' | '{')) || after_spread;
             let mut j = i;
             while j < chars.len() && chars[j].is_whitespace() {
                 j += 1;
             }
-            let is_key = chars.get(j) == Some(&':');
-            if !is_key
-                && !preceded_by_digit
-                && !matches!(word.as_str(), "true" | "false" | "null" | "undefined")
+            let value_end = matches!(chars.get(j), Some(',' | '}' | ']'));
+            if value_start
+                && value_end
+                && !matches!(
+                    word.as_str(),
+                    "true" | "false" | "null" | "undefined" | "NaN" | "Infinity"
+                )
             {
                 return true;
             }
@@ -1620,7 +1632,16 @@ mod dynamic_why_tests {
             "[true, false, undefined, 'item1']"
         ));
         assert!(container_holds_identifier("{ items: [item1, item2] }"));
-        assert!(container_holds_identifier("[1, f(2)]"));
+        assert!(container_holds_identifier("[1, item]"));
+        assert!(container_holds_identifier("{ item }"));
+        assert!(container_holds_identifier("{ ...base, n: 1 }"));
         assert!(!container_holds_identifier("foo"));
+        // Not variables: calls, member reads, `new`, asymmetric matchers and
+        // the non-finite number globals keep the generic wording.
+        assert!(!container_holds_identifier("[1, f(2)]"));
+        assert!(!container_holds_identifier("{ id: expect.any(String) }"));
+        assert!(!container_holds_identifier("{ n: NaN, m: [Infinity] }"));
+        assert!(!container_holds_identifier("{ d: new Date(0) }"));
+        assert!(!container_holds_identifier("[Number.MAX_VALUE]"));
     }
 }
