@@ -7,7 +7,7 @@ use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use rmcp::{
     RoleServer, ServiceExt,
     model::{
-        ClientJsonRpcMessage, ClientRequest, CustomRequest, GetExtensions, RequestId,
+        ClientJsonRpcMessage, ClientRequest, CustomRequest, ErrorCode, GetExtensions, RequestId,
         ServerJsonRpcMessage,
     },
     transport::{Transport, async_rw::JsonRpcMessageCodec},
@@ -38,8 +38,44 @@ type Failure = Arc<TransportFailure>;
 struct Admission {
     pending: StdMutex<Option<RequestId>>,
     wake: Notify,
+    /// A malformed `initialize` (one the SDK cannot type) and the message
+    /// naming its bad field. The SDK answers it before the handshake with a
+    /// generic `_meta` error; the reply for this id says what is actually
+    /// wrong instead.
+    initialize_hint: StdMutex<Option<(RequestId, String)>>,
 }
 impl Admission {
+    fn note_malformed_initialize(&self, id: RequestId, message: String) {
+        if let Ok(mut hint) = self.initialize_hint.lock() {
+            *hint = Some((id, message));
+        }
+    }
+    /// Rewrites the SDK's pre-handshake `_meta` refusal so it also names the
+    /// session lifecycle (or, for a malformed `initialize`, the bad field).
+    /// The wire code and id are unchanged.
+    fn clarify(&self, mut item: ServerJsonRpcMessage) -> ServerJsonRpcMessage {
+        if let ServerJsonRpcMessage::Error(error) = &mut item
+            && error.error.code == ErrorCode::INVALID_PARAMS
+            && error.error.message.starts_with(META_REFUSAL_PREFIX)
+        {
+            let hint = self
+                .initialize_hint
+                .lock()
+                .ok()
+                .and_then(|mut hint| hint.take())
+                .filter(|(id, _message)| Some(id) == error.id.as_ref())
+                .map(|(_id, message)| message);
+            error.error.message = match hint {
+                Some(message) => message.into(),
+                None => format!(
+                    "{}; to use the initialize lifecycle, send an `initialize` request first (params: protocolVersion, capabilities, clientInfo), then the `notifications/initialized` notification; to use the stateless lifecycle, put those `io.modelcontextprotocol/...` keys in params._meta",
+                    error.error.message
+                )
+                .into(),
+            };
+        }
+        item
+    }
     fn is_pending(&self) -> Result<bool, Error> {
         self.pending
             .lock()
@@ -69,6 +105,40 @@ impl Admission {
         Ok(())
     }
 }
+/// The SDK's refusal text for a request that lacks its inline-lifecycle
+/// `_meta` (rmcp `missing_request_metadata_error`).
+const META_REFUSAL_PREFIX: &str = "request _meta is missing or has malformed required fields";
+
+/// Names what is wrong with the params of an `initialize` request the SDK
+/// could not type, or `None` when no single field explains it.
+fn describe_malformed_initialize(params: Option<&serde_json::Value>) -> Option<String> {
+    const SHAPE: &str = "`protocolVersion` (string), `capabilities` (object) and `clientInfo` (object with string `name` and `version`)";
+    let Some(object) = params.and_then(serde_json::Value::as_object) else {
+        return Some(format!(
+            "invalid params for `initialize`: params must be an object with {SHAPE}"
+        ));
+    };
+    let problem = if !object
+        .get("protocolVersion")
+        .is_some_and(serde_json::Value::is_string)
+    {
+        "`protocolVersion` is required and must be a string such as \"2025-11-25\""
+    } else if !object
+        .get("capabilities")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        "`capabilities` is required and must be an object (`{}` when the client has none)"
+    } else if !object
+        .get("clientInfo")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        "`clientInfo` is required and must be an object with string `name` and `version`"
+    } else {
+        "`clientInfo` must carry string `name` and `version`"
+    };
+    Some(format!("invalid params for `initialize`: {problem}"))
+}
+
 fn record_failure(failure: &Failure, reason: &'static str) {
     if let Ok(mut stored) = failure.reason.lock()
         && stored.is_none()
@@ -233,6 +303,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
         let writer = self.writer.clone();
         let failure = self.failure.clone();
         let admission = self.admission.clone();
+        let item = admission.clarify(item);
         async move {
             let result = async {
                 let mut writer = writer.lock().await;
@@ -348,7 +419,10 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     match protocol_error_frame_with_id(
                         oversized_request_id(&prefix).unwrap_or(serde_json::Value::Null),
                         -32600,
-                        "MCP message exceeds the configured byte limit",
+                        &format!(
+                            "MCP message exceeds the configured limit of {} bytes; send a smaller message",
+                            super::MAX_MESSAGE_BYTES
+                        ),
                     ) {
                         Ok(frame) => {
                             self.pending_protocol_error = Some(frame);
@@ -407,6 +481,14 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         continue;
                     }
                     preserve_malformed_request_params(&mut message, &frame);
+                    if let ClientJsonRpcMessage::Request(request) = &message
+                        && let ClientRequest::CustomRequest(custom) = &request.request
+                        && custom.method == "initialize"
+                        && let Some(hint) = describe_malformed_initialize(custom.params.as_ref())
+                    {
+                        self.admission
+                            .note_malformed_initialize(request.id.clone(), hint);
+                    }
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {

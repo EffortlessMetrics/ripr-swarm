@@ -692,7 +692,7 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"offset": 3, "limit": 10}),
         serde_json::json!({"independent_pages": true}),
         serde_json::json!({"independent_pages": false}),
-        serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
+        serde_json::json!({"snapshot_id": format!("snapshot:sha256:{}", "a".repeat(64)), "offset": 0, "limit": 1}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let response = server
@@ -2341,4 +2341,47 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+#[test]
+fn echoed_arguments_escape_control_and_bidi_characters_and_stay_bounded() {
+    let escaped = crate::mcp::escape_echoed_argument("a\u{1b}b\nc\u{202e}d\u{200b}e");
+    assert_eq!(escaped, "a\\u{1b}b\\nc\\u{202e}d\\u{200b}e");
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("plain/id.rs:1 é"),
+        "plain/id.rs:1 é"
+    );
+    let long = "x".repeat(1000);
+    let bounded = crate::mcp::escape_echoed_argument(&long);
+    assert!(bounded.ends_with("..."), "{bounded}");
+    assert!(bounded.len() < 300, "{}", bounded.len());
+}
+
+#[test]
+fn malformed_snapshot_ids_are_invalid_arguments_and_well_formed_ones_pass() {
+    let args = |value: &str| serde_json::from_value(serde_json::json!({"snapshot_id": value})).ok();
+    for bad in [
+        "",
+        "abc",
+        "snapshot:sha256:x",
+        "snapshot:sha256:ABCDEF",
+        "sha256:aa",
+    ] {
+        let error = super::optional_snapshot_id_argument(&args(bad));
+        assert!(
+            matches!(&error, Err(e) if e.message.contains("snapshot:sha256:<64 lowercase hex")),
+            "{bad:?} must be refused: {error:?}"
+        );
+    }
+    let good = format!("snapshot:sha256:{}", "0123456789abcdef".repeat(4));
+    assert_eq!(
+        super::optional_snapshot_id_argument(&args(&good))
+            .ok()
+            .flatten(),
+        Some(good)
+    );
+    assert_eq!(
+        super::optional_snapshot_id_argument(&None).ok().flatten(),
+        None
+    );
 }
