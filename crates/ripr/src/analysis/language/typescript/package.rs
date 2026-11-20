@@ -348,13 +348,16 @@ fn manifest_test_script_is_placeholder(pkg_json: &str) -> bool {
     parse_manifest_facts(pkg_json)
         .and_then(|facts| facts.test_script)
         .is_some_and(|script| {
-            // The whole script is the placeholder: it starts with the `echo`,
-            // so a real command with a placeholder-like fallback branch
-            // (`npm run test:unit || (echo "..." && exit 1)`) stays runnable.
-            let script = script.trim_start();
-            script.starts_with("echo ")
-                && script.contains("no test specified")
-                && script.contains("exit 1")
+            // Only the complete npm-init script counts (the manifest reader
+            // lowercases it). Any other script, including one that runs a
+            // real command before a placeholder-like fallback
+            // (`echo "running tests" && node test.js || (echo "..." && exit 1)`),
+            // may run tests and stays runnable.
+            matches!(
+                script.trim(),
+                r#"echo "error: no test specified" && exit 1"#
+                    | r#"echo 'error: no test specified' && exit 1"#
+            )
         })
 }
 
@@ -1869,6 +1872,14 @@ mod tests {
         ));
         assert!(!manifest_test_script_is_placeholder(
             r#"{"scripts":{"test":"npm run test:unit || (echo \"Error: no test specified\" && exit 1)"}}"#
+        ));
+        // A working custom script whose fallback mentions the placeholder text:
+        // `npm test` runs `node test.js` and exits 0 when it passes.
+        assert!(!manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"echo \"running tests\" && node test.js || (echo \"no test specified\" && exit 1)"}}"#
+        ));
+        assert!(manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"  echo 'Error: no test specified' && exit 1 "}}"#
         ));
     }
 
