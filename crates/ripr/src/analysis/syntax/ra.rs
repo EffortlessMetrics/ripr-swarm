@@ -3824,8 +3824,22 @@ fn early_error() -> Result<(), String> {
             "assert_eq!(price(10), expected);",
             "ensure!(price(10) == expected);",
         ] {
+            let unrelated = format!(
+                "#[test]\nfn t() {{\nlet expected: i32 = todo!();\nlet other = |expected: i32| expected + 1;\n{assertion}\n}}"
+            );
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &unrelated)?;
+            let fact = facts
+                .tests
+                .iter()
+                .flat_map(|t| &t.assertions)
+                .find(|fact| fact.text.trim_end_matches(';') == assertion.trim_end_matches(';'))
+                .ok_or_else(|| format!("missing assertion: {unrelated}"))?;
+            assert_eq!(fact.strength, Unknown, "{unrelated}");
             for (opening, closing) in [
-                ("let other = |unused: i32,\nexpected: i32| {", "};"),
+                (
+                    "let other = |unused: i32,\nexpected: i32| {",
+                    "}; other(0, 7);",
+                ),
                 ("match (1, 2) { (expected, _) => {", "} }"),
                 ("match (1, 2) { (_, expected) => {", "} }"),
                 ("{ let Pair { expected, other } = pair();", "}"),
