@@ -106,14 +106,22 @@ pub(super) fn non_branch_advice(
 }
 
 /// The repair for a missing commit id or version tag, probing the repo's
-/// remotes and depth. `None` for every other spelling.
+/// remotes and depth. `None` for every other spelling. A branch that merely
+/// looks like a tag or an id (`v2`, `deadbeef`) and already exists as a
+/// fetched remote-tracking ref keeps that followable advice.
 pub(super) fn non_branch_ref_repair(
     root: &Path,
     missing_ref: &str,
+    flag: &str,
     git_timeout: Option<Duration>,
 ) -> Option<String> {
     let kind = non_branch_kind(missing_ref)?;
     let remotes = super::configured_remotes(root, git_timeout);
+    if let Some(advice) =
+        super::remote_tracking_advice(root, missing_ref, flag, remotes.as_deref(), git_timeout)
+    {
+        return Some(advice);
+    }
     let shallow = super::is_shallow_repository(root, git_timeout);
     Some(non_branch_advice(
         missing_ref,

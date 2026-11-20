@@ -193,7 +193,9 @@ Git fetches commits only by full id; in a shallow clone both also name
 `git fetch --unshallow <remote>`. A version tag names `git fetch --tags
 <remote>`. The remote is the only plain configured remote, else `origin` when
 configured, else a `<remote>` placeholder; a repository with no remote is told
-that no fetch can supply the ref. Other names keep the branch advice.
+that no fetch can supply the ref. A name of either shape that already exists
+as a fetched remote-tracking ref (a branch called `v2`) keeps the
+remote-tracking advice below. Other names keep the branch advice.
 
 In a repository with no commits and no refs at all, no revision can resolve, so
 the repair says the repository has no commits yet and to commit once instead

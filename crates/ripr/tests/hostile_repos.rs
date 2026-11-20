@@ -861,6 +861,20 @@ fn unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them() -> Res
             return Err(format!("{base}: wrong advice family\n{}", ran.stderr));
         }
     }
+    // A branch that only looks like a tag keeps the fetched-branch advice
+    // once it exists as a remote-tracking ref.
+    git(&root, &["update-ref", "refs/remotes/origin/v2", "HEAD"])?;
+    let ran = ripr(&root, &["check", "--base", "v2"], &[])?;
+    assert_sane(&ran, "v2 tracking branch")?;
+    if ran.code != Some(2)
+        || !ran.stderr.contains("The fetched branch is `origin/v2`")
+        || ran.stderr.contains("git fetch --tags")
+    {
+        return Err(format!(
+            "v2: expected the fetched-branch advice\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
     Ok(())
 }
 

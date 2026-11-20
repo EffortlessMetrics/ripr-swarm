@@ -2210,7 +2210,7 @@ fn missing_ref_repair(
     }
     // #15484: a commit id or a version tag is never brought in by a branch
     // fetch, so it gets its own fetch before the shallow and branch arms.
-    if let Some(advice) = base_advice::non_branch_ref_repair(root, missing_ref, git_timeout) {
+    if let Some(advice) = base_advice::non_branch_ref_repair(root, missing_ref, flag, git_timeout) {
         return advice;
     }
     if is_shallow_repository(root, git_timeout) {
