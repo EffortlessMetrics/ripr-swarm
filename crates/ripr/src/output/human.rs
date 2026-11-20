@@ -852,6 +852,7 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             ));
         }
     }
+    let mut named_not_analyzed_printed = false;
     for limitation in &outcome.limitations {
         // Plain words lead; on the full surface the schema tokens follow in
         // parentheses so the line still greps against JSON and docs (#4323).
@@ -877,9 +878,12 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
                 None => "changed files".to_string(),
             };
             if note_follows {
-                out.push_str(&format!(
-                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
-                ));
+                // #15288: one line naming every language that is off, not one
+                // identical anonymous line per language.
+                if !named_not_analyzed_printed {
+                    named_not_analyzed_printed = true;
+                    out.push_str(&not_analyzed_languages_line(output, &subject));
+                }
             } else {
                 out.push_str(&format!(
                     "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
@@ -1468,6 +1472,9 @@ pub(super) fn wrap_human_prose(
 ///   be read as clean. A copy-paste-ready TOML block is appended so enabling
 ///   the adapter is a single edit.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
+    // One combined snippet per run (#15288): applying a per-language snippet
+    // one at a time would switch the other languages back off.
+    let snippet_count = enable_snippet_advisories(output).count();
     for advisory in &output.preview_language_advisories {
         let (language, file_language) = advisory_language_names(advisory);
         let file_label = if advisory.file_count == 1 {
@@ -1495,11 +1502,13 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 advisory.file_count, file_label, language,
             ));
         } else if !advisory.enabled {
-            let enabled_line = preview_enablement_toml(&output.root, &advisory.language);
             out.push_str(&format!(
-                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
+                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n",
                 advisory.file_count, file_label, language,
             ));
+            if snippet_count == 1 {
+                out.push_str(&enable_snippet_block(output));
+            }
             if let Some(hint) = nested_python_root_hint(advisory, &output.root) {
                 out.push_str(&hint);
             }
@@ -1527,6 +1536,65 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
             ));
         }
     }
+    if snippet_count > 1 {
+        out.push_str(&enable_snippet_block(output));
+    }
+}
+
+/// The default-view "Not analyzed" line that points at the preview notes,
+/// naming each language that is off (`1 changed Python file and 1 changed
+/// TypeScript file`). Falls back to the limitation's own count when no
+/// advisory names a language.
+fn not_analyzed_languages_line(output: &CheckOutput, fallback_subject: &str) -> String {
+    let parts: Vec<String> = output
+        .preview_language_advisories
+        .iter()
+        .filter(|advisory| {
+            !advisory.analyzed(&output.language_runs)
+                && (!advisory.enabled || advisory.unavailable_adapter_recovery().is_some())
+        })
+        .map(|advisory| {
+            let (_, file_language) = advisory_language_names(advisory);
+            let noun = if advisory.file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            format!("{} changed {file_language} {noun}", advisory.file_count)
+        })
+        .collect();
+    match parts.as_slice() {
+        [] => format!(
+            "  Not analyzed: {fallback_subject} in a language ripr is not set up to analyze (see the note below).\n"
+        ),
+        [one] => format!(
+            "  Not analyzed: {one}, a language ripr is not set up to analyze (see the note below).\n"
+        ),
+        many => format!(
+            "  Not analyzed: {}, languages ripr is not set up to analyze (see the notes below).\n",
+            many.join(" and ")
+        ),
+    }
+}
+
+/// Advisories whose adapter is compiled in but not enabled: the ones one
+/// `[languages]` edit can turn on.
+fn enable_snippet_advisories(
+    output: &CheckOutput,
+) -> impl Iterator<Item = &crate::analysis::PreviewLanguageAdvisory> {
+    output
+        .preview_language_advisories
+        .iter()
+        .filter(|advisory| {
+            !advisory.analyzed(&output.language_runs)
+                && advisory.unavailable_adapter_recovery().is_none()
+                && !advisory.enabled
+        })
+}
+
+fn enable_snippet_block(output: &CheckOutput) -> String {
+    let enabled_line = preview_enablement_toml(output);
+    format!("\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n")
 }
 
 /// The `--root` hint for a not-enabled Python advisory at a monorepo root
@@ -1574,30 +1642,47 @@ fn nested_python_root_hint(
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
 /// Names Rust only when the analyzed root actually has Rust markers (#7648).
-fn preview_enablement_toml(root: &Path, language: &str) -> String {
-    let rust_detected = crate::domain::rust_markers_at(root);
-    let to_add = match crate::domain::LanguageId::from_wire(language) {
-        Some(crate::domain::LanguageId::JavaScript) => crate::domain::LanguageId::TypeScript,
-        Some(id) => id,
-        None => {
-            let mut names = Vec::new();
-            if rust_detected {
-                names.push("rust");
-            }
-            names.push(language);
-            return crate::domain::format_languages_enabled_toml(&names);
+fn preview_enablement_toml(output: &CheckOutput) -> String {
+    let rust_detected = crate::domain::rust_markers_at(&output.root);
+    // Keep the preview languages already on (their advisories say so), then
+    // add every language still off, so one edit enables them all (#15288).
+    let wire_id = |wire: &str| match crate::domain::LanguageId::from_wire(wire) {
+        Some(crate::domain::LanguageId::JavaScript) => Some(crate::domain::LanguageId::TypeScript),
+        other => other,
+    };
+    let mut enabled: Vec<crate::domain::LanguageId> = Vec::new();
+    if rust_detected {
+        enabled.push(crate::domain::LanguageId::Rust);
+    }
+    for advisory in output
+        .preview_language_advisories
+        .iter()
+        .filter(|a| a.enabled)
+    {
+        if let Some(id) = wire_id(&advisory.language)
+            && !enabled.contains(&id)
+        {
+            enabled.push(id);
         }
-    };
-    let enabled: &[crate::domain::LanguageId] = if rust_detected {
-        &[crate::domain::LanguageId::Rust]
-    } else {
-        &[]
-    };
-    let suggestion = crate::domain::enablement_tip_languages(enabled, rust_detected, [to_add]);
-    let names: Vec<&str> = suggestion
+    }
+    let mut to_add = Vec::new();
+    let mut unknown: Vec<&str> = Vec::new();
+    for advisory in enable_snippet_advisories(output) {
+        match wire_id(&advisory.language) {
+            Some(id) => to_add.push(id),
+            None => unknown.push(&advisory.language),
+        }
+    }
+    let suggestion = crate::domain::enablement_tip_languages(&enabled, rust_detected, to_add);
+    let mut names: Vec<&str> = suggestion
         .iter()
         .map(crate::domain::LanguageId::as_str)
         .collect();
+    for wire in unknown {
+        if !names.contains(&wire) {
+            names.push(wire);
+        }
+    }
     crate::domain::format_languages_enabled_toml(&names)
 }
 
