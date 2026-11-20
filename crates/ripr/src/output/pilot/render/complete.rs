@@ -1820,6 +1820,11 @@ fn push_declined_rust_files_terminal(
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: in a root where `ripr check` refuses, neither "diff-first" nor
+    // the enable step is the next action; the route guidance names it.
+    if route.blocked_by_work_tree {
+        return "preview; ripr check needs a Git work tree here";
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview, diff-first",
@@ -1838,9 +1843,13 @@ fn terminal_rank_label(label: &str) -> &'static str {
 }
 
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: checked before `enabled`, so a disabled language in a root
+    // where `ripr check` refuses is not told to turn it on to check it.
+    if route.blocked_by_work_tree {
+        return "preview; ripr check cannot run at this root";
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
-        (true, true) if route.blocked_by_work_tree => "preview; ripr check cannot run at this root",
         (true, true) => "preview; run the command below to check the diff",
         (true, false) => "preview; turn it on in ripr.toml [languages] to check it",
     }

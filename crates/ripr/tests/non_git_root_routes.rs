@@ -83,12 +83,34 @@ fn text(output: &Output) -> String {
     )
 }
 
-/// Every line of `text` that is a runnable `ripr check` command or route.
+/// Every line of `text` that names a runnable `ripr check --root` command,
+/// wherever on the line it appears (a bare command, `Next: ...`, a Markdown
+/// `Route:` bullet, or backticked prose).
 fn check_commands(text: &str) -> Vec<&str> {
     text.lines()
         .map(str::trim)
-        .filter(|line| line.starts_with("ripr check") || line.starts_with("route: ripr check"))
+        .filter(|line| line.contains("ripr check --root"))
         .collect()
+}
+
+/// `routes` holds only commands that cannot run into the refusal: each one
+/// reads a saved patch.
+fn assert_no_refused_check(routes: &[&str], out: &str) {
+    assert!(
+        routes.iter().all(|line| line.contains("--diff")),
+        "pilot must not print a check command that refuses here: {routes:?}\n{out}"
+    );
+}
+
+/// The pilot JSON language routes, parsed.
+fn pilot_json_routes(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+    let output = ripr(root, &["pilot", "--root", ".", "--format", "json"])?;
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("pilot JSON: {error}\n{}", text(&output)))?;
+    json["language_routes"]["routes"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("no language_routes.routes: {json}"))
 }
 
 #[test]
@@ -103,13 +125,45 @@ fn pilot_in_a_non_git_root_never_routes_back_to_a_refused_check() -> Result<(), 
     assert!(out.contains("typescript"), "{out}");
     // The loop: any printed `ripr check --root ...` runs straight into the
     // refusal above.
-    let routes = check_commands(&out);
-    assert!(
-        routes.iter().all(|line| line.contains("--diff")),
-        "pilot must not print a check command that refuses here: {routes:?}\n{out}"
-    );
+    assert_no_refused_check(&check_commands(&out), &out);
     assert!(out.contains("git init"), "{out}");
     assert!(out.contains("--diff PATH"), "{out}");
+    // TypeScript is detected but not enabled by default: the screen must not
+    // say enabling it is how to check it, since check still refuses here.
+    assert!(!out.contains("to check it"), "{out}");
+
+    // The written Markdown summary carries the same route.
+    let markdown = std::fs::read_to_string(dir.0.join("target/ripr/pilot/pilot-summary.md"))
+        .map_err(|error| format!("pilot-summary.md: {error}"))?;
+    assert_no_refused_check(&check_commands(&markdown), &markdown);
+    assert!(!markdown.contains("diff-first"), "{markdown}");
+
+    // The JSON contract documented in OUTPUT_SCHEMA.md.
+    let routes = pilot_json_routes(&dir.0)?;
+    assert!(!routes.is_empty(), "no routes");
+    for route in &routes {
+        assert_eq!(route["route"], "needs_git_work_tree", "{route}");
+        assert!(route["command"].is_null(), "{route}");
+        let guidance = route["guidance"].as_str().unwrap_or_default();
+        assert!(guidance.contains("git init"), "{route}");
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_in_a_bare_repository_names_a_work_tree() -> Result<(), String> {
+    let dir = ts_project("pilot-bare")?;
+    git(&dir.0, &["init", "--bare", "-q", "."])?;
+    let out = text(&ripr(&dir.0, &["pilot", "--root", "."])?);
+    assert_no_refused_check(&check_commands(&out), &out);
+    assert!(out.contains("git worktree add"), "{out}");
+    assert!(!out.contains("run `git init`"), "{out}");
+    let routes = pilot_json_routes(&dir.0)?;
+    assert!(!routes.is_empty(), "no routes");
+    for route in &routes {
+        assert_eq!(route["route"], "needs_git_work_tree", "{route}");
+        assert!(route["command"].is_null(), "{route}");
+    }
     Ok(())
 }
 
@@ -134,6 +188,13 @@ fn pilot_in_a_work_tree_keeps_its_check_route() -> Result<(), String> {
         "a real work tree keeps the check route: {out}"
     );
     assert!(!out.contains("needs a Git work tree"), "{out}");
+    let routes = pilot_json_routes(&dir.0)?;
+    assert!(
+        routes
+            .iter()
+            .any(|route| route["route"] == "check_diff_first" && route["command"].is_string()),
+        "{routes:?}"
+    );
     Ok(())
 }
 
@@ -145,6 +206,14 @@ fn bare_repository_is_named_by_doctor_and_refused_by_init() -> Result<(), String
     let doctor = text(&ripr(&dir.0, &["doctor"])?);
     assert!(doctor.contains("bare Git repository"), "{doctor}");
     assert!(doctor.contains("git worktree add"), "{doctor}");
+    // A bare repository has no source for pilot to read either, so doctor
+    // names the work tree, not a whole-repository pilot.
+    assert!(!doctor.contains("ripr pilot --root"), "{doctor}");
+
+    let dry_run = ripr(&dir.0, &["init", "--dry-run"])?;
+    let dry = text(&dry_run);
+    assert_eq!(dry_run.status.code(), Some(2), "{dry}");
+    assert!(dry.contains("bare Git repository"), "{dry}");
 
     let init = ripr(&dir.0, &["init"])?;
     let out = text(&init);

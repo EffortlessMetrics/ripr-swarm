@@ -96,9 +96,11 @@ fn record_output_location_refusal(report: &mut DoctorReport, refusal: &str) {
 
 /// Evidence for a bare repository root (#15297): the repair is a checked-out
 /// work tree, so no `git init` and no whole-repository route is named.
+const BARE_REPOSITORY_EVIDENCE_MARK: &str = "is a bare Git repository with no work tree";
+
 fn bare_repository_evidence(root: &Path) -> String {
     format!(
-        "{} is a bare Git repository with no work tree; the diff-scoped commands read checked-out \
+        "{} {BARE_REPOSITORY_EVIDENCE_MARK}; ripr reads checked-out \
          source. Check out a work tree (`git worktree add <path>` or `git clone`), then pass \
          `--root <path>`.",
         human_path(root)
@@ -147,6 +149,10 @@ pub(crate) enum DoctorFirstCommand {
     /// `git_repository` failed while git itself runs: whole-repository
     /// pilot exploration is the route that can run here.
     OutsideGit,
+    /// `git_repository` failed because the root is a bare repository
+    /// (#15297): there is no checked-out source, so neither `ripr check` nor
+    /// whole-repository pilot has anything to read. Name a work tree.
+    BareRepository,
     /// `git_repository` passed but `HEAD` is unborn (#5259): the repository
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep pilot exploration.
@@ -247,6 +253,15 @@ impl DoctorFirstCommand {
             } else {
                 Self::SavedDiff
             }
+        } else if report.checks.iter().any(|check| {
+            check.name == "git_repository"
+                && check.status == DoctorCheckStatus::Fail
+                && check
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|evidence| evidence.contains(BARE_REPOSITORY_EVIDENCE_MARK))
+        }) {
+            Self::BareRepository
         } else if !passed("git_repository") {
             Self::OutsideGit
         } else if report
@@ -289,6 +304,7 @@ impl DoctorFirstCommand {
             Self::NoDefaultBase => Some(Self::NO_DEFAULT_BASE_LINE),
             Self::MissingRoot
             | Self::OutsideGit
+            | Self::BareRepository
             | Self::UnbornHead
             | Self::DamagedRefs
             | Self::InvalidConfig
@@ -347,6 +363,11 @@ impl DoctorFirstCommand {
             ],
             Self::DamagedRefs => vec![
                 "- Recommended first command: correct or restore the ref metadata and its read access using the Git check above, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
+            Self::BareRepository => vec![
+                "- Recommended first command: check out a work tree from this bare repository \
+                 (`git worktree add <path>` or `git clone`), then run `ripr doctor --root <path>`"
                     .to_string(),
             ],
             Self::OutsideGit => {
@@ -1526,6 +1547,12 @@ pub(crate) fn doctor_recovery_for_first_command(
                 "fix the failing checks above, then rerun `ripr doctor`".to_string(),
             )
         }
+        // #15297: a bare repository has no source for any command to read,
+        // so the only next step is the work-tree recovery.
+        DoctorFirstCommand::BareRepository => (
+            "git_repository".to_string(),
+            "check out a work tree (`git worktree add <path>` or `git clone`), then rerun `ripr doctor --root <path>`".to_string(),
+        ),
         DoctorFirstCommand::OutsideGit
         | DoctorFirstCommand::UnbornHead
         | DoctorFirstCommand::NoDefaultBase

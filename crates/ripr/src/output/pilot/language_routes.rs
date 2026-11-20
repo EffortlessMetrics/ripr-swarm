@@ -368,6 +368,8 @@ pub(crate) enum CheckBlocker {
     NotWorkTree,
     /// The root is a bare repository: a repository with no checked-out source.
     BareRepository,
+    /// `git` is not on `PATH`, so only a saved patch can be checked.
+    GitMissing,
 }
 
 impl CheckBlocker {
@@ -377,6 +379,9 @@ impl CheckBlocker {
         match self {
             CheckBlocker::NotWorkTree => format!(
                 "ripr check needs a Git work tree and this root is not one: run `git init` and commit the files, or check a saved patch with `ripr check --root {shown} --diff PATH`"
+            ),
+            CheckBlocker::GitMissing => format!(
+                "ripr check needs Git to read the change and Git was not found on PATH: install Git, or check a saved patch with `ripr check --root {shown} --diff PATH`"
             ),
             CheckBlocker::BareRepository => "ripr check needs checked-out source and this root is a bare Git repository: run `git worktree add <path>` (or `git clone`), then pass `--root <path>`".to_string(),
         }

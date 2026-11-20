@@ -19293,8 +19293,9 @@ Field contract:
   (`check_diff_first`, `needs_git_work_tree` or `unavailable_in_this_binary`),
   `command` (the diff-first `ripr check --root <root>`, which resolves the default
   base itself, or `null`; `null` with `needs_git_work_tree` when the root is not a
-  Git work tree or is a bare repository, where `ripr check` would refuse and
-  `guidance` names `git init` plus a commit, `--diff PATH`, or `git worktree add`),
+  Git work tree, is a bare repository, or Git is not on `PATH`, where `ripr check`
+  would refuse and `guidance` names `git init` plus a commit, `--diff PATH`,
+  `git worktree add`, or installing Git),
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
   repair route for TypeScript and JavaScript, the `python_diff_first` repair
   route for Python, the unavailable-adapter notice for a language this binary

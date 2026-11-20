@@ -890,7 +890,7 @@ fn load_pilot_current_change(
 }
 
 /// `ripr check` refuses a root that is not a Git work tree (and a bare
-/// repository), so pilot must not print it as the follow-up there (#15297).
+/// repository, or any root when Git is missing), so pilot must not print it as the follow-up there (#15297).
 /// Probed only when a route would otherwise print a check command.
 fn withhold_check_routes_without_work_tree(
     routes: output::pilot::PilotLanguageRoutes,
@@ -904,6 +904,9 @@ fn withhold_check_routes_without_work_tree(
     match output::doctor::work_tree_probe(root) {
         Some(WorkTreeProbe::Outside) => routes.with_check_blocker(root, CheckBlocker::NotWorkTree),
         Some(WorkTreeProbe::Bare) => routes.with_check_blocker(root, CheckBlocker::BareRepository),
+        Some(WorkTreeProbe::GitMissing) => {
+            routes.with_check_blocker(root, CheckBlocker::GitMissing)
+        }
         _ => routes,
     }
 }

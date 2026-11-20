@@ -1300,6 +1300,7 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::SavedDiff => {}
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
+        | output::doctor::DoctorFirstCommand::BareRepository
         | output::doctor::DoctorFirstCommand::InvalidConfig
         | output::doctor::DoctorFirstCommand::DamagedRefs
         | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
@@ -1334,6 +1335,7 @@ fn enable_before_first_command_line(
     if matches!(
         first,
         output::doctor::DoctorFirstCommand::OutsideGit
+            | output::doctor::DoctorFirstCommand::BareRepository
             | output::doctor::DoctorFirstCommand::MissingRoot
     ) {
         return None;
