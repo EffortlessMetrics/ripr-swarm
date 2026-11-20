@@ -1165,6 +1165,17 @@ fn vscode_select_env(
     Ok(values[0].to_owned())
 }
 
+fn require_equal<A, B>(actual: A, expected: B, context: &str) -> TestResult
+where
+    A: PartialEq<B> + std::fmt::Debug,
+    B: std::fmt::Debug,
+{
+    if actual != expected {
+        return Err(format!("{context}: expected {expected:?}, got {actual:?}").into());
+    }
+    Ok(())
+}
+
 #[test]
 fn extension_queue_selection_includes_a_speculative_prefix() -> TestResult {
     let fixture = Fixture::new()?;
@@ -1175,18 +1186,28 @@ fn extension_queue_selection_includes_a_speculative_prefix() -> TestResult {
     fixture.git(&["checkout", "-b", "upper"])?;
     fixture.write("README.md", "upper documentation\n")?;
     let group = fixture.commit()?;
-    assert_eq!(fixture.git(&["merge-base", "--all", "main", &group])?, base);
-    assert_eq!(vscode_select(&fixture, &lower, &group, "")?, "false");
-    assert_eq!(
+    require_equal(
+        fixture.git(&["merge-base", "--all", "main", &group])?,
+        base,
+        "unexpected selector or fixture result",
+    )?;
+    require_equal(
+        vscode_select(&fixture, &lower, &group, "")?,
+        "false",
+        "unexpected selector or fixture result",
+    )?;
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &lower, &group, &lower, &group, "")?,
         "true",
-        "the event base is the speculative lower G, not protected main"
-    );
+        "the event base is the speculative lower G, not protected main",
+    )?;
 
     let production = shell("vscode-select")?;
     let weakened = production.replace("BASE_SHA=\"$destination_sha\"", ":");
-    assert_ne!(weakened, production, "the destination binding must exist");
-    assert_eq!(
+    if weakened == production {
+        return Err("the destination binding must exist".into());
+    }
+    require_equal(
         vscode_select_env(
             &fixture,
             &weakened,
@@ -1200,8 +1221,8 @@ fn extension_queue_selection_includes_a_speculative_prefix() -> TestResult {
             None,
         )?,
         "false",
-        "restoring the event-base range loses the lower extension change"
-    );
+        "restoring the event-base range loses the lower extension change",
+    )?;
     Ok(())
 }
 
@@ -1220,10 +1241,11 @@ fn extension_queue_selection_follows_prefix_settlement_and_destination_divergenc
     // Keep the local tracking ref stale to require a fresh destination fetch.
     fixture.git(&["update-ref", "refs/remotes/origin/main", &base])?;
     fixture.git(&["update-ref", "refs/heads/main", &lower])?;
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &lower, &group, &lower, &group, "")?,
-        "false"
-    );
+        "false",
+        "unexpected selector or fixture result",
+    )?;
 
     let lower_tree = fixture.git(&["rev-parse", &format!("{lower}^{{tree}}")])?;
     let recreated = fixture.git(&[
@@ -1234,23 +1256,26 @@ fn extension_queue_selection_follows_prefix_settlement_and_destination_divergenc
         "-m",
         "recreated prefix",
     ])?;
-    assert_ne!(recreated, lower);
+    if recreated == lower {
+        return Err("the recreated prefix needs a distinct commit".into());
+    }
     fixture.git(&["update-ref", "refs/heads/main", &recreated])?;
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &lower, &group, &lower, &group, "")?,
         "true",
-        "equal prefix trees do not establish that G descends from the landed prefix"
-    );
+        "equal prefix trees do not establish that G descends from the landed prefix",
+    )?;
 
     // An unrelated destination advance cannot hide the unlanded prefix.
     fixture.git(&["checkout", "-b", "diverged", &base])?;
     fixture.write("other.txt", "unrelated destination change\n")?;
     let diverged = fixture.commit()?;
     fixture.git(&["update-ref", "refs/heads/main", &diverged])?;
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &lower, &group, &lower, &group, "")?,
-        "true"
-    );
+        "true",
+        "unexpected selector or fixture result",
+    )?;
     Ok(())
 }
 
@@ -1261,11 +1286,11 @@ fn extension_queue_selection_requires_a_readable_destination_ref() -> TestResult
     fixture.git(&["checkout", "-b", "docs"])?;
     fixture.write("README.md", "documentation\n")?;
     let group = fixture.commit()?;
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &base, &group, &base, &group, "")?,
         "false",
-        "a complete docs-only group remains unselected"
-    );
+        "a complete docs-only group remains unselected",
+    )?;
     let script = shell("vscode-select")?;
     fixture.git(&["tag", "main", &base])?;
     for reference in [
@@ -1274,7 +1299,7 @@ fn extension_queue_selection_requires_a_readable_destination_ref() -> TestResult
         "refs/heads/missing",
         "refs/heads/bad ref",
     ] {
-        assert_eq!(
+        require_equal(
             vscode_select_env(
                 &fixture,
                 &script,
@@ -1288,16 +1313,16 @@ fn extension_queue_selection_requires_a_readable_destination_ref() -> TestResult
                 None,
             )?,
             "true",
-            "unknown destination {reference:?} cannot omit extension proof"
-        );
+            &format!("unknown destination {reference:?} cannot omit extension proof"),
+        )?;
     }
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &base, &group, &base, &group, "")?,
         "false",
-        "leave a valid cached FETCH_HEAD before the failed-read control"
-    );
+        "leave a valid cached FETCH_HEAD before the failed-read control",
+    )?;
     let wrapper = fixture.wrapper("if [ \"$1\" = fetch ]; then exit 1; fi")?;
-    assert_eq!(
+    require_equal(
         vscode_select_env(
             &fixture,
             &script,
@@ -1311,19 +1336,21 @@ fn extension_queue_selection_requires_a_readable_destination_ref() -> TestResult
             Some(&wrapper),
         )?,
         "true",
-        "a failed fetch cannot reuse cached destination state"
-    );
+        "a failed fetch cannot reuse cached destination state",
+    )?;
     fixture.git(&["checkout", "--orphan", "disconnected"])?;
     let disconnected = fixture.commit()?;
     fixture.git(&["update-ref", "refs/heads/main", &disconnected])?;
-    assert_eq!(
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &base, &group, &base, &group, "")?,
-        "true"
-    );
-    assert!(
-        fs::read_to_string(fixture.root.join(".git/actions-summary"))?
-            .contains("unavailable_merge_base")
-    );
+        "true",
+        "unexpected selector or fixture result",
+    )?;
+    if !fs::read_to_string(fixture.root.join(".git/actions-summary"))?
+        .contains("unavailable_merge_base")
+    {
+        return Err("the selector must report unavailable merge history".into());
+    }
     Ok(())
 }
 
@@ -1359,23 +1386,24 @@ fn extension_queue_selection_refuses_ambiguous_destination_ancestry() -> TestRes
         "group",
     ])?;
     fixture.git(&["update-ref", "refs/heads/main", &destination])?;
-    assert_eq!(
+    require_equal(
         fixture
             .git(&["merge-base", "--all", &destination, &group])?
             .lines()
             .count(),
         2,
-        "the fixture must contain two real merge bases"
-    );
-    assert_eq!(
+        "the fixture must contain two real merge bases",
+    )?;
+    require_equal(
         vscode_select_subject(&fixture, "merge_group", &base, &group, &right, &group, "")?,
-        "true"
-    );
-    assert!(
-        fs::read_to_string(fixture.root.join(".git/actions-summary"))?
-            .contains("ambiguous_merge_base"),
-        "selection must refuse the ambiguity, not rely on an empty diff"
-    );
+        "true",
+        "unexpected selector or fixture result",
+    )?;
+    if !fs::read_to_string(fixture.root.join(".git/actions-summary"))?
+        .contains("ambiguous_merge_base")
+    {
+        return Err("selection must refuse the ambiguity, not rely on an empty diff".into());
+    }
     Ok(())
 }
 
@@ -1395,12 +1423,16 @@ fn extension_queue_selection_keeps_shallow_destination_history_unknown() -> Test
     ])?;
     shallow.git(&["fetch", "--depth=1", "origin", "refs/heads/docs"])?;
     shallow.git(&["checkout", "--detach", "FETCH_HEAD"])?;
-    assert_eq!(shallow.git(&["rev-parse", "--is-shallow-repository"])?, "true");
-    assert_eq!(
+    require_equal(
+        shallow.git(&["rev-parse", "--is-shallow-repository"])?,
+        "true",
+        "unexpected selector or fixture result",
+    )?;
+    require_equal(
         vscode_select_subject(&shallow, "merge_group", &base, &group, &base, &group, "")?,
         "true",
-        "incomplete ancestry cannot justify omitting the selected proof"
-    );
+        "incomplete ancestry cannot justify omitting the selected proof",
+    )?;
     Ok(())
 }
 
