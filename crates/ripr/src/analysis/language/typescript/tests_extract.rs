@@ -233,7 +233,8 @@ fn extract_tests_expanding_suite_factories(
                 &ret.program.body,
                 &imports,
             )
-            .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
+            .with_strict_matchers(strict_equality_matchers(&ret.program.body, source))
+            .with_registers_matchers(file_may_register_matchers(source)),
             admission,
             hook_calls,
             ..TestScope::default()

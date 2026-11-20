@@ -1584,14 +1584,29 @@ pub(crate) fn expect_assertion_from_expression(
         None
     };
 
+    // Jasmine-only built-in names (`toBeTrue`, `toBeFalse`, `toHaveSize`) are
+    // also common names for home-grown matchers. Credit them only in their
+    // documented built-in shape: no matcher registration in the file, no
+    // `.rejects` (Jasmine has none; the reason is not the returned value),
+    // and no argument to the boolean pair. Anything else stays `unknown`.
+    if matches!(matcher, "toBeTrue" | "toBeFalse" | "toHaveSize")
+        && (bindings.registers_matchers
+            || async_modifier == Some("rejects")
+            || (matcher != "toHaveSize" && !outer_call.arguments.is_empty()))
+    {
+        oracle_kind = OracleKind::Unknown;
+        oracle_strength = OracleStrength::Unknown;
+    }
+
     // Jasmine `toBeTrue()` / `toBeFalse()` carry their expected boolean in the
     // matcher name, so they read the same expected value as `toBe(true)` /
     // `toBe(false)`. A negated assertion carries no expected value (#8712).
-    let expected_value_or_variant = match (negated, matcher, outer_call.arguments.len()) {
-        (false, "toBeTrue", 0) => Some("true".to_string()),
-        (false, "toBeFalse", 0) => Some("false".to_string()),
-        _ => expected_value_or_variant,
-    };
+    let expected_value_or_variant =
+        match (negated, matcher, outer_call.arguments.len(), &oracle_kind) {
+            (false, "toBeTrue", 0, OracleKind::ExactValue) => Some("true".to_string()),
+            (false, "toBeFalse", 0, OracleKind::ExactValue) => Some("false".to_string()),
+            _ => expected_value_or_variant,
+        };
 
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
@@ -1872,6 +1887,9 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
+    /// Whether the file may register its own matchers (`expect.extend`,
+    /// `addMatchers`), which can redefine a Jasmine-only built-in name.
+    registers_matchers: bool,
     /// Namespace binding for audited `fast-check` (`import * as fc` / default).
     pub(crate) fast_check_namespace: Option<String>,
     /// Named `assert` imports from `fast-check`.
@@ -2109,6 +2127,7 @@ impl TypeScriptAssertionBindings {
                 .collect(),
             ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
+            registers_matchers: self.registers_matchers,
             fast_check_namespace: self
                 .fast_check_namespace
                 .as_ref()
@@ -2166,6 +2185,13 @@ impl TypeScriptAssertionBindings {
     /// (RIPR-SPEC-0262).
     pub(crate) fn with_strict_matchers(mut self, names: Vec<String>) -> Self {
         self.strict_matchers = names;
+        self
+    }
+
+    /// These bindings with whether the file may register its own matchers
+    /// ([`file_may_register_matchers`]).
+    pub(crate) fn with_registers_matchers(mut self, registers: bool) -> Self {
+        self.registers_matchers = registers;
         self
     }
 
