@@ -572,6 +572,42 @@ fn well_tested_change_lists_nothing_and_the_gate_passes() -> Result<(), String> 
     Ok(())
 }
 
+/// Run both fixture tests against each polarity. Only the owner-operand
+/// control should fail when the return value changes.
+fn verify_predicate_mutant(root: &Path, kills_inversion: bool) -> Result<(), String> {
+    let source_path = root.join("src/lib.rs");
+    let original = std::fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
+    let exe = root.join(format!("predicate-tests{}", std::env::consts::EXE_SUFFIX));
+    for inverted in [false, true] {
+        if inverted {
+            std::fs::write(&source_path, original.replace("n >= 5", "n < 5"))
+                .map_err(|e| e.to_string())?;
+        }
+        let build = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--edition=2024", "--test"])
+            .arg(&source_path)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !build.status.success() {
+            return Err(diagnose("fixture rustc", &build));
+        }
+        let run = Command::new(&exe).output().map_err(|e| e.to_string())?;
+        let killed = inverted && kills_inversion;
+        let summary = if killed {
+            "1 passed; 1 failed"
+        } else {
+            "2 passed; 0 failed"
+        };
+        if run.status.success() == killed || !String::from_utf8_lossy(&run.stdout).contains(summary)
+        {
+            return Err(diagnose("fixture tests", &run));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn working_set_cards_only_refuse_closed_unrelated_assertions() -> Result<(), String> {
     let source = r#"pub fn admitted(n: i32) -> bool {
@@ -641,6 +677,9 @@ mod tests {
                     return Err(format!("{label} changed its original oracle: {card}"));
                 }
             }
+        }
+        if matches!(label, "discarded" | "owner-operand") {
+            verify_predicate_mutant(&fixture.0, label == "owner-operand")?;
         }
     }
     Ok(())
