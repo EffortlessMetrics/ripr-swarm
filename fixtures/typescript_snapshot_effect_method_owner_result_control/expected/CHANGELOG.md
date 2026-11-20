@@ -85,14 +85,3 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
-
-## Pending — typescript_snapshot_effect_method_owner_result_control (8)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless typescript_snapshot_effect_method_owner_result_control --reason "..."`
-
-Updated:
-- `expected/human.txt`

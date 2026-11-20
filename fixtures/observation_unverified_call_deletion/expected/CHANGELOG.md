@@ -585,14 +585,3 @@ Command:
 
 Updated:
 - `expected/check.json`
-
-## Pending — observation_unverified_call_deletion (37)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
-
-Updated:
-- `expected/human.txt`

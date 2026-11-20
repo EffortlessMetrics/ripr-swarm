@@ -773,14 +773,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — multi_hunk_removed_line_wrong_target (46)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
-
-Updated:
-- `expected/human.txt`

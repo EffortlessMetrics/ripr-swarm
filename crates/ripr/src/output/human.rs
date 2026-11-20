@@ -396,7 +396,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output, config, true);
+    let triage = triage::select_human_triage(output, config);
+    let all_clear = !output.findings.is_empty()
+        && triage::reads_all_clear(&triage, output, drill_in, provenance);
+    let mut out = render_header_summary(output, config, true, all_clear);
     render_analysis_outcome_disclosure(&mut out, output, true);
     render_suppression_policy_block(&mut out, output);
     render_owner_opt_out_block(&mut out, output);
@@ -410,7 +413,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             // paragraph: `Start here:` opens after a blank line here, as it
             // does after the analysis-outcome block on a run with findings.
             out.push('\n');
-            let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         let mut tail = String::new();
@@ -431,7 +433,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         return out;
     }
 
-    let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     let mut tail = String::new();
     render_all_no_path_disclosure(&mut tail, output);
@@ -476,7 +477,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output, config, false);
+    let mut out = render_header_summary(output, config, false, false);
 
     render_analysis_outcome_disclosure(&mut out, output, false);
     render_suppression_policy_block(&mut out, output);
@@ -640,6 +641,7 @@ pub(super) fn render_header_summary(
     output: &CheckOutput,
     config: &RiprConfig,
     plain: bool,
+    all_clear: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -739,9 +741,10 @@ pub(super) fn render_header_summary(
             // reader can match "2 changed behaviors" to their one-line edit.
             let on_lines = shared_line_note(output);
             // #15313: `found` means "listed for review", and a reader takes it as a
-            // gap count. When every finding reads as noticed, the Start here State
-            // says "no test gap found"; the Summary says so in the same words.
-            let listed = if triage::every_finding_reads_noticed(output) {
+            // gap count. `all_clear` is the decision behind the Start here
+            // `State: no test gap found` (`triage::reads_all_clear`); the Summary
+            // says so in the same words, and only then.
+            let listed = if all_clear {
                 format!("No test gap: {unsuppressed} listed")
             } else {
                 format!("{unsuppressed} found")
@@ -2361,7 +2364,7 @@ mod tests {
                 analyzed_revisions: None,
             };
 
-            let rendered = render_header_summary(&output, &RiprConfig::default(), false);
+            let rendered = render_header_summary(&output, &RiprConfig::default(), false, false);
 
             let expected = format!("root: {}\n", crate::output::path::human_path(&root));
             assert!(

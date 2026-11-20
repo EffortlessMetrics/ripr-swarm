@@ -396,14 +396,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — typescript_reexport_directory_star_barrel (34)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
-
-Updated:
-- `expected/human.txt`

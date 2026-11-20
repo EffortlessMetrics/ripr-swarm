@@ -91,14 +91,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — ts_table_row_expected_credit (9)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless ts_table_row_expected_credit --reason "..."`
-
-Updated:
-- `expected/human.txt`

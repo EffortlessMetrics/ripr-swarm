@@ -292,6 +292,26 @@ pub(crate) fn select_human_triage<'a>(
     }
 }
 
+/// #15313: the one all-clear decision behind `State: no test gap found`. The
+/// Summary asks the same question through this function, so the two lines
+/// cannot disagree (a preview-language run whose findings all read noticed
+/// keeps its advisory State, and its Summary keeps `N found`).
+pub(super) fn reads_all_clear(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> bool {
+    reads_all_clear_for_case(
+        check_case_or_fallback(triage, output, drill_in, provenance),
+        output,
+    )
+}
+
+fn reads_all_clear_for_case(check_case: NextActionCheckCase, output: &CheckOutput) -> bool {
+    check_case == NextActionCheckCase::NoDiffFinding && every_finding_reads_noticed(output)
+}
+
 /// True when the run is the all-clear a reader can act on: the shared
 /// verification owner (`CheckOutput::verification`, the same decision the
 /// agent format's `verify=complete` line prints) accepts it, and every
@@ -300,7 +320,7 @@ pub(crate) fn select_human_triage<'a>(
 /// source left out of the diff, a withheld finding, or one finding of any
 /// other class keeps the narrower "no gap selected" wording, so the all-clear
 /// sentence is never printed over something it does not cover.
-pub(super) fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
+fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
     output.verification().is_complete()
         && !output.findings.is_empty()
         && output.withheld_finding_ids().is_empty()
@@ -373,8 +393,7 @@ pub(crate) fn render_human_triage(
     // The canonical decision (#6304) selects the line family, so the decision
     // has one authority.
     let check_case = check_case_or_fallback(triage, output, drill_in, provenance);
-    let all_noticed =
-        check_case == NextActionCheckCase::NoDiffFinding && every_finding_reads_noticed(output);
+    let all_noticed = reads_all_clear_for_case(check_case, output);
     out.push_str(&format!(
         "  State: {}\n",
         if all_noticed {
@@ -4208,12 +4227,19 @@ mod tests {
     /// share one edited line so "2 changed behaviors" matches the one-line edit.
     #[test]
     fn summary_agrees_with_state_and_names_shared_candidate_lines() -> Result<(), String> {
+        // The real bounded render, with the same navigation and provenance as
+        // `start_here_lines`, so Summary and State come from one decision path.
         let summary_of = |output: &CheckOutput| {
-            crate::output::human::render_header_summary(output, &RiprConfig::default(), true)
-                .lines()
-                .find(|line| line.starts_with("Summary: "))
-                .unwrap_or_default()
-                .to_string()
+            crate::output::human::render_bounded_with_config_and_navigation(
+                output,
+                &RiprConfig::default(),
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .unwrap_or_default()
+            .to_string()
         };
         // All clear: two probes on one candidate line, every finding exposed.
         let mut clear = test_output(vec![
@@ -4240,6 +4266,21 @@ mod tests {
             line.contains("No test gap: 2 listed, 0 suppressed by your settings")
                 && !line.contains("found"),
             "all-clear Summary must not say found; got: {line}"
+        );
+        // Preview language: every finding reads noticed, but State keeps its
+        // advisory wording, so the Summary must keep `found` too (review of
+        // #15593: the first cut said "No test gap" here).
+        let mut preview = clear.clone();
+        for finding in &mut preview.findings {
+            finding.language_status = Some(LanguageStatus::Preview);
+        }
+        let (state, _) = start_here_lines(&preview);
+        assert_ne!(state, ALL_CLEAR_STATE);
+        let line = summary_of(&preview);
+        assert!(
+            line.contains("2 found, 0 suppressed by your settings")
+                && !line.contains("No test gap"),
+            "preview Summary must not claim the all-clear State withholds; got: {line}"
         );
         // Gap: the same shape with one finding not noticed keeps `found` and
         // State does not claim the all-clear.

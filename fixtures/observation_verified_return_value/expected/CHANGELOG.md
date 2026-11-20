@@ -599,14 +599,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — observation_verified_return_value (50)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless observation_verified_return_value --reason "..."`
-
-Updated:
-- `expected/human.txt`

@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/ts_boundary_named_constant_test/input
 config: <cwd>/fixtures/ts_boundary_named_constant_test/input/ripr.toml
 
-Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. No test gap: 2 listed, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 

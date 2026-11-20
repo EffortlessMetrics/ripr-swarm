@@ -342,14 +342,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — rust_sibling_effect_oracle (26)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
-
-Updated:
-- `expected/human.txt`

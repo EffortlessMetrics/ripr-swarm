@@ -35,14 +35,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — same_line_call_inputs_observed (4)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless same_line_call_inputs_observed --reason "..."`
-
-Updated:
-- `expected/human.txt`

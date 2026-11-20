@@ -401,14 +401,3 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
-
-## Pending — ts_node_ordinary_test_control (32)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
-
-Updated:
-- `expected/human.txt`

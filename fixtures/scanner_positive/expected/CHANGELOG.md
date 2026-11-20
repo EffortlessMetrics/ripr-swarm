@@ -361,14 +361,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — scanner_positive (31)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless scanner_positive --reason "..."`
-
-Updated:
-- `expected/human.txt`

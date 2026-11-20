@@ -620,14 +620,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — ts_already_observed (36)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless ts_already_observed --reason "..."`
-
-Updated:
-- `expected/human.txt`

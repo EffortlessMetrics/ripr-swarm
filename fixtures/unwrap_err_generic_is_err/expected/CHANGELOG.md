@@ -560,14 +560,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — unwrap_err_generic_is_err (47)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
-
-Updated:
-- `expected/human.txt`

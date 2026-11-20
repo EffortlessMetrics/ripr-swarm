@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_constant_tail_change/input
 
-Summary: 14 changed behaviors checked on 12 candidate lines: 4 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 9 unclear. 14 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
+Summary: 14 changed behaviors checked: 4 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 9 unclear. 14 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 26 changed line(s), 12 candidate line(s), 14 changed behavior(s) checked, 14 finding(s)

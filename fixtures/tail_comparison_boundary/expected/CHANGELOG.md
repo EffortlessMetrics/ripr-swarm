@@ -574,14 +574,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — tail_comparison_boundary (48)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
-
-Updated:
-- `expected/human.txt`

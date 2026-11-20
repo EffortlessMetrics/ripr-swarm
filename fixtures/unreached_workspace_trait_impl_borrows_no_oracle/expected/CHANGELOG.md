@@ -264,14 +264,3 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
-
-## Pending — unreached_workspace_trait_impl_borrows_no_oracle (21)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
-
-Updated:
-- `expected/human.txt`

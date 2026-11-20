@@ -324,14 +324,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — owner_return_pin_json_real_literal (27)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless owner_return_pin_json_real_literal --reason "..."`
-
-Updated:
-- `expected/human.txt`

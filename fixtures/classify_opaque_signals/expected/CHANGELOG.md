@@ -28,14 +28,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — classify_opaque_signals (3)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless classify_opaque_signals --reason "..."`
-
-Updated:
-- `expected/human.txt`

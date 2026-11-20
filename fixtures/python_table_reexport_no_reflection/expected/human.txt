@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_table_reexport_no_reflection/input
 config: <cwd>/fixtures/python_table_reexport_no_reflection/input/ripr.toml
 
-Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. No test gap: 1 listed, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 

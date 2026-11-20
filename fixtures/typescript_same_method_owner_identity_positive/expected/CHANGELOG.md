@@ -630,14 +630,3 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
-
-## Pending — typescript_same_method_owner_identity_positive (38)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless typescript_same_method_owner_identity_positive --reason "..."`
-
-Updated:
-- `expected/human.txt`

@@ -239,14 +239,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — returned_comparison_boundary_gap (20)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless returned_comparison_boundary_gap --reason "..."`
-
-Updated:
-- `expected/human.txt`

@@ -463,14 +463,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — proximity_name_oracle_not_credited (39)
-
-Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when every finding reads noticed
-
-Command:
-`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
-
-Updated:
-- `expected/human.txt`
