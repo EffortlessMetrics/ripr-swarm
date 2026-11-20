@@ -445,9 +445,16 @@ fn row_writes_withhold_each_literals_and_disclose_for_registrations() {
         "(p = 5)",
         "(p++)",
     ] {
+        // Unlike a number, the literal cell `undefined` still parses as an
+        // assignment target after substitution. Reparse alone cannot guard it.
+        let cell = if write.starts_with("delete") {
+            "999"
+        } else {
+            "undefined"
+        };
         for (method, binding) in [("each", "p, tier"), ("for", "[p, tier]")] {
             let source = format!(
-                "import {{ test, expect }} from 'vitest';\ntest.{method}([[999, 'silver']])('tier', ({binding}) => {{\n  {write};\n  expect(loyaltyTier(p)).toBe(tier);\n}});"
+                "import {{ test, expect }} from 'vitest';\ntest.{method}([[{cell}, 'silver']])('tier', ({binding}) => {{\n  {write};\n  expect(loyaltyTier(p)).toBe(tier);\n}});"
             );
             if method == "each" {
                 assert_eq!(
